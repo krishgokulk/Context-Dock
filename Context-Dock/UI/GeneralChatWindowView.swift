@@ -872,7 +872,7 @@ struct GeneralChatWindowView: View {
             // Two things the panel shows rather than describes: the tool's own screen, and
             // the file the thread is working on. They share the space — the panel is narrow,
             // and stacking both leaves neither enough room to be useful.
-            if hasTerminal || !previewFiles.isEmpty {
+            if hasTerminal || !previewFiles.isEmpty || !artifactFiles.isEmpty {
                 panelTabs
                 switch effectivePanelTab {
                 case .terminal where hasTerminal:
@@ -886,6 +886,9 @@ struct GeneralChatWindowView: View {
                     } else {
                         threadTerminal
                     }
+                case .artifacts:
+                    ChatThreadPreviewPanel(candidates: artifactFiles)
+                        .id("artifacts-" + (artifactFiles.last?.path ?? "none"))
                 default:
                     ChatThreadPreviewPanel(candidates: previewFiles)
                         .id(previewFiles.last?.path ?? "none")
@@ -1002,7 +1005,11 @@ struct GeneralChatWindowView: View {
         .background(Theme.surface(dark))
     }
 
-    private enum PanelTab: String { case terminal, preview }
+    private enum PanelTab: String { case terminal, preview, artifacts }
+
+    private var artifactFiles: [URL] {
+        ArtifactStore.artifacts(for: model.activeScope)
+    }
 
     private var unsupportedToolReason: String? {
         guard case .cli(let command) = model.activeScope else { return nil }
@@ -1017,8 +1024,16 @@ struct GeneralChatWindowView: View {
     /// Falls back rather than showing an empty half: a thread with no terminal opens on the
     /// preview, and one with no files opens on the terminal.
     private var effectivePanelTab: PanelTab {
-        if panelTab == .terminal, !hasTerminal { return .preview }
-        if panelTab == .preview, previewFiles.isEmpty, hasTerminal { return .terminal }
+        if panelTab == .artifacts, artifactFiles.isEmpty {
+            return previewFiles.isEmpty ? .terminal : .preview
+        }
+        if panelTab == .terminal, !hasTerminal {
+            return previewFiles.isEmpty && !artifactFiles.isEmpty ? .artifacts : .preview
+        }
+        if panelTab == .preview, previewFiles.isEmpty {
+            if !artifactFiles.isEmpty { return .artifacts }
+            if hasTerminal { return .terminal }
+        }
         return panelTab
     }
 
@@ -1099,6 +1114,9 @@ struct GeneralChatWindowView: View {
             if hasTerminal { tabPill("Terminal", tab: .terminal, symbol: "terminal") }
             if !previewFiles.isEmpty {
                 tabPill("Preview", tab: .preview, symbol: "doc.text")
+            }
+            if !artifactFiles.isEmpty {
+                tabPill("Artifacts", tab: .artifacts, symbol: "square.on.square")
             }
             Spacer(minLength: 0)
         }

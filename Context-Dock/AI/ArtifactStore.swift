@@ -95,10 +95,17 @@ enum ArtifactStore {
             <html><head><meta charset="utf-8">
             <style>body{margin:0;padding:12px;background:#1c1c1e;color:#eee;
             font:13px -apple-system}</style>
-            <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"
+                    onerror="document.body.classList.add('offline')"></script>
             </head><body>
             <pre class="mermaid">\(body)</pre>
-            <script>mermaid.initialize({startOnLoad:true,theme:'dark'});</script>
+            <script>
+            // Without the renderer the <pre> is still the diagram's source, which is
+            // readable. A blank frame would not be, and would look like a broken artifact
+            // rather than one waiting on a network.
+            if (window.mermaid) { mermaid.initialize({startOnLoad:true,theme:'dark'}); }
+            else { document.querySelector('.mermaid').style.whiteSpace = 'pre-wrap'; }
+            </script>
             </body></html>
             """
     }

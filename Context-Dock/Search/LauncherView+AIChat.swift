@@ -3176,6 +3176,28 @@ extension LauncherView {
         l2.isLoading = false
         l2.loadingStatus = nil
         l2.currentTask = nil
+        handOffArtifactIfProduced()
+    }
+
+    /// An answer that built something moves to the window, carrying the conversation.
+    ///
+    /// The dock is a strip. An artifact is a chart, a table, a diagram — a thing to look at
+    /// — and a strip can only show its source, which is the problem artifacts exist to
+    /// solve. Rather than render it badly here, the surface that can show it properly is
+    /// opened, with the transcript, so the user is not moved away from their conversation
+    /// to look at what their conversation produced.
+    ///
+    /// Every choke point runs through here, so this fires once per turn regardless of which
+    /// path answered.
+    private func handOffArtifactIfProduced() {
+        guard let last = l2.chatMessages.last, last.role == .assistant else { return }
+        let scopeInfo = currentContextDockChatScope
+        let scope: GeneralChatScope = scopeInfo.bundleId.isEmpty
+            ? .general : .app(bundleId: scopeInfo.bundleId)
+        guard let artifact = ArtifactStore.extract(from: last.content, scope: scope).last
+        else { return }
+        previewFileInChatWindow(
+            artifact, bundleId: scopeInfo.bundleId, appName: scopeInfo.appName)
     }
 
     @MainActor
