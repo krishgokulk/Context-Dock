@@ -164,6 +164,41 @@ struct InlineCapabilityApprovalCard: View {
 
     private var accent: Color { isHighRisk ? .orange : .accentColor }
 
+    /// The files this call would touch, resolved the way the guard resolves them — so the
+    /// card and the boundary check are reading the same thing.
+    private var targets: [URL] {
+        CapabilityScopeGuard.candidatePaths(
+            input: pending.plan.input, context: pending.context)
+    }
+
+    /// What happens if this turns out to be wrong. Said plainly and per capability: "undo
+    /// is not guaranteed" over a move to the Trash is a warning about the wrong thing, and
+    /// a user who learns the warning is generic stops reading it.
+    private var reversibility: String {
+        switch pending.capability.id {
+        case "finder.trash":
+            return "Goes to the Trash — recoverable from there until you empty it."
+        case "finder.moveFiles", "finder.organize":
+            return "Moves files. Reversible by moving them back; nothing is deleted."
+        case "finder.renameFiles":
+            return "Renames in place. Reversible by renaming back; nothing is deleted."
+        case "finder.copyFiles", "finder.newFolder":
+            return "Adds without removing anything."
+        default:
+            return isHighRisk ? "Undo is not guaranteed." : "Low risk."
+        }
+    }
+
+    private var isReversible: Bool {
+        switch pending.capability.id {
+        case "finder.trash", "finder.moveFiles", "finder.organize", "finder.renameFiles",
+            "finder.copyFiles", "finder.newFolder":
+            return true
+        default:
+            return !isHighRisk
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
@@ -199,6 +234,48 @@ struct InlineCapabilityApprovalCard: View {
                     Color.primary.opacity(0.05),
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous))
             }
+            // Which files, by name. The inputs above may say "the selection" or a pattern,
+            // and approving a rename of six files you cannot see is not approval.
+            if !targets.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(
+                        targets.count == 1
+                            ? "This will act on 1 item:"
+                            : "This will act on \(targets.count) items:"
+                    )
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    ForEach(targets.prefix(8), id: \.path) { url in
+                        Text(url.path)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    if targets.count > 8 {
+                        Text("+ \(targets.count - 8) more")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+
+            if let root = pending.scopeRoot {
+                Label("Confined to \(root.lastPathComponent)", systemImage: "folder")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(reversibility)
+                .font(.system(size: 10))
+                .foregroundStyle(
+                    isReversible ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+
             Text("Expires after 60 seconds.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)

@@ -26,6 +26,9 @@ struct AICapabilityInputSchema: Codable {
 struct AICapabilityExecutionRequest {
     let input: [String: String]
     let context: UserContext
+    /// The folder this conversation is confined to, when it is confined to one. Set for
+    /// folder threads; nil everywhere else, where the scope is the machine.
+    var scopeRoot: URL? = nil
 }
 
 struct AICapabilityExecutionResult {
@@ -646,13 +649,22 @@ final class AIExecutionEngine {
     func execute(
         _ plan: AIActionPlan,
         context: UserContext,
-        approved: Bool = false
+        approved: Bool = false,
+        scopeRoot: URL? = nil
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
         }
         if capability.riskLevel == .critical {
             throw AICapabilityError.blocked("Capability is blocked")
+        }
+        // The folder chat's boundary, checked once for every capability rather than
+        // sixteen times with one of them forgotten.
+        if let reason = CapabilityScopeGuard.violation(
+            capabilityID: capability.id, input: plan.input, context: context,
+            scopeRoot: scopeRoot)
+        {
+            throw AICapabilityError.blocked(reason)
         }
         if capability.riskLevel.requiresApproval && !approved {
             throw AICapabilityError.approvalRequired(capability.title)
@@ -662,21 +674,32 @@ final class AIExecutionEngine {
                 throw AICapabilityError.missingInput(field.name)
             }
         }
-        return try await capability.executor(.init(input: plan.input, context: context))
+        return try await capability.executor(
+            .init(input: plan.input, context: context, scopeRoot: scopeRoot))
     }
 
     func executeWithApproval(
         _ plan: AIActionPlan,
-        context: UserContext
+        context: UserContext,
+        scopeRoot: URL? = nil
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
+        }
+        // Checked before the card is raised, not after: asking the user to approve
+        // something that will then be refused teaches them the card means nothing.
+        if let reason = CapabilityScopeGuard.violation(
+            capabilityID: capability.id, input: plan.input, context: context,
+            scopeRoot: scopeRoot)
+        {
+            throw AICapabilityError.blocked(reason)
         }
         if capability.riskLevel.requiresApproval {
             let approved = await AICapabilityApprovalCenter.shared.requestApproval(
                 plan: plan,
                 capability: capability,
-                context: context
+                context: context,
+                scopeRoot: scopeRoot
             )
             guard approved else {
                 AIAuditHistory.shared.record(
@@ -690,7 +713,8 @@ final class AIExecutionEngine {
             }
         }
         do {
-            let result = try await execute(plan, context: context, approved: true)
+            let result = try await execute(
+                plan, context: context, approved: true, scopeRoot: scopeRoot)
             AIAuditHistory.shared.record(
                 capabilityID: capability.id,
                 risk: capability.riskLevel,
@@ -813,6 +837,9 @@ final class AICapabilityApprovalCenter: ObservableObject {
         let plan: AIActionPlan
         let capability: AICapability
         let context: UserContext
+        /// The folder the asking thread is confined to, so the card can say where this
+        /// will happen rather than only what.
+        var scopeRoot: URL? = nil
         let continuation: CheckedContinuation<Bool, Never>
     }
 
@@ -821,13 +848,17 @@ final class AICapabilityApprovalCenter: ObservableObject {
 
     private init() {}
 
-    func requestApproval(plan: AIActionPlan, capability: AICapability, context: UserContext) async -> Bool {
+    func requestApproval(
+        plan: AIActionPlan, capability: AICapability, context: UserContext,
+        scopeRoot: URL? = nil
+    ) async -> Bool {
         await withCheckedContinuation { continuation in
             expiryTask?.cancel()
             pending = PendingApproval(
                 plan: plan,
                 capability: capability,
                 context: context,
+                scopeRoot: scopeRoot,
                 continuation: continuation
             )
             expiryTask = Task { [weak self] in
