@@ -118,10 +118,36 @@ enum ChatPlanRunner {
     ///
     /// Later steps assume earlier ones happened; running them after a failure produces
     /// confident nonsense, which is worse than stopping short and saying where it stopped.
-    static func run(_ plan: ChatPlan, query: String) async -> [ChatPlanStepResult] {
+    /// - Parameter authorizedBundleIds: the apps this conversation may act on, lowercased.
+    ///   Nil means unchecked, which is right for replaying a saved recipe: its steps were
+    ///   authorized when it was recorded, and the thread replaying it may be a different
+    ///   one. The chat path always passes a set, because that is where a plan is composed
+    ///   fresh from a model's ordering.
+    static func run(
+        _ plan: ChatPlan, query: String, authorizedBundleIds: Set<String>? = nil
+    ) async -> [ChatPlanStepResult] {
         var results: [ChatPlanStepResult] = []
 
         for (index, step) in plan.steps.enumerated() {
+            // Re-checked here, not only when the plan was built. The catalogue is what the
+            // model was allowed to order; this is what it is allowed to run, and the two
+            // being the same is an invariant worth asserting rather than assuming.
+            if let authorizedBundleIds,
+                !authorizedBundleIds.contains(step.route.bundleId.lowercased())
+            {
+                log.notice(
+                    "step \(index + 1, privacy: .public) refused: \(step.route.bundleId, privacy: .public) is outside this chat")
+                results.append(
+                    ChatPlanStepResult(
+                        id: step.id, step: step, success: false,
+                        output:
+                            "\(step.route.appName) is not part of this conversation, so that "
+                            + "step was not run. Attach it to this chat if you want it "
+                            + "included.",
+                        verification: nil))
+                break
+            }
+
             let scope = GeneralChatScope.app(bundleId: step.route.bundleId)
             log.notice(
                 "step \(index + 1, privacy: .public)/\(plan.steps.count, privacy: .public): \(step.route.title, privacy: .public)")

@@ -86,7 +86,14 @@ final class AIRequestClassifier {
         let matchedVerbCount = workflowVerbs.reduce(into: 0) { count, verb in
             if query.contains(verb) { count += 1 }
         }
-        let sequenceSignals = [" and then ", " then ", " after that ", " once ", " followed by "]
+        // A plain "and" between two actions is the commonest way people say "two steps" —
+        // "find the newest export and open it" has no "then" and nothing to share, and was
+        // classified as a single action, so it was answered with one route that did half
+        // the job. A false positive here costs one planner call that returns an empty plan;
+        // a false negative silently drops work the user asked for.
+        let sequenceSignals = [
+            " and then ", " then ", " after that ", " once ", " followed by ", " and ", ", ",
+        ]
         if sequenceSignals.contains(where: query.contains), matchedVerbCount >= 2 {
             return true
         }

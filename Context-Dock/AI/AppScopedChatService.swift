@@ -476,6 +476,11 @@ enum AppScopedChatService {
             var crossAppRoutes: [ChatRoute] = []
             var scopeApps: [(String, String)] = []
             if case .app(let bundleId) = scope { scopeApps.append((bundleId, appName)) }
+            // A folder thread's actions are Finder's — the same mapping its capabilities
+            // and routes already use.
+            if scope.folderURL != nil {
+                scopeApps.append((ChatAppDirectory.finderBundleID, "Finder"))
+            }
             for name in extraAppNames {
                 let bundleId =
                     NSWorkspace.shared.runningApplications
@@ -484,7 +489,19 @@ enum AppScopedChatService {
                     .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
                 if let bundleId { scopeApps.append((bundleId, name)) }
             }
-            if scopeApps.count > 1 {
+
+            // Planning used to require two or more apps in the thread, which meant "find
+            // the newest export and open it" — two steps in one app — was answered as a
+            // single route and quietly did half the job. Several steps is a property of
+            // the request, not of how many apps happen to be attached, and the classifier
+            // already decides that. Two apps still qualifies on its own, so a combined
+            // chat behaves exactly as before.
+            let intent = AIRequestClassifier.shared.classify(
+                query: query,
+                hasExplicitContext: !attachments.isEmpty || !finderSelection.isEmpty)
+            let mayNeedPlan = intent.requiresPlanning || scopeApps.count > 1
+
+            if !scopeApps.isEmpty, mayNeedPlan {
                 for (bundleId, name) in scopeApps {
                     crossAppRoutes += await ChatRouteResolver.routes(
                         for: query, bundleId: bundleId, appName: name)
@@ -495,7 +512,12 @@ enum AppScopedChatService {
                         provider: provider, apiKey: apiKey)
                 {
                     log.notice("stage: plan of \(plan.steps.count, privacy: .public) steps")
-                    let results = await ChatPlanRunner.run(plan, query: query)
+                    // The thread's own apps, and only those. Routes were resolved from this
+                    // set, so a step outside it means the plan drifted from what was
+                    // offered — checked per step rather than trusted once.
+                    let results = await ChatPlanRunner.run(
+                        plan, query: query,
+                        authorizedBundleIds: Set(scopeApps.map { $0.0.lowercased() }))
                     let receipt = ChatPlanRunner.receipt(plan, results: results)
                     let allSucceeded = ChatPlanRunner.fullyConfirmed(plan, results: results)
                     // Only a plan that ran end to end is offerable as a recipe. Keeping a
