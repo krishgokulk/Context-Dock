@@ -13,6 +13,7 @@
 // the only step required to make a tool callable from every provider.
 
 import Foundation
+import PDFKit
 
 /// What a tool receives. Carries the per-request collaborators a handler may need, so
 /// handlers stay free of ambient state and can be tested by constructing one of these.
@@ -58,12 +59,23 @@ struct AgentToolContext {
     /// resolve implicit targets ("this file", "the current folder").
     var userContext: UserContext = .none
 
+    /// Files attached to this turn.
+    ///
+    /// They reached the provider as vision blocks, and stopped there — the tool loop had no
+    /// idea a file existed. So "read this screenshot and paste it as markdown" was answered
+    /// by guessing the content was on the clipboard and running pbpaste, then inventing a
+    /// `markdown` binary to pipe it through. The model was not being stupid; the attachment
+    /// was invisible from where it was standing.
+    var attachments: [URL] = []
+
     init(
         commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
-        userContext: UserContext = .none
+        userContext: UserContext = .none,
+        attachments: [URL] = []
     ) {
         self.commandExecutor = commandExecutor
         self.userContext = userContext
+        self.attachments = attachments
     }
 }
 
@@ -449,6 +461,80 @@ final class AgentToolRegistry {
         // 35k tokens per message, so they are reached through two tools instead: search,
         // then call. The model discovers what exists at the moment it needs it, and pays for
         // only what it looked up.
+
+        register(AgentTool(
+            name: "read_attachment",
+            description: "Read a file the user attached to this message — OCR for images and "
+                + "screenshots, plain text for text/markdown/code, extracted text for PDFs. "
+                + "Call this FIRST whenever the user says \"this\", \"this screenshot\", "
+                + "\"the attached file\", or asks to convert, summarise or reformat something "
+                + "they attached. Do not guess the content from the clipboard.",
+            properties: [
+                "index": [
+                    "type": "integer",
+                    "description": "Which attachment, 0-based. Omit for the first one.",
+                ]
+            ],
+            required: []
+        ) { arguments, context in
+            let attachments = context.attachments
+            guard !attachments.isEmpty else {
+                return AgentToolResult(
+                    success: false,
+                    output: "Nothing is attached to this message.",
+                    displayCommand: "read_attachment()")
+            }
+            let index = (arguments["index"] as? Int) ?? 0
+            guard attachments.indices.contains(index) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "There \(attachments.count == 1 ? "is 1 attachment" : "are \(attachments.count) attachments"), so index \(index) doesn't exist.",
+                    displayCommand: "read_attachment(\(index))")
+            }
+            let url = attachments[index]
+            let label = url.lastPathComponent
+            guard let data = try? Data(contentsOf: url) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "Couldn't read \(label).",
+                    displayCommand: "read_attachment(\(label))")
+            }
+
+            let imageTypes: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "bmp", "webp"]
+            let ext = url.pathExtension.lowercased()
+            var text = ""
+            if imageTypes.contains(ext) {
+                text = ScreenCaptureService.recognizeText(in: data)
+                if text.isEmpty {
+                    // An image with no text is a real answer, not a failure — and saying so
+                    // stops the model inventing content it cannot see.
+                    return AgentToolResult(
+                        success: true,
+                        output: "\(label) is an image with no readable text in it. If the user "
+                            + "is asking about what it depicts, describe it from the image you "
+                            + "were shown rather than from this tool.",
+                        displayCommand: "read_attachment(\(label))")
+                }
+            } else if ext == "pdf" {
+                text = PDFDocument(url: url)?.string ?? ""
+            } else {
+                text = String(data: data, encoding: .utf8) ?? ""
+            }
+
+            guard !text.isEmpty else {
+                return AgentToolResult(
+                    success: false,
+                    output: "\(label) has no text I can extract.",
+                    displayCommand: "read_attachment(\(label))")
+            }
+            // Bounded: a long PDF would otherwise crowd out the rest of the turn.
+            let clipped = text.count > 20_000
+                ? String(text.prefix(20_000)) + "\n…(truncated)" : text
+            return AgentToolResult(
+                success: true,
+                output: "Contents of \(label):\n\n\(clipped)",
+                displayCommand: "read_attachment(\(label))")
+        })
 
         register(AgentTool(
             name: "find_capability",

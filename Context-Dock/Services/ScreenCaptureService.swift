@@ -236,7 +236,10 @@ final class ScreenCaptureService: @unchecked Sendable {
 
     // MARK: - Recognition
 
-    private static func recognizeText(in data: Data) -> String {
+    /// Text in an image. Internal rather than private so the agent tool loop can read an
+    /// attached screenshot with the same recogniser Capture Text uses, instead of a second
+    /// implementation drifting alongside it.
+    static func recognizeText(in data: Data) -> String {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
         else { return "" }

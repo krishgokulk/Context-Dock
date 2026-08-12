@@ -98,7 +98,7 @@ extension AIProviderService {
                     } else if let result = await AgentToolRegistry.shared.dispatch(
                         name: tc.function.name,
                         arguments: args,
-                        context: AgentToolContext(commandExecutor: commandExecutor)
+                        context: AgentToolContext(commandExecutor: commandExecutor, attachments: imageAttachments)
                     ) {
                         success = result.success
                         output = result.output
@@ -245,7 +245,7 @@ extension AIProviderService {
                 } else if let result = await AgentToolRegistry.shared.dispatch(
                     name: toolName,
                     arguments: args,
-                    context: AgentToolContext(commandExecutor: commandExecutor)
+                    context: AgentToolContext(commandExecutor: commandExecutor, attachments: imageAttachments)
                 ) {
                     success = result.success
                     output = result.output
@@ -346,7 +346,7 @@ extension AIProviderService {
                 } else if let result = await AgentToolRegistry.shared.dispatch(
                     name: fc.name,
                     arguments: args,
-                    context: AgentToolContext(commandExecutor: commandExecutor)
+                    context: AgentToolContext(commandExecutor: commandExecutor, attachments: imageAttachments)
                 ) {
                     success = result.success
                     output = result.output
