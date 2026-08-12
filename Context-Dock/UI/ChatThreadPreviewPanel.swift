@@ -18,6 +18,7 @@ import AppKit
 import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 
 struct ChatThreadPreviewPanel: View {
     /// Newest last — the file most recently mentioned is the one being worked on.
@@ -114,9 +115,23 @@ struct ChatThreadPreviewPanel: View {
 
     // MARK: - Content
 
+    /// A rendered document rather than its source.
+    private var isWebRendered: Bool {
+        ["html", "svg"].contains(current?.pathExtension.lowercased() ?? "")
+    }
+
     @ViewBuilder
     private func content(for url: URL) -> some View {
-        if isEditable {
+        if isWebRendered {
+            // The point of an artifact is that it is the thing, not a description of it: a
+            // chart you can read, a tracker you can click. Source stays one tap away
+            // through Show in Finder.
+            ArtifactWebView(url: url)
+                .frame(height: 320)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.horizontal, 10)
+                .padding(.bottom, 10)
+        } else if isEditable {
             // Editable in place. A file the assistant just wrote is usually a draft, and
             // making the user open an editor to change one line is the friction this panel
             // exists to remove.
@@ -148,9 +163,13 @@ struct ChatThreadPreviewPanel: View {
         }
     }
 
+    /// Text-shaped files are edited; everything else is looked at. A rendered document is
+    /// neither — editing its source in a 260pt box is worse than opening a real editor.
+    private var isEditableCandidate: Bool { !isWebRendered }
+
     /// Text-shaped files are edited; everything else is looked at.
     private var isEditable: Bool {
-        guard let current else { return false }
+        guard isEditableCandidate, let current else { return false }
         guard let type = UTType(filenameExtension: current.pathExtension) else {
             return current.pathExtension.isEmpty
         }
@@ -243,5 +262,26 @@ struct ChatThreadPreviewPanel: View {
         } catch {
             status = "couldn't save"
         }
+    }
+}
+
+
+/// Renders an artifact. Local files only, and no navigation away from them: an artifact is
+/// a document the model produced, not a browser.
+private struct ArtifactWebView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> WKWebView {
+        let view = WKWebView()
+        view.setValue(false, forKey: "drawsBackground")
+        view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        // Reload only when the file actually changes: reloading on every SwiftUI update
+        // would restart any animation or interaction the artifact has.
+        guard view.url?.path != url.path else { return }
+        view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
     }
 }

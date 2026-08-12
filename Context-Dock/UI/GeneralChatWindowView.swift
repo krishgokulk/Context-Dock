@@ -1075,6 +1075,10 @@ struct GeneralChatWindowView: View {
             }
         }
         model.attachments.forEach { consider($0.path) }
+        // What this thread built, after what it merely mentioned: a chart the answer just
+        // produced is more likely to be what the user wants to look at than a path it
+        // quoted in passing.
+        ArtifactStore.artifacts(for: model.activeScope).forEach { consider($0.path) }
         // Last, so it is the one Preview opens on — the file the user asked to see wins
         // over whatever the transcript happened to mention most recently.
         considerHandoff()

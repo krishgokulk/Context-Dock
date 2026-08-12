@@ -557,6 +557,10 @@ final class GeneralChatWindowModel: ObservableObject {
         guard sendingScopeKeys.contains(scope.storageKey) else { return }
         sendingScopeKeys.remove(scope.storageKey)
         settleConsole(scope)
+        // Anything the answer built becomes a file, which the panel already knows how to
+        // show. Done here rather than in the view so an artifact survives the thread being
+        // switched away from before it was ever looked at.
+        ArtifactStore.extract(from: message.content, scope: scope)
         sendTasks[scope.storageKey] = nil
 
         if scope == activeScope {
