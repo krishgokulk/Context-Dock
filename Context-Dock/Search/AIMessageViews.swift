@@ -487,6 +487,22 @@ struct AIChatMessage: Identifiable, Equatable {
         case approval  // inline approve/deny card (replaces popup window)
     }
 
+    /// Protocol is never UI.
+    ///
+    /// A tool call the model wrote as text is a call that did not run. Rendering it shows
+    /// the user plumbing in place of an answer and hides the fact that nothing happened —
+    /// which is how {"globalcmd.empty-trash":{}} ended up in a chat bubble under the words
+    /// "No tools ran".
+    ///
+    /// This sits in the initialiser on purpose. There are fifty-odd places that append an
+    /// assistant message across the surfaces, and an invariant enforced at fifty call sites
+    /// is one that the fifty-first will break. Every bubble is built here.
+    private static func presentable(_ content: String, role: ChatRole) -> String {
+        guard role == .assistant else { return content }
+        guard ChatAnswerSanitizer.isProtocolOnly(content) else { return content }
+        return ChatAnswerSanitizer.protocolFallback
+    }
+
     init(
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
@@ -502,7 +518,7 @@ struct AIChatMessage: Identifiable, Equatable {
     ) {
         self.id = UUID()
         self.role = role
-        self.content = content
+        self.content = Self.presentable(content, role: role)
         self.timestamp = Date()
         self.isError = isError
         self.structuredData = structuredData
@@ -538,7 +554,9 @@ struct AIChatMessage: Identifiable, Equatable {
     ) {
         self.id = id
         self.role = role
-        self.content = content
+        // Streaming too: a partial object is not valid JSON and passes through untouched,
+        // so this only bites once the message has actually settled into a complete call.
+        self.content = Self.presentable(content, role: role)
         self.timestamp = Date()
         self.isError = isError
         self.structuredData = structuredData
