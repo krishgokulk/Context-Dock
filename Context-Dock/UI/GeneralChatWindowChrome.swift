@@ -71,8 +71,11 @@ final class GeneralChatWindowChromeState: ObservableObject {
 enum GeneralChatChromeMetrics {
     /// Titlebar height, shared by both columns so the split line stays straight.
     static let barHeight: CGFloat = 52
-    /// Runway for the traffic lights, which AppKit still draws.
-    static let trafficLightInset: CGFloat = 78
+    /// Runway for the traffic lights, which AppKit still draws. The unified toolbar that
+    /// centres them vertically also shifts them 10pt right — measured, the zoom button now
+    /// ends at x=79 instead of 69 — so the old 78pt runway put the sidebar toggle underneath
+    /// the green light. 79 + a 13pt gap.
+    static let trafficLightInset: CGFloat = 92
 }
 
 // MARK: - Sidebar-side bar
