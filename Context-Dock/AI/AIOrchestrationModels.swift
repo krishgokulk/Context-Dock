@@ -266,6 +266,30 @@ enum AITypedInvocationResolver {
                     arguments: ["bundleId": app],
                     requiresApproval: false)
             }
+
+            // `{"globalcmd.empty-trash": {}}` — the capability id used directly as the key.
+            //
+            // Not a form anything documents, and exactly the form a model reaches for once
+            // it has been handed a capability id by find_capability and shown JSON call
+            // conventions for MCP and chat history. It reads as the obvious generalisation.
+            // Unmatched, it fell through to the surface and was printed at the user as raw
+            // JSON while nothing ran.
+            //
+            // Accepting it costs nothing: the id is validated downstream like any other, so
+            // a wrong one produces an honest "no such capability" instead of silence. One
+            // key, a dotted id, a dictionary value — anything else is left alone.
+            if root.count == 1,
+                let (key, value) = root.first,
+                key.contains("."),
+                !key.contains(" "),
+                let values = value as? [String: Any]
+            {
+                return AITypedInvocation(
+                    kind: .capability,
+                    capabilityID: key,
+                    arguments: values.mapValues { String(describing: $0) },
+                    requiresApproval: true)
+            }
         }
         return nil
     }

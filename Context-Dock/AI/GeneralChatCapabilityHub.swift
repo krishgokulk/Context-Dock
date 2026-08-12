@@ -209,6 +209,17 @@ final class GeneralChatCapabilityHub {
             "in this launcher), reply with ONLY:",
             "{\"app_chat_history\": {\"app\": \"<bundleId or app name>\"}}",
             "",
+            // Parsed all along, never documented. Shown two JSON conventions and given
+            // capability ids by find_capability, a model invents its own third form —
+            // {"globalcmd.empty-trash":{}} — which used to match nothing and get printed at
+            // the user while the action never ran. Teaching the real envelope is the fix;
+            // tolerating the invented one is only the safety net.
+            "To run one of the capabilities listed below (ids like \"globalcmd.empty-trash\",",
+            "\"browser.history\", \"finder.trash\"), reply with ONLY:",
+            "{\"capability_call\": {\"capability\": \"<id>\", \"arguments\": { … }}}",
+            "Never write a capability id as the JSON key itself, and never show any of this",
+            "JSON to the user — it is how you act, not something to explain.",
+            "",
             "After the tool result returns, answer the user's actual question in plain language.",
             "If the user asks \"how many\", count the items in the result.",
             "",
