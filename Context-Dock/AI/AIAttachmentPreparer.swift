@@ -52,6 +52,13 @@ enum AIAttachmentPreparer {
             let ext = url.pathExtension.lowercased()
             guard imageExts.contains(ext) else { return nil }
             if nativeImageExtensions.contains(ext), let data = try? Data(contentsOf: url) {
+                // A photo straight off a camera or phone is several megabytes, and vision
+                // endpoints reject an image over roughly five once base64 has added a
+                // third. Downscaling loses nothing that matters for "what is this" and is
+                // the difference between an answer and a 400 the user cannot act on.
+                if data.count > maxImageBytes, let smaller = downscaledJPEG(from: url) {
+                    return (smaller.base64EncodedString(), "image/jpeg")
+                }
                 return (data.base64EncodedString(), mediaType(forExtension: ext))
             }
             guard let png = pngData(from: url) else { return nil }
@@ -66,6 +73,35 @@ enum AIAttachmentPreparer {
         case "webp": return "image/webp"
         default: return "image/jpeg"
         }
+    }
+
+    /// Above this, the raw file is re-encoded rather than sent. Chosen below the ~5 MB
+    /// endpoint limit so base64's third still fits under it.
+    private static let maxImageBytes = 3_500_000
+    /// Long edge after downscaling. Vision models sample images down to roughly this
+    /// anyway, so sending more costs tokens and latency for detail that is discarded.
+    private static let maxImageEdge: CGFloat = 1568
+
+    /// The image re-encoded small enough to send: long edge bounded, JPEG quality 0.8.
+    private static func downscaledJPEG(from url: URL) -> Data? {
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return nil }
+        let scale = min(1, maxImageEdge / max(size.width, size.height))
+        let target = NSSize(width: size.width * scale, height: size.height * scale)
+
+        let resized = NSImage(size: target)
+        resized.lockFocus()
+        image.draw(
+            in: NSRect(origin: .zero, size: target),
+            from: NSRect(origin: .zero, size: size),
+            operation: .copy, fraction: 1)
+        resized.unlockFocus()
+
+        guard let tiff = resized.tiffRepresentation,
+            let rep = NSBitmapImageRep(data: tiff)
+        else { return nil }
+        return rep.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
     }
 
     private static func pngData(from url: URL) -> Data? {

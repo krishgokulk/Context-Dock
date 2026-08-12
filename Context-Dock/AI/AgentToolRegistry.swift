@@ -68,14 +68,22 @@ struct AgentToolContext {
     /// was invisible from where it was standing.
     var attachments: [URL] = []
 
+    /// The thread this turn belongs to. Carries the folder a capability may not reach
+    /// outside of, and where a report it produces should be filed. Without it, every
+    /// capability called through the tool loop ran unscoped — the boundary the folder
+    /// threads promise existed only on the prose-recovery path.
+    var chatScope: GeneralChatScope? = nil
+
     init(
         commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         userContext: UserContext = .none,
-        attachments: [URL] = []
+        attachments: [URL] = [],
+        chatScope: GeneralChatScope? = nil
     ) {
         self.commandExecutor = commandExecutor
         self.userContext = userContext
         self.attachments = attachments
+        self.chatScope = chatScope
     }
 }
 
@@ -515,6 +523,21 @@ final class AgentToolRegistry {
         ) { arguments, context in
             let attachments = context.attachments
             guard !attachments.isEmpty else {
+                // "These files" usually means the Finder selection, not an upload. Ending
+                // the turn on "nothing is attached" left the model with a flat no while the
+                // files the user was pointing at sat one tool call away — so this says what
+                // *is* there and which tool reaches it.
+                if case .filesSelected(let selected) = context.userContext, !selected.isEmpty {
+                    let names = selected.prefix(10).map(\.path).joined(separator: "\n")
+                    return AgentToolResult(
+                        success: false,
+                        output: "Nothing is attached to this message, but the user has "
+                            + "\(selected.count) item(s) selected in Finder:\n\(names)\n\n"
+                            + "That is what \"these files\" means. Any image among them has "
+                            + "already been shown to you — describe it directly. For anything "
+                            + "else use finder.readFile or finder.fileInfo on the paths above.",
+                        displayCommand: "read_attachment()")
+                }
                 return AgentToolResult(
                     success: false,
                     output: "Nothing is attached to this message.",
@@ -750,7 +773,7 @@ final class AgentToolRegistry {
                 capability: capabilityID, input: input, explanation: explanation)
             do {
                 let result = try await AIExecutionEngine.shared.executeWithApproval(
-                    plan, context: context.userContext)
+                    plan, context: context.userContext, chatScope: context.chatScope)
                 if result.success, isWrite {
                     RecentCapabilityWrites.record(capabilityID, input: input)
                 }

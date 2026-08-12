@@ -25,6 +25,8 @@ extension AIProviderService {
         extraHeaders: [String: String] = [:],
         transport: any OpenAIToolTransport,
         imageAttachments: [URL] = [],
+        userContext: UserContext = .none,
+        chatScope: GeneralChatScope? = nil,
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -98,7 +100,9 @@ extension AIProviderService {
                     } else if let result = await AgentToolRegistry.shared.dispatch(
                         name: tc.function.name,
                         arguments: args,
-                        context: AgentToolContext(commandExecutor: commandExecutor, attachments: imageAttachments)
+                        context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            attachments: imageAttachments, chatScope: chatScope)
                     ) {
                         success = result.success
                         output = result.output
@@ -135,6 +139,8 @@ extension AIProviderService {
         maxIterations: Int,
         model: String,
         imageAttachments: [URL] = [],
+        userContext: UserContext = .none,
+        chatScope: GeneralChatScope? = nil,
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -245,7 +251,9 @@ extension AIProviderService {
                 } else if let result = await AgentToolRegistry.shared.dispatch(
                     name: toolName,
                     arguments: args,
-                    context: AgentToolContext(commandExecutor: commandExecutor, attachments: imageAttachments)
+                    context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            attachments: imageAttachments, chatScope: chatScope)
                 ) {
                     success = result.success
                     output = result.output
@@ -282,6 +290,8 @@ extension AIProviderService {
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         imageAttachments: [URL] = [],
+        userContext: UserContext = .none,
+        chatScope: GeneralChatScope? = nil,
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -346,7 +356,9 @@ extension AIProviderService {
                 } else if let result = await AgentToolRegistry.shared.dispatch(
                     name: fc.name,
                     arguments: args,
-                    context: AgentToolContext(commandExecutor: commandExecutor, attachments: imageAttachments)
+                    context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            attachments: imageAttachments, chatScope: chatScope)
                 ) {
                     success = result.success
                     output = result.output

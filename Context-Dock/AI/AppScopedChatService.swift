@@ -216,6 +216,19 @@ enum AppScopedChatService {
 
     // MARK: - Shared context blocks
 
+    /// Image files a provider can be shown directly. Capped: a folder of forty photos sent
+    /// as vision blocks is a very expensive way to answer one question, and the first few
+    /// are what "these" almost always means.
+    static func selectedImages(in selection: [URL], limit: Int = 6) -> [URL] {
+        let imageTypes: Set<String> = [
+            "png", "jpg", "jpeg", "heic", "heif", "gif", "tiff", "bmp", "webp",
+        ]
+        return selection
+            .filter { imageTypes.contains($0.pathExtension.lowercased()) }
+            .prefix(limit)
+            .map { $0 }
+    }
+
     /// What the user is pointing at, named in full.
     ///
     /// A count alone ("3 files selected") leaves the model to ask which — and the whole
@@ -767,6 +780,11 @@ enum AppScopedChatService {
                 consoleScope: scope)
         }
 
+        // Selected images are shown, not just named. "Explain these files" on two JPGs is a
+        // question about what they depict, and neither OCR nor a file listing can answer it
+        // — the provider has to actually see them. Non-image selections are left alone;
+        // they are read on demand by the file tools.
+        let visionAttachments = attachments + selectedImages(in: finderSelection)
         log.notice("stage: provider sendWithTools")
         var (text, executed) = try await AIProviderService.shared.sendWithTools(
             query,
@@ -776,7 +794,8 @@ enum AppScopedChatService {
             conversationHistory: history,
             commandExecutor: executor,
             additionalSystemPrompt: systemPrompt,
-            imageAttachments: attachments
+            imageAttachments: visionAttachments,
+            chatScope: scope
         )
         log.notice("stage: answer received (\(text.count, privacy: .public) chars, \(executed.count, privacy: .public) commands)")
 

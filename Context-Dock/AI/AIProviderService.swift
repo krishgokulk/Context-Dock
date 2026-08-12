@@ -1160,6 +1160,8 @@ class AIProviderService: ObservableObject {
         systemPromptOverride: String? = nil,
         additionalSystemPrompt: String? = nil,
         imageAttachments: [URL] = [],
+        /// The thread asking, so tools inherit its folder boundary and its artifact home.
+        chatScope: GeneralChatScope? = nil,
         simulateAllTools: Bool = false
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
@@ -1191,6 +1193,8 @@ class AIProviderService: ObservableObject {
                     ? "gpt-4o-mini" : AppSettings.shared.selectedOpenAIModel,
                 transport: OpenAIToolProviderAdapter(),
                 imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
                 simulateAllTools: simulateAllTools
             )
 
@@ -1208,6 +1212,8 @@ class AIProviderService: ObservableObject {
                     ? AnthropicModelCatalog.defaultModelID
                     : AppSettings.shared.selectedAnthropicModel,
                 imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
                 simulateAllTools: simulateAllTools
             )
 
@@ -1222,6 +1228,8 @@ class AIProviderService: ObservableObject {
                 customTools: customTools,
                 maxIterations: maxIterations,
                 imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
                 simulateAllTools: simulateAllTools
             )
 
