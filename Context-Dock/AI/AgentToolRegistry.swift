@@ -302,6 +302,11 @@ final class AgentToolRegistry {
         // usually unrelated, presented as the answer to a question about many.
         case "clipboard.read":
             return "current now latest pasteboard paste this what is copied"
+        case "capture.text":
+            return "ocr read text on screen snip select region grab words from picture "
+                + "scan recognise recognize"
+        case "capture.area":
+            return "region area crop snip selection part of the screen rectangle grab"
         case "app.menu.click":
             return "menu minimize maximize zoom hide quit close window save open new "
                 + "preferences settings command item click run app"

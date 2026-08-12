@@ -230,6 +230,7 @@ final class CapabilityRegistry {
         ProjectBuildCapabilities.register(in: self)
         LocalDataCapabilities.register(in: self)
         AppControlCapabilities.register(in: self)
+        CaptureCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
         AppWorkflowToolCatalog.shared.register(in: self)
