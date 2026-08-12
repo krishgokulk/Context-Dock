@@ -1031,6 +1031,27 @@ extension LauncherView {
         GeneralChatWindowController.shared.show()
     }
 
+    /// Moves the General AI thread to the window with the artifact it just built showing.
+    ///
+    /// The dock's own path auto-opens because an app-scoped chat already carries a window
+    /// glyph — the handover is a gesture the user knows. General chat has no such glyph, so
+    /// a window appearing unasked would be the app taking over a sheet the user is reading.
+    /// Here it is a press, next to Clear.
+    func openGeneralChatArtifactInWindow() {
+        guard let artifact = generalChatArtifact else { return }
+        GeneralChatWindowModel.shared.pendingPreviewFile = artifact
+        GeneralChatWindowModel.shared.openSession(
+            .general, title: "General", seed: aiMode.messages)
+        GeneralChatWindowController.shared.show()
+        aiMode.currentTask?.cancel()
+        aiMode.currentTask = nil
+        aiMode.isLoading = false
+        aiMode.loadingStatus = nil
+        searchState.query = ""
+        isSearchFieldFocused = false
+        AppDelegate.shared?.hideLauncher(force: true)
+    }
+
     func handOffChatToWindow() {
         if let key = l2.activeDockSessionKey {
             AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
@@ -2155,6 +2176,14 @@ extension LauncherView {
                         self.aiMode.isLoading = false
                     }
                     self.persistGeneralAIConversation()
+                    // Anything the answer built becomes a file the window can already show.
+                    // Unlike the dock path, nothing opens on its own here — the composer
+                    // grows a button and the user decides.
+                    if let artifact = ArtifactStore.extract(
+                        from: cleaned, scope: .general
+                    ).last {
+                        self.generalChatArtifact = artifact
+                    }
                     // Two-step: don't send yet — show a confirm card so the user approves the
                     // destination first.
                     if let shareInvocation,

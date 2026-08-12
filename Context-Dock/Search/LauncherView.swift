@@ -38,6 +38,13 @@ struct LauncherView: View {
     @State var clipboardSourcePillFocusIndex: Int? = nil
     // Running apps explicitly shared with General AI chat from the app picker.
     @State var chatFocusApps: [GeneralChatFocusApp] = []
+    /// The newest thing this general-chat session built, if it built one.
+    ///
+    /// The dock throws no window at the user here: the sheet is where they asked, so the
+    /// artifact arrives as a button beside Clear and opens only when pressed. Session
+    /// state, not a store read — an artifact from a thread that has since been cleared is
+    /// not something this composer should still be offering.
+    @State var generalChatArtifact: URL? = nil
     /// True while a submitted dock turn is carrying files or captured text. Early routes
     /// check it so an attachment is never dropped without the user being told.
     @State var pendingAttachmentTurn = false
