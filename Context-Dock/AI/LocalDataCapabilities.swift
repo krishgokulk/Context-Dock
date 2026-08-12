@@ -41,6 +41,106 @@ enum LocalDataCapabilities {
         registerClipboardHistory(registry)
         registerExtensionsList(registry)
         registerCLITools(registry)
+        registerMemory(registry)
+    }
+
+    // MARK: - Memory
+
+    /// What DoraX has been told to remember, asked for rather than pushed.
+    ///
+    /// Memory reaches the model today by injection: a heuristic decides a question sounds
+    /// like recall and prepends the relevant file. When it fires the answer is grounded;
+    /// when it does not, the model has no idea memory exists and answers from nothing. It
+    /// cannot go looking, and it cannot write — which is why people.md and tasks.md sit at
+    /// zero facts while the user has been talking to it for weeks.
+    ///
+    /// Reading and writing are both plain Markdown under Application Support, so nothing
+    /// here is a new store — only a way to reach the one that exists.
+    private static func registerMemory(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "memory.search",
+                title: "Search Saved Memory",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(
+                        name: "query",
+                        description: "Words to look for. Omit to list what memory holds.",
+                        required: false)
+                ]),
+                riskLevel: .low
+            ) { request in
+                let query = (request.input["query"] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let summaries = MarkdownMemoryStore.shared.fileSummaries()
+                guard !summaries.isEmpty else {
+                    return .init(success: true, output: "Memory is empty.")
+                }
+                guard !query.isEmpty else {
+                    let lines = summaries.map {
+                        "- \($0.relativePath): \($0.factCount) fact\($0.factCount == 1 ? "" : "s")"
+                    }
+                    return .init(
+                        success: true,
+                        output: "Memory files:\n" + lines.joined(separator: "\n"))
+                }
+                // Line-level matches, with the file they came from. A fact without its
+                // source is not checkable, and memory the user cannot check is memory they
+                // cannot correct.
+                var hits: [String] = []
+                for summary in summaries {
+                    guard let markdown = try? String(contentsOf: summary.url, encoding: .utf8)
+                    else { continue }
+                    for line in markdown.split(separator: "\n") {
+                        let trimmed = line.trimmingCharacters(in: .whitespaces)
+                        guard trimmed.hasPrefix("- "), trimmed.lowercased().contains(query)
+                        else { continue }
+                        hits.append("- [\(summary.relativePath)] \(trimmed.dropFirst(2))")
+                        if hits.count >= 40 { break }
+                    }
+                    if hits.count >= 40 { break }
+                }
+                guard !hits.isEmpty else {
+                    return .init(
+                        success: true, output: "Nothing in memory mentions “\(query)”.")
+                }
+                return .init(success: true, output: hits.joined(separator: "\n"))
+            }
+        )
+
+        registry.register(
+            AICapability(
+                id: "memory.save",
+                title: "Save a Fact to Memory",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(
+                        name: "text",
+                        description: "The fact to remember, in the user's own terms.",
+                        required: true),
+                    .init(
+                        name: "bundleId",
+                        description: "Save under a specific app's memory instead of the general files.",
+                        required: false),
+                ]),
+                // Writes a durable file the user will be answered from later. Cheap to undo
+                // — the files are plain Markdown they can open — but never silent.
+                riskLevel: .medium
+            ) { request in
+                let text = (request.input["text"] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { throw AICapabilityError.missingInput("text") }
+                let bundleID = request.input["bundleId"] ?? request.input["bundleID"]
+                guard let confirmation = MarkdownMemoryStore.shared.remember(
+                    text, appBundleID: bundleID)
+                else {
+                    return .init(
+                        success: false,
+                        output: "I couldn't work out where that belongs in memory.")
+                }
+                return .init(success: true, output: confirmation)
+            }
+        )
     }
 
     // MARK: - CLI tools

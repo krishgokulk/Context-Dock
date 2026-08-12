@@ -303,6 +303,9 @@ final class AgentToolRegistry {
         case "clipboard.read":
             return "current now latest pasteboard paste this what is copied"
         case "cli": return "tool tools command line terminal binary linked utility run"
+        case "memory":
+            return "remember remembered recall know knows told saved fact facts note "
+                + "preference preferences about me my people projects tasks forget"
         case "capture.text":
             return "ocr read text on screen snip select region grab words from picture "
                 + "scan recognise recognize"
