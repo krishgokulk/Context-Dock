@@ -9,7 +9,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class GeneralChatWindowController: NSObject, NSWindowDelegate {
+final class GeneralChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
     static let shared = GeneralChatWindowController()
 
     private var window: NSWindow?
@@ -61,6 +61,20 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
         // The SwiftUI chrome row draws the whole titlebar strip, so AppKit must not
         // paint a separator or its own background over it.
         win.isMovableByWindowBackground = false
+        // AppKit centres the traffic lights in the TITLEBAR, which is 28pt tall — but the
+        // SwiftUI chrome row is 52pt, so the lights sat ~12pt above the sidebar toggle,
+        // the history arrows and the Chat/Work pill. Every other Mac window (Finder, Safari)
+        // gets this right because it has a toolbar: with a unified toolbar AppKit measures
+        // the combined titlebar + toolbar area and centres the lights in that instead.
+        // So the window carries an empty toolbar purely for its geometry. It has no items
+        // and, with a transparent titlebar and no separator, paints nothing — the SwiftUI
+        // bar still draws the whole strip and the sidebar/content split stays unbroken.
+        let toolbar = NSToolbar(identifier: "GeneralChatChromeGeometry")
+        toolbar.delegate = self
+        toolbar.displayMode = .iconOnly
+        win.toolbar = toolbar
+        win.toolbarStyle = .unified
+        win.titlebarSeparatorStyle = .none
         let hosting = NSHostingController(rootView: GeneralChatWindowView())
         hosting.view.wantsLayer = true
         hosting.view.layer?.backgroundColor = NSColor.clear.cgColor
@@ -74,6 +88,17 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
         win.makeKeyAndOrderFront(nil)
         window = win
     }
+
+    // MARK: - Toolbar (geometry only)
+
+    // Deliberately item-less: the toolbar exists so the traffic lights are centred in the
+    // 52pt unified titlebar, not to show controls. The SwiftUI chrome row draws those.
+    nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [] }
+    nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [] }
+    nonisolated func toolbar(
+        _ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
+        willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? { nil }
 
     /// True while the window exists on screen. Used to decide whether the app still needs
     /// to be a regular, menu-bar-owning app.
