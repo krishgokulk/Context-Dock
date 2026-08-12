@@ -113,6 +113,23 @@ enum ChatAnswerSanitizer {
         return (kind, arguments)
     }
 
+    /// A capability call written with the id as the key: `{"globalcmd.empty-trash": {}}`.
+    ///
+    /// Matched separately because every other recovery here keys off `<name>_call`, so this
+    /// form reached none of them, was stripped as scaffolding, and left an empty bubble
+    /// under "No tools ran" — the request silently dropped rather than run.
+    static func capabilityIDCall(in text: String) -> (id: String, arguments: [String: Any])? {
+        let pattern = #"\{\s*"([A-Za-z][A-Za-z0-9_]*\.[A-Za-z0-9_.-]+)"\s*:\s*(\{[\s\S]*?\})\s*\}"#
+        guard let range = text.range(of: pattern, options: .regularExpression),
+            let data = String(text[range]).data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object.count == 1,
+            let id = object.keys.first,
+            let arguments = object[id] as? [String: Any]
+        else { return nil }
+        return (id, arguments)
+    }
+
     static func clean(_ text: String) -> String {
         var out = text
         for pattern in patterns {

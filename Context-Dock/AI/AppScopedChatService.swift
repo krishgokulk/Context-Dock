@@ -738,20 +738,31 @@ enum AppScopedChatService {
         // teaches exactly this protocol, so a model following the instruction is not
         // misbehaving — and until now the surface stripped it and answered nothing, which
         // is why "sleep now" ended in a confirmation that led nowhere.
-        if let call = ChatAnswerSanitizer.knownCall(in: text) {
+        // Either envelope: the documented `{"capability_call": …}` or the id-as-key form a
+        // model writes once it has been handed an id. Both name a capability; recovering
+        // only the first left the second stripped and the request dropped.
+        let prose: (kind: String, id: String, arguments: [String: Any])? = {
+            if let call = ChatAnswerSanitizer.knownCall(in: text) {
+                let id =
+                    (call.arguments["tool"] as? String)
+                    ?? (call.arguments["capability"] as? String)
+                    ?? (call.arguments["capability_id"] as? String)
+                    ?? ""
+                return (call.kind, id, (call.arguments["arguments"] as? [String: Any]) ?? [:])
+            }
+            if let call = ChatAnswerSanitizer.capabilityIDCall(in: text) {
+                return ("capability_id_key", call.id, call.arguments)
+            }
+            return nil
+        }()
+        if let call = prose {
             log.notice("recovering prose \(call.kind, privacy: .public)")
-            let capabilityID =
-                (call.arguments["tool"] as? String)
-                ?? (call.arguments["capability"] as? String)
-                ?? (call.arguments["capability_id"] as? String)
-                ?? ""
+            let capabilityID = call.id
             if !capabilityID.isEmpty,
                 CapabilityRegistry.shared.capability(id: capabilityID) != nil
             {
                 var input: [String: String] = [:]
-                if let raw = call.arguments["arguments"] as? [String: Any] {
-                    for (key, value) in raw { input[key] = String(describing: value) }
-                }
+                for (key, value) in call.arguments { input[key] = String(describing: value) }
                 let plan = AIActionPlan(
                     capability: capabilityID, input: input,
                     explanation: "Requested in chat: \(query)")
@@ -768,6 +779,13 @@ enum AppScopedChatService {
                 } else {
                     text = "\(capabilityID) didn't run."
                 }
+            } else {
+                // An id that is not registered. Left alone, the JSON was stripped as
+                // scaffolding and the user got an empty bubble — the worst outcome, because
+                // it looks like the app simply had nothing to say.
+                text = capabilityID.isEmpty
+                    ? "I tried to run something but didn't name what."
+                    : "I tried to run `\(capabilityID)`, which isn't a capability on this Mac."
             }
         }
 

@@ -499,6 +499,13 @@ struct AIChatMessage: Identifiable, Equatable {
     /// is one that the fifty-first will break. Every bubble is built here.
     private static func presentable(_ content: String, role: ChatRole) -> String {
         guard role == .assistant else { return content }
+        // An empty assistant bubble is the same failure wearing a quieter face: it happens
+        // when scaffolding was stripped and nothing was left, so the user sees the app
+        // apparently having nothing to say about a request it understood. Say what
+        // happened instead.
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ChatAnswerSanitizer.protocolFallback
+        }
         guard ChatAnswerSanitizer.isProtocolOnly(content) else { return content }
         return ChatAnswerSanitizer.protocolFallback
     }
