@@ -290,6 +290,12 @@ final class AgentToolRegistry {
         // usually unrelated, presented as the answer to a question about many.
         case "clipboard.read":
             return "current now latest pasteboard paste this what is copied"
+        case "app.menu.click":
+            return "menu minimize maximize zoom hide quit close window save open new "
+                + "preferences settings command item click run app"
+        case "app.insertText":
+            return "insert paste type write put text into markdown convert replace "
+                + "editor document frontmost app"
         case "clipboard.history":
             return "history earlier previous past clips captures captured capturing "
                 + "screenshots screenshot ocr snippets from source app apps saved took "

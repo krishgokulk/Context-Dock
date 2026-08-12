@@ -163,6 +163,7 @@ final class CapabilityRegistry {
         XcodeCapabilities.register(in: self)
         ProjectBuildCapabilities.register(in: self)
         LocalDataCapabilities.register(in: self)
+        AppControlCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
         AppWorkflowToolCatalog.shared.register(in: self)
