@@ -152,6 +152,22 @@ extension LauncherView {
                 .background(Color.accentColor.opacity(0.12), in: Capsule())
             }
 
+            // Artifact button: the answer built a chart, table or diagram, and this strip
+            // can only show its source. One press moves the thread to the window, which
+            // renders it beside the conversation.
+            if generalChatArtifact != nil {
+                Button(action: openGeneralChatArtifactInWindow) {
+                    Image(systemName: "macwindow")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor.opacity(0.9))
+                        .frame(width: 22, height: 22)
+                        .background(Color.accentColor.opacity(0.14), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Show what this answer built")
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+            }
+
             // Clear chat button
             if !aiMode.messages.isEmpty {
                 Button(action: {
@@ -165,6 +181,7 @@ extension LauncherView {
                     aiMode.selectionFiles = []
                     aiMode.selectionURL = nil
                     aiMode.pendingShare = nil
+                    generalChatArtifact = nil
                     hasUserSentMessageInCurrentSession = false
                     clearGeneralAIConversation()
                     AIProviderService.shared.resetOnDeviceSession()
@@ -178,18 +195,16 @@ extension LauncherView {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
+        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: generalChatArtifact)
     }
 
     @ViewBuilder
     var chatFocusAppPicker: some View {
-        // Shared with the composer bar's picker: one list, one set of states, so choosing
-        // an app is the same interaction wherever the chat is.
+        // Shared with the composer bar's picker: one list, one source, one set of states,
+        // so choosing an app is the same interaction wherever the chat is. Finder leads
+        // it — see ChatAppDirectory.
         ScopedAppPickerList(
-            rows: chatFocusAppRows().map {
-                ScopedAppPickerRow(
-                    name: $0.name, bundleId: $0.bundleId, icon: $0.icon,
-                    isRunning: $0.isRunning)
-            },
+            rows: ScopedAppPickerRow.allApps(),
             selectedIDs: Set(chatFocusApps.map { $0.bundleId.lowercased() })
         ) { row in
             if chatFocusApps.contains(where: { $0.bundleId == row.bundleId }) {
@@ -200,69 +215,6 @@ extension LauncherView {
         }
     }
 
-    /// Regular (user-visible) running apps for the chat focus picker, excluding
-    /// Context-Dock itself, sorted by name.
-    func runningAppsForChatFocus() -> [(name: String, bundleId: String, icon: NSImage)] {
-        var seen = Set<String>()
-        return NSWorkspace.shared.runningApplications
-            .filter {
-                $0.activationPolicy == .regular
-                    && !$0.isTerminated
-                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
-            }
-            .compactMap { app -> (name: String, bundleId: String, icon: NSImage)? in
-                guard let name = app.localizedName, let bundleId = app.bundleIdentifier,
-                    !bundleId.isEmpty
-                else { return nil }
-                // macOS reports one NSRunningApplication per PROCESS, so the same bundle can
-                // appear twice — a relaunch mid-quit, or an app running from two copies. The
-                // picker keys its rows by bundle id, and duplicate identifiers in a ForEach
-                // are undefined behaviour that takes the app down when the list is built.
-                guard seen.insert(bundleId.lowercased()).inserted else { return nil }
-                let icon = resolvedRunningAppIcon(for: app) ?? app.icon
-                    ?? NSWorkspace.shared.icon(forFile: app.bundleURL?.path ?? "")
-                return (name, bundleId, icon)
-            }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    /// Rows for the chat-focus picker: currently-running apps first (green dot), then apps
-    /// the user configured in Settings → App Adapters that aren't running (grey dot, below).
-    /// This lets the user scope the general chat to a configured app and start asking before
-    /// the app is even launched — the adapter/menu routes are what make the chat work.
-    func chatFocusAppRows() -> [(name: String, bundleId: String, icon: NSImage, isRunning: Bool)]
-    {
-        let running = runningAppsForChatFocus()
-        var rows: [(name: String, bundleId: String, icon: NSImage, isRunning: Bool)] =
-            running.map { (name: $0.name, bundleId: $0.bundleId, icon: $0.icon, isRunning: true) }
-        let runningIds = Set(running.map { $0.bundleId.lowercased() })
-
-        let adapterApps = AppAdapterManager.shared.adapters
-            .filter {
-                $0.isEnabled
-                    && !$0.bundleId.isEmpty
-                    && !$0.bundleId.hasPrefix("scope://")
-                    && $0.bundleId != Bundle.main.bundleIdentifier
-                    && !runningIds.contains($0.bundleId.lowercased())
-            }
-            .sorted {
-                $0.appName.localizedCaseInsensitiveCompare($1.appName) == .orderedAscending
-            }
-        var seen = runningIds
-        for a in adapterApps {
-            guard seen.insert(a.bundleId.lowercased()).inserted else { continue }
-            let icon =
-                resolvedApplicationIcon(bundleIdentifier: a.bundleId, appName: a.appName)
-                ?? NSWorkspace.shared.icon(
-                    forFile: NSWorkspace.shared.urlForApplication(
-                        withBundleIdentifier: a.bundleId)?.path ?? "")
-            rows.append((name: a.appName, bundleId: a.bundleId, icon: icon, isRunning: false))
-        }
-        // Belt and braces: the rows are keyed by bundle id downstream, so guarantee the
-        // uniqueness here rather than trusting every future source to preserve it.
-        var uniqueIds = Set<String>()
-        return rows.filter { uniqueIds.insert($0.bundleId.lowercased()).inserted }
-    }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.
     func attachAIFiles(imagesOnly: Bool) {

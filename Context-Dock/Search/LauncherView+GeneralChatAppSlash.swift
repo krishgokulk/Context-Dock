@@ -45,58 +45,16 @@ extension LauncherView {
     /// Apps matching the filter: running and adapter-configured apps first (those are
     /// the ones with live data), then everything installed, so "/rem" still finds
     /// Reminders when Reminders isn't open.
+    ///
+    /// The ranking lives in ChatAppDirectory, which the chat window's composer filters
+    /// too — "/finder" must mean the same thing in both places, and it did not while each
+    /// surface merged its own sources.
     var generalChatSlashApps: [GeneralChatSlashApp] {
         guard let filter = generalChatSlashFilter else { return [] }
-
-        var seen = Set<String>()
-        var ranked: [(rank: Int, app: GeneralChatSlashApp)] = []
-
-        func consider(_ app: GeneralChatSlashApp, sourceRank: Int) {
-            guard !app.bundleId.isEmpty, app.bundleId != Bundle.main.bundleIdentifier else {
-                return
-            }
-            guard seen.insert(app.id).inserted else { return }
-            let lowered = app.name.lowercased()
-            // An empty filter ("/" alone) lists everything, so the capsule shows the
-            // choices before the user has narrowed them.
-            let matchRank: Int
-            if filter.isEmpty {
-                matchRank = 1
-            } else if lowered.hasPrefix(filter) {
-                matchRank = 0
-            } else if lowered.contains(filter) {
-                matchRank = 1
-            } else {
-                return
-            }
-            ranked.append((rank: matchRank * 10 + sourceRank, app: app))
+        return ChatAppDirectory.matching(filter).map {
+            GeneralChatSlashApp(
+                name: $0.name, bundleId: $0.bundleId, icon: $0.icon, isRunning: $0.isRunning)
         }
-
-        for row in chatFocusAppRows() {
-            consider(
-                GeneralChatSlashApp(
-                    name: row.name, bundleId: row.bundleId, icon: row.icon,
-                    isRunning: row.isRunning),
-                sourceRank: row.isRunning ? 0 : 1)
-        }
-
-        for entry in InstalledApplicationsCatalog.cachedInstalledApps() {
-            consider(
-                GeneralChatSlashApp(
-                    name: entry.name, bundleId: entry.bundleId, icon: entry.icon,
-                    isRunning: false),
-                sourceRank: 2)
-        }
-
-        return
-            ranked
-            .sorted {
-                if $0.rank != $1.rank { return $0.rank < $1.rank }
-                return $0.app.name.localizedCaseInsensitiveCompare($1.app.name)
-                    == .orderedAscending
-            }
-            .prefix(8)
-            .map(\.app)
     }
 
     /// Put the app in this chat's focus and clear the "/…" text — the field goes back

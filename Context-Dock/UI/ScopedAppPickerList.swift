@@ -82,7 +82,11 @@ struct ScopedAppPickerList: View {
     }
 
     private func rowView(_ row: ScopedAppPickerRow) -> some View {
-        let isSelected = selectedIDs.contains(row.id)
+        // Two callers key attachment differently — the dock by bundle id, the composer
+        // bars by app name — and the rows now carry both. Matching either keeps the
+        // checkmark honest on both surfaces rather than making one of them re-key.
+        let isSelected =
+            selectedIDs.contains(row.id) || selectedIDs.contains(row.name.lowercased())
         let isHovered = hoveredID == row.id
         return Button {
             onToggle(row)
@@ -144,40 +148,12 @@ extension ScopedAppPickerRow {
     /// "work with Notes" is reasonable before Notes is open.
     @MainActor
     static func allApps() -> [ScopedAppPickerRow] {
-        var running: [String: NSImage?] = [:]
-        for app in NSWorkspace.shared.runningApplications
-        where app.activationPolicy == .regular
-            && app.bundleIdentifier != Bundle.main.bundleIdentifier
-        {
-            guard let name = app.localizedName else { continue }
-            running[name] = app.icon
-        }
-
-        var seen = Set<String>()
-        var rows: [ScopedAppPickerRow] = []
-        for result in AppCatalogService.shared.appsNow() {
-            guard seen.insert(result.title).inserted else { continue }
-            rows.append(
-                ScopedAppPickerRow(
-                    name: result.title,
-                    bundleId: result.title,  // the composer API attaches apps by name
-                    icon: result.icon ?? running[result.title] ?? nil,
-                    isRunning: running[result.title] != nil))
-        }
-
-        // Running apps the catalogue does not carry. The catalogue scans /Applications, and
-        // Finder lives in /System/Library/CoreServices — so typing "/finder" in the window
-        // matched nothing, while the dock's picker (which starts from running apps) offered
-        // it. Finder is the app most worth scoping a chat to: it is where the user's files
-        // are, and this app can already read its selection.
-        for (name, icon) in running where seen.insert(name).inserted {
-            rows.append(
-                ScopedAppPickerRow(name: name, bundleId: name, icon: icon, isRunning: true))
-        }
-
-        return rows.sorted {
-            ($0.isRunning ? 0 : 1, $0.name.lowercased())
-                < ($1.isRunning ? 0 : 1, $1.name.lowercased())
+        // One merged, ranked source for every chat surface — see ChatAppDirectory. Rows
+        // carry the real bundle id rather than the name doubling as one, so a picker can
+        // open a scope without resolving the app again.
+        ChatAppDirectory.all().map {
+            ScopedAppPickerRow(
+                name: $0.name, bundleId: $0.bundleId, icon: $0.icon, isRunning: $0.isRunning)
         }
     }
 }

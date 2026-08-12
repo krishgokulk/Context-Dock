@@ -546,40 +546,13 @@ struct AIComposerBar: View {
 
     /// Apps matching the "/" filter — running first, prefix matches before
     /// substring ones, so the leftmost icon is what Return will take.
-    private var slashApps: [(name: String, icon: NSImage?, running: Bool)] {
+    ///
+    /// Sourced from ChatAppDirectory, the same list the dock filters. Reading the app
+    /// catalogue directly was why "/finder" matched nothing here while it worked in the
+    /// dock: the catalogue does not scan /System/Library/CoreServices.
+    private var slashApps: [ChatAppEntry] {
         guard let filter = slashFilter else { return [] }
-        var running = Set<String>()
-        for app in NSWorkspace.shared.runningApplications
-        where app.activationPolicy == .regular {
-            if let name = app.localizedName { running.insert(name) }
-        }
-        var ranked: [(rank: Int, row: (name: String, icon: NSImage?, running: Bool))] = []
-        for result in AppCatalogService.shared.appsNow() {
-            let lowered = result.title.lowercased()
-            let matchRank: Int
-            if filter.isEmpty {
-                matchRank = 1
-            } else if lowered.hasPrefix(filter) {
-                matchRank = 0
-            } else if lowered.contains(filter) {
-                matchRank = 1
-            } else {
-                continue
-            }
-            let isRunning = running.contains(result.title)
-            ranked.append(
-                (rank: matchRank * 10 + (isRunning ? 0 : 1),
-                 row: (name: result.title, icon: result.icon, running: isRunning)))
-        }
-        return
-            ranked
-            .sorted {
-                if $0.rank != $1.rank { return $0.rank < $1.rank }
-                return $0.row.name.localizedCaseInsensitiveCompare($1.row.name)
-                    == .orderedAscending
-            }
-            .prefix(8)
-            .map(\.row)
+        return ChatAppDirectory.matching(filter)
     }
 
     private func pickSlashApp(_ name: String) {
@@ -642,7 +615,7 @@ struct AIComposerBar: View {
             // than in a popover the typing cannot reach.
             if !slashApps.isEmpty {
                 HStack(spacing: 4) {
-                    ForEach(slashApps, id: \.name) { app in
+                    ForEach(slashApps) { app in
                         Button { pickSlashApp(app.name) } label: {
                             Group {
                                 if let icon = app.icon {
@@ -659,19 +632,19 @@ struct AIComposerBar: View {
                             .background(
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                                     .fill(
-                                        app.name == slashApps.first?.name
+                                        app.id == slashApps.first?.id
                                             ? Color.accentColor.opacity(0.28) : Color.clear
                                     )
                             )
                             .overlay(alignment: .bottomTrailing) {
-                                if app.running {
+                                if app.isRunning {
                                     Circle().fill(Color.green).frame(width: 5, height: 5)
                                 }
                             }
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .help(app.running ? "\(app.name) — running" : app.name)
+                        .help(app.isRunning ? "\(app.name) — running" : app.name)
                     }
                 }
                 .padding(.horizontal, 6)
@@ -817,7 +790,13 @@ struct AppContextPicker: View {
         .task { rows = ScopedAppPickerRow.allApps() }
     }
 
+    /// The icon for an attached app, wherever it came from. Through the directory rather
+    /// than the app catalogue: the catalogue does not carry Finder, so an attached Finder
+    /// chip and its sidebar row both drew the dashed placeholder for an app that is
+    /// running right there.
     static func icon(forAppNamed name: String) -> NSImage? {
-        AppCatalogService.shared.appsNow().first { $0.title == name }?.icon
+        ChatAppDirectory.all().first {
+            $0.name.caseInsensitiveCompare(name) == .orderedSame
+        }?.icon
     }
 }
