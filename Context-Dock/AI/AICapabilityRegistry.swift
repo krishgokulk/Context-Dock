@@ -33,12 +33,78 @@ struct AICapabilityExecutionResult {
     let output: String
 }
 
+/// Whether a capability's entire authority comes from the user's explicit selection.
+///
+/// Selection Scope is opened on a piece of text or a file the user picked, and its promise
+/// is that it acts on that and nothing else. Enforcing this by listing permitted capability
+/// ids would rot: every new capability defaults to allowed-by-omission or forgotten, and the
+/// list stops describing anything. So a capability declares what it needs and what it
+/// touches, and the scope decides.
+///
+/// Three questions, all of which must be answered narrowly for a capability to run here:
+/// what does it read, what does it change, and what does it aim at.
+struct SelectionSafety {
+    enum InputAuthority {
+        /// Everything it operates on comes from the explicit selection.
+        case selectionOnly
+        /// It reads app or system state the user did not select. Never selection-safe.
+        case systemOrApp
+    }
+
+    enum SideEffect {
+        case none
+        case clipboard
+        /// Rewrites the selected text in place.
+        case selectionReplacement
+        /// Changes something the selection does not name — files, apps, system state.
+        case unrelatedState
+    }
+
+    enum TargetScope {
+        case currentSelection
+        case appOrSystem
+    }
+
+    let inputAuthority: InputAuthority
+    let sideEffect: SideEffect
+    let targetScope: TargetScope
+
+    /// The default is deliberately the strict one. A capability that has not thought about
+    /// Selection Scope is not selection-safe, so adding one can never widen this scope by
+    /// omission — the failure mode an allowlist has by construction.
+    static let unsafe = SelectionSafety(
+        inputAuthority: .systemOrApp, sideEffect: .unrelatedState, targetScope: .appOrSystem)
+
+    /// Reads the selection and produces an answer or a clipboard write. Summarise, explain,
+    /// translate, copy-as.
+    static let readsSelection = SelectionSafety(
+        inputAuthority: .selectionOnly, sideEffect: .clipboard, targetScope: .currentSelection)
+
+    /// Rewrites the selected text in place.
+    static let rewritesSelection = SelectionSafety(
+        inputAuthority: .selectionOnly, sideEffect: .selectionReplacement,
+        targetScope: .currentSelection)
+
+    var isSelectionSafe: Bool {
+        guard inputAuthority == .selectionOnly, targetScope == .currentSelection else {
+            return false
+        }
+        switch sideEffect {
+        case .none, .clipboard, .selectionReplacement: return true
+        case .unrelatedState: return false
+        }
+    }
+}
+
 struct AICapability {
     let id: String
     let title: String
     let appBundleID: String?
     let inputSchema: AICapabilityInputSchema
     let riskLevel: AICapabilityRiskLevel
+    /// What this may touch when the conversation is scoped to a selection. Defaults to
+    /// unsafe, so a capability is only reachable from Selection Scope if it says so.
+    var selectionSafety: SelectionSafety = .unsafe
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 

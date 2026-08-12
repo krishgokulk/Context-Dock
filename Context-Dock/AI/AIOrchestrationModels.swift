@@ -108,7 +108,11 @@ enum CapabilityAuthorizationError: LocalizedError {
         case .crossAppDenied(let expected, let received):
             return "This chat is scoped to \(expected); \(received) is outside that scope."
         case .selectionTargetDenied(let received):
-            return "Selection Chat cannot read from or execute against \(received)."
+            // Names the boundary and where the request does belong. The old wording was
+            // accurate and useless: a user told their request hit "constraints on the
+            // execution path" learns nothing and has nowhere to go.
+            return "Selection Scope only acts on what you selected, and \(received) reaches "
+                + "beyond it. Ask in General Chat to run this."
         }
     }
 }
@@ -159,9 +163,8 @@ enum CapabilityAuthorizationGate {
         let registeredBundle = CapabilityRegistry.shared.capability(id: plan.capability)?.appBundleID
         let suppliedBundle = plan.input["bundleId"] ?? plan.input["bundleID"]
         try validateTarget(bundleID: suppliedBundle ?? registeredBundle, scope: scope)
-        if case .selection = scope,
-           plan.capability != "system.share" {
-            throw CapabilityAuthorizationError.selectionTargetDenied(plan.capability)
+        if case .selection = scope, plan.capability != "system.share" {
+            try validateSelectionSafety(plan.capability)
         }
     }
 
@@ -173,9 +176,25 @@ enum CapabilityAuthorizationGate {
             return
         }
         if case .selection = scope {
-            throw CapabilityAuthorizationError.selectionTargetDenied(invocation.capabilityID)
+            // Was a blanket deny, which read to the user as "did not run due to constraints
+            // on the execution path" — true, opaque, and wrong for the capabilities whose
+            // whole authority is the selection they opened this on. "Copy as markdown" acts
+            // on the selected text and nothing else; refusing it protected nobody.
+            try validateSelectionSafety(invocation.capabilityID)
+            return
         }
         try validateTarget(bundleID: bundleID, scope: scope)
+    }
+
+    /// Selection Scope may run a capability only when every part of it stays inside the
+    /// selection: what it reads, what it changes, and what it aims at.
+    static func validateSelectionSafety(_ capabilityID: String) throws {
+        guard let capability = CapabilityRegistry.shared.capability(id: capabilityID) else {
+            throw CapabilityAuthorizationError.selectionTargetDenied(capabilityID)
+        }
+        guard capability.selectionSafety.isSelectionSafe else {
+            throw CapabilityAuthorizationError.selectionTargetDenied(capabilityID)
+        }
     }
 }
 
