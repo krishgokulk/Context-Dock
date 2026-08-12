@@ -287,6 +287,33 @@ final class AgentToolRegistry {
     /// surface, and the model still decides whether any result fits. Without it, "paste what
     /// I copied" matched nothing, because no word in the phrase appears in "clipboard.read /
     /// Read Clipboard" — the model would have had to guess the word DoraX happens to use.
+    /// Capability ids that match `query`, best first.
+    ///
+    /// Extracted from the find_capability tool so the ranking can be tested without a
+    /// provider, a registry or a running app. Every alias change this session was verified
+    /// by hand in a throwaway script; the same phrasings now live in the test suite, where
+    /// a change that breaks one is caught rather than noticed later in a screenshot.
+    static func rankedCapabilityIDs(
+        query: String, catalogue: [(id: String, title: String)]
+    ) -> [String] {
+        // Three characters minimum, matching the tool: two-letter words are almost never
+        // the subject and substring-match inside real words.
+        let terms = query.lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { $0.count > 2 }
+        guard !terms.isEmpty else { return [] }
+        return catalogue
+            .map { entry -> (score: Int, id: String) in
+                let haystack = (entry.id + " " + entry.title + " " + searchAliases(for: entry.id))
+                    .lowercased()
+                return (terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }, entry.id)
+            }
+            .filter { $0.score > 0 }
+            .sorted { $0.score > $1.score }
+            .map(\.id)
+    }
+
     private static func searchAliases(for capabilityID: String) -> String {
         // Whole-id aliases first. Families are too coarse when one mixes reading with
         // doing: "system" covers both listing running apps and taking a screenshot, and
