@@ -40,6 +40,108 @@ enum LocalDataCapabilities {
         registerMostUsedApps(registry)
         registerClipboardHistory(registry)
         registerExtensionsList(registry)
+        registerCLITools(registry)
+    }
+
+    // MARK: - CLI tools
+
+    /// The command-line tools the user linked, and how to run one.
+    ///
+    /// These resolve inside an app-scoped chat, through the route resolver, and nowhere
+    /// else — so General Chat could not see them at all. An adapter listing "3 CLI" was
+    /// describing tools the model had no way to find, and the shell fallback reached for
+    /// whatever happened to be on PATH instead of the tool the user deliberately linked.
+    ///
+    /// Listing and running are separate for the same reason extensions are: an id the model
+    /// cannot discover is a capability that does not exist.
+    private static func registerCLITools(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "cli.list",
+                title: "List Linked CLI Tools",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(name: "query", description: "Words to match", required: false)
+                ]),
+                riskLevel: .low
+            ) { request in
+                let query = (request.input["query"] ?? "").lowercased()
+                let enabled = TerminalPackageManager.shared.packages.filter(\.isEnabled)
+                let matched = query.isEmpty
+                    ? enabled
+                    : enabled.filter {
+                        "\($0.command) \($0.name) \($0.description) \($0.keywords.joined(separator: " "))"
+                            .lowercased().contains(query)
+                    }
+                guard !matched.isEmpty else {
+                    return .init(
+                        success: true,
+                        output: enabled.isEmpty
+                            ? "No CLI tools are linked. The user can add them in Settings → CLI Tool Scope."
+                            : "No linked CLI tool matches “\(query)”.")
+                }
+                let lines = matched.prefix(25).map { package -> String in
+                    var line = "- \(package.command)"
+                    if !package.description.isEmpty { line += " — \(package.description)" }
+                    if !package.subcommands.isEmpty {
+                        line += "\n    subcommands: "
+                            + package.subcommands.prefix(12).joined(separator: ", ")
+                    }
+                    return line
+                }
+                return .init(
+                    success: true,
+                    output: "Linked CLI tools — run one with cli.run:\n"
+                        + lines.joined(separator: "\n"))
+            }
+        )
+
+        registry.register(
+            AICapability(
+                id: "cli.run",
+                title: "Run a Linked CLI Tool",
+                appBundleID: nil,
+                inputSchema: .init(fields: [
+                    .init(name: "command", description: "Tool name, e.g. \"rem\"", required: true),
+                    .init(
+                        name: "arguments",
+                        description: "Arguments after the tool name, e.g. \"list --today\"",
+                        required: false),
+                ]),
+                riskLevel: .high
+            ) { request in
+                let command = (request.input["command"] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !command.isEmpty else { throw AICapabilityError.missingInput("command") }
+
+                // Only tools the user linked and left enabled. Without this the capability
+                // would be a second, less inspectable run_command — the shell already has
+                // one, and this exists to run what the user chose, not anything at all.
+                let enabled = TerminalPackageManager.shared.packages.filter(\.isEnabled)
+                guard let package = enabled.first(where: {
+                    $0.command.caseInsensitiveCompare(command) == .orderedSame
+                }) else {
+                    let names = enabled.map(\.command).sorted()
+                    return .init(
+                        success: false,
+                        output: names.isEmpty
+                            ? "“\(command)” isn't a linked CLI tool, and none are linked."
+                            : "“\(command)” isn't a linked CLI tool. Linked: "
+                                + names.joined(separator: ", ") + ".")
+                }
+                let arguments = (request.input["arguments"] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let line = arguments.isEmpty
+                    ? package.command : "\(package.command) \(arguments)"
+                let result = await TerminalCommandExecutor.shared.run(
+                    line, purpose: "Run the linked tool \(package.command)")
+                return .init(
+                    success: result.success,
+                    output: result.output.isEmpty
+                        ? (result.success ? "\(line) finished with no output." : "\(line) failed.")
+                        : result.output)
+            }
+        )
     }
 
     // MARK: - Clipboard

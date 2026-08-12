@@ -302,6 +302,7 @@ final class AgentToolRegistry {
         // usually unrelated, presented as the answer to a question about many.
         case "clipboard.read":
             return "current now latest pasteboard paste this what is copied"
+        case "cli": return "tool tools command line terminal binary linked utility run"
         case "capture.text":
             return "ocr read text on screen snip select region grab words from picture "
                 + "scan recognise recognize"
