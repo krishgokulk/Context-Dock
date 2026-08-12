@@ -605,7 +605,20 @@ final class AgentToolRegistry {
                 "- \(id): \(name) (\(app) app action) | input: [] | risk: low"
             }
 
-            guard !matches.isEmpty || !adapterLines.isEmpty else {
+            // Word search found nothing. Before telling the model this Mac cannot do the
+            // thing — the answer that produced "you have no browsing history" — let the
+            // on-device model read the request against what exists. Only here, only when
+            // the deterministic path has already failed.
+            var fallbackMatches: [AICapability] = []
+            if matches.isEmpty, adapterLines.isEmpty {
+                let all = await MainActor.run { CapabilityRegistry.shared.all }
+                let picked = await CapabilityFallbackClassifier.pick(
+                    query: query, from: all.map { (id: $0.id, title: $0.title) })
+                let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+                fallbackMatches = picked.compactMap { byID[$0] }
+            }
+
+            guard !matches.isEmpty || !adapterLines.isEmpty || !fallbackMatches.isEmpty else {
                 return AgentToolResult(
                     success: true,
                     output: "No capability matched \"\(query)\". Registered capability families: "
@@ -617,7 +630,7 @@ final class AgentToolRegistry {
                         + ". Try one of those words, or use run_command for anything shell-based.",
                     displayCommand: "find_capability(\(query))")
             }
-            let lines = matches.map { capability -> String in
+            let lines = (matches + fallbackMatches).map { capability -> String in
                 let fields = capability.inputSchema.fields
                     .map { "\($0.name)\($0.required ? "" : "?")" }
                     .joined(separator: ", ")
