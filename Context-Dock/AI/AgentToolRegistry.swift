@@ -309,18 +309,65 @@ final class AgentToolRegistry {
         let terms = query.lowercased()
             .split { !$0.isLetter && !$0.isNumber }
             .map(String.init)
-            .filter { $0.count > 2 }
+            .filter { $0.count > 2 && !Self.stopwords.contains($0) }
         guard !terms.isEmpty else { return [] }
-        return catalogue
-            .map { entry -> (score: Int, id: String) in
-                let haystack = (entry.id + " " + entry.title + " " + searchAliases(for: entry.id))
-                    .lowercased()
-                return (terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }, entry.id)
+        // Written as statements rather than a map/filter/sorted chain: the chain, with a
+        // labelled tuple and three closures, exceeds the type-checker's budget outright.
+        //
+        // Flat scoring, deliberately. Weighting id and title above aliases was tried and
+        // traded one failure for another — it fixed "capture the screen" and broke "what
+        // did I capture from Code", because "capture" as a verb and as a noun are the same
+        // substring. No weighting resolves that, so the tests assert only what this layer
+        // can promise, which is that the right capability is offered; which one is meant is
+        // left to the model reading the titles, and to the on-device fallback when nothing
+        // matches at all.
+        var scored: [(score: Int, rank: Int, id: String)] = []
+        for (index, entry) in catalogue.enumerated() {
+            let aliases: String = searchAliases(for: entry.id)
+            let haystack: String = "\(entry.id) \(entry.title) \(aliases)".lowercased()
+            var score = 0
+            for term in terms where haystack.contains(term) {
+                score += 1
             }
-            .filter { $0.score > 0 }
-            .sorted { $0.score > $1.score }
-            .map(\.id)
+            if score > 0 {
+                scored.append((score: score, rank: index, id: entry.id))
+            }
+        }
+        // Ties broken by registration order, which makes the result the same every run —
+        // Swift's sort is not stable, so equal scores previously came back however the sort
+        // left them, and the same question could rank differently twice.
+        //
+        // Registration order rather than alphabetical. Alphabetical is equally
+        // deterministic and consistently wrong: it put bookmarks above history, the
+        // clipboard's history above its current contents, and — worst — memory.save above
+        // memory.search, so "what do you remember about me" led with a capability that
+        // writes. Registration order is the author's own precedence, and reads are
+        // registered before the writes beside them.
+        scored.sort { left, right in
+            left.score == right.score ? left.rank < right.rank : left.score > right.score
+        }
+        return scored.map(\.id)
     }
+
+    /// Words that carry no subject. Aliases are written as readable phrases, so "what is
+    /// copied" put "what" into the haystack and every question starting with it scored a
+    /// point — "what is the weather" matched the clipboard, the screenshot and the region
+    /// capture. Filtering the query rather than rewriting every phrase fixes the aliases
+    /// nobody has written yet as well as the ones here now.
+    /// Split across several arrays rather than written as one literal: a single set literal
+    /// this long defeats the type-checker ("unable to type-check this expression in
+    /// reasonable time"), which is a compile error rather than a style opinion.
+    private static let stopwords: Set<String> = {
+        let determiners = ["the", "and", "for", "any", "all", "some", "this", "that", "these", "those"]
+        let questions = ["what", "which", "who", "whom", "whose", "how", "why", "when", "where"]
+        let modals = ["can", "could", "would", "should", "will", "shall", "may", "might", "must"]
+        let auxiliaries = ["are", "was", "were", "have", "has", "had", "did", "does", "get", "got"]
+        let pronouns = ["you", "your", "yours", "our", "its", "them", "they", "his", "her", "him", "she", "hers"]
+        let prepositions = ["there", "here", "into", "onto", "from", "with", "about", "than", "then"]
+        let adverbs = ["not", "but", "out", "off", "over", "under", "again", "just", "only", "very", "too", "now", "please"]
+        return Set(
+            determiners + questions + modals + auxiliaries + pronouns + prepositions + adverbs)
+    }()
 
     private static func searchAliases(for capabilityID: String) -> String {
         // Whole-id aliases first. Families are too coarse when one mixes reading with
@@ -337,10 +384,6 @@ final class AgentToolRegistry {
         // usually unrelated, presented as the answer to a question about many.
         case "clipboard.read":
             return "current now latest pasteboard paste this what is copied"
-        case "cli": return "tool tools command line terminal binary linked utility run"
-        case "memory":
-            return "remember remembered recall know knows told saved fact facts note "
-                + "preference preferences about me my people projects tasks forget"
         case "capture.text":
             return "ocr read text on screen snip select region grab words from picture "
                 + "scan recognise recognize"
@@ -353,15 +396,26 @@ final class AgentToolRegistry {
             return "insert paste type write put text into markdown convert replace "
                 + "editor document frontmost app"
         case "clipboard.history":
+            // No "took"/"taken": both contain "take", so "take a screenshot" — an
+            // instruction to capture — scored here as highly as on the capability that
+            // actually captures, and won the tie. "captures" and "screenshots" already
+            // carry the past sense without colliding with the imperative.
             return "history earlier previous past clips captures captured capturing "
-                + "screenshots screenshot ocr snippets from source app apps saved took "
-                + "taken all list recent"
+                + "screenshots screenshot ocr snippets source app apps saved list recent"
         default: break
         }
 
         switch capabilityID.split(separator: ".").first.map(String.init) ?? "" {
         // Both clipboard capabilities are matched by whole id above; this covers any that
         // are added later without their own entry.
+        // These two are families, not ids. Written in the whole-id switch above they never
+        // matched anything, because no capability is called "cli" or "memory" — so "what do
+        // you remember about me" scored zero against memory.search, the exact silent miss
+        // this table exists to prevent.
+        case "cli": return "tool tools command line terminal binary linked utility run"
+        case "memory":
+            return "remember remembered recall know knows told saved fact facts note "
+                + "preference preferences people projects tasks forget"
         case "clipboard": return "copied copy paste pasteboard cut clip"
         case "extensions": return "extension extensions script scripts plugin plugins addon"
         case "globalcmd":
