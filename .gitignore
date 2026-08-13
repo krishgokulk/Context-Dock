@@ -34,3 +34,6 @@ AppIcon.icon/
 
 # Google Drive upload temp
 .tmp.driveupload/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+graft/

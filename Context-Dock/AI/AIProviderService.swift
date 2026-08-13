@@ -326,6 +326,14 @@ class AIProviderService: ObservableObject {
         return prompt
     }
 
+    /// `hasDirectoryPath` only reports what the URL was built to claim, so a path parsed
+    /// from text says "file" for a real folder. The disk is asked instead.
+    private func isDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        return exists && isDirectory.boolValue
+    }
+
     private func buildContextPrompt(
         for context: UserContext,
         matchedPackage: TerminalPackage? = nil,
@@ -396,7 +404,17 @@ class AIProviderService: ObservableObject {
 
         switch context {
         case .filesSelected(let urls):
-            if urls.count == 1 {
+            if urls.count == 1, urls[0].hasDirectoryPath || isDirectory(urls[0]) {
+                // A folder described with the file template reads as a file nobody can
+                // open: "Type: —, Size: 0 bytes, no content". A folder chat asked "do you
+                // know anything about this folder?" and was answered "I do not have any
+                // specific information", because the section that looked authoritative was
+                // empty. Folders get folder facts.
+                let url = urls[0]
+                prompt += "\n\n## SELECTED FOLDER\n"
+                prompt += FolderScopeDigest.promptBlock(for: url)
+                prompt += "\n"
+            } else if urls.count == 1 {
                 let url = urls[0]
                 let fileInfo = await analyzeFile(url)
                 prompt += "\n\n## SELECTED FILE\n"

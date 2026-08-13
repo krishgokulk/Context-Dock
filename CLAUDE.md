@@ -217,3 +217,39 @@ Always fetch current Apple docs before using any API, especially macOS 26 Tahoe 
 These files are very large - read only the relevant range:
 - Search/ContentView.swift - 420+ @State vars; use awk NR>=X and NR<=Y
 - Search/LauncherView+ContextualActions.swift - use same awk pattern
+
+## graft — find code before reading it
+
+The repo is indexed by `graft/` (local cache, git-ignored, rebuilt with `graft build .`).
+Reach for it **before** Glob/Grep/Read — it answers from a symbol index instead of loading files.
+
+```bash
+graft ask "where is the dock height preset logic"   # ranked symbols + file:line
+graft skeleton <file>                               # signatures only, no bodies
+graft grep "<regex>"                                # search indexed files
+graft map                                           # per-folder symbol counts
+```
+
+`graft skeleton` is the big win on the large files above — signatures of
+`ContentView.swift` instead of 7k tokens of body.
+
+**Swift limitation:** Swift is parsed by the breadth tier (signature-only). Definitions,
+types, and symbol search work; **`graft callers` does not** — the graph has ~0 call edges
+for Swift. To find call sites use `graft grep` or plain `grep -rn`, not `graft callers`.
+
+Rebuild after another agent lands a batch of commits: `graft build .`
+
+## Working alongside other agents
+
+2-4 Claude/Codex sessions run against this repo at once. Assume a file you did not
+touch is being edited by someone else **right now**, and that HEAD moves under you.
+
+- **Never `git add -A` / `git commit -a`.** Stage explicit paths only — anything else
+  sweeps up another session's half-finished work.
+- **Never** `git checkout -- .`, `git stash`, `git reset --hard`, or branch switches on
+  the shared tree. Those destroy uncommitted work you cannot see.
+- **Re-check before you conclude.** `git log --oneline -3` and `git status` at the start
+  of a task, and again before reporting counts or "this is all the usages" — both change
+  mid-task.
+- **Isolate risky work in a worktree** (`.claude/worktrees/`) rather than the shared tree.
+- If `git status` shows modifications you did not make, leave them alone and say so.

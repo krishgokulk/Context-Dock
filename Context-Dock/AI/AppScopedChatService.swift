@@ -526,12 +526,18 @@ enum AppScopedChatService {
                     if allSucceeded {
                         WorkbenchIntent.rememberSuccessfulPlan(plan, query: query)
                     }
+                    // "Nothing after the failed step was attempted" was appended whenever
+                    // the plan was not fully confirmed — including when every step ran and
+                    // none failed, and one merely changed nothing observable. It reported
+                    // abandoned work that did not exist. The receipt already names what was
+                    // skipped, and only when something was.
+                    let stoppedEarly = results.count < plan.steps.count
                     return Answer(
                         text: (allSucceeded ? "\(plan.summary)\n\n" : "")
                             + receipt
-                            + (allSucceeded
-                                ? ""
-                                : "\n\nNothing after the failed step was attempted."),
+                            + (stoppedEarly
+                                ? "\n\nNothing after that step was attempted."
+                                : ""),
                         toolChips: results.map { "\($0.step.route.kind.rawValue) · \($0.step.route.title)" })
                 }
             }
