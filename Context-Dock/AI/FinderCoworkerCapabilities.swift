@@ -40,9 +40,9 @@ enum FinderCoworkerCapabilities {
     /// instead is a different answer to a question nobody asked.
     static func scopeURLs(
         from request: AICapabilityExecutionRequest, explicitPath: String? = nil
-    ) -> (roots: [URL], describedAs: String) {
+    ) -> (roots: [URL], describedAs: String, usedDefaults: Bool) {
         if let explicit = resolveRoot(explicitPath) {
-            return ([explicit], explicit.path)
+            return ([explicit], explicit.path, false)
         }
         let selected = selectedURLs(from: request)
         if !selected.isEmpty {
@@ -50,13 +50,32 @@ enum FinderCoworkerCapabilities {
                 selected,
                 selected.count == 1
                     ? selected[0].lastPathComponent
-                    : "\(selected.count) selected item(s)")
+                    : "\(selected.count) selected item(s)",
+                false)
         }
         if let current = ContextDetector.shared.getCurrentFinderDirectory(), !current.isEmpty {
             let url = URL(fileURLWithPath: current)
-            return ([url], url.path)
+            return ([url], url.path, false)
         }
-        return (defaultRoots, "your Desktop, Documents and Downloads")
+        return (defaultRoots, "your Desktop, Documents and Downloads", true)
+    }
+
+    /// Said whenever an answer came from the fallback roots rather than from somewhere the
+    /// user named.
+    ///
+    /// "Show me the recent images from the screenshot folder" was answered with two files
+    /// from Downloads, and nothing in the answer admitted Downloads was a guess. A question
+    /// that names a folder deserves that folder or an admission — and the way to stop the
+    /// guessing repeating is to give the folder its own thread.
+    static func fallbackNudge(
+        _ scope: (roots: [URL], describedAs: String, usedDefaults: Bool)
+    ) -> String {
+        guard scope.usedDefaults else { return "" }
+        return "\n\nSearched \(scope.describedAs) — the default when no folder is named, "
+            + "not necessarily where the user meant. If they named a folder you could not "
+            + "find, ask which one rather than presenting this as the answer, and offer to "
+            + "attach it to this chat (+ → Chat with a Folder…) so later questions land in "
+            + "the right place."
     }
 
     /// Every file under the given roots, hidden files skipped. One walker for the whole
@@ -125,7 +144,10 @@ enum FinderCoworkerCapabilities {
                 let duplicates = groups.values.filter { $0.count > 1 }
                     .sorted { size(of: $0[0]) * Int64($0.count) > size(of: $1[0]) * Int64($1.count) }
                 guard !duplicates.isEmpty else {
-                    return .init(success: true, output: "No duplicate names and sizes in \(scope.describedAs).")
+                    return .init(
+                        success: true,
+                        output: "No duplicate names and sizes in \(scope.describedAs)."
+                            + fallbackNudge(scope))
                 }
                 let formatter = byteFormatter
                 var reclaimable: Int64 = 0
@@ -169,7 +191,7 @@ enum FinderCoworkerCapabilities {
                         "\(duplicates.count) set(s) of likely duplicates in \(scope.describedAs) — "
                         + "matched on name and size, not contents.\n"
                         + "Reclaimable if you keep one of each: \(formatter.string(fromByteCount: reclaimable))\n\n"
-                        + lines.joined(separator: "\n") + trailer)
+                        + lines.joined(separator: "\n") + trailer + fallbackNudge(scope))
             }
         )
     }
@@ -232,7 +254,7 @@ enum FinderCoworkerCapabilities {
                     output:
                         "\(stale.count) file(s) in \(scope.describedAs) untouched for \(months)+ months, "
                         + "holding \(formatter.string(fromByteCount: total)).\n\n"
-                        + lines.joined(separator: "\n") + trailer)
+                        + lines.joined(separator: "\n") + trailer + fallbackNudge(scope))
             }
         )
     }
@@ -316,7 +338,8 @@ enum FinderCoworkerCapabilities {
                 guard !matches.isEmpty else {
                     return .init(
                         success: true,
-                        output: "No \(kind) files in \(scope.describedAs) from the last \(days) day(s).")
+                        output: "No \(kind) files in \(scope.describedAs) from the last "
+                            + "\(days) day(s)." + fallbackNudge(scope))
                 }
                 let formatter = byteFormatter
                 let dateFormatter = DateFormatter()
@@ -326,11 +349,15 @@ enum FinderCoworkerCapabilities {
                     "- \(url.lastPathComponent) — \(formatter.string(fromByteCount: size(of: url))), "
                         + "\(dateFormatter.string(from: modified(url)))\n    \(url.deletingLastPathComponent().path)"
                 }
+                // Where it looked is part of the answer. Without it, files found in
+                // Downloads read as "the screenshots" to someone who asked about a
+                // different folder entirely.
                 return .init(
                     success: true,
                     output:
-                        "\(matches.count) \(kind) file(s) in the last \(days) day(s):\n\n"
-                        + lines.joined(separator: "\n"))
+                        "\(matches.count) \(kind) file(s) in \(scope.describedAs), last "
+                        + "\(days) day(s):\n\n"
+                        + lines.joined(separator: "\n") + fallbackNudge(scope))
             }
         )
     }
@@ -509,14 +536,61 @@ enum FinderCoworkerCapabilities {
 
     /// Resolve a user-supplied path (tilde/relative allowed), constrained to the
     /// user's home tree so the tool never wanders outside it.
-    private static func resolveRoot(_ raw: String?) -> URL? {
+    static func resolveRoot(_ raw: String?) -> URL? {
         guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !raw.isEmpty
         else { return nil }
-        let expanded = (raw as NSString).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded).standardizedFileURL
         let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
-        guard url.path == home || url.path.hasPrefix(home + "/") else { return nil }
-        return url
+        let expanded = (raw as NSString).expandingTildeInPath
+
+        if expanded.hasPrefix("/") {
+            let url = URL(fileURLWithPath: expanded).standardizedFileURL
+            guard url.path == home || url.path.hasPrefix(home + "/") else { return nil }
+            return url
+        }
+
+        // A bare name — "Screenshot", "screenshot folder" — resolved to nothing, because a
+        // relative path fails the home-tree guard. The capability then fell back to
+        // Desktop/Documents/Downloads and answered confidently about the wrong place.
+        // People name folders far more often than they type paths.
+        return namedFolder(expanded)
+    }
+
+    /// A folder the user named, found where folders actually live. One level deep and
+    /// case-insensitive: enough for "screenshot folder", cheap enough to run on every call,
+    /// and it never leaves the home tree.
+    static func namedFolder(_ name: String) -> URL? {
+        let fm = FileManager.default
+        let cleaned = name
+            .replacingOccurrences(of: "folder", with: "", options: .caseInsensitive)
+            .replacingOccurrences(of: "directory", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+
+        var parents = [URL(fileURLWithPath: NSHomeDirectory())]
+        for directory: FileManager.SearchPathDirectory in [
+            .picturesDirectory, .documentDirectory, .desktopDirectory, .downloadsDirectory,
+            .moviesDirectory, .musicDirectory,
+        ] {
+            if let url = try? fm.url(
+                for: directory, in: .userDomainMask, appropriateFor: nil, create: false)
+            {
+                parents.append(url)
+            }
+        }
+
+        for parent in parents {
+            guard let children = try? fm.contentsOfDirectory(
+                at: parent, includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles])
+            else { continue }
+            for child in children
+            where child.lastPathComponent.caseInsensitiveCompare(cleaned) == .orderedSame {
+                let isDirectory =
+                    (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+                if isDirectory { return child.standardizedFileURL }
+            }
+        }
+        return nil
     }
 
     // MARK: - Search
