@@ -1024,9 +1024,28 @@ extension LauncherView {
             let command = line.dropFirst(4)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
-            return command.isEmpty ? nil : command
+            guard !command.isEmpty else { return nil }
+            // A capability id is not a shell command. The model is shown ids like
+            // "cli.list" and "browser.history" as things it can run, so it writes
+            // `RUN: cli.list` — and this loop, which accepts any string, classified it,
+            // asked the user to approve it, and handed it to zsh: "command not found:
+            // cli.list", exit 127. The user approved a real prompt for a command that never
+            // existed.
+            guard !isCapabilityID(command) else { return nil }
+            return command
         }
         return nil
+    }
+
+    /// Whether the first word names a registered capability rather than a binary.
+    ///
+    /// Checked against the registry rather than by shape, so a genuine command that happens
+    /// to contain a dot — `python3.12 -m http.server`, `./scripts/dev-run.sh` — still runs.
+    static func isCapabilityID(_ command: String) -> Bool {
+        guard let first = command.split(separator: " ").first.map(String.init) else {
+            return false
+        }
+        return CapabilityRegistry.shared.capability(id: first) != nil
     }
 
     /// Removes the directive line so a reply that both explains and proposes does not show

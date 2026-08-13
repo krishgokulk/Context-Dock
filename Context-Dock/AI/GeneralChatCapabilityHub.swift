@@ -219,6 +219,18 @@ final class GeneralChatCapabilityHub {
             "",
             "Planning rules:",
             "- Prefer real DoraX routes over generic advice: app adapter/native actions, built-in capabilities, MCP tools, API/Shortcuts, native share, cached app menus, then CLI fallback, then launch/activate.",
+            // Named explicitly because the generic advice above was not enough to find
+            // them. Asked to read a screenshot and paste it as markdown, the model read the
+            // attachment and then ran `pbpaste` — reaching for the shell for a job two
+            // registered capabilities do, because nothing told it they were the way to put
+            // text somewhere or press a menu item.
+            "- To put text into the app the user is looking at, run the capability "
+                + "`app.insertText` with {\"text\": \"…\"}. Never use pbpaste, pbcopy or any "
+                + "shell command to type, paste or insert text — they do not do it.",
+            "- To press a menu item in an app (Minimize, Save, Quit, Close, a View toggle), "
+                + "run `app.menu.click` with {\"path\": \"Window > Minimize\"}.",
+            "- Something the user attached to the message is read with the read_attachment "
+                + "tool, never guessed at from the clipboard.",
             // Deliberately "when one FITS", not "when one EXISTS". The stronger phrasing was
             // enforced in code for a while: run_command was refused whenever the scoped app
             // had any adapter action at all, so "what is the recent commit I did?" was
