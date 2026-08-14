@@ -33,6 +33,9 @@ struct GeneralChatWindowView: View {
     /// Bumped to rebuild the terminal view after its shell is restarted.
     @State private var terminalToken = 0
     @State private var panelTab: PanelTab = .terminal
+    /// The artifact a transcript card asked for. The panel shows the last candidate, so
+    /// choosing one moves it to the end rather than teaching the panel a second concept.
+    @State private var focusedArtifact: URL?
 
     private let minSidebarWidth: Double = 160
     private let maxSidebarWidth: Double = 380
@@ -175,18 +178,19 @@ struct GeneralChatWindowView: View {
                 }
             }
 
-            // One app is not a combination — it belongs with the other single-scope
-            // threads under Apps & tools. "Combined chat" only earns its heading once
-            // there is more than one app to combine.
-            if model.scopeAppNames.count > 1 {
-                combinedChatEntry
-                    .padding(.horizontal, 8)
-                    .padding(.top, 6)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    // Scope stays above every navigation section, even in a long history.
+                    if model.scopeAppNames.count > 1 {
+                        combinedChatEntry
+                            .padding(.horizontal, 8)
+                            .padding(.top, 10)
+                    }
+                    sessionList
+                }
+                .padding(.bottom, 12)
             }
-
-            sessionList
-
-            Spacer()
+            .scrollIndicators(.visible)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -201,7 +205,10 @@ struct GeneralChatWindowView: View {
         // an app that is not one, and the two are picked for different reasons.
         let all = model.sessions.filter { $0.scope != .general }
         let folderRows = all.filter { $0.scope.folderURL != nil }
-        let rows = all.filter { $0.scope.folderURL == nil }
+        let recentRows = model.sessions
+            .filter { $0.scope.isGeneralChat && $0.messageCount > 0 }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let rows = all.filter { $0.scope.folderURL == nil && !$0.scope.isGeneralChat }
         // A lone attached app has no session of its own — it is a scope on the current
         // conversation — but from the sidebar it reads as the same thing: one app this
         // chat is about. Listing it here is what stops it disappearing from the sidebar
@@ -209,6 +216,13 @@ struct GeneralChatWindowView: View {
         let loneApp =
             model.activeScopeAppName == nil && model.attachedAppNames.count == 1
             ? model.attachedAppNames.first : nil
+        if !recentRows.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                sidebarSectionTitle("Recents")
+                ForEach(recentRows) { session in sessionRow(session) }
+            }
+        }
+
         if !rows.isEmpty || loneApp != nil {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Apps & tools")
@@ -257,6 +271,16 @@ struct GeneralChatWindowView: View {
                 }
             }
         }
+    }
+
+    private func sidebarSectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.tertiary)
+            .tracking(0.6)
+            .padding(.horizontal, 12)
+            .padding(.top, 14)
+            .padding(.bottom, 4)
     }
 
     /// The single app this conversation is scoped to. Same shape as a session row, with
@@ -586,6 +610,22 @@ struct GeneralChatWindowView: View {
                                 message: message,
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) })
+
+                            // What this answer built, where it built it. The panel lists
+                            // everything the thread has ever produced, which is the wrong
+                            // place to learn that the message you are reading made a
+                            // document — so the document appears under the message, and
+                            // opens in the panel beside it.
+                            let produced = ArtifactStore.artifacts(
+                                mentionedIn: message.content, scope: model.activeScope)
+                            if message.role == .assistant, !produced.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(produced, id: \.path) { url in
+                                        artifactCard(url)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                         .id(message.id)
                     }
@@ -736,6 +776,65 @@ struct GeneralChatWindowView: View {
         .padding(.horizontal, 28)
         .padding(.bottom, 20)
         .padding(.top, 8)
+    }
+
+    /// One document an answer produced, as a row under that answer.
+    ///
+    /// Deliberately a card rather than rendered inline: an artifact is a thing to look at,
+    /// and the panel already renders it properly with room to scroll. This says it exists
+    /// and takes you there.
+    private func artifactCard(_ url: URL) -> some View {
+        Button {
+            focusedArtifact = url
+            panelTab = .artifacts
+            chrome.showSidePanel()
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: symbolForArtifact(url))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 26, height: 26)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.12)))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(url.lastPathComponent)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text("Document · \(url.pathExtension.uppercased())")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Text("Open")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.accentColor.opacity(0.14)))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.primary.opacity(0.05)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 0.5))
+            .frame(maxWidth: 320, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(url.path)
+    }
+
+    private func symbolForArtifact(_ url: URL) -> String {
+        switch url.pathExtension.lowercased() {
+        case "csv": return "tablecells"
+        case "svg": return "scribble"
+        default: return "doc.richtext"
+        }
     }
 
     /// What Finder has highlighted, when this thread is entitled to speak for it.
@@ -1017,8 +1116,8 @@ struct GeneralChatWindowView: View {
                         threadTerminal
                     }
                 case .artifacts:
-                    ChatThreadPreviewPanel(candidates: artifactFiles)
-                        .id("artifacts-" + (artifactFiles.last?.path ?? "none"))
+                    ChatThreadPreviewPanel(candidates: orderedArtifactFiles)
+                        .id("artifacts-" + (orderedArtifactFiles.last?.path ?? "none"))
                 default:
                     ChatThreadPreviewPanel(candidates: previewFiles)
                         .id(previewFiles.last?.path ?? "none")
@@ -1136,6 +1235,14 @@ struct GeneralChatWindowView: View {
     }
 
     private enum PanelTab: String { case terminal, preview, artifacts }
+
+    /// Artifacts with the chosen one last, because the panel opens on the last candidate.
+    private var orderedArtifactFiles: [URL] {
+        guard let focusedArtifact, artifactFiles.contains(focusedArtifact) else {
+            return artifactFiles
+        }
+        return artifactFiles.filter { $0 != focusedArtifact } + [focusedArtifact]
+    }
 
     private var artifactFiles: [URL] {
         ArtifactStore.artifacts(for: model.activeScope)

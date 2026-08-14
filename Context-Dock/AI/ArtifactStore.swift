@@ -69,7 +69,7 @@ enum ArtifactStore {
             // produces an empty panel next to an answer that explained itself perfectly.
             guard body.trimmingCharacters(in: .whitespacesAndNewlines).count > 80 else { continue }
 
-            let name = "\(abs(body.hashValue)).\(fileExtension(for: language))"
+            let name = fileName(for: body, language: language)
             let url = folder.appendingPathComponent(name)
             guard !FileManager.default.fileExists(atPath: url.path) else {
                 written.append(url)
@@ -87,6 +87,12 @@ enum ArtifactStore {
             }
         }
         return written
+    }
+
+    /// Content-addressed, so the same block always names the same file — which is what
+    /// lets a message find its own artifacts later without a stored mapping.
+    private static func fileName(for body: String, language: String) -> String {
+        "\(abs(body.hashValue)).\(fileExtension(for: language))"
     }
 
     private static func fileExtension(for language: String) -> String {
@@ -153,6 +159,46 @@ enum ArtifactStore {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd-HHmm"
         return "\(stem)-\(formatter.string(from: Date())).\(ext)"
+    }
+
+    /// The artifacts a single answer produced, without writing anything.
+    ///
+    /// The panel lists everything a thread has ever built; this is what *this* message
+    /// built, so the transcript can show it where it happened. Two ways an answer produces
+    /// a file: a fenced block, whose name is derived from its content exactly as `extract`
+    /// derives it, and a report a capability filed and named in its text.
+    static func artifacts(mentionedIn text: String, scope: GeneralChatScope) -> [URL] {
+        let folder = folder(for: scope)
+        var found: [URL] = []
+        var seen = Set<String>()
+
+        func consider(_ url: URL) {
+            guard FileManager.default.fileExists(atPath: url.path),
+                seen.insert(url.path).inserted
+            else { return }
+            found.append(url)
+        }
+
+        if let regex = try? NSRegularExpression(pattern: "```([a-zA-Z]+)\\n([\\s\\S]*?)```") {
+            for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+                guard match.numberOfRanges >= 3,
+                    let languageRange = Range(match.range(at: 1), in: text),
+                    let bodyRange = Range(match.range(at: 2), in: text)
+                else { continue }
+                let language = String(text[languageRange]).lowercased()
+                guard renderable.contains(language) else { continue }
+                let body = String(text[bodyRange])
+                consider(folder.appendingPathComponent(fileName(for: body, language: language)))
+            }
+        }
+
+        // A filed report names itself in the answer ("saved as folder-breakdown-….csv").
+        // Matched against what is actually on disk for this thread, so a filename the model
+        // invented shows nothing rather than a card that opens onto an error.
+        for url in artifacts(for: scope) where text.contains(url.lastPathComponent) {
+            consider(url)
+        }
+        return found
     }
 
     /// Every artifact this thread has produced, oldest first.
