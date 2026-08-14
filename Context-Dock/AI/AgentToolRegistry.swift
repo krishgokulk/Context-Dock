@@ -400,6 +400,19 @@ final class AgentToolRegistry {
         // I capture from Code?" rank *taking a new screenshot* above reading the captures
         // already taken. A request to read something must not be answered by doing it.
         switch capabilityID {
+        // "Summarise quarterly-notes.md" found no file tool at all. The scorer matches
+        // words against ids and titles, and finder.readFile's title says "Read a file's
+        // contents" — nothing a person asking for a summary would type. So the query
+        // scored zero against it and one against every Apple Notes capability, because the
+        // FILENAME contained "notes". The model looped on read_attachment and gave up.
+        case "finder.readFile":
+            return "read open summarise summarize explain describe contents what does say "
+                + "inside text pdf document markdown md txt docx file"
+        case "finder.grepFiles":
+            return "search find inside contents mentions containing text within files "
+                + "which file says look for"
+        case "finder.fileInfo":
+            return "how big size kind when modified created details about this file"
         case "system.captureScreenshot":
             return "screenshot screengrab grab snap take picture of the screen new"
         // These two differ by tense, and tense is the whole question: one is what is on the
@@ -697,6 +710,12 @@ final class AgentToolRegistry {
                 .split { !$0.isLetter && !$0.isNumber }
                 .map(String.init)
                 .filter { $0.count > 2 }
+            // "notes.md" is a filename, not a request about Apple Notes. Detected on the
+            // raw query because tokenising splits the extension off the stem, losing the
+            // one signal that says which of the two this is.
+            let namesAFile = query.range(
+                of: "[\\w-]+\\.(md|txt|pdf|docx?|rtf|csv|json|ya?ml|html?|pages|key|numbers|xlsx?|pptx?)\\b",
+                options: [.regularExpression, .caseInsensitive]) != nil
             let matches = await MainActor.run { () -> [AICapability] in
                 let all = CapabilityRegistry.shared.all
                 guard !terms.isEmpty else { return [] }
@@ -704,7 +723,11 @@ final class AgentToolRegistry {
                     .map { capability -> (score: Int, capability: AICapability) in
                         let haystack = (capability.id + " " + capability.title
                             + " " + Self.searchAliases(for: capability.id)).lowercased()
-                        let score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
+                        var score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
+                        // A question naming a file is a question about files. Without this
+                        // "summarise quarterly-notes.md" ranked Apple Notes above every
+                        // file tool, on the strength of the word inside the filename.
+                        if namesAFile, capability.id.hasPrefix("finder.") { score += 2 }
                         return (score, capability)
                     }
                     .filter { $0.score > 0 }

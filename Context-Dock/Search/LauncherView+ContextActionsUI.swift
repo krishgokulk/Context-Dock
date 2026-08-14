@@ -991,11 +991,13 @@ extension LauncherView {
             isDirectory.boolValue
         else { return false }
 
+        // The dock answers about the current folder in the dock. Opening the window here
+        // took the user out of the surface they were typing in to start a conversation
+        // they had not asked to move — and the window glyph beside this control exists
+        // precisely to say when they do want that. The folder thread is still created, so
+        // pressing the glyph later lands in the same conversation rather than a new one.
         GeneralChatWindowModel.shared.openFolderSession(folderURL)
-        GeneralChatWindowController.shared.show()
-        searchState.query = ""
-        isSearchFieldFocused = false
-        AppDelegate.shared?.hideLauncher(force: true)
+        armContextDockChat()
         return true
     }
 
@@ -1018,15 +1020,16 @@ extension LauncherView {
             isDirectory.boolValue
         else { return false }
 
-        let model = GeneralChatWindowModel.shared
-        model.openFolderSession(folderURL)
-        model.input = trimmed
-        model.send()
-        GeneralChatWindowController.shared.show()
-        searchState.query = ""
-        isSearchFieldFocused = false
-        AppDelegate.shared?.hideLauncher(force: true)
-        return true
+        // Registered so the thread exists and the window glyph opens the same
+        // conversation, but the question itself is answered here: a folder question typed
+        // into the dock is a dock question. Returning false hands it to the dock's own
+        // Finder chat rather than sending it somewhere the user cannot see it.
+        //
+        // Deliberately not arming the chat from here. This runs before find-intent
+        // resolution, and arming flips wasContextDockChatActive — which would demote
+        // "search X" in a Finder window from a real search into a chat message.
+        GeneralChatWindowModel.shared.openFolderSession(folderURL)
+        return false
     }
 
     @ViewBuilder
