@@ -529,6 +529,27 @@ final class AgentToolRegistry {
             let needsApproval = arguments["requires_approval"] as? Bool ?? false
             let (success, output, exitCode) = await context.commandExecutor(
                 command, purpose, needsApproval)
+            // A missing binary is not a wrong invocation, and the difference matters.
+            // "code --theme light" failed with "command not found: code", and the model
+            // read that as bad syntax and tried "--set-theme" — a flag that does not exist
+            // either, against a binary that was never there. Two failed commands and an
+            // answer telling the user to do it by hand. Say which of the two it was, and
+            // that retrying cannot help.
+            let missingBinary = output.contains("command not found")
+                || output.contains("No such file or directory")
+            if !success, missingBinary {
+                let name = command.split(separator: " ").first.map(String.init) ?? command
+                return AgentToolResult(
+                    success: false,
+                    output: "`\(name)` is not installed on this Mac, or is not on the PATH "
+                        + "DoraX runs commands with — the command never ran, so nothing is "
+                        + "wrong with how it was written. Do NOT retry with different flags. "
+                        + "Use find_capability to see whether an app action, menu command or "
+                        + "capability can do this instead, and if none can, tell the user "
+                        + "plainly that \(name) is missing.",
+                    displayCommand: "run_command(\(command))",
+                    exitCode: exitCode)
+            }
             return AgentToolResult(
                 success: success,
                 output: output,
