@@ -85,7 +85,7 @@ enum AppScopedChatService {
             ChatConsoleLog.shared.append(
                 .tool, title: "skill · \(route.title)", output: instructions,
                 success: !instructions.isEmpty,
-                scope: .app(bundleId: route.bundleId))
+                scope: scope)
             // The thread's own scope, not the route's app: a skill belonging to Finder
             // does not turn a folder conversation into a Finder one.
             let answer = try? await send(
@@ -102,15 +102,21 @@ enum AppScopedChatService {
         }
 
         log.notice("route: \(route.kind.rawValue, privacy: .public) \(route.title, privacy: .public)")
+        // The console belongs to the conversation, not to the app the route came from.
+        // Logging under the route's app sent the receipt to a thread the user was not
+        // looking at: "tailscale status" answered "check the Terminal panel for the
+        // details" while the panel under the question read "Nothing has run in this thread
+        // yet". The app scope is still what state is resolved against — that is about the
+        // app — but what ran is reported where it was asked.
         let routeScope = GeneralChatScope.app(bundleId: route.bundleId)
-        let rowID = ChatConsoleLog.shared.begin(.route, title: route.title, scope: routeScope)
+        let rowID = ChatConsoleLog.shared.begin(.route, title: route.title, scope: scope)
         let result = await ChatRouteResolver.run(route, query: query)
         ChatConsoleLog.shared.finish(
             rowID,
             output: result.output.isEmpty
                 ? (result.success ? "(no output)" : "(failed, no output)") : result.output,
             success: result.success,
-            scope: routeScope)
+            scope: scope)
 
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -130,7 +136,7 @@ enum AppScopedChatService {
                     title: "verified \(route.appName) state",
                     output: verification,
                     success: true,
-                    scope: routeScope)
+                    scope: scope)
             }
         }
 
@@ -191,7 +197,7 @@ enum AppScopedChatService {
     static func appNeedingAccess(
         query: String, scope: GeneralChatScope, attachedAppNames: [String]
     ) -> EnableAppRequest? {
-        guard case .general = scope else { return nil }
+        guard scope.isGeneralChat else { return nil }
         // "do i have any reminder today" names Reminders, but the resolver matches whole
         // words against app names, so the singular missed and the question fell through to
         // a model with no access and no explanation. Try the plural too.
@@ -754,7 +760,7 @@ enum AppScopedChatService {
                 bundleId: "cli://\(command)", appName: command, query: query)
             if !tool.isEmpty { sections.append(tool) }
 
-        case .general:
+        case .general, .thread:
             // Unscoped chat is not ungrounded chat: it still answers about the user's
             // machine, so it gets the same capability catalogue the dock's General Chat
             // builds. Without it the model was handed a CLI protocol by the provider's

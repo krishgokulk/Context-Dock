@@ -9,7 +9,7 @@ import AppKit
 import SwiftUI
 
 @MainActor
-final class GeneralChatWindowController: NSObject, NSWindowDelegate, NSToolbarDelegate {
+final class GeneralChatWindowController: NSObject, NSWindowDelegate {
     static let shared = GeneralChatWindowController()
 
     private var window: NSWindow?
@@ -61,19 +61,17 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate, NSToolbarDe
         // The SwiftUI chrome row draws the whole titlebar strip, so AppKit must not
         // paint a separator or its own background over it.
         win.isMovableByWindowBackground = false
-        // AppKit centres the traffic lights in the TITLEBAR, which is 28pt tall — but the
-        // SwiftUI chrome row is 52pt, so the lights sat ~12pt above the sidebar toggle,
-        // the history arrows and the Chat/Work pill. Every other Mac window (Finder, Safari)
-        // gets this right because it has a toolbar: with a unified toolbar AppKit measures
-        // the combined titlebar + toolbar area and centres the lights in that instead.
-        // So the window carries an empty toolbar purely for its geometry. It has no items
-        // and, with a transparent titlebar and no separator, paints nothing — the SwiftUI
-        // bar still draws the whole strip and the sidebar/content split stays unbroken.
-        let toolbar = NSToolbar(identifier: "GeneralChatChromeGeometry")
-        toolbar.delegate = self
-        toolbar.displayMode = .iconOnly
-        win.toolbar = toolbar
-        win.toolbarStyle = .unified
+        // AppKit centres the traffic lights in the TITLEBAR, which is 28pt tall, while the
+        // SwiftUI chrome row is 52pt — so the lights sat ~12pt above the sidebar toggle,
+        // the history arrows and the Chat/Work pill.
+        //
+        // An empty unified toolbar fixed that by making AppKit measure a taller strip, and
+        // cost every control in it: a toolbar spans the titlebar, so clicks that missed an
+        // item became window drags. Both panel toggles, the arrows and the Chat/Work pill
+        // stopped responding — the window looked frozen along its whole top edge.
+        //
+        // The lights are positioned directly instead. Nothing is laid over the chrome row,
+        // so every control in it keeps its clicks.
         win.titlebarSeparatorStyle = .none
         let hosting = NSHostingController(rootView: GeneralChatWindowView())
         hosting.view.wantsLayer = true
@@ -87,18 +85,39 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate, NSToolbarDe
         win.setFrame(frame, display: false)
         win.makeKeyAndOrderFront(nil)
         window = win
+        centreTrafficLights(in: win)
     }
 
-    // MARK: - Toolbar (geometry only)
+    // MARK: - Traffic lights
 
-    // Deliberately item-less: the toolbar exists so the traffic lights are centred in the
-    // 52pt unified titlebar, not to show controls. The SwiftUI chrome row draws those.
-    nonisolated func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [] }
-    nonisolated func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [] }
-    nonisolated func toolbar(
-        _ toolbar: NSToolbar, itemForItemIdentifier identifier: NSToolbarItem.Identifier,
-        willBeInsertedIntoToolbar flag: Bool
-    ) -> NSToolbarItem? { nil }
+    /// Centres the window buttons against the 52pt chrome row.
+    ///
+    /// Re-applied on resize and on becoming key because AppKit lays the buttons out itself
+    /// at those moments and would otherwise put them back at titlebar height.
+    private func centreTrafficLights(in win: NSWindow) {
+        let chromeHeight: CGFloat = 52
+        let buttons: [NSButton] = [.closeButton, .miniaturizeButton, .zoomButton]
+            .compactMap { win.standardWindowButton($0) }
+        guard let container = buttons.first?.superview else { return }
+        for button in buttons {
+            var frame = button.frame
+            // The titlebar container is flipped-origin-at-bottom, so centring means
+            // measuring down from the top of the chrome row rather than up from zero.
+            frame.origin.y = (container.bounds.height - chromeHeight) / 2
+                + (chromeHeight - frame.height) / 2
+            button.setFrameOrigin(frame.origin)
+        }
+    }
+
+    func windowDidResize(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow else { return }
+        centreTrafficLights(in: win)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow else { return }
+        centreTrafficLights(in: win)
+    }
 
     /// True while the window exists on screen. Used to decide whether the app still needs
     /// to be a regular, menu-bar-owning app.

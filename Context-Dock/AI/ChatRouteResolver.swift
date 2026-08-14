@@ -344,10 +344,15 @@ enum ChatRouteResolver {
             if ChatThreadTerminalManager.needsTerminal(command: command) {
                 let scope = GeneralChatScope.cli(command: command)
                 ChatThreadTerminalManager.shared.run(route.payload, scope: scope)
+                // It runs in the TOOL's thread, which is the only one with a terminal —
+                // not in whichever thread asked. Saying "this thread's terminal" from a
+                // General chat sent the user to a panel that reads "nothing has run in
+                // this thread yet", so the message names where to actually look.
                 return (
                     true,
-                    "Running in this thread's terminal — it draws its own screen, so watch "
-                        + "the Terminal panel rather than waiting for output here."
+                    "Started `\(route.payload)` in the \(command) thread's terminal — that "
+                        + "tool draws its own screen, so it cannot report back here. Open "
+                        + "\(command) in the sidebar to watch it."
                 )
             }
             let result = await TerminalCommandExecutor.shared.run(
