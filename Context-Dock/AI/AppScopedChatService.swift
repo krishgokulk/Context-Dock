@@ -713,6 +713,29 @@ enum AppScopedChatService {
                 than guessing — and if a tool cannot read it, say so.
                 """)
             sections.append(FolderScopeDigest.promptBlock(for: url))
+            // File work goes through the file tools, never the shell.
+            //
+            // Asked to tidy a folder, the model wrote `mkdir a b c` and then two `mv`s
+            // chained with &&. Writes are not on the unattended allowlist and && is
+            // rejected outright, so nothing was created — and the mv commands then ran
+            // against destinations that did not exist, reporting "is not a directory"
+            // while the answer said the folders had been made. finder.organize does that
+            // whole request in one call, inside this folder, with the file list on the
+            // approval card and a read-back afterwards.
+            sections.append(
+                """
+                FILE WORK IN THIS FOLDER
+                Use the finder.* capabilities for anything that creates, moves, renames, \
+                copies or deletes files — finder.organize for tidying by kind or month, \
+                finder.newFolder, finder.moveFiles, finder.renameFiles, finder.trash. They \
+                are confined to this folder, ask the user before changing anything, and are \
+                checked afterwards.
+
+                Do NOT use run_command for file changes. mkdir, mv, cp and rm are refused \
+                by the command gate and chained commands (&&) are rejected, so a shell \
+                attempt does nothing and reports failure you must not mistake for success. \
+                If a step fails, say so and stop rather than continuing as though it worked.
+                """)
             if let selectionBlock = selectionBlock(finderSelection) {
                 sections.append(selectionBlock)
             }
