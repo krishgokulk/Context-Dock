@@ -36,6 +36,36 @@ enum AppScopedChatService {
         var routeChoices: [ActionChoice] = []
         /// Raw output of a route that ran, for the Console panel.
         var consoleOutput: String? = nil
+        /// Files the answer named that exist on disk, so the surface can offer them
+        /// instead of leaving a path in a paragraph for the user to retype.
+        var files: [URL] = []
+    }
+
+    /// Paths an answer mentions, kept only when they are real.
+    ///
+    /// A file chat's answer is usually about files, and it names them: "there is one PDF:
+    /// /Users/…/Resume.pdf". Left as prose that is a path to select and paste somewhere;
+    /// as a row it is a thing to open. Existence is checked because a model naming a file
+    /// is not evidence one is there, and a row that opens onto nothing is worse than a
+    /// sentence.
+    static func mentionedFiles(in text: String, limit: Int = 8) -> [URL] {
+        let pattern = #"(/Users/[^\s"'`,;:()\[\]]+|~/[^\s"'`,;:()\[\]]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        var found: [URL] = []
+        var seen = Set<String>()
+        for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
+            guard let range = Range(match.range(at: 1), in: text) else { continue }
+            // Trailing punctuation belongs to the sentence, not to the path.
+            let raw = String(text[range])
+                .trimmingCharacters(in: CharacterSet(charactersIn: ".,;:!?)"))
+            let expanded = (raw as NSString).expandingTildeInPath
+            guard FileManager.default.fileExists(atPath: expanded),
+                seen.insert(expanded).inserted
+            else { continue }
+            found.append(URL(fileURLWithPath: expanded))
+            if found.count >= limit { break }
+        }
+        return found
     }
 
     /// Routes offered for the last question, by choice id, so a pick can be executed

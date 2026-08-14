@@ -86,6 +86,189 @@ enum AgentAnswerVerifier {
         """
     }
 
+    /// When the user states the criterion explicitly, a different successful verifier is not
+    /// evidence. In particular, "verify the file exists" must never be satisfied by proving
+    /// that it does not exist.
+    static func requiredVerificationKind(in query: String) -> String? {
+        let lowered = query.lowercased()
+        guard let verifyRange = lowered.range(of: "verify", options: .backwards) else { return nil }
+        let clause = String(lowered[verifyRange.lowerBound...])
+        if clause.contains("does not exist") || clause.contains("doesn't exist") {
+            return "file_does_not_exist"
+        }
+        if clause.contains(" exists") || clause.hasSuffix("exists") || clause.contains("exist.") {
+            return "file_exists"
+        }
+        if clause.contains("exactly matches") || clause.contains("equals")
+            || clause.contains("exact contents") {
+            return "file_equals"
+        }
+        if clause.contains("contains") { return "file_contains" }
+        return nil
+    }
+
+    static func explicitVerificationIsMissingOrMismatched(
+        query: String,
+        executed: [AIProviderService.ExecutedCommand]
+    ) -> Bool {
+        guard let requiredKind = requiredVerificationKind(in: query),
+              executed.contains(where: { $0.success && !$0.isVerification }) else {
+            return false
+        }
+        return !executed.contains {
+            $0.success && $0.isVerification
+                && $0.command.contains("verify_outcome(\(requiredKind),")
+        }
+    }
+
+    static func explicitVerificationPrompt(originalQuery: String) -> String {
+        let kind = requiredVerificationKind(in: originalQuery) ?? "the requested kind"
+        return """
+        SYSTEM NOTE — the verification criterion must match the user's request.
+
+        The user explicitly requested `\(kind)`. A different or opposite verification cannot
+        satisfy that criterion, even if it succeeds. Call verify_outcome with kind `\(kind)`
+        and the path from the original request. Report success only if that exact check passes;
+        otherwise report that the requested criterion failed.
+
+        Original request: "\(originalQuery)"
+        """
+    }
+
+    /// Runs the exact typed criterion requested by the user. This is a postcondition, not a
+    /// second chance for the model to reinterpret words or filenames.
+    static func executeRequiredVerification(
+        query: String,
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32)
+    ) async -> (answer: String, receipt: AIProviderService.ExecutedCommand)? {
+        guard let kind = requiredVerificationKind(in: query),
+              let path = explicitVerificationPath(in: query),
+              let result = await AgentToolRegistry.shared.dispatch(
+                name: "verify_outcome",
+                arguments: ["kind": kind, "path": path],
+                context: AgentToolContext(commandExecutor: commandExecutor)
+              )
+        else { return nil }
+
+        let status = result.success ? "passed" : "failed"
+        return (
+            "Verification \(status): \(result.output)",
+            AIProviderService.ExecutedCommand(
+                command: result.displayCommand,
+                output: result.output,
+                success: result.success,
+                isVerification: true
+            )
+        )
+    }
+
+    /// Narrow deterministic contract for requests shaped as "Run X, then/but verify Y".
+    /// This is intentionally not a general NL-to-shell parser; it only prevents the agent
+    /// from skipping an exact command the user explicitly supplied.
+    static func explicitlyRequestedCommand(in query: String) -> String? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.lowercased().hasPrefix("run "),
+              trimmed.range(of: "verify", options: .caseInsensitive) != nil else {
+            return nil
+        }
+        let afterRun = String(trimmed.dropFirst(4))
+        let separators = [", but verify", ", then verify", " and verify", "; verify"]
+        let boundary = separators.compactMap {
+            afterRun.range(of: $0, options: .caseInsensitive)?.lowerBound
+        }.min()
+        let command = String(boundary.map { afterRun[..<$0] } ?? afterRun[...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return command.isEmpty ? nil : command
+    }
+
+    static func explicitExecutionIsMissing(
+        query: String,
+        executed: [AIProviderService.ExecutedCommand]
+    ) -> Bool {
+        guard let command = explicitlyRequestedCommand(in: query) else { return false }
+        return !executed.contains {
+            !$0.isVerification && $0.command == "run_command(\(command))"
+        }
+    }
+
+    static func explicitExecutionPrompt(originalQuery: String) -> String {
+        let command = explicitlyRequestedCommand(in: originalQuery) ?? ""
+        let verificationKind = requiredVerificationKind(in: originalQuery)
+        let verificationInstruction = verificationKind.map {
+            "After it runs, call verify_outcome with kind `\($0)` and the original path."
+        } ?? "After it runs, perform the verification the user requested."
+        return """
+        SYSTEM NOTE — an explicitly requested execution was skipped.
+
+        The user explicitly asked to run `\(command)`. Call run_command with exactly that
+        command now. Do not omit it merely because it has no output or does not affect the
+        later criterion. \(verificationInstruction) Report both outcomes honestly.
+
+        Original request: "\(originalQuery)"
+        """
+    }
+
+    /// Enforces the narrow `Run X, ... verify PATH exists` contract without asking the
+    /// model to remember the skipped action a second time. The command still goes through
+    /// TerminalCommandExecutor, including its classifier and approval gate. Verification is
+    /// then repeated after execution so the receipt describes post-action state.
+    static func executeMissingExplicitContract(
+        query: String,
+        executed: [AIProviderService.ExecutedCommand],
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32)
+    ) async -> (answer: String, additions: [AIProviderService.ExecutedCommand])? {
+        guard explicitExecutionIsMissing(query: query, executed: executed),
+              let command = explicitlyRequestedCommand(in: query)
+        else { return nil }
+
+        let (commandSucceeded, commandOutput, _) = await commandExecutor(
+            command,
+            "Run the command explicitly requested by the user before verification.",
+            false
+        )
+        var additions = [AIProviderService.ExecutedCommand(
+            command: "run_command(\(command))",
+            output: commandOutput,
+            success: commandSucceeded
+        )]
+
+        guard let kind = requiredVerificationKind(in: query),
+              let path = explicitVerificationPath(in: query),
+              let result = await AgentToolRegistry.shared.dispatch(
+                name: "verify_outcome",
+                arguments: ["kind": kind, "path": path],
+                context: AgentToolContext(commandExecutor: commandExecutor)
+              )
+        else {
+            let status = commandSucceeded ? "succeeded" : "failed"
+            return ("The requested command `\(command)` \(status).", additions)
+        }
+
+        additions.append(AIProviderService.ExecutedCommand(
+            command: result.displayCommand,
+            output: result.output,
+            success: result.success,
+            isVerification: true
+        ))
+        let commandStatus = commandSucceeded ? "succeeded" : "failed"
+        let verificationStatus = result.success ? "passed" : "failed"
+        return (
+            "The command `\(command)` \(commandStatus). Verification \(verificationStatus): \(result.output)",
+            additions
+        )
+    }
+
+    private static func explicitVerificationPath(in query: String) -> String? {
+        guard let verifyRange = query.range(of: "verify", options: .caseInsensitive) else {
+            return nil
+        }
+        let clause = query[verifyRange.upperBound...]
+        let punctuation = CharacterSet(charactersIn: ".,;:!?\"'()[]{}")
+        return clause.split(whereSeparator: { $0.isWhitespace })
+            .map { String($0).trimmingCharacters(in: punctuation) }
+            .first { $0.hasPrefix("/") }
+    }
+
     /// The correction turn. Hands the model the ground truth and asks for one honest rewrite.
     ///
     /// Deliberately not "try again" — a retry invites another guess. It states the fact and

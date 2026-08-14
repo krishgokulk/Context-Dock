@@ -2053,7 +2053,15 @@ extension LauncherView {
                                     {
                                         if let target = l2.targetApp {
                                             HStack(spacing: 0) {
-                                                Text("Ask \(target.name)")
+                                                // Same wording as the armed state above:
+                                                // in a Finder window the subject is the
+                                                // folder, and this branch is the one the
+                                                // open chat sheet renders.
+                                                Text(
+                                                    target.bundleId == ChatAppDirectory.finderBundleID
+                                                        ? contextDockChatPrompt
+                                                        : "Ask \(target.name)"
+                                                )
                                                     .foregroundStyle(.secondary.opacity(0.48))
                                                     .font(.system(size: 15, weight: .medium))
                                                     .lineLimit(1)

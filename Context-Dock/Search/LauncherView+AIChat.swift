@@ -1337,6 +1337,13 @@ extension LauncherView {
     }
 
     func contextDockChatTitle(appName: String, bundleId: String) -> String {
+        // In a Finder window the subject is the folder, not the file manager. "Chat with
+        // Finder" names the wrong thing twice over: it is not what the user wants to talk
+        // about, and it is not what the answer will be scoped to.
+        if bundleId == ChatAppDirectory.finderBundleID, isFinderFrontmostWindowContext() {
+            let name = currentFinderAIChatFolderURL.lastPathComponent
+            if !name.isEmpty { return name }
+        }
         guard isContextDockBrowserBundle(bundleId),
             let pageTitle = connectedBrowserPageGhostTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
             !pageTitle.isEmpty
@@ -5324,6 +5331,30 @@ extension LauncherView {
                             executed += verificationExecuted
                         }
                     }
+                    if AgentAnswerVerifier.explicitVerificationIsMissingOrMismatched(
+                        query: query, executed: executed)
+                    {
+                        await self.setL2LoadingStatus(
+                            "Checking the requested criterion…", requestID: l2RequestID)
+                        if let verification = await AgentAnswerVerifier.executeRequiredVerification(
+                            query: query, commandExecutor: commandExecutor
+                        ) {
+                            finalResponse = verification.answer
+                            executed.append(verification.receipt)
+                        }
+                    }
+                    if AgentAnswerVerifier.explicitExecutionIsMissing(
+                        query: query, executed: executed)
+                    {
+                        await self.setL2LoadingStatus(
+                            "Running the requested command…", requestID: l2RequestID)
+                        if let repair = await AgentAnswerVerifier.executeMissingExplicitContract(
+                            query: query, executed: executed, commandExecutor: commandExecutor
+                        ) {
+                            finalResponse = repair.answer
+                            executed += repair.additions
+                        }
+                    }
 
                     var toolsRan = memoryToolChips + (await mcpRan.tools)
                         + executed.map(\.command)
@@ -6962,6 +6993,33 @@ extension LauncherView {
                             )
                         finalResponse = verified
                         executed += verificationExecuted
+                    }
+                    if AgentAnswerVerifier.explicitVerificationIsMissingOrMismatched(
+                        query: query, executed: executed)
+                    {
+                        await MainActor.run {
+                            aiMode.loadingStatus = "Checking the requested criterion…"
+                        }
+                        if let verification = await AgentAnswerVerifier.executeRequiredVerification(
+                            query: query, commandExecutor: generalCommandExecutor
+                        ) {
+                            finalResponse = verification.answer
+                            executed.append(verification.receipt)
+                        }
+                    }
+                    if AgentAnswerVerifier.explicitExecutionIsMissing(
+                        query: query, executed: executed)
+                    {
+                        await MainActor.run {
+                            aiMode.loadingStatus = "Running the requested command…"
+                        }
+                        if let repair = await AgentAnswerVerifier.executeMissingExplicitContract(
+                            query: query, executed: executed,
+                            commandExecutor: generalCommandExecutor
+                        ) {
+                            finalResponse = repair.answer
+                            executed += repair.additions
+                        }
                     }
 
                     await MainActor.run {

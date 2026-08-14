@@ -893,6 +893,14 @@ final class GeneralAIActionResolver {
         let before = range.lowerBound == text.startIndex
             ? nil : text[text.index(before: range.lowerBound)]
         let after = range.upperBound == text.endIndex ? nil : text[range.upperBound]
+        // An app name inside a filesystem/URL-style token is data, not an app target.
+        // `/tmp/context-dock-verification.txt` used to resolve as the Context-Dock app and
+        // interrupt a shell task with an unrelated "Enable Context-Dock" permission card.
+        let pathJoiners: Set<Character> = ["/", "\\", "-", "_", "."]
+        guard before.map({ !pathJoiners.contains($0) }) ?? true,
+              after.map({ !pathJoiners.contains($0) }) ?? true else {
+            return nil
+        }
         let boundary = { (c: Character?) in c == nil || !(c!.isLetter || c!.isNumber) }
         guard boundary(before), boundary(after) else { return nil }
         return text.distance(from: text.startIndex, to: range.lowerBound)

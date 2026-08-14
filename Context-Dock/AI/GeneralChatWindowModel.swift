@@ -253,9 +253,15 @@ final class GeneralChatWindowModel: ObservableObject {
         {
             GeneralChatWindowChromeState.shared.showBottomPanel()
         }
+        // Files the answer named, as rows with Open / Show in Finder — the same treatment
+        // the general chat already gives them, now that a scoped answer can carry them.
+        let named = answer.files.isEmpty
+            ? AppScopedChatService.mentionedFiles(in: answer.text)
+            : answer.files
         deliver(
             AIChatMessage(
                 role: .assistant, content: answer.text,
+                recentFiles: named.map { RecentFileAction(url: $0) },
                 mcpToolsRan: answer.toolChips,
                 enableAppRequest: answer.enableApp,
                 actionChoices: answer.routeChoices),
