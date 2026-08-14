@@ -537,6 +537,85 @@ final class AgentToolRegistry {
         })
 
         register(AgentTool(
+            name: "verify_outcome",
+            description: "Read back filesystem state after an action. Every criterion starts "
+                + "failing; call this after work that creates, removes, or changes a file and "
+                + "before claiming completion. This tool is read-only and cannot run commands.",
+            properties: [
+                "kind": [
+                    "type": "string",
+                    "enum": [
+                        "file_exists", "file_does_not_exist", "file_contains", "file_equals",
+                    ],
+                    "description": "The exact read-only verification to perform",
+                ],
+                "path": ["type": "string", "description": "Absolute path to verify"],
+                "expected_text": [
+                    "type": "string",
+                    "description": "Required only for file_contains",
+                ],
+            ],
+            required: ["kind", "path"]
+        ) { arguments, _ in
+            guard let kind = arguments["kind"] as? String,
+                  let rawPath = arguments["path"] as? String,
+                  rawPath.hasPrefix("/")
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "Verification requires a supported kind and an absolute path.",
+                    displayCommand: "verify_outcome(invalid)")
+            }
+
+            let path = NSString(string: rawPath).standardizingPath
+            let fileManager = FileManager.default
+            let passed: Bool
+            let observation: String
+            switch kind {
+            case "file_exists":
+                passed = fileManager.fileExists(atPath: path)
+                observation = passed ? "File exists at \(path)." : "No file exists at \(path)."
+            case "file_does_not_exist":
+                passed = !fileManager.fileExists(atPath: path)
+                observation = passed ? "No file exists at \(path)." : "A file still exists at \(path)."
+            case "file_contains":
+                guard let expected = arguments["expected_text"] as? String else {
+                    return AgentToolResult(
+                        success: false,
+                        output: "file_contains requires expected_text.",
+                        displayCommand: "verify_outcome(file_contains, \(path))")
+                }
+                let contents = try? String(contentsOfFile: path, encoding: .utf8)
+                passed = contents?.contains(expected) == true
+                observation = passed
+                    ? "File at \(path) contains the expected text."
+                    : "File at \(path) does not contain the expected text."
+            case "file_equals":
+                guard let expected = arguments["expected_text"] as? String else {
+                    return AgentToolResult(
+                        success: false,
+                        output: "file_equals requires expected_text.",
+                        displayCommand: "verify_outcome(file_equals, \(path))")
+                }
+                let contents = try? String(contentsOfFile: path, encoding: .utf8)
+                passed = contents == expected
+                observation = passed
+                    ? "File at \(path) exactly matches the expected text."
+                    : "File at \(path) does not exactly match the expected text."
+            default:
+                return AgentToolResult(
+                    success: false,
+                    output: "Unsupported verification kind: \(kind).",
+                    displayCommand: "verify_outcome(\(kind), \(path))")
+            }
+
+            return AgentToolResult(
+                success: passed,
+                output: observation,
+                displayCommand: "verify_outcome(\(kind), \(path))")
+        })
+
+        register(AgentTool(
             name: "spawn_worker",
             description: "Start a long-running command in the background without waiting for it "
                 + "to finish. Use for media players, downloaders, timers, and any process that "

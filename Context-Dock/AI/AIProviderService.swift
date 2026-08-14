@@ -1159,6 +1159,19 @@ class AIProviderService: ObservableObject {
         let command: String
         let output: String
         let success: Bool
+        let isVerification: Bool
+
+        init(
+            command: String,
+            output: String,
+            success: Bool,
+            isVerification: Bool = false
+        ) {
+            self.command = command
+            self.output = output
+            self.success = success
+            self.isVerification = isVerification
+        }
     }
 
     // MARK: - Tool-Use Dispatcher

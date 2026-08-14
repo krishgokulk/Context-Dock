@@ -108,7 +108,10 @@ extension AIProviderService {
                         output = result.output
                         exitCode = result.exitCode
                         executedCommands.append(ExecutedCommand(
-                            command: result.displayCommand, output: output, success: success))
+                            command: result.displayCommand,
+                            output: output,
+                            success: success,
+                            isVerification: tc.function.name == "verify_outcome"))
                     } else {
                         // Not a registered tool — an L2 extension, resolved by name at run time.
                         (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
@@ -259,7 +262,10 @@ extension AIProviderService {
                     output = result.output
                     exitCode = result.exitCode
                     executedCommands.append(ExecutedCommand(
-                        command: result.displayCommand, output: output, success: success))
+                        command: result.displayCommand,
+                        output: output,
+                        success: success,
+                        isVerification: toolName == "verify_outcome"))
                 } else {
                     // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: toolName, arguments: args)
@@ -364,7 +370,10 @@ extension AIProviderService {
                     output = result.output
                     exitCode = result.exitCode
                     executedCommands.append(ExecutedCommand(
-                        command: result.displayCommand, output: output, success: success))
+                        command: result.displayCommand,
+                        output: output,
+                        success: success,
+                        isVerification: fc.name == "verify_outcome"))
                 } else {
                     // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: fc.name, arguments: args)

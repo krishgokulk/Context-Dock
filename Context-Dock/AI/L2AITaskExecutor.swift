@@ -81,6 +81,7 @@ class L2AITaskExecutor: ObservableObject {
             case fileExists
             case fileDoesNotExist
             case fileContains
+            case fileEquals
         }
 
         let kind: Kind
@@ -586,7 +587,7 @@ class L2AITaskExecutor: ObservableObject {
               "toolOptions": ["tool_a", "tool_b"],
               "command": "actual terminal command to execute (use {tool} if toolOptions provided)",
               "verification": {
-                "kind": "commandSucceeded | fileExists | fileDoesNotExist | fileContains",
+                "kind": "commandSucceeded | fileExists | fileDoesNotExist | fileContains | fileEquals",
                 "path": "absolute output path, required for file checks",
                 "expectedText": "required only for fileContains"
               }
@@ -681,6 +682,12 @@ class L2AITaskExecutor: ObservableObject {
             summary = passed
                 ? "File contains the expected text at \(resolvedPath ?? "missing path")."
                 : "Expected text was not found at \(resolvedPath ?? "missing path")."
+        case .fileEquals:
+            let contents = resolvedPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+            passed = method.expectedText.map { contents == $0 } ?? false
+            summary = passed
+                ? "File exactly matches the expected text at \(resolvedPath ?? "missing path")."
+                : "File does not exactly match the expected text at \(resolvedPath ?? "missing path")."
         }
 
         return (

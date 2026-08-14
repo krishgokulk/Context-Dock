@@ -3662,6 +3662,15 @@ extension LauncherView {
         }
         let scopedBundleId = scope.scopedBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         if !scopedBundleId.isEmpty {
+            // Finder is not one place. A chat about Downloads and a chat about a project
+            // folder are different conversations, and keying both to com.apple.finder put
+            // them in one thread that made sense in neither. Keyed by folder, the dock and
+            // the window's Folders row are the same conversation.
+            if scopedBundleId == ChatAppDirectory.finderBundleID,
+                isFinderFrontmostWindowContext()
+            {
+                return "dock_folder_\(currentFinderAIChatFolderURL.path)"
+            }
             return "dock_app_\(scopedBundleId)"
         }
         let appName = scope.scopedAppName.trimmingCharacters(in: .whitespacesAndNewlines)

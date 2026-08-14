@@ -975,6 +975,20 @@ extension LauncherView {
         return URL(fileURLWithPath: currentFinderFolderPath()).standardizedFileURL
     }
 
+    /// What the dock's chat field offers to talk about.
+    ///
+    /// "Ask Finder" is the wrong noun in a Finder window: nobody wants to ask the file
+    /// manager anything — they want to ask about the folder they are looking at, which is
+    /// also the scope the answer will actually use. Naming the folder says which one, so
+    /// the same phrasing is honest in Downloads and in a project directory.
+    var contextDockChatPrompt: String {
+        if isFinderFrontmostWindowContext() {
+            let name = currentFinderAIChatFolderURL.lastPathComponent
+            return name.isEmpty ? "Ask about this folder" : "Ask about \(name)"
+        }
+        return "Ask \(contextDockChatDraftAppName)"
+    }
+
     /// Mirrors the trailing Finder `+` for keyboard users. Empty-field Right Arrow opens
     /// the persistent folder thread; it no longer enables the retired folder-search mode.
     @discardableResult

@@ -146,9 +146,11 @@ enum GeneralChatSessionStore {
         switch scope {
         case .app(let bundleId): return "dock_app_\(bundleId)"
         case .cli(let command): return "dock_app_cli://\(command.lowercased())"
-        // A folder thread has no dock counterpart to share a file with — the dock scopes
-        // by bundle id, and a directory has none. Its conversation lives in this store.
-        case .folder: return nil
+        // The dock's Finder-window chat is this same conversation: ask about the folder
+        // in the dock, press the window glyph, and the thread that opens must be the one
+        // you were just having. Threads written before this shared key existed are merged
+        // in by migratedIfNeeded, so nothing said earlier is lost.
+        case .folder(let path): return "dock_folder_\(path)"
         case .general, .thread: return nil
         }
     }

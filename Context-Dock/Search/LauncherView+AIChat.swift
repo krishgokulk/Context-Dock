@@ -5302,6 +5302,28 @@ extension LauncherView {
                             executed += correctionExecuted
                         }
                     }
+                    if AgentAnswerVerifier.claimsUnverifiedWork(
+                        answer: finalResponse, executed: executed)
+                    {
+                        await self.setL2LoadingStatus(
+                            "Verifying the result…", requestID: l2RequestID)
+                        let verification = AgentAnswerVerifier.verificationPrompt(
+                            originalQuery: query, answer: finalResponse)
+                        if let (verified, verificationExecuted) = try? await AIProviderService.shared
+                            .sendWithTools(
+                                verification,
+                                context: scopedConversationContext,
+                                provider: provider,
+                                apiKey: apiKey,
+                                conversationHistory: chatHistory,
+                                commandExecutor: commandExecutor,
+                                additionalSystemPrompt: activeContextPrompt.isEmpty
+                                    ? nil : activeContextPrompt
+                            ) {
+                            finalResponse = verified
+                            executed += verificationExecuted
+                        }
+                    }
 
                     var toolsRan = memoryToolChips + (await mcpRan.tools)
                         + executed.map(\.command)
@@ -6921,6 +6943,25 @@ extension LauncherView {
                             )
                         finalResponse = corrected
                         executed += correctionExecuted
+                    }
+                    if AgentAnswerVerifier.claimsUnverifiedWork(
+                        answer: finalResponse, executed: executed)
+                    {
+                        await MainActor.run { aiMode.loadingStatus = "Verifying the result…" }
+                        let verification = AgentAnswerVerifier.verificationPrompt(
+                            originalQuery: query, answer: finalResponse)
+                        let (verified, verificationExecuted) =
+                            try await AIProviderService.shared.sendWithTools(
+                                verification,
+                                context: .none,
+                                provider: toolProvider,
+                                apiKey: toolAPIKey,
+                                conversationHistory: history,
+                                commandExecutor: generalCommandExecutor,
+                                additionalSystemPrompt: toolSystemPrompt
+                            )
+                        finalResponse = verified
+                        executed += verificationExecuted
                     }
 
                     await MainActor.run {

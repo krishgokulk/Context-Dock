@@ -2027,7 +2027,7 @@ extension LauncherView {
                                                     .font(.system(size: 15, weight: .regular))
                                                     .lineLimit(1)
                                             } else {
-                                                Text("Ask \(contextDockChatDraftAppName)")
+                                                Text(contextDockChatPrompt)
                                                     .foregroundStyle(.secondary.opacity(0.55))
                                                     .font(.system(size: 15, weight: .medium))
                                                     .lineLimit(1)

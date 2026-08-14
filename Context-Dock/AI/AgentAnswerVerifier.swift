@@ -56,6 +56,36 @@ enum AgentAnswerVerifier {
         return assertsCompletedAction(in: answer)
     }
 
+    /// A successful tool call proves execution, not the requested outcome. Completed-action
+    /// claims need an explicit read-back criterion from the shared typed verification tool.
+    static func claimsUnverifiedWork(
+        answer: String,
+        executed: [AIProviderService.ExecutedCommand]
+    ) -> Bool {
+        guard assertsCompletedAction(in: answer),
+              executed.contains(where: { $0.success && !$0.isVerification }) else {
+            return false
+        }
+        return !executed.contains(where: { $0.success && $0.isVerification })
+    }
+
+    static func verificationPrompt(originalQuery: String, answer: String) -> String {
+        """
+        SYSTEM NOTE — outcome verification required.
+
+        A tool executed, but execution is not proof that the user's requested outcome now
+        exists. Your draft claims completion without a successful typed verification:
+        "\(answer.prefix(500))"
+
+        Call verify_outcome now with the narrowest read-only criterion that proves the result.
+        Do not use run_command, cat, test, ls, or another mutation as a substitute. If the
+        criterion fails, say the task is not complete and report the observed state. Only claim
+        success after verify_outcome returns status: ok.
+
+        Original request: "\(originalQuery)"
+        """
+    }
+
     /// The correction turn. Hands the model the ground truth and asks for one honest rewrite.
     ///
     /// Deliberately not "try again" — a retry invites another guess. It states the fact and
