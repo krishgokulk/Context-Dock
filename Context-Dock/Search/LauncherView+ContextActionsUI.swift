@@ -931,17 +931,12 @@ extension LauncherView {
                 : "Add \(folderName) as AI context — all queries will be scoped to this folder")
     }
 
-    /// Takes the folder Finder is showing and makes it a thread in the chat window.
-    ///
-    /// Deliberately not what "+" does. "+" scopes the dock's next question to this folder
-    /// and forgets it when the dock closes; this opens a conversation about the folder that
-    /// keeps its history, its file tools and its own artifacts — the same folder reached
-    /// from the window's own picker. One is a scope on a query, the other is a place to
-    /// come back to, and collapsing them would cost the user the difference.
+    /// Opens a persistent AI thread for the folder Finder is showing. In Finder's
+    /// desktop-only mode, Desktop itself is the scope. The general chat window owns this
+    /// conversation so folder history, file tools, and the right-side preview stay together.
     @ViewBuilder
     var openFinderFolderInChatWindowButton: some View {
-        let folderPath = currentFinderFolderPath()
-        let folderURL = URL(fileURLWithPath: folderPath).standardizedFileURL
+        let folderURL = currentFinderAIChatFolderURL
         let folderName =
             folderURL.lastPathComponent.isEmpty ? "this folder" : folderURL.lastPathComponent
         let isOpen = GeneralChatWindowModel.shared.sessions.contains {
@@ -949,27 +944,89 @@ extension LauncherView {
         }
 
         Button {
-            GeneralChatWindowModel.shared.openFolderSession(folderURL)
-            GeneralChatWindowController.shared.show()
-            searchState.query = ""
-            isSearchFieldFocused = false
-            AppDelegate.shared?.hideLauncher(force: true)
+            _ = openCurrentFinderFolderAIChatIfNeeded()
         } label: {
-            Image(systemName: isOpen ? "macwindow.badge.plus" : "macwindow")
-                .font(.system(size: 10, weight: .bold))
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(
                     isOpen
                         ? AnyShapeStyle(Color.green.opacity(0.9))
                         : AnyShapeStyle(.secondary.opacity(0.70))
                 )
-                .frame(width: 22, height: 22)
+                .frame(width: 28, height: 28)
                 .background(Color.white.opacity(0.07), in: Circle())
         }
         .buttonStyle(.plain)
         .help(
             isOpen
-                ? "Open the \(folderName) thread in the chat window"
-                : "Chat with \(folderName) — a thread with this folder's files and history")
+                ? "Open the \(folderName) AI chat"
+                : "Chat with \(folderName) in the AI window")
+    }
+
+    /// The stable folder scope represented by Finder right now. Finder returns its last
+    /// browser directory even when every window is closed, so desktop-only mode must not
+    /// trust that cached value: its visible place is always `~/Desktop`.
+    var currentFinderAIChatFolderURL: URL {
+        if isFinderDesktopOnlyMode {
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Desktop", isDirectory: true)
+                .standardizedFileURL
+        }
+        return URL(fileURLWithPath: currentFinderFolderPath()).standardizedFileURL
+    }
+
+    /// Mirrors the trailing Finder `+` for keyboard users. Empty-field Right Arrow opens
+    /// the persistent folder thread; it no longer enables the retired folder-search mode.
+    @discardableResult
+    func openCurrentFinderFolderAIChatIfNeeded() -> Bool {
+        guard showContextInDock,
+            !isGlobalContextActive,
+            isFinderFrontmostWindowContext()
+        else { return false }
+
+        let folderURL = currentFinderAIChatFolderURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: folderURL.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return false }
+
+        GeneralChatWindowModel.shared.openFolderSession(folderURL)
+        GeneralChatWindowController.shared.show()
+        searchState.query = ""
+        isSearchFieldFocused = false
+        AppDelegate.shared?.hideLauncher(force: true)
+        return true
+    }
+
+    /// Sends an unmatched Finder-window query to the same persistent folder thread opened
+    /// by the trailing `+`. Real Finder menu/file rows get first refusal in the keyboard
+    /// handlers; this is the natural-language fallback once none of those executed.
+    @discardableResult
+    func submitCurrentFinderFolderAIQueryIfNeeded(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            showContextInDock,
+            !isGlobalContextActive,
+            isFinderFrontmostWindowContext()
+        else { return false }
+
+        let folderURL = currentFinderAIChatFolderURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: folderURL.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return false }
+
+        let model = GeneralChatWindowModel.shared
+        model.openFolderSession(folderURL)
+        model.input = trimmed
+        model.send()
+        GeneralChatWindowController.shared.show()
+        searchState.query = ""
+        isSearchFieldFocused = false
+        AppDelegate.shared?.hideLauncher(force: true)
+        return true
     }
 
     @ViewBuilder

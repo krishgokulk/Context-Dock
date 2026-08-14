@@ -74,10 +74,12 @@ enum FolderScopeDigest {
             lines.append("The folder is empty.")
         } else {
             let shown = entries.prefix(entryLimit)
-            lines.append("Contents, newest first:")
-            for entry in shown {
-                lines.append("- \(describe(entry))")
-            }
+            // Filenames are attacker-controllable in the ordinary case of a downloaded
+            // file, so the listing is quoted rather than stated.
+            lines.append(
+                UntrustedContent.fenced(
+                    shown.map { "- \(describe($0))" }.joined(separator: "\n"),
+                    from: "folder listing"))
             if entries.count > shown.count {
                 lines.append(
                     "…and \(entries.count - shown.count) more. Use finder.listFolder or "

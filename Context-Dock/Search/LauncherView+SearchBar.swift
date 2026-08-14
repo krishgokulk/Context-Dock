@@ -2334,6 +2334,9 @@ extension LauncherView {
                                             if executeFirstAttachedFinderFolderResultIfNeeded() {
                                                 return
                                             }
+                                            if submitCurrentFinderFolderAIQueryIfNeeded(trimmed) {
+                                                return
+                                            }
                                             if launchTypedAppMatchIfNeeded() {
                                                 return
                                             }
@@ -2641,9 +2644,9 @@ extension LauncherView {
                                     }
                                 }
                             } else if showContextInDock {
-                                // "+" affordance per frontmost app: Finder window → attach the
-                                // current folder for search; any other app → connect frontmost-app
-                                // chat. Pressing → (or the button) turns the "+" into "−".
+                                // "+" affordance per frontmost app: Finder → open a persistent
+                                // AI chat for the current folder (or Desktop when no window is
+                                // open); any other app → connect frontmost-app chat.
                                 // A live selection shows its icon to the RIGHT of the "+".
                                 HStack(spacing: 6) {
                                     if isContextDockChatConnected {
@@ -2653,14 +2656,7 @@ extension LauncherView {
                                             frontmost.bundleID == "com.apple.finder"
                                             || l2.targetApp?.bundleId == "com.apple.finder"
                                         if finderContext {
-                                            // Finder window present (not desktop-only) → "+" attaches
-                                            // the current folder for recursive/content search.
-                                            if canAttachCurrentFinderFolderToConversation {
-                                                addFinderFolderButton
-                                                // Same folder, the other job: a thread
-                                                // rather than a scope on this query.
-                                                openFinderFolderInChatWindowButton
-                                            }
+                                            openFinderFolderInChatWindowButton
                                         } else if l2.targetApp == nil, !frontmost.bundleID.isEmpty,
                                             frontmost.bundleID != Bundle.main.bundleIdentifier
                                         {

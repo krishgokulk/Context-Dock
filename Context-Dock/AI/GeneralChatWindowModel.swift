@@ -154,11 +154,22 @@ final class GeneralChatWindowModel: ObservableObject {
         sessions = GeneralChatSessionStore.index()
     }
 
+    /// Preserve the shared General transcript before replacing it with a clean chat.
+    private func archiveGeneralConversationIfNeeded() {
+        guard activeScope == .general, !messages.isEmpty else { return }
+        let archivedScope = GeneralChatScope.thread(id: UUID().uuidString.lowercased())
+        let firstQuestion = messages.first(where: { $0.role == .user })?.content
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let title = firstQuestion.isEmpty ? "New chat" : String(firstQuestion.prefix(52))
+        GeneralChatSessionStore.save(messages, scope: archivedScope, title: title)
+        GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: archivedScope)
+    }
+
     /// True when the scope's app is running (or its CLI binary is installed) — the
     /// sidebar dims what is not currently there without hiding it.
     func isScopeLive(_ scope: GeneralChatScope) -> Bool {
         switch scope {
-        case .general:
+        case .general, .thread:
             return true
         case .app(let bundleId):
             return !NSRunningApplication
@@ -177,7 +188,7 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Heading for the side panel: the thread's own name, not a generic "Details".
     var activeScopeTitle: String {
         switch activeScope {
-        case .general: return "Details"
+        case .general, .thread: return "Details"
         case .cli(let command): return command
         case .folder(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .app: return activeScopeAppName ?? "Details"
@@ -193,7 +204,7 @@ final class GeneralChatWindowModel: ObservableObject {
 
     var activeScopeSymbol: String {
         switch activeScope {
-        case .general: return "bubble.left.and.bubble.right"
+        case .general, .thread: return "bubble.left.and.bubble.right"
         case .cli: return "terminal"
         case .folder: return "folder"
         case .app: return "app.dashed"
@@ -203,7 +214,7 @@ final class GeneralChatWindowModel: ObservableObject {
     /// What the visible thread can reach — the same inventory its prompt is built from.
     var activeScopeInventory: ScopeInventory {
         switch activeScope {
-        case .general:
+        case .general, .thread:
             return ScopeInventory(
                 subtitle: "Unscoped chat. Attach an app to give it that app's tools.",
                 groups: [])
@@ -221,6 +232,8 @@ final class GeneralChatWindowModel: ObservableObject {
     var activeTitle: String {
         switch activeScope {
         case .general: return "General"
+        case .thread:
+            return sessions.first { $0.scope == activeScope }?.title ?? "Chat"
         case .cli(let command): return command
         case .folder(let path): return URL(fileURLWithPath: path).lastPathComponent
         case .app(let bundleId):
@@ -320,25 +333,19 @@ final class GeneralChatWindowModel: ObservableObject {
     func newChat() {
         guard activeScope == .general else {
             openGeneralSession()
-            input = ""
-            attachments = []
-            attachedAppNames = []
+            newChat()
             return
         }
         cancel()
+        archiveGeneralConversationIfNeeded()
         messages = []
         messageApps = [:]
         input = ""
         attachments = []
         attachedAppNames = []
         GeneralChatSessionStore.saveAttachedApps([], scope: activeScope)
-        // Clears the thread being shown, not every thread: with sessions, "New chat" on the
-        // Reminders session must not wipe the CLI ones beside it.
-        if activeScope == .general {
-            GeneralAIChatConversationStore.clear()
-        } else {
-            GeneralChatSessionStore.save([], scope: activeScope, title: activeTitle)
-        }
+        GeneralAIChatConversationStore.clear()
+        GeneralChatSessionStore.upsert(scope: .general, title: "General", messageCount: 0)
         sessions = GeneralChatSessionStore.index()
     }
 
@@ -388,7 +395,7 @@ final class GeneralChatWindowModel: ObservableObject {
         // The General thread is persisted on the way out and stays in the sidebar; the app
         // thread opens clean rather than inheriting a copy of a conversation that is
         // already readable one row above.
-        if activeScope == .general, let bundleId = Self.bundleId(forAppNamed: name) {
+        if activeScope.isGeneralChat, let bundleId = Self.bundleId(forAppNamed: name) {
             openSession(.app(bundleId: bundleId), title: name)
             return
         }

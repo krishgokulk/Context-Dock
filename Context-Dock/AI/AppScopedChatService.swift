@@ -645,7 +645,7 @@ enum AppScopedChatService {
             }
         }
 
-        var sections: [String] = [dateTimeBlock()]
+        var sections: [String] = [dateTimeBlock(), UntrustedContent.rule]
         var context: UserContext = .none
         /// The machine as it was before this turn ran anything, kept so a tool's claim can
         /// be checked against what actually changed.
@@ -678,7 +678,7 @@ enum AppScopedChatService {
             if !block.isEmpty { sections.append(block) }
             log.notice("context \(resolved.summary, privacy: .public)")
             if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
-                sections.append(history)
+                sections.append(UntrustedContent.fenced(history, from: "browser history"))
             }
             // The same block the dock builds for its scoped chat — adapter actions, menu
             // commands, MCP, API, Shortcuts, skills, CLI, and the tool-choice order.

@@ -701,11 +701,16 @@ enum FinderCoworkerCapabilities {
                 {
                     return .init(
                         success: true,
-                        output: converted.markdown
-                            + (converted.wasTruncated ? "\n\n…(truncated)" : ""))
+                        output: UntrustedContent.fenced(
+                            converted.markdown
+                                + (converted.wasTruncated ? "\n\n…(truncated)" : ""),
+                            from: url.lastPathComponent))
                 }
                 if let text = try? String(contentsOf: url, encoding: .utf8) {
-                    return .init(success: true, output: String(text.prefix(8_000)))
+                    return .init(
+                        success: true,
+                        output: UntrustedContent.fenced(
+                            String(text.prefix(8_000)), from: url.lastPathComponent))
                 }
                 return .init(success: false, output: "Couldn't read \(url.lastPathComponent) as text.")
             }

@@ -112,7 +112,7 @@ enum ContextResolver {
     /// belongs to this app; caches last, labelled as caches.
     static func resolve(scope: GeneralChatScope, appName: String) -> ResolvedContext {
         switch scope {
-        case .general:
+        case .general, .thread:
             return ResolvedContext(scope: scope, appName: appName, bundleId: "")
         case .cli(let command):
             return resolveCLI(scope: scope, command: command)

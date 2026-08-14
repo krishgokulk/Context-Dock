@@ -17,6 +17,8 @@ import Foundation
 
 /// What a session is scoped to. The raw value is the storage key, so it must stay stable.
 enum GeneralChatScope: Codable, Hashable {
+    /// A durable, unscoped conversation created from the General Chat window.
+    case thread(id: String)
     /// An installed app, by bundle identifier.
     case app(bundleId: String)
     /// A pinned CLI tool, by command.
@@ -34,6 +36,7 @@ enum GeneralChatScope: Codable, Hashable {
 
     var storageKey: String {
         switch self {
+        case .thread(let id): return "thread:\(id)"
         case .app(let bundleId): return "app:\(bundleId)"
         case .cli(let command): return "cli:\(command.lowercased())"
         case .folder(let path): return "folder:\(path)"
@@ -45,6 +48,13 @@ enum GeneralChatScope: Codable, Hashable {
     var folderURL: URL? {
         guard case .folder(let path) = self else { return nil }
         return URL(fileURLWithPath: path)
+    }
+
+    var isGeneralChat: Bool {
+        switch self {
+        case .general, .thread: return true
+        default: return false
+        }
     }
 
     /// The dock identifies a scope by bundle id, using a `cli://` prefix for tools. Given the
@@ -139,7 +149,7 @@ enum GeneralChatSessionStore {
         // A folder thread has no dock counterpart to share a file with — the dock scopes
         // by bundle id, and a directory has none. Its conversation lives in this store.
         case .folder: return nil
-        case .general: return nil
+        case .general, .thread: return nil
         }
     }
 
@@ -274,7 +284,7 @@ enum GeneralChatSessionStore {
             // The real folder icon, so a tagged or custom-iconed directory looks in the
             // sidebar the way it looks in Finder.
             return NSWorkspace.shared.icon(forFile: path)
-        case .general:
+        case .general, .thread:
             return NSImage(systemSymbolName: "bubble.left.and.bubble.right", accessibilityDescription: nil)
         }
     }

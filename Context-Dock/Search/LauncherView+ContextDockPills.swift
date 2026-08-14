@@ -895,13 +895,17 @@ extension LauncherView {
         let records = contextDockViewModel.finderDesktopSearchRecords
         contextDockViewModel.finderDesktopFastMatchTask = Task { @MainActor in
             let matches = await Task.detached(priority: .userInitiated) {
-                records.compactMap { record -> (String, Int)? in
+                records.compactMap { record -> (pathKey: String, score: Int, isDirectory: Bool)? in
                     guard let score = record.score(for: q) else { return nil }
-                    return (record.pathKey, score)
+                    return (record.pathKey, score, record.isDirectory)
                 }
                 .sorted {
-                    if $0.1 != $1.1 { return $0.1 > $1.1 }
-                    return $0.0 < $1.0
+                    // Finder desktop search is place-first: matching folders lead so Right
+                    // Arrow can drill into the likely destination before individual files.
+                    // Text quality still determines order inside each type.
+                    if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                    if $0.score != $1.score { return $0.score > $1.score }
+                    return $0.pathKey < $1.pathKey
                 }
                 .prefix(80)
                 .map { $0 }
@@ -914,7 +918,7 @@ extension LauncherView {
 
             var pills: [DockPill] = []
             pills.reserveCapacity(matches.count)
-            for (pathKey, score) in matches {
+            for (pathKey, score, _) in matches {
                 guard var pill = contextDockViewModel.finderDesktopPillsByPath[pathKey] else { continue }
                 pill.rankingScore = Double(score)
                 pills.append(pill)
@@ -1012,6 +1016,7 @@ extension LauncherView {
             let indexed = pills.enumerated().map { (order: $0.offset, pill: $0.element) }
             let groups = Dictionary(grouping: indexed) { finderDesktopTypeGroup($0.pill) }
             let groupOrder = groups.keys.sorted { a, b in
+                if a == "Folders" || b == "Folders" { return a == "Folders" }
                 let fa = groups[a]?.map { openCount($0.pill) }.max() ?? 0
                 let fb = groups[b]?.map { openCount($0.pill) }.max() ?? 0
                 if fa != fb { return fa > fb }
@@ -1037,6 +1042,9 @@ extension LauncherView {
         }
         let groups = Dictionary(grouping: scored) { finderDesktopTypeGroup($0.pill) }
         let groupOrder = groups.keys.sorted { a, b in
+            // Place-first Finder behavior: a matching directory is more useful than an
+            // individual file because it can be drilled into and scopes what follows.
+            if a == "Folders" || b == "Folders" { return a == "Folders" }
             let ma = groups[a]?.map(\.score).max() ?? 0
             let mb = groups[b]?.map(\.score).max() ?? 0
             if ma != mb { return ma > mb }

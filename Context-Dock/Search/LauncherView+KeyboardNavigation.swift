@@ -528,9 +528,11 @@ extension LauncherView {
                 {
                     return nil
                 }
-                // Right arrow always drives the "+" actions (attach folder / frontmost
+                // Right arrow always drives the "+" actions (Finder folder chat / frontmost
                 // chat). Selection Scope opens ONLY from clicking its trailing icon.
-                if self.attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
+                if self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    self.openCurrentFinderFolderAIChatIfNeeded()
+                {
                     return nil
                 }
                 if self.connectFrontmostAppChatFromEmptyFieldIfNeeded() {
@@ -1146,6 +1148,9 @@ extension LauncherView {
                 // launchTypedAppMatchIfNeeded here would fuzzy-launch e.g. "applica" → App Store.
                 if self.isFinderDesktopOnlyMode {
                     if self.executeFirstVisibleFinderDesktopPillIfNeeded() { return nil }
+                    if self.submitCurrentFinderFolderAIQueryIfNeeded(self.searchState.query) {
+                        return nil
+                    }
                     return event
                 }
 
@@ -1154,6 +1159,10 @@ extension LauncherView {
                 }
 
                 if self.executeFirstAttachedFinderFolderResultIfNeeded() {
+                    return nil
+                }
+
+                if self.submitCurrentFinderFolderAIQueryIfNeeded(self.searchState.query) {
                     return nil
                 }
 
@@ -1814,6 +1823,12 @@ extension LauncherView {
                     // Finder desktop scope never launches a typed app — file search only.
                     if isFinderDesktopOnlyMode {
                         if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
+                        if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
+                            return .handled
+                        }
+                        return .handled
+                    }
+                    if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
                         return .handled
                     }
                     // Enter runs the row the user is looking at. The highlighted row is what
@@ -2227,7 +2242,9 @@ extension LauncherView {
                     openSelectionContextFromTrailingButton()
                     return .handled
                 }
-                if attachCurrentFinderFolderFromEmptyFieldIfNeeded() {
+                if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    openCurrentFinderFolderAIChatIfNeeded()
+                {
                     return .handled
                 }
                 // In a browser with an empty field, right-arrow grabs the current

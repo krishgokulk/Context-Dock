@@ -29,6 +29,7 @@ class L2AITaskExecutor: ObservableObject {
         let query: String
         let context: FileContext?
         var todoList: [TaskStep] = []
+        var criteria: [TaskCriterion] = []
         var currentStepIndex: Int = 0
         var status: TaskStatus = .planning
         var result: String?
@@ -44,20 +45,84 @@ class L2AITaskExecutor: ObservableObject {
         }
         
         var progress: Double {
-            guard !todoList.isEmpty else { return 0 }
-            return Double(currentStepIndex) / Double(todoList.count)
+            guard !criteria.isEmpty else { return 0 }
+            return Double(criteria.filter { $0.status == .passed }.count) / Double(criteria.count)
         }
+    }
+
+    /// A task is incomplete until every required criterion has verifier-produced evidence.
+    /// Criteria deliberately start failing; command exit alone is not task completion.
+    struct TaskCriterion: Identifiable, Codable {
+        let id: UUID
+        let stepID: UUID
+        let description: String
+        let verification: VerificationMethod
+        var status: CriterionStatus = .failing
+        var evidence: VerificationEvidence?
+
+        init(stepID: UUID, description: String, verification: VerificationMethod) {
+            self.id = UUID()
+            self.stepID = stepID
+            self.description = description
+            self.verification = verification
+        }
+    }
+
+    enum CriterionStatus: String, Codable {
+        case failing
+        case passed
+    }
+
+    /// Closed set of read-only checks. The planner chooses a kind and arguments, but cannot
+    /// invent verification commands or silently perform another mutation.
+    struct VerificationMethod: Codable, Equatable {
+        enum Kind: String, Codable {
+            case commandSucceeded
+            case fileExists
+            case fileDoesNotExist
+            case fileContains
+        }
+
+        let kind: Kind
+        let path: String?
+        let expectedText: String?
+
+        static let commandSucceeded = VerificationMethod(
+            kind: .commandSucceeded, path: nil, expectedText: nil)
+    }
+
+    struct VerificationEvidence: Codable, Equatable {
+        let summary: String
+        let observedAt: Date
     }
     
     struct TaskStep: Identifiable, Codable {
-        let id = UUID()
+        let id: UUID
         let description: String
         let requiredTool: String?
         let toolOptions: [String]?
         let command: String?
+        let verification: VerificationMethod
         var status: StepStatus = .pending
         var output: String?
         var error: String?
+
+        init(
+            id: UUID = UUID(),
+            description: String,
+            requiredTool: String?,
+            toolOptions: [String]?,
+            command: String?,
+            verification: VerificationMethod = VerificationMethod(
+                kind: .commandSucceeded, path: nil, expectedText: nil)
+        ) {
+            self.id = id
+            self.description = description
+            self.requiredTool = requiredTool
+            self.toolOptions = toolOptions
+            self.command = command
+            self.verification = verification
+        }
         
         enum StepStatus: String, Codable {
             case pending
@@ -316,6 +381,22 @@ class L2AITaskExecutor: ObservableObject {
         #endif
         let todoList = try await analyzePlan(query: query, context: context, aiProvider: aiProvider)
         task.todoList = todoList
+        task.criteria = todoList.compactMap { step in
+            guard !step.description.localizedCaseInsensitiveContains("optional"),
+                  step.command != nil || step.verification.kind != .commandSucceeded else {
+                return nil
+            }
+            return TaskCriterion(
+                stepID: step.id,
+                description: "Verify: \(step.description)",
+                verification: step.verification)
+        }
+        guard !task.criteria.isEmpty else {
+            task.status = .failed
+            task.error = TaskError.noVerifiableCriteria.localizedDescription
+            currentTask = task
+            throw TaskError.noVerifiableCriteria
+        }
         task.status = .executingSteps
         currentTask = task
         
@@ -338,10 +419,12 @@ class L2AITaskExecutor: ObservableObject {
                 selectedTool = await chooseTool(for: step, options: options)
                 if let tool = selectedTool {
                     step = TaskStep(
+                        id: step.id,
                         description: "\(step.description) (Using \(tool))",
                         requiredTool: tool,
                         toolOptions: step.toolOptions,
-                        command: step.command?.replacingOccurrences(of: "{{tool}}", with: tool).replacingOccurrences(of: "{tool}", with: tool)
+                        command: step.command?.replacingOccurrences(of: "{{tool}}", with: tool).replacingOccurrences(of: "{tool}", with: tool),
+                        verification: step.verification
                     )
                 } else {
                     step.status = .failed
@@ -388,8 +471,16 @@ class L2AITaskExecutor: ObservableObject {
                 do {
                     let (success, output) = try await executeCommand(command)
                     step.output = output
-                    step.status = success ? .completed : .failed
-                    if !success {
+                    let verification = verify(
+                        step.verification,
+                        commandSucceeded: success,
+                        commandOutput: output)
+                    if let criterionIndex = task.criteria.firstIndex(where: { $0.stepID == step.id }) {
+                        task.criteria[criterionIndex].status = verification.passed ? .passed : .failing
+                        task.criteria[criterionIndex].evidence = verification.evidence
+                    }
+                    step.status = success && verification.passed ? .completed : .failed
+                    if !success || !verification.passed {
                         step.error = output
                     }
                     task.todoList[index] = step
@@ -397,6 +488,11 @@ class L2AITaskExecutor: ObservableObject {
                     
                     if !success && !step.description.contains("optional") {
                         throw TaskError.commandFailed(command, output)
+                    }
+                    if !verification.passed && !step.description.contains("optional") {
+                        throw TaskError.verificationFailed(
+                            step.description,
+                            verification.evidence.summary)
                     }
                 } catch {
                     step.status = .failed
@@ -409,9 +505,15 @@ class L2AITaskExecutor: ObservableObject {
             }
         }
         
-        // Step 4: Task completed successfully
+        // Step 4: Completion is earned only when every default-failing criterion passed.
+        guard !task.criteria.isEmpty, task.criteria.allSatisfy({ $0.status == .passed }) else {
+            task.status = .failed
+            task.error = TaskError.verificationIncomplete.localizedDescription
+            currentTask = task
+            throw TaskError.verificationIncomplete
+        }
         task.status = .completed
-        task.result = "Task completed successfully!"
+        task.result = "Task completed with \(task.criteria.count) verified criterion/criteria."
         
         // Step 5: Generate extension suggestion if applicable
         if shouldSuggestExtension(for: task) {
@@ -472,6 +574,8 @@ class L2AITaskExecutor: ObservableObject {
         3. Suggest tools if they're not installed (available via Homebrew)
         4. Create specific terminal commands for each step
         5. Prefer the best installed tool; if multiple tools fit, pick one and mention it in the step description
+        6. Give every command a read-only verification. Prefer checking the resulting file state
+           over merely checking the command exit status.
         
         RESPONSE FORMAT (JSON):
         {
@@ -480,7 +584,12 @@ class L2AITaskExecutor: ObservableObject {
               "description": "Clear description of what this step does",
               "requiredTool": "tool_name or null if not needed",
               "toolOptions": ["tool_a", "tool_b"],
-              "command": "actual terminal command to execute (use {tool} if toolOptions provided)"
+              "command": "actual terminal command to execute (use {tool} if toolOptions provided)",
+              "verification": {
+                "kind": "commandSucceeded | fileExists | fileDoesNotExist | fileContains",
+                "path": "absolute output path, required for file checks",
+                "expectedText": "required only for fileContains"
+              }
             }
           ]
         }
@@ -492,13 +601,19 @@ class L2AITaskExecutor: ObservableObject {
               "description": "Check if ImageMagick is installed",
               "requiredTool": "imagemagick",
               "toolOptions": null,
-              "command": null
+              "command": null,
+              "verification": null
             },
             {
               "description": "Compress image using ImageMagick",
               "requiredTool": "imagemagick",
               "toolOptions": null,
-              "command": "convert INPUT_FILE -quality 85 -strip OUTPUT_FILE"
+              "command": "convert INPUT_FILE -quality 85 -strip OUTPUT_FILE",
+              "verification": {
+                "kind": "fileExists",
+                "path": "OUTPUT_FILE",
+                "expectedText": null
+              }
             }
           ]
         }
@@ -526,9 +641,51 @@ class L2AITaskExecutor: ObservableObject {
                 description: stepData.description,
                 requiredTool: stepData.requiredTool,
                 toolOptions: stepData.toolOptions,
-                command: stepData.command
+                command: stepData.command,
+                verification: stepData.verification ?? .commandSucceeded
             )
         }
+    }
+
+    private func verify(
+        _ method: VerificationMethod,
+        commandSucceeded: Bool,
+        commandOutput: String
+    ) -> (passed: Bool, evidence: VerificationEvidence) {
+        let fileManager = FileManager.default
+        let resolvedPath = method.path.map {
+            NSString(string: $0).expandingTildeInPath
+        }
+        let passed: Bool
+        let summary: String
+
+        switch method.kind {
+        case .commandSucceeded:
+            passed = commandSucceeded
+            summary = commandSucceeded
+                ? "Command exited successfully."
+                : "Command failed: \(commandOutput.prefix(300))"
+        case .fileExists:
+            passed = resolvedPath.map(fileManager.fileExists(atPath:)) ?? false
+            summary = passed
+                ? "File exists at \(resolvedPath ?? "missing path")."
+                : "No file exists at \(resolvedPath ?? "missing path")."
+        case .fileDoesNotExist:
+            passed = resolvedPath.map { !fileManager.fileExists(atPath: $0) } ?? false
+            summary = passed
+                ? "No file exists at \(resolvedPath ?? "missing path")."
+                : "A file still exists at \(resolvedPath ?? "missing path")."
+        case .fileContains:
+            let contents = resolvedPath.flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+            passed = method.expectedText.map { contents?.contains($0) == true } ?? false
+            summary = passed
+                ? "File contains the expected text at \(resolvedPath ?? "missing path")."
+                : "Expected text was not found at \(resolvedPath ?? "missing path")."
+        }
+
+        return (
+            passed,
+            VerificationEvidence(summary: summary, observedAt: Date()))
     }
     
     private func extractJSON(from text: String) -> String? {
@@ -651,6 +808,7 @@ class L2AITaskExecutor: ObservableObject {
             let requiredTool: String?
             let toolOptions: [String]?
             let command: String?
+            let verification: VerificationMethod?
         }
     }
     
@@ -665,6 +823,9 @@ class L2AITaskExecutor: ObservableObject {
         case toolInstallationDeclined(String)
         case toolSelectionCancelled
         case commandFailed(String, String)
+        case noVerifiableCriteria
+        case verificationFailed(String, String)
+        case verificationIncomplete
         case extensionGenerationFailed
         
         var errorDescription: String? {
@@ -675,6 +836,12 @@ class L2AITaskExecutor: ObservableObject {
                 return "Tool selection was cancelled"
             case .commandFailed(let command, let output):
                 return "Command failed: \(command)\nOutput: \(output)"
+            case .noVerifiableCriteria:
+                return "The generated plan contained no executable, verifiable outcome."
+            case .verificationFailed(let step, let evidence):
+                return "Verification failed for '\(step)': \(evidence)"
+            case .verificationIncomplete:
+                return "The task stopped because one or more success criteria remain unverified."
             case .extensionGenerationFailed:
                 return "Failed to generate extension suggestion"
             }

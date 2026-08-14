@@ -130,7 +130,12 @@ enum FinderSearchCapabilities {
                         "\(skipped) file(s) were not read — the search stops at \(readBudget) "
                             + "to stay answerable. Narrow it with extensions or a subfolder.")
                 }
-                return .init(success: true, output: lines.joined(separator: "\n"))
+                // The matched lines are quoted out of the user's documents, so they are
+                // content to read rather than instructions to follow.
+                return .init(
+                    success: true,
+                    output: UntrustedContent.fenced(
+                        lines.joined(separator: "\n"), from: "search results"))
             }
         )
     }
