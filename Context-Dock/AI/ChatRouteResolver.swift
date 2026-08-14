@@ -168,6 +168,30 @@ enum ChatRouteResolver {
             return !words.isDisjoint(with: terms)
         }
 
+        /// A stricter test for commands that take the screen.
+        ///
+        /// One shared word is enough to match a tool that answers quietly and wrong; it is
+        /// not enough to justify driving someone's menu bar. "Open it" matched "File ▸ Open
+        /// and Close Window" on the word "open" alone, and a plan step that was supposed to
+        /// open a screenshot closed a window instead. So most of the command's own words
+        /// must be words the user said — short commands ("Open", "New Folder") still match
+        /// on one or two, while a four-word command needs real overlap.
+        func stronglyMatches(_ command: String) -> Bool {
+            // Glue words carry no intent and are everywhere: "and" is what let "Open and
+            // Close Window" clear the bar for "…and open it".
+            let glue: Set<String> = [
+                "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
+                "me", "my", "this", "that", "then", "please",
+            ]
+            let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter { !glue.contains($0) }
+            guard !words.isEmpty else { return false }
+            let matched = words.filter { terms.contains($0) && !glue.contains($0) }.count
+            if words.count <= 2 { return matched >= 1 }
+            return Double(matched) / Double(words.count) >= 0.5
+        }
+
         var routes: [ChatRoute] = []
 
         // CLI first: it answers without taking the screen, which is what the user usually
@@ -217,7 +241,7 @@ enum ChatRouteResolver {
             // Match the command, not its menu. Matching any path component is what put
             // "Edit ▸ Copy" and "Edit ▸ Delete" in front of a question about an IP address,
             // because both live under a menu whose name shares nothing with the request.
-            && item.path.last.map(matches) == true {
+            && item.path.last.map(stronglyMatches) == true {
             let path = item.path.joined(separator: " ▸ ")
             routes.append(
                 ChatRoute(
