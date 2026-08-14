@@ -193,23 +193,47 @@ final class AgentToolRegistry {
     static func capabilityInsteadOfShell(_ command: String) -> String? {
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         let home = NSHomeDirectory()
-        let userFolders = ["Desktop", "Documents", "Downloads"]
-        let touchesUserFolder = userFolders.contains { folder in
-            trimmed.contains("~/\(folder)") || trimmed.contains("\(home)/\(folder)")
-        }
+        // Anywhere in the user's own tree, not three named folders. A folder thread can be
+        // rooted at ~/Pictures/Screenshot or ~/Projects, and a shell rearrangement of those
+        // is exactly as unwanted as one of Desktop.
+        let touchesUserFolder = trimmed.contains("~/") || trimmed.contains(home + "/")
         guard touchesUserFolder else { return nil }
 
-        if trimmed.hasPrefix("mkdir ") {
+        // Chained commands are rejected by the gate anyway, but the redirect should name
+        // the right tool for what was intended rather than let the model discover the
+        // refusal one command at a time.
+        let verb = trimmed
+            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            .first.map(String.init) ?? ""
+
+        switch verb {
+        case "mkdir":
             return "Use run_capability with finder.newFolder for folders in the user's own "
                 + "folders — it previews the destination for approval and confirms the "
                 + "folder afterwards. Fields: destination (absolute parent path), name."
-        }
-        if trimmed.hasPrefix("rm ") || trimmed.hasPrefix("rm -") {
+        case "rm", "rmdir", "unlink":
             return "Use run_capability with finder.trash instead of rm for the user's own "
                 + "files — it is recoverable from the Trash and confirms the file is gone. "
                 + "Field: path."
+        case "mv":
+            // The case that failed in the wild: mkdir was refused, the model did not read
+            // the refusal, and two chained mv commands ran at folders that did not exist.
+            return "Use run_capability with finder.moveFiles to move the user's files — it "
+                + "acts on the selection or a named path, asks first, and reads the result "
+                + "back. Field: destination (absolute folder path). To tidy a whole folder "
+                + "into subfolders by kind or by month, use finder.organize instead: it "
+                + "creates the folders and moves everything in one approved step, so there "
+                + "is no half-done state when one command fails."
+        case "cp", "ditto":
+            return "Use run_capability with finder.copyFiles to copy the user's files — it "
+                + "asks first and confirms afterwards. Field: destination (absolute folder "
+                + "path)."
+        case "touch":
+            return "Creating empty files in the user's folders is not something the shell "
+                + "is allowed to do here. If the intent is a folder, use finder.newFolder."
+        default:
+            return nil
         }
-        return nil
     }
 
     func tool(named name: String) -> AgentTool? {

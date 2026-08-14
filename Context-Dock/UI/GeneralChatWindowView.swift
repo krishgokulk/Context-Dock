@@ -1246,7 +1246,13 @@ struct GeneralChatWindowView: View {
                 tabPill("Preview", tab: .preview, symbol: "doc.text")
             }
             if !artifactFiles.isEmpty {
-                tabPill("Artifacts", tab: .artifacts, symbol: "square.on.square")
+                // Counted, because a report filed by a capability says so in the answer and
+                // then sits behind a tab that looks identical whether it holds one document
+                // or none. A number is the difference between "it saved something" and
+                // having to go and check.
+                tabPill(
+                    "Artifacts", tab: .artifacts, symbol: "square.on.square",
+                    badge: artifactFiles.count)
             }
             Spacer(minLength: 0)
         }
@@ -1254,12 +1260,24 @@ struct GeneralChatWindowView: View {
         .padding(.top, 10)
     }
 
-    private func tabPill(_ title: String, tab: PanelTab, symbol: String) -> some View {
+    private func tabPill(
+        _ title: String, tab: PanelTab, symbol: String, badge: Int? = nil
+    ) -> some View {
         let active = effectivePanelTab == tab
         return Button { panelTab = tab } label: {
             HStack(spacing: 4) {
                 Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
                 Text(title).font(.system(size: 10.5, weight: .semibold))
+                if let badge, badge > 0 {
+                    Text("\(badge)")
+                        .font(.system(size: 9, weight: .bold))
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(
+                            Capsule().fill(
+                                active ? Color.accentColor.opacity(0.32)
+                                       : Color.primary.opacity(0.12)))
+                }
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
