@@ -2162,7 +2162,30 @@ extension LauncherView {
         aiMode.attachments = []
 
         aiMode.isLoading = true
-        aiMode.loadingStartedAt = Date()
+        let turnStartedAt = Date()
+        aiMode.loadingStartedAt = turnStartedAt
+
+        // End the turn if nothing comes back. The hub is bounded and the provider call is
+        // not, so a stalled request left "Working…" on screen with no answer, no error and
+        // no way to tell a slow turn from a dead one — and because a turn in flight blocks
+        // the next question, the surface stopped accepting input entirely.
+        //
+        // Identified by its start time: a later turn replaces it, and this one then finds a
+        // timestamp that is not its own and leaves the newer request alone.
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000_000)
+            guard aiMode.isLoading, aiMode.loadingStartedAt == turnStartedAt else { return }
+            aiMode.isLoading = false
+            aiMode.streamingId = nil
+            aiMode.loadingStatus = nil
+            aiMode.messages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "No answer came back after two minutes, so I stopped waiting. "
+                        + "Ask again, or try a narrower question.",
+                    isError: true))
+            persistGeneralAIConversation()
+        }
         aiMode.loadingStatus = pendingAttachments.isEmpty
             ? "Checking App Adapters…"
             : "Reading attached files…"
