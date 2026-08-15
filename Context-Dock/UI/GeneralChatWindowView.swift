@@ -615,15 +615,26 @@ struct GeneralChatWindowView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Spacer()
-            Text("Where should we begin?")
-                .font(.system(size: 28, weight: .semibold))
+            // A scoped thread already says what it is about, so it opens on its own name.
+            // Only the unscoped chat has nothing to go on, and that is where a starting
+            // point is worth the space.
+            if model.activeScope == .general {
+                GeneralChatStartView { prompt in
+                    model.input = prompt
+                    model.send()
+                }
+            } else {
+                Spacer()
+                Text("Where should we begin?")
+                    .font(.system(size: 28, weight: .semibold))
+                Spacer()
+            }
             if chrome.temporaryChat {
                 Text("Temporary chat — this conversation is not saved.")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                    .padding(.bottom, 12)
             }
-            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
