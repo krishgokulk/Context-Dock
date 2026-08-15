@@ -3266,15 +3266,50 @@ extension LauncherView {
     ///
     /// Every choke point runs through here, so this fires once per turn regardless of which
     /// path answered.
+    /// Moves to the window when the answer produced something to *look at*.
+    ///
+    /// The dock is a strip: it reads a paragraph well and shows a document, a rendered
+    /// artifact, a live terminal or a six-step run badly. Those all have somewhere proper to
+    /// be — the window's Preview panel, its Artifacts tab, its terminal, its console — and
+    /// leaving the user in the strip means the work is finished somewhere they cannot see
+    /// it, and they have to know to go looking.
+    ///
+    /// A long *text* answer is deliberately not a trigger. Prose reads fine in the dock,
+    /// and expanding for it would make the window appear on almost every question, which is
+    /// the app taking over the screen rather than helping.
     private func handOffArtifactIfProduced() {
         guard let last = l2.chatMessages.last, last.role == .assistant else { return }
         let scopeInfo = currentContextDockChatScope
         let scope: GeneralChatScope = scopeInfo.bundleId.isEmpty
             ? .general : .app(bundleId: scopeInfo.bundleId)
-        guard let artifact = ArtifactStore.extract(from: last.content, scope: scope).last
-        else { return }
-        previewFileInChatWindow(
-            artifact, bundleId: scopeInfo.bundleId, appName: scopeInfo.appName)
+
+        // A rendered thing, then a file it produced: both belong in Preview, and the
+        // handoff carries the file so the window opens on it rather than near it.
+        if let artifact = ArtifactStore.extract(from: last.content, scope: scope).last {
+            previewFileInChatWindow(
+                artifact, bundleId: scopeInfo.bundleId, appName: scopeInfo.appName)
+            return
+        }
+        if let file = last.recentFiles.first?.url,
+            FileManager.default.fileExists(atPath: file.path)
+        {
+            previewFileInChatWindow(
+                file, bundleId: scopeInfo.bundleId, appName: scopeInfo.appName)
+            return
+        }
+
+        // A run worth watching rather than reading: several steps, or a tool drawing its
+        // own screen. Three is the point where the receipt stops fitting the strip —
+        // one or two steps are legible where they happened.
+        let manySteps = last.trace.count >= 3
+        let hasTerminal = ChatThreadTerminalManager.shared.hasTerminal(for: scope)
+        guard manySteps || hasTerminal else { return }
+
+        GeneralChatWindowModel.shared.openSession(
+            scope, title: scopeInfo.appName.isEmpty ? "General" : scopeInfo.appName,
+            seed: l2.chatMessages)
+        handOffChatToWindow()
+        GeneralChatWindowController.shared.show()
     }
 
     @MainActor
