@@ -63,7 +63,8 @@ extension LauncherView {
         if !chatFocusApps.contains(where: {
             $0.bundleId.caseInsensitiveCompare(app.bundleId) == .orderedSame
         }) {
-            chatFocusApps.append(.init(name: app.name, bundleId: app.bundleId))
+            switchDockWorkspace(
+                to: chatFocusApps + [.init(name: app.name, bundleId: app.bundleId)])
         }
         searchState.query = ""
         ensureSearchInputFocusReady()

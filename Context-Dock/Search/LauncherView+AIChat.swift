@@ -2055,7 +2055,8 @@ extension LauncherView {
             $0.bundleId.caseInsensitiveCompare(req.bundleId) == .orderedSame
         }) {
             withAnimation(.dockStandard) {
-                chatFocusApps.append(.init(name: req.name, bundleId: req.bundleId))
+                switchDockWorkspace(
+                    to: chatFocusApps + [.init(name: req.name, bundleId: req.bundleId)])
             }
         }
         aiMode.pendingEnableApp = nil
@@ -2240,9 +2241,21 @@ extension LauncherView {
         ChatAnswerSanitizer.clean(text)
     }
 
+    /// The workspace the dock's general chat is currently in.
+    ///
+    /// Two or more apps is a combined chat, and a combined chat is a conversation of its
+    /// own — the same one the window opens for that membership. Keyed identically, so the
+    /// dock and the window are two views of one workspace rather than two chats that happen
+    /// to have the same apps attached.
+    var dockChatScope: GeneralChatScope {
+        let names = chatFocusApps.map(\.name)
+        guard names.count > 1 else { return .general }
+        return .thread(id: GeneralChatWindowModel.combinedThreadID(for: names))
+    }
+
     func restoreGeneralAIConversationIfNeeded() {
         guard aiMode.messages.isEmpty else { return }
-        let restored = GeneralAIChatConversationStore.load()
+        let restored = GeneralChatSessionStore.load(scope: dockChatScope)
         guard !restored.isEmpty else { return }
         aiMode.messages = restored
         hasUserSentMessageInCurrentSession = true
@@ -2250,11 +2263,35 @@ extension LauncherView {
     }
 
     func persistGeneralAIConversation() {
-        GeneralAIChatConversationStore.save(aiMode.messages)
+        let scope = dockChatScope
+        GeneralChatSessionStore.save(
+            aiMode.messages, scope: scope, title: dockWorkspaceTitle)
+        if case .thread = scope {
+            GeneralChatSessionStore.saveAttachedApps(chatFocusApps.map(\.name), scope: scope)
+        }
     }
 
     func clearGeneralAIConversation() {
-        GeneralAIChatConversationStore.clear()
+        GeneralChatSessionStore.save(
+            [], scope: dockChatScope, title: dockWorkspaceTitle)
+    }
+
+    private var dockWorkspaceTitle: String {
+        let names = chatFocusApps.map(\.name)
+        return names.count > 1 ? names.joined(separator: " + ") : "General"
+    }
+
+    /// Moves the dock's general chat to the workspace for this membership.
+    ///
+    /// Changing which apps a chat is about changes which conversation it is. Keeping the
+    /// transcript across the move would carry Safari's answers into the Safari + Notes
+    /// workspace, where they were never asked.
+    func switchDockWorkspace(to apps: [GeneralChatFocusApp]) {
+        persistGeneralAIConversation()
+        chatFocusApps = apps
+        aiMode.messages = GeneralChatSessionStore.load(scope: dockChatScope)
+        hasUserSentMessageInCurrentSession = !aiMode.messages.isEmpty
+        requestWindowSizeUpdate(reason: .chatChanged)
     }
 
     func mergedAIRequestAttachments(explicitAttachments: [URL]) -> [URL] {

@@ -115,7 +115,7 @@ extension LauncherView {
                 HStack(spacing: 5) {
                     ForEach(chatFocusApps) { focusedApp in
                         Button {
-                            chatFocusApps.removeAll { $0.bundleId == focusedApp.bundleId }
+                            switchDockWorkspace(to: chatFocusApps.filter { $0.bundleId != focusedApp.bundleId })
                         } label: {
                             ZStack {
                                 AppBundleIconView(
@@ -208,7 +208,7 @@ extension LauncherView {
             selectedIDs: Set(chatFocusApps.map { $0.bundleId.lowercased() })
         ) { row in
             if chatFocusApps.contains(where: { $0.bundleId == row.bundleId }) {
-                chatFocusApps.removeAll { $0.bundleId == row.bundleId }
+                switchDockWorkspace(to: chatFocusApps.filter { $0.bundleId != row.bundleId })
             } else {
                 chatFocusApps.append(.init(name: row.name, bundleId: row.bundleId))
             }
