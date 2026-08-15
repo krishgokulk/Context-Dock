@@ -1409,8 +1409,12 @@ struct LauncherView: View {
             DispatchQueue.main.async {
                 // A chat surface on screen owns the approval: a separate floating panel
                 // covered the dock and split the conversation the request came from.
+                // The chat window is a chat surface too. Leaving it out meant a request
+                // made there got the floating panel — a second window thrown over the
+                // conversation that asked for it, with the answer waiting behind it.
                 let chatSurfaceVisible =
                     aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
+                    || GeneralChatWindowController.shared.isVisible
                 if let pending {
                     if chatSurfaceVisible {
                         AdapterApprovalWindowHost.close()

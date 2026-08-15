@@ -338,6 +338,20 @@ final class GeneralChatWindowModel: ObservableObject {
     /// there is no way back to General once an app thread is open, and the button would
     /// instead wipe the app thread the user is reading.
     func newChat() {
+        // A combined thread's members are the thread. Clearing them would leave a thread
+        // named after two apps that is about neither, so New chat here empties the
+        // transcript and keeps the pairing — the same rule as General.
+        if case .thread = activeScope {
+            cancel()
+            messages = []
+            messageApps = [:]
+            input = ""
+            attachments = []
+            GeneralChatSessionStore.save(
+                [], scope: activeScope, title: attachedAppNames.joined(separator: " + "))
+            sessions = GeneralChatSessionStore.index()
+            return
+        }
         guard activeScope == .general else {
             openGeneralSession()
             newChat()
@@ -392,6 +406,12 @@ final class GeneralChatWindowModel: ObservableObject {
         }
     }
 
+    /// Stable per membership, so pairing the same two apps returns to the same
+    /// conversation rather than starting a new one each time.
+    static func combinedThreadID(for names: [String]) -> String {
+        "combined-" + names.map { $0.lowercased() }.sorted().joined(separator: "+")
+    }
+
     func attachApp(_ name: String) {
         guard !attachedAppNames.contains(name) else { return }
         // Picking an app in General chat means "talk to this app" — so it becomes that
@@ -409,6 +429,23 @@ final class GeneralChatWindowModel: ObservableObject {
             openSession(.app(bundleId: bundleId), title: name)
             return
         }
+
+        // A second app makes a combined chat, and a combined chat is its own thread.
+        //
+        // Attaching Messages while in Safari's thread used to leave Safari's thread holding
+        // Messages — so the combined workflow lived inside one of its members. Clicking
+        // Messages in the sidebar showed a combined row it did not own, and New chat in
+        // Safari took the pairing with it. A workflow across two apps belongs to neither.
+        if let scopeApp = activeScopeAppName, scopeApp != name {
+            let members = [scopeApp, name]
+            let combined = GeneralChatScope.thread(id: Self.combinedThreadID(for: members))
+            openSession(combined, title: members.joined(separator: " + "))
+            attachedAppNames = members
+            GeneralChatSessionStore.saveAttachedApps(members, scope: combined)
+            sessions = GeneralChatSessionStore.index()
+            return
+        }
+
         attachedAppNames.append(name)
         GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
     }

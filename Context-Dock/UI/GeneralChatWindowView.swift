@@ -25,6 +25,7 @@ struct GeneralChatWindowView: View {
     @AppStorage("generalChatSidebarWidth") private var sidebarWidth: Double = 200
     @State private var dragStartWidth: Double?
     @State private var showsSidebarAppPicker = false
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
     @State private var hoveredSidebarRow: String?
     @State private var hoveringCombinedChat = false
     /// Kept across launches: a pinned workflow is a standing arrangement, not a gesture to
@@ -705,6 +706,12 @@ struct GeneralChatWindowView: View {
     /// the dock reads, so a request is answered wherever the user actually is.
     @ViewBuilder
     private var approvalCard: some View {
+        if let adapterPending = adapterManager.pendingApproval {
+            // The same decision the dock shows inline, in the conversation that asked.
+            InlineAdapterApprovalCard(request: adapterPending)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 8)
+        }
         if let pending = terminalBridge.pendingApproval, pending.origin == .window {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
