@@ -2542,7 +2542,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func hideLauncher(force: Bool = false) {
-        WebQuickLookPanel.shared.close()
         // A pinned preview is a window the user asked to keep; only the one following
         // the dock's selection goes away with the dock.
         PreviewController.shared.closeUnpinned()

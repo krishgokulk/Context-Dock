@@ -1254,7 +1254,8 @@ extension LauncherView {
             accentColorName: "blue",
             badge: "Quick Look",
             execute: {
-                quickLookDataSource = QuickLookDataSource(urls: [firstURL])
+                PreviewController.shared.present(
+                    url: firstURL, siblings: urls, toggleIfSame: true)
                 searchState.query = ""
                 l2.focusedPillIndex = nil
             }

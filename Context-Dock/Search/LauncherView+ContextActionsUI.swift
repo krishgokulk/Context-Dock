@@ -1858,7 +1858,8 @@ extension LauncherView {
                     NSPasteboard.general.setString(path, forType: .string)
                 },
                 PanelAction(icon: "eye", label: "Quick Look") {
-                    quickLookDataSource = QuickLookDataSource(urls: [URL(fileURLWithPath: path)])
+                    PreviewController.shared.present(
+                        url: URL(fileURLWithPath: path), toggleIfSame: true)
                 },
                 PanelAction(icon: "trash", label: "Move to Trash") {
                     try? FileManager.default.trashItem(
@@ -1882,7 +1883,8 @@ extension LauncherView {
                     NSAppleScript(source: script)?.executeAndReturnError(nil)
                 },
                 PanelAction(icon: "eye", label: "Quick Look") {
-                    quickLookDataSource = QuickLookDataSource(urls: [URL(fileURLWithPath: path)])
+                    PreviewController.shared.present(
+                        url: URL(fileURLWithPath: path), toggleIfSame: true)
                 },
             ]
 

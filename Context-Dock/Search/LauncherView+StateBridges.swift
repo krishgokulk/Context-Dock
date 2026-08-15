@@ -134,11 +134,6 @@ extension LauncherView {
         nonmutating set { launcherViewModel.contactPreviewData = newValue }
     }
 
-    var quickLookDataSource: QuickLookDataSource? {
-        get { launcherViewModel.quickLookDataSource }
-        nonmutating set { launcherViewModel.quickLookDataSource = newValue }
-    }
-
     var quickLookEventMonitor: Any? {
         get { launcherViewModel.quickLookEventMonitor }
         nonmutating set { launcherViewModel.quickLookEventMonitor = newValue }

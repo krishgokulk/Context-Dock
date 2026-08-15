@@ -92,40 +92,6 @@ class AdapterApprovalWindowHost: NSObject, NSWindowDelegate {
     }
 }
 
-// MARK: - Quick Look Support
-class QuickLookDataSource: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
-    let urls: [URL]
-    /// Called after the panel closes via Space/Escape so the caller can restore the
-    /// list selection to the file that was being previewed (otherwise focus falls
-    /// back to the first result).
-    var onClose: (() -> Void)?
-
-    init(urls: [URL]) {
-        self.urls = urls
-        super.init()
-    }
-
-    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-        return urls.count
-    }
-
-    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
-        return urls[index] as NSURL
-    }
-
-    func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
-        // Space (49) and Escape (53) both close the panel. Handle them here — Space
-        // would otherwise be swallowed by Quick Look's own toggle, closing the panel
-        // without ever restoring our list selection.
-        if event.type == .keyDown, event.keyCode == 49 || event.keyCode == 53 {
-            panel.orderOut(nil)
-            onClose?()
-            return true
-        }
-        return false
-    }
-}
-
 // ResultRow moved to ResultRow.swift
 
 // MARK: - Folder Preview View

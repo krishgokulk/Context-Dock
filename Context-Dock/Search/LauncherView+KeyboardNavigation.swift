@@ -167,22 +167,12 @@ extension LauncherView {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
             // A pinned panel is its own surface. Hand its keys straight back, or
             // navigating a folder panel also arrows through Global Context behind it.
-            if GlassFloatingPanel.ownsEvent(event) { return event }
-            // Quick Look is modal to the keyboard while it is up: its arrows page
-            // through the preview set. Without this the dock also read them and
-            // switched app scope behind the preview.
-            if FileQuickLookPanel.shared.ownsEvent(event) { return event }
+            if previewOwnsKeyEvent(event) { return event }
 
-            // Space = Quick Look, handled before anything else in this monitor can
-            // consume it. Sitting further down, an earlier branch swallowed it and
-            // Space did nothing in a file scope.
-            if event.keyCode == 49,
-                !event.modifierFlags.contains(.command),
-                let path = self.focusedPillPreviewPath() {
-                FileQuickLookPanel.shared.toggle(
-                    path: path, siblings: self.visiblePreviewPaths())
-                return nil
-            }
+            // Space, decided in one place — see PreviewKeyRouter. It has to run before
+            // anything else in this monitor: sitting further down, an earlier branch
+            // swallowed it and Space did nothing in a file scope.
+            if handleSpaceKeyForPreview(event) { return nil }
 
             // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
             // Handled here because the field editor swallows Backspace before SwiftUI's
@@ -1219,8 +1209,7 @@ extension LauncherView {
 
         cmdHoldMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) {
             [self] event in
-            if GlassFloatingPanel.ownsEvent(event) { return event }
-            if FileQuickLookPanel.shared.ownsEvent(event) { return event }
+            if previewOwnsKeyEvent(event) { return event }
             if event.type == .keyDown {
                 // Any keyDown while Cmd held → cancel the long-press timer
                 cmdHoldTask?.cancel()

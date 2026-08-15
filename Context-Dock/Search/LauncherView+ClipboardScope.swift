@@ -2062,12 +2062,12 @@ extension LauncherView {
     }
 
     func quickLookDockPill(_ pill: DockPill) -> Bool {
-        // Web link rows (Safari history/bookmarks) peek the live page.
+        // Web link rows (Safari history/bookmarks) peek the live page — same surface as
+        // a file, since a preview is a preview whatever is behind the row.
         if let webURL = pill.resolvedURL,
             webURL.scheme == "https" || webURL.scheme == "http"
         {
-            WebQuickLookPanel.shared.toggle(url: webURL)
-            return true
+            return PreviewController.shared.present(url: webURL, toggleIfSame: true)
         }
         guard let url = pill.quickLookURL else { return false }
         return showQuickLookURL(url, toggleIfSame: true)

@@ -14,14 +14,20 @@ import Vision
 
 extension LauncherView {
     // MARK: - Folder Preview Helper
-    func showFolderPreviewInline(path: String) {
-        #if DEBUG
-        print("📂 Opening folder preview inline: \(path)")
-        #endif
+    /// Folders go to the preview surface like everything else. `showFolderPreview` is
+    /// deliberately NOT set: the inline folder view it used to gate was deleted long ago
+    /// — nothing rendered it — so raising the flag only convinced twenty keyboard
+    /// branches that a preview was open when the screen was showing nothing.
+    /// `folderPreviewPath` stays, because the scope key and the action context read it.
+    /// `toggleIfSame` is false when the caller is retargeting an open preview as the
+    /// selection moves — there, landing back on the same folder must re-show it, not
+    /// close the window out from under the arrow keys.
+    func showFolderPreviewInline(path: String, toggleIfSame: Bool = true) {
         folderPreviewPath = path
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-            showFolderPreview = true
-        }
+        PreviewController.shared.present(
+            url: URL(fileURLWithPath: path),
+            toggleIfSame: toggleIfSame
+        )
     }
 
     func quickLookSelectedItem() {

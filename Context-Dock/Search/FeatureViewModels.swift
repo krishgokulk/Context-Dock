@@ -80,7 +80,6 @@ final class LauncherViewModel: ObservableObject {
     var debounceTask: Task<Void, Never>?
     var browserWarmupTask: Task<Void, Never>?
     var windowResizeTask: Task<Void, Never>?
-    var quickLookDataSource: QuickLookDataSource?
     var quickLookEventMonitor: Any?
     var cmdHoldTask: Task<Void, Never>?
     var cmdHoldMonitor: Any?

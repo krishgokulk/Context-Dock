@@ -504,86 +504,14 @@ extension LauncherView {
         // Remove any existing monitor first
         removeQuickLookEventMonitor()
 
-        // Add a local event monitor to intercept Space key for Quick Look
-        // This works even when the text field has focus
+        // A local monitor, not .onKeyPress: the field editor swallows Space before
+        // SwiftUI ever sees it while the search field has focus.
         quickLookEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
             [self] event in
-            // A pinned panel owns its own keys — Space there is Quick Look for that
-            // panel, not for the dock's selection.
-            if GlassFloatingPanel.ownsEvent(event) { return event }
-            if FileQuickLookPanel.shared.ownsEvent(event) { return event }
-            // Only handle Space key (keyCode 49)
-            guard event.keyCode == 49 else { return event }
-
-            if showFolderPreview {
-                if let index = searchState.selectedIndex,
-                    searchState.results.indices.contains(index),
-                    let path = searchState.results[index].filePath,
-                    searchState.results[index].type == .folder,
-                    folderPreviewPath != path
-                {
-                    showFolderPreviewInline(path: path)
-                } else {
-                    withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                        showFolderPreview = false
-                        folderPreviewPath = nil
-                    }
-                }
-                return nil
-            }
-
-            // Don't intercept if in AI mode (allow typing spaces in AI queries)
-            guard !aiMode.isActive else { return event }
-
-            if let pill = currentFocusedDockPillForQuickLook(),
-                quickLookDockPill(pill)
-            {
-                return nil
-            }
-
-            // Global grouped list (app-scope sheet): Space peeks web link rows.
-            if isGlobalContextActive,
-                let pill = focusedGlobalGroupedListPill(),
-                pill.resolvedURL != nil,
-                quickLookDockPill(pill)
-            {
-                return nil
-            }
-
-            if isGlobalContextActive,
-                l2.pillNavViaKeyboard,
-                let result = focusedGlobalAppResultForInputPreview(),
-                result.type != .application,
-                let path = result.filePath,
-                showQuickLookURL(URL(fileURLWithPath: path), toggleIfSame: true)
-            {
-                return nil
-            }
-
-            // Only intercept if we have a selected result
-            guard let index = searchState.selectedIndex, index < searchState.results.count else {
-                return event
-            }
-
-            let result = searchState.results[index]
-
-            // Check if the result supports preview (file, folder, or contact)
-            let supportsPreview = result.filePath != nil || result.type == .contact
-            guard supportsPreview else { return event }
-
-            // Only trigger Quick Look when query is literally empty (user pressed space with nothing typed)
-            // or Shift+Space. Never consume space mid-query — user may be typing multi-word searches.
-            let isShiftHeld = event.modifierFlags.contains(.shift)
-            let searchIsEmpty = searchState.query.isEmpty
-
-            if isShiftHeld || searchIsEmpty {
-                DispatchQueue.main.async {
-                    self.quickLookSelectedItem()
-                }
-                return nil  // Consume the event
-            }
-
-            return event
+            // A floating panel owns its own keys — Space there belongs to that panel,
+            // not to the dock's selection behind it.
+            if previewOwnsKeyEvent(event) { return event }
+            return handleSpaceKeyForPreview(event) ? nil : event
         }
     }
 
@@ -724,41 +652,18 @@ extension LauncherView {
     }
 
     func refreshQuickLookPreviewForCurrentFocusIfVisible() {
-        if showFolderPreview {
-            if let index = searchState.selectedIndex,
-                searchState.results.indices.contains(index),
-                let path = searchState.results[index].filePath,
-                path != folderPreviewPath
-            {
-                if searchState.results[index].type == .folder {
-                    showFolderPreviewInline(path: path)
-                } else {
-                    showFolderPreview = false
-                    folderPreviewPath = nil
-                    _ = showQuickLookURL(URL(fileURLWithPath: path), toggleIfSame: false)
-                }
-            }
+        guard quickLookPanelIsVisible() else { return }
+
+        // Web rows first: a link's preview is the live page, and the pill carries the
+        // resolved URL that its file path does not.
+        if let pill = currentFocusedDockPillForQuickLook() ?? focusedGlobalGroupedListPill(),
+            let url = pill.resolvedURL,
+            url.scheme == "https" || url.scheme == "http"
+        {
+            PreviewController.shared.present(url: url, toggleIfSame: false)
             return
         }
 
-        if WebQuickLookPanel.shared.isVisible {
-            if let pill = currentFocusedDockPillForQuickLook(),
-                let url = pill.resolvedURL,
-                url.scheme == "https" || url.scheme == "http"
-            {
-                WebQuickLookPanel.shared.show(url: url)
-                return
-            }
-            if let pill = focusedGlobalGroupedListPill(),
-                let url = pill.resolvedURL,
-                url.scheme == "https" || url.scheme == "http"
-            {
-                WebQuickLookPanel.shared.show(url: url)
-                return
-            }
-        }
-
-        guard quickLookPanelIsVisible() else { return }
         if let pill = currentFocusedDockPillForQuickLook(),
             let url = pill.quickLookURL
         {
@@ -779,9 +684,7 @@ extension LauncherView {
             let path = searchState.results[index].filePath
         else { return }
         if searchState.results[index].type == .folder {
-            QLPreviewPanel.shared()?.orderOut(nil)
-            quickLookDataSource = nil
-            showFolderPreviewInline(path: path)
+            showFolderPreviewInline(path: path, toggleIfSame: false)
             return
         }
         _ = showQuickLookURL(URL(fileURLWithPath: path), toggleIfSame: false)

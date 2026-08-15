@@ -33,6 +33,12 @@ private struct PreviewFolderList: View {
     let url: URL
 
     @State private var entries: [Entry] = []
+    /// Folders walked into from here, so the panel can go back without reopening. The
+    /// preview is a peek — it browses, it does not become a file manager.
+    @State private var stack: [URL] = []
+    @State private var selection: String?
+
+    private var currentURL: URL { stack.last ?? url }
 
     private struct Entry: Identifiable {
         let id: String
@@ -44,49 +50,103 @@ private struct PreviewFolderList: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(entries) { entry in
-                    HStack(spacing: 10) {
-                        Image(nsImage: entry.icon)
-                            .resizable()
-                            .frame(width: 22, height: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.name)
-                                .font(.system(size: 12))
-                                .lineLimit(1)
-                            Text(entry.detail)
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
-                    .contentShape(Rectangle())
-                    .onTapGesture(count: 2) {
-                        if entry.isDirectory {
-                            NSWorkspace.shared.activateFileViewerSelecting([entry.url])
-                        } else {
-                            PreviewController.shared.present(url: entry.url, toggleIfSame: false)
-                        }
-                    }
-                }
+        VStack(spacing: 0) {
+            if !stack.isEmpty { breadcrumb }
 
-                if entries.isEmpty {
-                    Text("Empty folder")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 18)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(entries) { entry in
+                        row(entry)
+                    }
+
+                    if entries.isEmpty {
+                        Text("Empty folder")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 18)
+                    }
                 }
+                .padding(.vertical, 6)
             }
-            .padding(.vertical, 6)
         }
-        .task(id: url) { load() }
+        .task(id: currentURL) { load() }
+        .onChange(of: url) { _, _ in stack = [] }
+    }
+
+    private var breadcrumb: some View {
+        HStack(spacing: 6) {
+            Button { stack.removeLast() } label: {
+                Image(systemName: "chevron.left").font(.system(size: 10, weight: .bold))
+            }
+            .buttonStyle(.plain)
+            .help("Back")
+
+            Text(currentURL.lastPathComponent)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.primary.opacity(0.05))
+    }
+
+    private func row(_ entry: Entry) -> some View {
+        HStack(spacing: 10) {
+            Image(nsImage: entry.icon)
+                .resizable()
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.name)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Text(entry.detail)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer(minLength: 0)
+            if entry.isDirectory {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 5)
+        .background(
+            selection == entry.id ? Color.accentColor.opacity(0.18) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+        )
+        .padding(.horizontal, 6)
+        .contentShape(Rectangle())
+        .onTapGesture { selection = entry.id }
+        .onTapGesture(count: 2) { activate(entry) }
+        .contextMenu {
+            Button("Open") { NSWorkspace.shared.open(entry.url) }
+            Button("Reveal in Finder") {
+                NSWorkspace.shared.activateFileViewerSelecting([entry.url])
+            }
+            Button("Copy Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(entry.url.path, forType: .string)
+            }
+        }
+    }
+
+    /// Folders open in place; files take over the same window, so a peek into a folder
+    /// never sprays panels across the screen.
+    private func activate(_ entry: Entry) {
+        if entry.isDirectory {
+            stack.append(entry.url)
+        } else {
+            PreviewController.shared.present(url: entry.url, toggleIfSame: false)
+        }
     }
 
     private func load() {
+        let url = currentURL
         let contents = (try? FileManager.default.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .contentModificationDateKey],
