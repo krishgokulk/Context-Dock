@@ -193,7 +193,7 @@ struct GeneralChatWindowView: View {
                     // attachment on a scoped thread — Safari + Messages *is* the Safari
                     // thread. Hiding the row there hid the combined chat exactly where
                     // combining actually happens.
-                    if model.scopeAppNames.count > 1 {
+                    if model.scopeAppNames.count > 1, chrome.mode == .work {
                         combinedChatEntry
                             .padding(.horizontal, 8)
                             .padding(.top, 10)
@@ -215,11 +215,22 @@ struct GeneralChatWindowView: View {
     private var sessionList: some View {
         // Folders get their own heading: a directory listed under "Apps & tools" reads as
         // an app that is not one, and the two are picked for different reasons.
+        // Work lists workspaces and nothing else; Chat lists everything that is not one.
+        // A list that mixes them cannot say which is which, which is what made a workspace
+        // look like a stray copy of one of its members.
+        let isWorkspaces = chrome.mode == .work
         let all = model.sessions.filter { $0.scope != .general }
+            .filter { session in
+                if case .thread = session.scope { return isWorkspaces }
+                return !isWorkspaces
+            }
         let folderRows = all.filter { $0.scope.folderURL != nil }
-        let recentRows = model.sessions
-            .filter { $0.scope.isGeneralChat && $0.messageCount > 0 }
-            .sorted { $0.updatedAt > $1.updatedAt }
+        let recentRows = isWorkspaces
+            ? model.sessions.filter {
+                if case .thread = $0.scope { return $0.messageCount > 0 }
+                return false
+            }.sorted { $0.updatedAt > $1.updatedAt }
+            : []
         let rows = all.filter { $0.scope.folderURL == nil && !$0.scope.isGeneralChat }
         // A lone attached app has no session of its own — it is a scope on the current
         // conversation — but from the sidebar it reads as the same thing: one app this
@@ -931,20 +942,40 @@ struct GeneralChatWindowView: View {
 
     // MARK: - Work mode
 
+    /// Workspaces: conversations that span several apps.
+    ///
+    /// Chat is for asking; Work is for getting something done across apps. Keeping both in
+    /// one list was the source of most of the confusion — a Safari + Notes workflow sat
+    /// beside a plain Safari chat looking like a third kind of Safari, and adding an app to
+    /// a conversation quietly turned it into something the Chat list could not describe.
+    /// Separating them means the question "is this a chat or a workflow?" is answered by
+    /// which tab you are in.
     private var workPane: some View {
-        VStack(spacing: 6) {
-            Spacer()
-            Image(systemName: "hammer")
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("Work")
-                .font(.system(size: 15, weight: .semibold))
-            Text("Task runs and their output will live here.")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            Spacer()
+        Group {
+            if case .thread = model.activeScope {
+                chatPane
+            } else {
+                VStack(spacing: 8) {
+                    Spacer()
+                    Image(systemName: "square.stack.3d.up")
+                        .font(.system(size: 26, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Text("Workspaces")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(
+                        "Add two or more apps to a conversation — with \"/\", or by enabling "
+                            + "them when asked — and it becomes a workspace here, with only "
+                            + "those apps' tools."
+                    )
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Panels

@@ -441,17 +441,23 @@ final class GeneralChatWindowModel: ObservableObject {
         switch members.count {
         case 0:
             openGeneralSession()
+            GeneralChatWindowChromeState.shared.mode = .chat
         case 1:
-            // One app is that app's own thread, not a combination of one.
+            // One app is that app's own thread, not a combination of one — and an app
+            // thread is a chat, so the window goes back to Chat with it.
             guard let bundleId = Self.bundleId(forAppNamed: members[0]) else { return }
             openSession(.app(bundleId: bundleId), title: members[0])
             attachedAppNames = []
             GeneralChatSessionStore.saveAttachedApps([], scope: activeScope)
+            GeneralChatWindowChromeState.shared.mode = .chat
         default:
             let combined = GeneralChatScope.thread(id: Self.combinedThreadID(for: members))
             openSession(combined, title: members.joined(separator: " + "))
             attachedAppNames = members
             GeneralChatSessionStore.saveAttachedApps(members, scope: combined)
+            // A workspace lives in Work. Building one and leaving the user in Chat would
+            // put the conversation somewhere its own list does not show it.
+            GeneralChatWindowChromeState.shared.mode = .work
         }
         sessions = GeneralChatSessionStore.index()
     }
