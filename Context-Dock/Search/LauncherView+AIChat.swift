@@ -2173,11 +2173,15 @@ extension LauncherView {
                             role: .assistant, content: cleaned, appLaunches: launches,
                             recentFiles: recentFiles,
                             mcpToolsRan: self.aiMode.pendingToolChips,
+                            evidenceReceipts: self.aiMode.pendingEvidenceReceipts,
+                            subjectiveEvaluation: self.aiMode.pendingSubjectiveEvaluation,
                             enableAppRequest: enableReq,
                             trace: self.aiMode.routerTrace,
                             actionChoices: choices)
                         self.aiMode.messages.append(self.tagMessageWithProposal(baseMsg))
                         self.aiMode.pendingToolChips = []
+                        self.aiMode.pendingEvidenceReceipts = []
+                        self.aiMode.pendingSubjectiveEvaluation = nil
                         self.aiMode.routerTrace = []
                         self.aiMode.loadingStatus = nil
                         self.aiMode.isLoading = false
@@ -5124,6 +5128,10 @@ extension LauncherView {
                 }
 
                 if provider != .onDevice && provider != .shortcuts {
+                    let complexityRoute = TaskComplexityRouter.route(query)
+                    await MainActor.run {
+                        self.dockTraceStep("Complexity: \(complexityRoute.rawValue)")
+                    }
                     // Collects MCP tools the model invokes via the tool loop, for the chip.
                     let mcpRan = MCPRunCollector()
                     // In a CLI tool scope every status names the tool and the step, so the
@@ -5280,7 +5288,9 @@ extension LauncherView {
                         apiKey: apiKey,
                         conversationHistory: chatHistory,
                         commandExecutor: commandExecutor,
-                        additionalSystemPrompt: activeContextPrompt.isEmpty ? nil : activeContextPrompt,
+                        maxIterations: complexityRoute.maxToolIterations,
+                        additionalSystemPrompt: [activeContextPrompt, complexityRoute.instruction]
+                            .filter { !$0.isEmpty }.joined(separator: "\n\n"),
                         imageAttachments: scopedImageAttachments
                     )
                     if Task.isCancelled {
@@ -5356,6 +5366,16 @@ extension LauncherView {
                         }
                     }
 
+                    await self.setL2LoadingStatus(
+                        "Reviewing result independently…", requestID: l2RequestID)
+                    let subjectiveEvaluation = await FreshResultEvaluator.evaluate(
+                        request: query,
+                        result: finalResponse,
+                        evidence: executed,
+                        provider: provider,
+                        apiKey: apiKey
+                    )
+
                     var toolsRan = memoryToolChips + (await mcpRan.tools)
                         + executed.map(\.command)
                     await self.setL2LoadingStatus(
@@ -5390,6 +5410,8 @@ extension LauncherView {
                     await MainActor.run {
                         var msg = AIChatMessage(
                             role: .assistant, content: finalResponse, mcpToolsRan: toolsRan,
+                            evidenceReceipts: executed.map(EvidenceReceipt.init),
+                            subjectiveEvaluation: subjectiveEvaluation,
                             trace: self.l2.routerTrace)
                         msg = self.tagMessageWithProposal(msg)
                         l2.chatMessages.append(msg)
@@ -6562,6 +6584,12 @@ extension LauncherView {
         attachments: [URL] = [],
         providerSelection capturedSelection: AIProviderSelection? = nil
     ) async throws -> String {
+        // Settings can change while the shared Chat shell remains open. Refresh dynamic
+        // capability families for every request so added/edited/disabled Global Commands
+        // and MCP toggles cannot leave classification and execution using different views.
+        CapabilityRegistry.shared.refreshGlobalCommands()
+        CapabilityRegistry.shared.refreshBuiltInMCPs()
+
         await MainActor.run {
             aiMode.loadingStatus = attachments.isEmpty
                 ? "Checking App Adapters…"
@@ -6588,9 +6616,62 @@ extension LauncherView {
             query: query,
             hasExplicitContext: hasExplicitContext
         )
+        // Decide evidence authority before any memory lookup or provider prompt is built.
+        // General Chat previously skipped this rule even though Context Dock chat used it,
+        // allowing a saved preference to answer a question about mutable live state.
+        let sourceDecision = AgentSourceAuthority.decide(query: query)
         let requestLiveContext = generalChatPolicy.includesLiveContext(
             explicitlyRequested: false
         ) ? ContextCollector.shared.snapshot() : nil
+
+        // Capability-first system reads. This runs before Markdown memory so a saved
+        // preference ("I like dark mode") cannot masquerade as current Mac state. Explicit
+        // changes still continue to the normal approval-backed action router below.
+        if sourceDecision.primary == .liveState,
+           currentAISelectionSnapshot.isEmpty,
+           let liveSystemState = await GlobalCommandCapabilities.liveStateAnswer(for: query) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = [liveSystemState.label]
+            }
+            return liveSystemState.answer
+        }
+
+        // Exact Global Command names are deterministic installed capabilities. Execute them
+        // directly instead of asking a language model whether it feels like calling the tool.
+        // This also ensures the approval card and evidence receipts describe real work.
+        if currentAISelectionSnapshot.isEmpty,
+           let match = GlobalCommandCapabilities.explicitRunMatch(for: query) {
+            let plan = AIActionPlan(
+                capability: match.id, input: [:],
+                explanation: "Run the installed Global Command \(match.command.name)")
+            let result = try await AIExecutionEngine.shared.executeWithApproval(
+                plan, context: .none)
+            var executed = [AIProviderService.ExecutedCommand(
+                command: "run_capability(\(match.id))",
+                output: result.output,
+                success: result.success,
+                isVerification: false
+            )]
+            var answer = result.success
+                ? (result.output.isEmpty ? "Ran \(match.command.name)." : result.output)
+                : "\(match.command.name) did not run: \(result.output)"
+
+            if result.success,
+               let verification = await AgentAnswerVerifier.executeRequiredVerification(
+                    query: query,
+                    commandExecutor: { _, _, _ in (false, "Not used for typed read-back.", -1) }
+               ) {
+                answer += "\n\n" + verification.answer
+                executed.append(verification.receipt)
+            }
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = executed.map(\.command)
+                aiMode.pendingEvidenceReceipts = executed.map(EvidenceReceipt.init)
+            }
+            return answer
+        }
 
         if let memoryAnswer = MarkdownMemoryStore.shared.cacheFromCommand(query) {
             await MainActor.run {
@@ -6669,6 +6750,10 @@ extension LauncherView {
             let namedApp = GeneralAIActionResolver.shared.namedInstalledApp(in: actionQuery),
             !chatFocusApps.contains(where: {
                 $0.bundleId.caseInsensitiveCompare(namedApp.bundleId) == .orderedSame
+            }),
+            !CapabilityRegistry.shared.all.contains(where: {
+                $0.appBundleID?.caseInsensitiveCompare(namedApp.bundleId) == .orderedSame
+                    && $0.riskLevel == .low
             })
         {
             // Offer a one-tap "Enable <app> for this chat" button — approving it adds the app
@@ -6727,8 +6812,11 @@ extension LauncherView {
             lone tool call is how you use the tools at all.
             \(currentDateTimeContextBlock())
             """
-        let memoryBlock = MarkdownMemoryStore.shared.contextBlock(query: query)
-        let memoryToolChips = MarkdownMemoryStore.shared.relevantSourceChips(query: query)
+        sysContent += "\n\n" + sourceDecision.promptRule
+        let memoryBlock = sourceDecision.allowsMemoryEvidence
+            ? MarkdownMemoryStore.shared.contextBlock(query: query) : ""
+        let memoryToolChips = sourceDecision.allowsMemoryEvidence
+            ? MarkdownMemoryStore.shared.relevantSourceChips(query: query) : []
         if !memoryBlock.isEmpty { sysContent += "\n\n" + memoryBlock }
         // App Store picker: the user explicitly chose a running app to focus on, so
         // ground answers on it (and treat it as allowed for this conversation).
@@ -6850,7 +6938,9 @@ extension LauncherView {
         // Read-only capability router first. Queries like "show Salman Khan email" are
         // contact lookups, not Mail/share commands. Run this before executable routing so
         // personal-data reads don't get misclassified as actions.
-        if !modelFirst, attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
+        let hasDeterministicReadDomain = readOnlyDataDomain(for: query) != nil
+        if (!modelFirst || hasDeterministicReadDomain),
+           attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let readAnswer = await readOnlyCapabilityAnswer(query: query) {
             return readAnswer
         }
@@ -6865,7 +6955,9 @@ extension LauncherView {
             return prefAnswer
         }
 
-        if !modelFirst, attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
+        let exactSelectedAdapterAction = hasExactSelectedAdapterAction(query: actionQuery)
+        if (!modelFirst || exactSelectedAdapterAction),
+           attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer
         }
@@ -6933,6 +7025,10 @@ extension LauncherView {
                 // the model could only ask for a tool by writing JSON into its answer, and
                 // the same system prompt told it never to do that.
                 if toolProvider.supportsNativeTools {
+                    let complexityRoute = TaskComplexityRouter.route(query)
+                    await MainActor.run {
+                        aiMode.routerTrace.append("Complexity: \(complexityRoute.rawValue)")
+                    }
                     let rawKey = toolProvider.requiresAPIKey
                         ? AppSettings.shared.getAPIKey(for: toolProvider) : ""
                     let toolAPIKey: String? = rawKey.isEmpty ? nil : rawKey
@@ -6951,7 +7047,8 @@ extension LauncherView {
                         apiKey: toolAPIKey,
                         conversationHistory: history,
                         commandExecutor: generalCommandExecutor,
-                        additionalSystemPrompt: toolSystemPrompt
+                        maxIterations: complexityRoute.maxToolIterations,
+                        additionalSystemPrompt: toolSystemPrompt + "\n\n" + complexityRoute.instruction
                     )
 
                     // Verification. The app knows which tools ran; the model does not get to
@@ -7023,6 +7120,18 @@ extension LauncherView {
                     }
 
                     await MainActor.run {
+                        aiMode.loadingStatus = FreshResultEvaluator.shouldEvaluate(query)
+                            ? "Reviewing result independently…" : nil
+                    }
+                    let subjectiveEvaluation = await FreshResultEvaluator.evaluate(
+                        request: query,
+                        result: finalResponse,
+                        evidence: executed,
+                        provider: toolProvider,
+                        apiKey: toolAPIKey
+                    )
+
+                    await MainActor.run {
                         aiMode.loadingStatus = nil
                         // Chips report what actually ran. They used to be derived from words
                         // in the query, which meant asking about "uncommitted changes" showed
@@ -7033,6 +7142,8 @@ extension LauncherView {
                         // when it should read as "nothing happened".
                         aiMode.pendingToolChips = memoryToolChips + executed.map(\.command)
                             + (AgentAnswerVerifier.noActionChip(executed: executed).map { [$0] } ?? [])
+                        aiMode.pendingEvidenceReceipts = executed.map(EvidenceReceipt.init)
+                        aiMode.pendingSubjectiveEvaluation = subjectiveEvaluation
                     }
                     return finalResponse
                 }

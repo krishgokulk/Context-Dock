@@ -348,8 +348,11 @@ final class GeneralChatWindowModel: ObservableObject {
         messageApps = [:]
         input = ""
         attachments = []
-        attachedAppNames = []
-        GeneralChatSessionStore.saveAttachedApps([], scope: activeScope)
+        // The combined set survives. Attaching Safari and Notes together is a working
+        // arrangement the user built — a workflow they return to across many questions —
+        // and clearing it on New chat threw that away every time they wanted a fresh
+        // question about the same apps. New chat empties the conversation, not the setup.
+        GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
         GeneralAIChatConversationStore.clear()
         GeneralChatSessionStore.upsert(scope: .general, title: "General", messageCount: 0)
         sessions = GeneralChatSessionStore.index()

@@ -698,6 +698,14 @@ final class AIProviderRouter {
                 endpoint: settings.openAICompatibleEndpoint,
                 modelID: settings.openAICompatibleModelID
             )
+        case .kimi:
+            guard !key.isEmpty, !settings.selectedKimiModel.isEmpty else {
+                throw AIServiceError.missingAPIKey("Kimi API key and model are required")
+            }
+            return .init(
+                apiKey: key,
+                endpoint: "https://api.moonshot.ai/v1",
+                modelID: settings.selectedKimiModel)
         case .claudeBridge:
             guard !settings.claudeBridgeEndpoint.isEmpty else {
                 throw AIServiceError.networkError("Claude bridge endpoint is required. Start VibeProxy or a compatible bridge.")
@@ -721,7 +729,7 @@ final class AIProviderRouter {
         case .anthropic: return AnthropicProviderAdapter()
         case .googleGemini: return GeminiProviderAdapter()
         case .ollama: return OllamaProviderAdapter()
-        case .openAICompatible: return OpenAICompatibleProviderAdapter()
+        case .openAICompatible, .kimi: return OpenAICompatibleProviderAdapter()
         case .claudeBridge, .chatGPTBridge: return OpenAICompatibleProviderAdapter()
         case .shortcuts: return ShortcutsProviderAdapter()
         case .onDevice:
@@ -763,6 +771,8 @@ final class AIProviderRouter {
         case .openAICompatible:
             return AIAttachmentPreparer.modelSupportsVision(
                 modelID: settings.openAICompatibleModelID)
+        case .kimi:
+            return AIAttachmentPreparer.modelSupportsVision(modelID: settings.selectedKimiModel)
         case .shortcuts:
             return false
         default:

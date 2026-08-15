@@ -109,11 +109,15 @@ struct ScopedListPanelContent: View {
     @FocusState private var filterFocused: Bool
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("extensionPanelAIWidth") private var aiWidth = 300.0
-    private var aiVisible: Bool { showAI ?? CustomListProviderService.hasAIPanel(command) }
+    private var presetValues: [String] { GlobalCommandCapabilities.presetValues(for: command) }
+    private var isPresetPicker: Bool { !presetValues.isEmpty }
+    private var aiVisible: Bool {
+        showAI ?? (isPresetPicker || CustomListProviderService.hasAIPanel(command))
+    }
 
     /// The panel's own field filters rows. A computed extension takes its input from
     /// the dock, so a second box here would be a duplicate that does nothing useful.
-    private var showsFilterField: Bool { !isComputed }
+    private var showsFilterField: Bool { isPresetPicker || !isComputed }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -204,7 +208,7 @@ struct ScopedListPanelContent: View {
         .onKeyPress(.return) {
             guard !filterFocused, !isTypingInPanel,
                   let row = displayedRows.first(where: { $0.id == selectedID }) else { return .ignored }
-            CustomListProviderService.shared.runAction(command, row: row, query: query)
+            run(row)
             return .handled
         }
     }
@@ -340,8 +344,7 @@ struct ScopedListPanelContent: View {
                         }
                     } else {
                     Button {
-                        CustomListProviderService.shared.runAction(
-                            command, row: row, query: query)
+                        run(row)
                         refresh()
                     } label: {
                         HStack(spacing: 8) {
@@ -487,6 +490,7 @@ struct ScopedListPanelContent: View {
 
     private func start() {
         refresh()
+        guard !isPresetPicker else { return }
         // Same cadence the inline scope uses, so a pinned panel is never staler
         // than the dock would have been.
         ticker = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
@@ -495,6 +499,15 @@ struct ScopedListPanelContent: View {
     }
 
     private func refresh() {
+        if isPresetPicker {
+            rows = presetValues.map { value in
+                let label = URL(string: value)?.host(percentEncoded: false) ?? value
+                return CustomListRow(
+                    id: value, title: label, subtitle: command.description,
+                    badge: "System", icon: command.icon)
+            }
+            return
+        }
         let service = CustomListProviderService.shared
         if service.isStale(command, query: query) {
             service.refresh(command, query: query) {
@@ -502,6 +515,17 @@ struct ScopedListPanelContent: View {
             }
         }
         rows = service.rows(for: command)
+    }
+
+    private func run(_ row: CustomListRow) {
+        if isPresetPicker {
+            let value = row.id
+            Task.detached(priority: .userInitiated) {
+                _ = SystemCommandInteractiveRunner.runForOutput(command: command, value: value)
+            }
+            return
+        }
+        CustomListProviderService.shared.runAction(command, row: row, query: query)
     }
 }
 

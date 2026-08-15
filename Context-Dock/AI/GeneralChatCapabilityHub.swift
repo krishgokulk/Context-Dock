@@ -391,13 +391,6 @@ final class GeneralChatCapabilityHub {
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
 
-        let mediaInfo = MediaInfoProvider.shared.getNowPlayingSourceInfo()
-        let mediaBundleId = mediaInfo.bundleID
-        let mediaDisplayName = MediaPlayerObserver.shared.appName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let observerMediaApp = MediaPlayerObserver.shared.appName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
         var lines: [String] = [
             "- App access is allowlisted by enabled App Adapters: \(adapterByBundle.count) app(s) available.",
             "- Inventory entries without an enabled adapter are awareness-only: never read their private data or execute their routes; explain that the app must be added in Settings → App Adapters.",
@@ -435,19 +428,6 @@ final class GeneralChatCapabilityHub {
             }
             if let summary = menuSummaryByBundle[app.bundleId] {
                 bits.append("\(summary.recordCount) cached menu command\(summary.recordCount == 1 ? "" : "s")")
-            }
-            if app.bundleId == mediaBundleId
-                || (!mediaDisplayName.isEmpty
-                    && mediaDisplayName.localizedCaseInsensitiveContains(app.name))
-                || (!observerMediaApp.isEmpty
-                    && app.name.localizedCaseInsensitiveContains(observerMediaApp)) {
-                let title = (mediaInfo.title ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty {
-                    bits.append("media \(mediaInfo.playbackRate > 0 ? "playing" : "paused"): \(title)")
-                } else {
-                    bits.append("media source")
-                }
             }
             if runningBundleIds.contains(app.bundleId) {
                 bits.append("AX/Vision available with approval")

@@ -14,6 +14,22 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
 
     private var window: NSWindow?
 
+    /// The hotkey's entry point: a second press on a window that is already in front puts
+    /// it away again.
+    ///
+    /// `show()` alone could not do this. Pressing the hotkey over a window that was already
+    /// frontmost re-activated the app and re-ordered the same window to the front, which
+    /// looks like nothing happened at best and like a second window appearing at worst —
+    /// so the press that was meant to dismiss it did nothing instead.
+    func toggle() {
+        if let window, window.isVisible, !window.isMiniaturized, NSApp.isActive, window.isKeyWindow {
+            window.orderOut(nil)
+            AppDelegate.shared?.restoreAccessoryPolicyIfNoWindowsRemain(closing: window)
+            return
+        }
+        show()
+    }
+
     func show() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
@@ -22,6 +38,10 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
         GeneralChatWindowModel.shared.reloadFromStore()
 
         if let window {
+            // A minimised window ignores makeKeyAndOrderFront, and one left on another
+            // Space would drag the user there. Both read as "the hotkey did nothing".
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.collectionBehavior.insert(.moveToActiveSpace)
             window.makeKeyAndOrderFront(nil)
             return
         }

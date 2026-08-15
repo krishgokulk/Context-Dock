@@ -38,7 +38,7 @@ struct AIProviderIcon: View {
         case .openAI, .chatGPTBridge: return "com.openai.chat"
         case .anthropic, .claudeBridge: return "com.anthropic.claudefordesktop"
         case .googleGemini: return "com.google.Gemini"
-        case .onDevice, .ollama, .openAICompatible, .shortcuts: return nil
+        case .onDevice, .ollama, .openAICompatible, .kimi, .shortcuts: return nil
         }
     }
 

@@ -1127,6 +1127,20 @@ struct AIProviderSettingsView: View {
             ollamaConfigView
         case .openAICompatible:
             openAICompatibleConfigView
+        case .kimi:
+            VStack(alignment: .leading, spacing: 12) {
+                apiKeyConfigView(
+                    title: "Kimi API Key",
+                    key: $settings.kimiAPIKey,
+                    placeholder: "sk-...",
+                    helpURL: "https://platform.moonshot.ai/console/api-keys"
+                )
+                TextField("Model", text: $settings.selectedKimiModel)
+                    .textFieldStyle(.roundedBorder)
+                Text("Official endpoint: https://api.moonshot.ai/v1")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         case .claudeBridge:
             bridgeConfigView(
                 title: "Claude Pro Bridge",
@@ -4235,6 +4249,7 @@ struct AIProviderRow: View {
         case .chatGPTBridge: return .teal
         case .ollama:       return .green
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts:    return .purple
         }
     }

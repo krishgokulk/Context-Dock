@@ -25,6 +25,7 @@ final class AIRequestClassifier {
             .map { [$0.name] } ?? []
         let isWorkflow = looksLikeMultiStepWorkflow(normalized)
         let isDeterministic = GeneralAIActionResolver.shared.looksExecutable(normalized)
+        let matchesSystemCapability = GlobalCommandCapabilities.hasSemanticMatch(normalized)
         let isScoped = hasExplicitContext || !targetApps.isEmpty || looksLikeScopedTask(normalized)
 
         if isWorkflow {
@@ -49,6 +50,19 @@ final class AIRequestClassifier {
                 targetApps: targetApps,
                 requiredCapabilityKinds: kinds,
                 confidence: 0.9,
+                requiresPlanning: false
+            )
+        }
+
+        // A compact system phrase can be neither a grammatical command nor a question:
+        // "dark mode", "volume", a user-authored "focus setup". It is still capability-
+        // shaped and must enter discovery instead of falling through to provider chat.
+        if matchesSystemCapability {
+            return AIIntentResolution(
+                kind: .scopedTask,
+                targetApps: [],
+                requiredCapabilityKinds: [.appData],
+                confidence: 0.88,
                 requiresPlanning: false
             )
         }

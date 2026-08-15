@@ -535,6 +535,21 @@ struct PageLinkAction: Equatable, Identifiable {
     }
 }
 
+struct EvidenceReceipt: Equatable, Identifiable {
+    let id = UUID()
+    let command: String
+    let observation: String
+    let passed: Bool
+    let isVerification: Bool
+
+    init(_ executed: AIProviderService.ExecutedCommand) {
+        command = executed.command
+        observation = executed.output.isEmpty ? "No output" : executed.output
+        passed = executed.success
+        isVerification = executed.isVerification
+    }
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -552,6 +567,8 @@ struct AIChatMessage: Identifiable, Equatable {
     var browserTabs: [BrowserTabAction]  // Live browser tabs with direct activation
     var pageLinks: [PageLinkAction]  // Grounded links from the active Safari page
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
+    var evidenceReceipts: [EvidenceReceipt]  // Typed action/verification outcomes
+    var subjectiveEvaluation: SubjectiveEvaluation?  // Independent read-only review
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
@@ -597,6 +614,8 @@ struct AIChatMessage: Identifiable, Equatable {
         browserTabs: [BrowserTabAction] = [],
         pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
+        evidenceReceipts: [EvidenceReceipt] = [],
+        subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
     ) {
@@ -616,6 +635,8 @@ struct AIChatMessage: Identifiable, Equatable {
         self.browserTabs = browserTabs
         self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
+        self.evidenceReceipts = evidenceReceipts
+        self.subjectiveEvaluation = subjectiveEvaluation
         self.enableAppRequest = enableAppRequest
         self.trace = trace
         self.runOutput = runOutput
@@ -633,6 +654,8 @@ struct AIChatMessage: Identifiable, Equatable {
         browserTabs: [BrowserTabAction] = [],
         pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
+        evidenceReceipts: [EvidenceReceipt] = [],
+        subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
     ) {
@@ -654,6 +677,8 @@ struct AIChatMessage: Identifiable, Equatable {
         self.browserTabs = browserTabs
         self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
+        self.evidenceReceipts = evidenceReceipts
+        self.subjectiveEvaluation = subjectiveEvaluation
         self.enableAppRequest = enableAppRequest
         self.trace = trace
         self.runOutput = runOutput
@@ -743,6 +768,8 @@ struct AIChatMessageView: View {
     var assistantAvatarImage: NSImage? = nil
     @State private var isTraceExpanded = false
     @State private var isRunOutputExpanded = false
+    @State private var isEvidenceExpanded = false
+    @State private var isEvaluationExpanded = false
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -755,6 +782,7 @@ struct AIChatMessageView: View {
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts: return .indigo
         }
     }
@@ -1318,6 +1346,83 @@ struct AIChatMessageView: View {
         }
     }
 
+    private var evidenceReceiptView: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.dockSoft) { isEvidenceExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isEvidenceExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "checkmark.seal")
+                    Text("Evidence · \(message.evidenceReceipts.count) receipt\(message.evidenceReceipts.count == 1 ? "" : "s")")
+                        .fontWeight(.semibold)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if isEvidenceExpanded {
+                ForEach(message.evidenceReceipts) { receipt in
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: receipt.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(receipt.passed ? .green : .red)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(receipt.isVerification ? "Verification" : "Action")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            Text(receipt.command)
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                .textSelection(.enabled)
+                            Text(receipt.observation)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var subjectiveEvaluationView: some View {
+        if let evaluation = message.subjectiveEvaluation {
+            VStack(alignment: .leading, spacing: 5) {
+                Button {
+                    withAnimation(.dockSoft) { isEvaluationExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isEvaluationExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Image(systemName: evaluation.verdict == .pass
+                            ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                        Text(evaluation.verdict == .pass
+                            ? "Independent review · Pass" : "Independent review · Needs revision")
+                            .fontWeight(.semibold)
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(evaluation.verdict == .pass ? .green : .orange)
+                }
+                .buttonStyle(.plain)
+                if isEvaluationExpanded {
+                    Text(evaluation.summary)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                    ForEach(evaluation.issues, id: \.self) { issue in
+                        Label(issue, systemImage: "exclamationmark.circle")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
     /// Collapsed record of how the answer was routed. Every line is real work the app did
     /// (catalog size, chosen path, executed row) — never model reasoning.
     @ViewBuilder
@@ -1499,6 +1604,10 @@ struct AIChatMessageView: View {
                 if !message.mcpToolsRan.isEmpty && message.reminderResults.isEmpty {
                     mcpToolChips
                 }
+                if !message.evidenceReceipts.isEmpty {
+                    evidenceReceiptView
+                }
+                subjectiveEvaluationView
                 // Detect extension proposal in structuredData
                 if let sd = message.structuredData, message.role == .assistant,
                     let data = sd.data(using: .utf8),
@@ -1879,6 +1988,7 @@ struct AILoadingView: View {
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts: return .indigo
         }
     }

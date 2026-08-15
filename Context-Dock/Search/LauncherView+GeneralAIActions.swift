@@ -389,7 +389,12 @@ extension LauncherView {
         let scoped = await MainActor.run { () -> (name: String, bundleId: String)? in
             // Start this turn's trace clean; a stale one would be attached to the answer.
             aiMode.routerTrace = []
-            let scoped = scopedChatApp()
+            // General Chat's app picker is an explicit scope too. With exactly one app
+            // selected, short commands such as "Run New Tab" must resolve inside Safari
+            // without requiring the user to repeat "Safari" in every message.
+            let selectedScope = chatFocusApps.count == 1
+                ? (chatFocusApps[0].name, chatFocusApps[0].bundleId) : nil
+            let scoped = scopedChatApp() ?? selectedScope
             actionTraceStep(
                 scoped.map { "Reading \($0.name) capabilities…" }
                     ?? "Reading available capabilities…")
@@ -505,6 +510,16 @@ extension LauncherView {
             return await runCompoundAction(
                 appName: appName, bundleID: bundleID, steps: steps)
         }
+    }
+
+    /// Model-first affects ambiguous language, not an exact action installed in the sole
+    /// app the user explicitly selected. Returning true here keeps deterministic work local
+    /// while preserving model-first behaviour for ordinary and cross-app requests.
+    func hasExactSelectedAdapterAction(query: String) -> Bool {
+        guard chatFocusApps.count == 1 else { return false }
+        let app = chatFocusApps[0]
+        return AppAdapterManager.shared.scoredActions(for: app.bundleId, query: query)
+            .contains { $0.score >= AppAdapterManager.adapterActionStrongMatchScore }
     }
 
     /// Execute an ordered compound plan ("save and quit vscode"): activate the app, warm its
@@ -795,21 +810,40 @@ extension LauncherView {
             let verification = await GeneralAIActionExecutor.shared.verify(candidate)
             await MainActor.run {
                 aiMode.loadingStatus = nil
+                var receipts = [EvidenceReceipt(AIProviderService.ExecutedCommand(
+                    command: "adapter_action(\(candidate.adapterActionID ?? candidate.capabilityID ?? candidate.id))",
+                    output: result.message,
+                    success: true,
+                    isVerification: false
+                ))]
                 switch verification {
-                case .verified:
+                case .verified(let refined):
                     aiMode.actionProgress?.finish()
                     aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Verified"]
+                    receipts.append(EvidenceReceipt(AIProviderService.ExecutedCommand(
+                        command: "verify_adapter_outcome(\(candidate.title))",
+                        output: refined ?? "The requested outcome was observed.",
+                        success: true,
+                        isVerification: true
+                    )))
                 case .skipped:
                     aiMode.actionProgress?.finish()
                     aiMode.pendingToolChips = [
                         "\(candidate.title) · \(candidate.routeLabel)", "Executor confirmed",
                     ]
-                case .unverified:
+                case .unverified(let reason):
                     aiMode.actionProgress?.failed = true
                     aiMode.pendingToolChips = [
                         "\(candidate.title) · \(candidate.routeLabel)", "Verification failed",
                     ]
+                    receipts.append(EvidenceReceipt(AIProviderService.ExecutedCommand(
+                        command: "verify_adapter_outcome(\(candidate.title))",
+                        output: reason,
+                        success: false,
+                        isVerification: true
+                    )))
                 }
+                aiMode.pendingEvidenceReceipts = receipts
                 aiMode.actionProgress = nil
             }
             switch verification {

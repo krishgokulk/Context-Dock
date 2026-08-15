@@ -66,6 +66,17 @@ enum AgentAnswerVerifier {
               executed.contains(where: { $0.success && !$0.isVerification }) else {
             return false
         }
+        // The shared verify_outcome tool currently has typed filesystem criteria only.
+        // A user-authored Global Command may open a URL/app or run AppleScript, for which
+        // inventing a file path cannot prove anything. Its successful executor receipt is
+        // deliberately "executor confirmed", not independently verified; do not force the
+        // model into an invalid filesystem check merely to manufacture a verification chip.
+        let successfulActions = executed.filter { $0.success && !$0.isVerification }
+        if successfulActions.allSatisfy({
+            $0.command.hasPrefix("run_capability(globalcmd.")
+        }) {
+            return false
+        }
         return !executed.contains(where: { $0.success && $0.isVerification })
     }
 

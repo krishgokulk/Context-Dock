@@ -103,7 +103,7 @@ final class AISafetyPolicy {
                 : AppSettings.shared.chatGPTBridgeEndpoint
             guard let host = URLComponents(string: endpoint)?.host?.lowercased() else { return false }
             return ["localhost", "127.0.0.1", "::1"].contains(host)
-        case .openAI, .anthropic, .googleGemini, .shortcuts:
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts:
             return false
         }
     }

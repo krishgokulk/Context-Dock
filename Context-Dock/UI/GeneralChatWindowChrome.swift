@@ -19,6 +19,9 @@ import SwiftUI
 enum GeneralChatWindowMode: String, CaseIterable, Identifiable {
     case chat
     case work
+    /// Reading mode: what the local stores already know, drawn back. It shares this shell
+    /// rather than opening a window of its own — one surface, several modes.
+    case dashboard
 
     var id: String { rawValue }
 
@@ -26,6 +29,7 @@ enum GeneralChatWindowMode: String, CaseIterable, Identifiable {
         switch self {
         case .chat: return "Chat"
         case .work: return "Work"
+        case .dashboard: return "Dashboard"
         }
     }
 }

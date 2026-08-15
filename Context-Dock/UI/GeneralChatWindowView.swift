@@ -517,6 +517,7 @@ struct GeneralChatWindowView: View {
                         switch chrome.mode {
                         case .chat: chatPane
                         case .work: workPane
+                        case .dashboard: DashboardPane()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

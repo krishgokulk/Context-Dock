@@ -88,10 +88,37 @@ enum AgentSourceAuthority {
     }
 
     private static func isLiveStateQuestion(_ q: String) -> Bool {
+        // Mutable machine state is never a preference. A saved fact such as "I prefer dark
+        // mode" may help with an action, but it cannot prove what the Mac is doing now.
+        // Keep mutation phrases out: "turn on Wi-Fi" is an action and must continue to the
+        // typed capability/approval path below.
+        let mutationSignals = [
+            "turn on", "turn off", "enable", "disable", "set ", "switch to",
+            "change to", "toggle", "increase", "decrease", "mute", "unmute",
+        ]
+        let isMutation = mutationSignals.contains(where: q.contains)
+        let systemStateObjects = [
+            "dark mode", "light mode", "appearance", "volume", "sound level",
+            "wi-fi", "wifi", "bluetooth", "battery", "focus mode", "do not disturb",
+            "now playing", "currently playing", "media playback",
+        ]
+        let stateQuestionSignals = [
+            "status", "current", "currently", "right now", "is ", "are ",
+            "what", "which", "how much", "how loud", "active", "connected",
+        ]
+        if !isMutation,
+            systemStateObjects.contains(where: q.contains),
+            (stateQuestionSignals.contains(where: q.contains)
+                || q.split(separator: " ").count <= 3)
+        {
+            return true
+        }
+
         let freshness = ["latest", "recent", "current", "right now", "just now", "today",
                          "newest", "last commit", "open ", "unread", "due ", "status"]
         let liveObjects = ["commit", "branch", "change", "workspace", "project", "file",
-                           "window", "tab", "email", "mail", "note", "reminder", "inbox"]
+                           "window", "tab", "email", "mail", "note", "reminder", "inbox",
+                           "event", "calendar", "message", "song", "track"]
         if freshness.contains(where: q.contains), liveObjects.contains(where: q.contains) {
             return true
         }

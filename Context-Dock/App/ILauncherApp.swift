@@ -966,8 +966,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showLauncher()
     }
 
+    /// Menu items land here. Choosing "General Chat" from a menu means bring it up — never
+    /// "and put it away if it is already there", which is what a toggle would do to someone
+    /// who just picked it out of a list.
     @objc func showGeneralChatWindow() {
         GeneralChatWindowController.shared.show()
+    }
+
+    /// The hotkey lands here instead: press once to open, press again to dismiss.
+    @objc func toggleGeneralChatWindow() {
+        GeneralChatWindowController.shared.toggle()
     }
 
     @objc func showSettings() {
@@ -1706,7 +1714,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
                 return OSStatus(eventNotHandledErr)
             }
-            delegate.showGeneralChatWindow()
+            delegate.toggleGeneralChatWindow()
             return noErr
         }
         let selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)

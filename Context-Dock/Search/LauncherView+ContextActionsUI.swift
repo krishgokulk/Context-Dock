@@ -256,6 +256,7 @@ extension LauncherView {
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts: return .indigo
         }
     }

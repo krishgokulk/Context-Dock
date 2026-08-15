@@ -705,6 +705,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     case chatGPTBridge = "chatGPTBridge"
     case ollama = "ollama"
     case openAICompatible = "openAICompatible"
+    case kimi = "kimi"
     case shortcuts = "shortcuts"
 
     var id: String { rawValue }
@@ -719,6 +720,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .chatGPTBridge: return "ChatGPT Plus (via Bridge)"
         case .ollama: return "Ollama (Local)"
         case .openAICompatible: return "OpenAI-Compatible"
+        case .kimi: return "Kimi (Moonshot AI)"
         case .shortcuts: return "Apple Shortcuts"
         }
     }
@@ -735,7 +737,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .onDevice, .shortcuts:
             return false
-        case .openAI, .anthropic, .googleGemini, .ollama, .openAICompatible,
+        case .openAI, .anthropic, .googleGemini, .ollama, .openAICompatible, .kimi,
              .claudeBridge, .chatGPTBridge:
             return true
         }
@@ -751,6 +753,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .chatGPTBridge: return "ChatGPT Plus"
         case .ollama: return "Ollama"
         case .openAICompatible: return "Compatible"
+        case .kimi: return "Kimi"
         case .shortcuts: return "Shortcuts"
         }
     }
@@ -772,6 +775,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .ollama: return "Run local AI models with Ollama. Free and private."
         case .openAICompatible:
             return "Use LM Studio, OpenRouter, or another OpenAI-compatible endpoint."
+        case .kimi: return "Moonshot AI's Kimi model through its official API."
         case .shortcuts: return "Use any Apple Shortcut as your AI. Fully customizable."
         }
     }
@@ -786,6 +790,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .chatGPTBridge: return "arrow.triangle.2.circlepath.circle"
         case .ollama: return "server.rack"
         case .openAICompatible: return "network"
+        case .kimi: return "moon.stars.fill"
         case .shortcuts: return "bolt.fill"
         }
     }
@@ -795,7 +800,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .onDevice, .ollama, .openAICompatible, .shortcuts,
             .claudeBridge, .chatGPTBridge:
             return false
-        case .googleGemini, .openAI, .anthropic: return true
+        case .googleGemini, .openAI, .anthropic, .kimi: return true
         }
     }
 
@@ -812,7 +817,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
 
     var supportTier: AIProviderSupportTier {
         switch self {
-        case .openAI, .anthropic, .googleGemini:
+        case .openAI, .anthropic, .googleGemini, .kimi:
             return .official
         case .claudeBridge, .chatGPTBridge:
             return .bridge
@@ -1035,6 +1040,7 @@ class AppSettings: ObservableObject {
     @AppStorage("googleGeminiAPIKey") private var legacyGoogleGeminiAPIKey: String = ""
     @AppStorage("anthropicAPIKey") private var legacyAnthropicAPIKey: String = ""
     @AppStorage("openAICompatibleAPIKey") private var legacyOpenAICompatibleAPIKey: String = ""
+    @AppStorage("kimiAPIKey") private var legacyKimiAPIKey: String = ""
     // True while loading keys FROM the Keychain at launch, so the didSet writers
     // below don't persist a transiently-empty read back over a real stored key —
     // that wiped users' API keys after a crash/relaunch.
@@ -1066,6 +1072,12 @@ class AppSettings: ObservableObject {
             )
         }
     }
+    @Published var kimiAPIKey: String = "" {
+        didSet {
+            guard !isLoadingAPIKeys else { return }
+            KeychainStore.shared.set(kimiAPIKey, for: AIProvider.kimi.rawValue)
+        }
+    }
     @AppStorage("selectedOpenAIModel") var selectedOpenAIModel: String = "gpt-4o-mini"
     @AppStorage("selectedAnthropicModel") var selectedAnthropicModel: String =
         AnthropicModelCatalog.defaultModelID
@@ -1074,6 +1086,7 @@ class AppSettings: ObservableObject {
     @AppStorage("openAICompatibleEndpoint") var openAICompatibleEndpoint: String =
         "http://localhost:1234/v1"
     @AppStorage("openAICompatibleModelID") var openAICompatibleModelID: String = ""
+    @AppStorage("selectedKimiModel") var selectedKimiModel: String = "kimi-k2.5"
     // Dedicated AppleScript-automation model (e.g. Osaurus AppleScript-8B/16B on
     // 127.0.0.1:1337/v1). Optional + independent of the main chat provider: used ONLY
     // to turn NL automation intents into AppleScript in the action/execution layer.
@@ -2179,6 +2192,7 @@ class AppSettings: ObservableObject {
         case .googleGemini: return googleGeminiAPIKey
         case .anthropic: return anthropicAPIKey
         case .openAICompatible: return openAICompatibleAPIKey
+        case .kimi: return kimiAPIKey
         default: return ""
         }
     }
@@ -2189,6 +2203,7 @@ class AppSettings: ObservableObject {
         case .googleGemini: googleGeminiAPIKey = key
         case .anthropic: anthropicAPIKey = key
         case .openAICompatible: openAICompatibleAPIKey = key
+        case .kimi: kimiAPIKey = key
         default: break
         }
     }
@@ -2207,6 +2222,8 @@ class AppSettings: ObservableObject {
             return !ollamaEndpoint.isEmpty && !selectedOllamaModel.isEmpty
         case .openAICompatible:
             return !openAICompatibleEndpoint.isEmpty && !openAICompatibleModelID.isEmpty
+        case .kimi:
+            return !kimiAPIKey.isEmpty && !selectedKimiModel.isEmpty
         case .claudeBridge:
             return !claudeBridgeEndpoint.isEmpty && !claudeBridgeModelID.isEmpty
         case .chatGPTBridge:
@@ -2235,11 +2252,13 @@ class AppSettings: ObservableObject {
             provider: .openAICompatible,
             legacyValue: legacyOpenAICompatibleAPIKey
         )
+        kimiAPIKey = migrateAIKey(provider: .kimi, legacyValue: legacyKimiAPIKey)
 
         legacyOpenAIAPIKey = ""
         legacyGoogleGeminiAPIKey = ""
         legacyAnthropicAPIKey = ""
         legacyOpenAICompatibleAPIKey = ""
+        legacyKimiAPIKey = ""
     }
 
     private func migrateAIKey(provider: AIProvider, legacyValue: String) -> String {

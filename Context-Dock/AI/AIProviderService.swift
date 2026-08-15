@@ -308,7 +308,7 @@ class AIProviderService: ObservableObject {
                   let host = components.host?.lowercased()
             else { return false }
             return host == "localhost" || host == "127.0.0.1" || host == "::1"
-        case .openAI, .anthropic, .googleGemini, .shortcuts:
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts:
             return false
         }
     }
@@ -1171,6 +1171,7 @@ class AIProviderService: ObservableObject {
             self.output = output
             self.success = success
             self.isVerification = isVerification
+            TaskRunStore.shared.record(self)
         }
     }
 
@@ -1196,11 +1197,27 @@ class AIProviderService: ObservableObject {
         simulateAllTools: Bool = false
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
+        let resume = TaskRunStore.shared.resolve(message)
+        let effectiveMessage = resume.message
+        let guardedCommandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
+            command, purpose, approval in
+            if let cached = TaskRunStore.shared.cachedSuccessfulCommand(command, from: resume.source) {
+                return (true, "Resumed from durable receipt: \(cached.output)", 0)
+            }
+            return await commandExecutor(command, purpose, approval)
+        }
+
+        return try await TaskRunStore.shared.track(
+            request: resume.source?.request ?? message,
+            provider: String(describing: provider),
+            resumedFrom: resume.source?.id
+        ) {
+
         var contextPrompt: String
         if let override = systemPromptOverride {
             contextPrompt = override
         } else {
-            contextPrompt = await buildContextPrompt(for: context, originalQuery: message, forToolUse: true)
+            contextPrompt = await buildContextPrompt(for: context, originalQuery: effectiveMessage, forToolUse: true)
         }
         if let additional = additionalSystemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
             !additional.isEmpty
@@ -1216,8 +1233,8 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: key,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations, endpoint: "https://api.openai.com/v1/chat/completions",
                 model: AppSettings.shared.selectedOpenAIModel.isEmpty
@@ -1235,8 +1252,8 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .anthropic)
             return try await sendAnthropicWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: key,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 model: AppSettings.shared.selectedAnthropicModel.isEmpty
@@ -1254,8 +1271,8 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .gemini)
             return try await sendGeminiWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: key,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 imageAttachments: imageAttachments,
@@ -1271,8 +1288,8 @@ class AIProviderService: ObservableObject {
             let customTools = extManager.toolSchemas(for: .openAI)
             // Use OpenAI-compatible endpoint (/v1/chat/completions) so response format matches OpenAIToolResponse
             return try await sendOpenAIWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: nil,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: nil,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 endpoint: "\(endpoint)/v1/chat/completions",
@@ -1293,9 +1310,9 @@ class AIProviderService: ObservableObject {
             let key = apiKey ?? settings.openAICompatibleAPIKey
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message, contextPrompt: contextPrompt,
+                message: effectiveMessage, contextPrompt: contextPrompt,
                 apiKey: key.isEmpty ? nil : key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools, maxIterations: maxIterations,
                 endpoint: endpoint.hasSuffix("chat/completions")
                     ? endpoint : "\(endpoint)/chat/completions",
@@ -1306,6 +1323,29 @@ class AIProviderService: ObservableObject {
                 simulateAllTools: simulateAllTools
             )
 
+        case .kimi:
+            guard let key = apiKey, !key.isEmpty else {
+                throw AIServiceError.missingAPIKey("Kimi API key is required")
+            }
+            let customTools = extManager.toolSchemas(for: .openAI)
+            return try await sendOpenAIWithTools(
+                message: effectiveMessage,
+                contextPrompt: contextPrompt,
+                apiKey: key,
+                history: conversationHistory,
+                commandExecutor: guardedCommandExecutor,
+                customTools: customTools,
+                maxIterations: maxIterations,
+                endpoint: "https://api.moonshot.ai/v1/chat/completions",
+                model: AppSettings.shared.selectedKimiModel,
+                timeout: 120,
+                extraHeaders: [:],
+                transport: OpenAICompatibleToolProviderAdapter(),
+                imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
+                simulateAllTools: simulateAllTools)
+
         case .claudeBridge:
             let settings = AppSettings.shared
             let endpoint = settings.claudeBridgeEndpoint
@@ -1315,11 +1355,11 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message,
+                message: effectiveMessage,
                 contextPrompt: contextPrompt,
                 apiKey: nil,
                 history: conversationHistory,
-                commandExecutor: commandExecutor,
+                commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 endpoint: endpoint.hasSuffix("chat/completions")
@@ -1340,11 +1380,11 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message,
+                message: effectiveMessage,
                 contextPrompt: contextPrompt,
                 apiKey: nil,
                 history: conversationHistory,
-                commandExecutor: commandExecutor,
+                commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 endpoint: endpoint.hasSuffix("chat/completions")
@@ -1358,6 +1398,7 @@ class AIProviderService: ObservableObject {
 
         default:
             throw AIServiceError.unsupportedProvider("onDevice_fallback")
+        }
         }
     }
 
