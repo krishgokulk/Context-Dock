@@ -1487,7 +1487,9 @@ struct LauncherView: View {
             }
         }
         .onReceive(TerminalAIBridge.shared.$pendingApproval) { pending in
-            if let pending = pending {
+            // Only what this surface asked for. A card from the chat window landing here
+            // is someone else's conversation appearing in the user's.
+            if let pending = pending, pending.origin == .dock {
                 // A CLI scope is a real command workspace, not an app adapter. Keep its
                 // live status honest while the approval card is on screen.
                 let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true

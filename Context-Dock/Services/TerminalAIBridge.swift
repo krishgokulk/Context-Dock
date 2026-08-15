@@ -74,11 +74,20 @@ class TerminalAIBridge: ObservableObject {
         }
     }
 
+    /// Which surface asked, so its approval card appears there and only there.
+    ///
+    /// The pending command is one global value and both surfaces render it, so a command
+    /// requested in the chat window put its "Run command?" card into whatever dock chat
+    /// happened to be open — the user watched Finder's conversation fill up with Safari
+    /// commands it had never asked for.
+    enum ApprovalOrigin { case dock, window }
+
     struct PendingCommand: Identifiable {
         let id = UUID()
         let command: String
         let purpose: String
         let classification: TerminalCommandClassifier.CommandClassification
+        let origin: ApprovalOrigin
         let continuation: CheckedContinuation<CommandResult, Never>
     }
 
@@ -230,6 +239,11 @@ class TerminalAIBridge: ObservableObject {
                 command: command,
                 purpose: purpose,
                 classification: classification,
+                // The surface the user is looking at is the one that asked. Inferred rather
+                // than threaded through every caller: the request arrives from deep inside
+                // an async chain, and the key window is the one fact that is true at the
+                // moment the question needs answering.
+                origin: GeneralChatWindowController.shared.isKeyWindow ? .window : .dock,
                 continuation: continuation
             )
             approvalExpiryTask = Task { [weak self] in

@@ -143,6 +143,9 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
     /// to be a regular, menu-bar-owning app.
     var isVisible: Bool { window?.isVisible == true }
 
+    /// True when the chat window is the one the user is typing into.
+    var isKeyWindow: Bool { window?.isKeyWindow == true }
+
     func windowWillClose(_ notification: Notification) {
         guard notification.object as? NSWindow === window else { return }
         // The window is kept, not dropped. Rebuilding it on the next open would rebuild the

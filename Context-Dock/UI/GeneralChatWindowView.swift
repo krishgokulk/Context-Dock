@@ -185,14 +185,14 @@ struct GeneralChatWindowView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // Scope stays above every navigation section, even in a long history.
-                    // Combined chat is a property of the general thread — several apps
-                    // answering one conversation. A scoped thread already *is* its app, so
-                    // showing the row there claimed Safari's chat was also about Notes,
-                    // which it was not. Pinned, it stays visible from any thread, because
-                    // that is what pinning it is for.
-                    if model.scopeAppNames.count > 1,
-                        model.activeScope.isGeneralChat || pinnedCombinedChat
-                    {
+                    // Shown whenever the current thread is about more than one app.
+                    //
+                    // Restricting this to the general thread was wrong: attaching an app in
+                    // General opens that app's own thread, so a second app lands as an
+                    // attachment on a scoped thread — Safari + Messages *is* the Safari
+                    // thread. Hiding the row there hid the combined chat exactly where
+                    // combining actually happens.
+                    if model.scopeAppNames.count > 1 {
                         combinedChatEntry
                             .padding(.horizontal, 8)
                             .padding(.top, 10)
@@ -705,7 +705,7 @@ struct GeneralChatWindowView: View {
     /// the dock reads, so a request is answered wherever the user actually is.
     @ViewBuilder
     private var approvalCard: some View {
-        if let pending = terminalBridge.pendingApproval {
+        if let pending = terminalBridge.pendingApproval, pending.origin == .window {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 6) {
                     Image(systemName: "terminal.fill")
