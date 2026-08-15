@@ -520,6 +520,25 @@ final class AgentToolRegistry {
                     output: "run_command requires 'command' and 'purpose'.",
                     displayCommand: "run_command(invalid)")
             }
+            // An unfilled placeholder is not a command. `graft --dir <your_project_directory>`
+            // ran verbatim, zsh choked on the angle brackets, and the answer said the
+            // visualisation was rendering. The prompt already says never to invent
+            // placeholders; this refuses the ones that get written anyway, because a
+            // command containing <…> cannot do what it claims and its failure reads like a
+            // shell quirk rather than a missing value.
+            if let placeholder = command.range(
+                of: #"<[A-Za-z_][A-Za-z0-9_ ]*>"#, options: .regularExpression)
+            {
+                return AgentToolResult(
+                    success: false,
+                    output: "That command still contains the placeholder "
+                        + "`\(command[placeholder])` — it was never filled in, so it cannot "
+                        + "run. Work out the real value first (the thread's folder, the "
+                        + "current project, the file the user named) and send the command "
+                        + "with it, or ask the user which one they mean. Do not run it with "
+                        + "the placeholder text.",
+                    displayCommand: "run_command(\(command))")
+            }
             if let redirect = Self.capabilityInsteadOfShell(command) {
                 return AgentToolResult(
                     success: false,
@@ -561,7 +580,11 @@ final class AgentToolRegistry {
             name: "verify_outcome",
             description: "Read back filesystem state after an action. Every criterion starts "
                 + "failing; call this after work that creates, removes, or changes a file and "
-                + "before claiming completion. This tool is read-only and cannot run commands.",
+                + "before claiming completion. Use only when the requested outcome concerns a "
+                + "real absolute file path supplied by the user or returned by a tool. Never "
+                + "invent placeholder paths and never use it to verify URLs, opened apps, Global "
+                + "Commands, menus, or other non-filesystem outcomes. This tool is read-only and "
+                + "cannot run commands.",
             properties: [
                 "kind": [
                     "type": "string",
@@ -580,11 +603,12 @@ final class AgentToolRegistry {
         ) { arguments, _ in
             guard let kind = arguments["kind"] as? String,
                   let rawPath = arguments["path"] as? String,
-                  rawPath.hasPrefix("/")
+                  rawPath.hasPrefix("/"),
+                  !rawPath.lowercased().hasPrefix("/path/to/")
             else {
                 return AgentToolResult(
                     success: false,
-                    output: "Verification requires a supported kind and an absolute path.",
+                    output: "Verification requires a supported kind and a real absolute path; placeholder paths are not evidence.",
                     displayCommand: "verify_outcome(invalid)")
             }
 
