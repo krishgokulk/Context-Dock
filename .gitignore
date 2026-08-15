@@ -35,5 +35,8 @@ AppIcon.icon/
 # Google Drive upload temp
 .tmp.driveupload/
 
-# graft's local graph cache — regenerable, not committed (run `graft build`).
-graft/
+# graphify local knowledge graph — regenerable, not committed (run `graphify update .`).
+graphify-out/
+
+# macOS/Google Drive custom folder-icon artifacts (one of these broke `xcodebuild test`)
+Icon\r

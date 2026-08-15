@@ -218,27 +218,6 @@ These files are very large - read only the relevant range:
 - Search/ContentView.swift - 420+ @State vars; use awk NR>=X and NR<=Y
 - Search/LauncherView+ContextualActions.swift - use same awk pattern
 
-## graft — find code before reading it
-
-The repo is indexed by `graft/` (local cache, git-ignored, rebuilt with `graft build .`).
-Reach for it **before** Glob/Grep/Read — it answers from a symbol index instead of loading files.
-
-```bash
-graft ask "where is the dock height preset logic"   # ranked symbols + file:line
-graft skeleton <file>                               # signatures only, no bodies
-graft grep "<regex>"                                # search indexed files
-graft map                                           # per-folder symbol counts
-```
-
-`graft skeleton` is the big win on the large files above — signatures of
-`ContentView.swift` instead of 7k tokens of body.
-
-**Swift limitation:** Swift is parsed by the breadth tier (signature-only). Definitions,
-types, and symbol search work; **`graft callers` does not** — the graph has ~0 call edges
-for Swift. To find call sites use `graft grep` or plain `grep -rn`, not `graft callers`.
-
-Rebuild after another agent lands a batch of commits: `graft build .`
-
 ## Working alongside other agents
 
 2-4 Claude/Codex sessions run against this repo at once. Assume a file you did not
@@ -253,3 +232,13 @@ touch is being edited by someone else **right now**, and that HEAD moves under y
   mid-task.
 - **Isolate risky work in a worktree** (`.claude/worktrees/`) rather than the shared tree.
 - If `git status` shows modifications you did not make, leave them alone and say so.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
