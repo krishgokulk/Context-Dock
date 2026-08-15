@@ -2449,7 +2449,25 @@ extension LauncherView {
                                             guard !q.isEmpty else { return }
                                             handleRemPanelQuery()
                                         } else {
-                                            executeSelectedResult()
+                                            // Nothing above claimed Return. With a result
+                                            // highlighted that means "run it"; with typed
+                                            // text and no result it means the user asked a
+                                            // question, and the only honest answer is to
+                                            // answer it.
+                                            //
+                                            // This was reachable whenever no frontmost app
+                                            // had been detected: the context dock never
+                                            // showed, General Chat was not marked active,
+                                            // no smart scope applied — so every branch
+                                            // declined and Return did nothing at all, with
+                                            // the question still sitting in the field.
+                                            let typed = searchState.query.trimmingCharacters(
+                                                in: .whitespacesAndNewlines)
+                                            if searchState.selectedIndex == nil, !typed.isEmpty {
+                                                submitAIQuery()
+                                            } else {
+                                                executeSelectedResult()
+                                            }
                                         }
                                     }
                             }
