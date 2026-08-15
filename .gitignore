@@ -39,4 +39,4 @@ AppIcon.icon/
 graphify-out/
 
 # macOS/Google Drive custom folder-icon artifacts (one of these broke `xcodebuild test`)
-Icon\r
+Icon?
