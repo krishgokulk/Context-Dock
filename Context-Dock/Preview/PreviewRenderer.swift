@@ -15,6 +15,8 @@ struct PreviewRenderer: View {
 
     var body: some View {
         switch item.kind {
+        case .text where PreviewTextEditor.handles(item.url):
+            PreviewTextEditor(url: item.url)
         case .document, .image, .text:
             InlineQLPreview(url: item.url)
         case .folder:

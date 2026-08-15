@@ -11,8 +11,18 @@
 import AppKit
 import SwiftUI
 
+/// Where the surface is living. Same shell either way — a preview embedded in the chat
+/// window must not look like a different feature from the one Space opens — but a panel
+/// inside another window has no traffic lights of its own to draw, and no assistant to
+/// offer, because the window it sits in already is one.
+enum PreviewHost {
+    case window
+    case embedded
+}
+
 struct PreviewSurfaceView: View {
     @ObservedObject var session: PreviewSession
+    var host: PreviewHost = .window
     @ObservedObject private var settings = AppSettings.shared
     @AppStorage("previewPanelAIWidth") private var aiWidth = 320.0
 
@@ -46,7 +56,7 @@ struct PreviewSurfaceView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
-                    if session.showsAI {
+                    if session.showsAI, host == .window {
                         StickySplitDivider(width: $aiWidth, maximumWidth: maxAI,
                                            minimumWidth: 240)
                             .frame(width: dividerWidth)
@@ -63,16 +73,7 @@ struct PreviewSurfaceView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The panel is transparent so Liquid Glass can show the desktop; the material
         // has to come from the content, exactly as the sticky note and scoped panels do.
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
-        )
+        .background(chrome)
         .onChange(of: session.index) { _, _ in
             session.window?.title = session.current?.title ?? "Preview"
         }
@@ -92,15 +93,38 @@ struct PreviewSurfaceView: View {
         extractedText = await PreviewTextExtractor.text(for: item)
     }
 
+    /// A window draws its own glass; embedded, the surrounding window already did.
+    @ViewBuilder
+    private var chrome: some View {
+        if host == .window {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+        } else {
+            Color.clear
+        }
+    }
+
     // MARK: - Header
 
     private var header: some View {
         HStack(spacing: 8) {
-            // Close / minimise / zoom at the leading edge, where macOS puts them — the
-            // panel hides the real traffic lights to keep the glass unbroken.
-            circleButton("xmark", size: 9, help: "Close") { session.window?.close() }
-            circleButton("minus", size: 9, help: "Minimise") { session.window?.miniaturize(nil) }
-            circleButton("arrow.up.left.and.arrow.down.right", size: 8, help: "Zoom") { toggleZoom() }
+            if host == .window {
+                // Close / minimise / zoom at the leading edge, where macOS puts them — the
+                // panel hides the real traffic lights to keep the glass unbroken.
+                circleButton("xmark", size: 9, help: "Close") { session.window?.close() }
+                circleButton("minus", size: 9, help: "Minimise") {
+                    session.window?.miniaturize(nil)
+                }
+                circleButton("arrow.up.left.and.arrow.down.right", size: 8, help: "Zoom") {
+                    toggleZoom()
+                }
+            }
 
             if let item = session.current {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
@@ -129,17 +153,30 @@ struct PreviewSurfaceView: View {
                     .help("Reading the file for the assistant…")
             }
 
-            iconButton("sidebar.right", help: session.showsAI ? "Hide assistant" : "Ask about this",
-                       active: session.showsAI) {
-                session.showsAI.toggle()
+            if host == .window {
+                iconButton(
+                    "sidebar.right",
+                    help: session.showsAI ? "Hide assistant" : "Ask about this",
+                    active: session.showsAI
+                ) {
+                    session.showsAI.toggle()
+                }
             }
 
             iconButton(session.isPinned ? "pin.fill" : "pin",
                        help: session.isPinned
                            ? "Pinned — stays open while you work"
-                           : "Pin — detach this preview and keep it open",
+                           : "Pin — open this preview in its own window",
                        active: session.isPinned) {
-                PreviewController.shared.togglePin(session)
+                if host == .embedded {
+                    // Nothing to detach from: an embedded panel belongs to the window
+                    // around it, so pinning copies its content into a real window and
+                    // leaves the chat's own panel where it was.
+                    PreviewController.shared.presentDetached(
+                        items: session.items, focus: session.index)
+                } else {
+                    PreviewController.shared.togglePin(session)
+                }
             }
         }
         .padding(.horizontal, 12)

@@ -22,7 +22,9 @@ struct PreviewItem: Identifiable, Hashable {
     let kind: Kind
 
     var id: String { url.absoluteString }
-    var title: String { kind == .web ? (url.host ?? url.absoluteString) : url.lastPathComponent }
+    var title: String {
+        url.isFileURL ? url.lastPathComponent : (url.host ?? url.absoluteString)
+    }
 
     /// Nil when the path no longer exists — a preview of a deleted file is a blank
     /// window the user has to close, which is worse than the key doing nothing.
@@ -51,6 +53,9 @@ struct PreviewItem: Identifiable, Hashable {
     }
 
     private static func fileKind(_ url: URL) -> Kind {
+        // A rendered document is the point of an artifact: a chart you can read, a
+        // tracker you can click. Its source stays one menu item away.
+        if ["html", "svg"].contains(url.pathExtension.lowercased()) { return .web }
         guard let type = UTType(filenameExtension: url.pathExtension) else { return .document }
         if type.conforms(to: .image) { return .image }
         if type.conforms(to: .text) || type.conforms(to: .sourceCode) { return .text }

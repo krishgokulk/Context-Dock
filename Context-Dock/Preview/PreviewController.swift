@@ -128,6 +128,18 @@ final class PreviewController: ObservableObject {
         window.close()
     }
 
+    /// Opens content straight into its own pinned window without disturbing the live
+    /// one. For an embedded panel, which has no window of its own to detach.
+    func presentDetached(items: [PreviewItem], focus: Int) {
+        guard !items.isEmpty else { return }
+        let session = PreviewSession(items: items, index: focus)
+        session.isPinned = true
+        let window = makeWindow(for: session)
+        session.window = window
+        pinnedWindows.append(window)
+        window.orderFrontRegardless()
+    }
+
     /// Called when the dock goes away. A pinned preview is a window the user asked to
     /// keep, so it stays; the live one is part of the dock's session and goes with it.
     func closeUnpinned() {

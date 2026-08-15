@@ -48,6 +48,9 @@ struct GeneralChatWindowView: View {
     /// Kept across launches: a width someone dragged to is a preference, not a gesture to
     /// repeat every time they open the window.
     @AppStorage("generalChatSidePanelWidth") private var sidePanelWidth: Double = 300
+    /// Which side the panel sits on. Results on the left is how people read a document
+    /// next to a conversation; the default stays right, where it has always been.
+    @AppStorage("generalChatPreviewOnLeading") private var previewOnLeading = false
     @State private var panelDragStart: Double?
     private let bottomPanelHeight: CGFloat = 180
 
@@ -587,6 +590,17 @@ struct GeneralChatWindowView: View {
             GeneralChatContentBar(chrome: chrome, carriesWindowControls: !chrome.sidebarVisible)
 
             HStack(spacing: 0) {
+                // Same panel, either edge. A document read alongside a conversation
+                // usually wants to be on the left; the default stays right, where the
+                // panel has always been, so nobody's layout moves without asking.
+                if chrome.sidePanelVisible, previewOnLeading {
+                    sidePanel
+                        .frame(width: sidePanelWidth)
+                        .transition(.move(edge: .leading))
+                    Divider().opacity(0.55)
+                    sidePanelResizeHandle
+                }
+
                 VStack(spacing: 0) {
                     Group {
                         switch chrome.mode {
@@ -605,8 +619,9 @@ struct GeneralChatWindowView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
 
-                if chrome.sidePanelVisible {
+                if chrome.sidePanelVisible, !previewOnLeading {
                     sidePanelResizeHandle
                     Divider().opacity(0.55)
                     sidePanel
@@ -1216,8 +1231,12 @@ struct GeneralChatWindowView: View {
                     .onChanged { value in
                         let start = panelDragStart ?? sidePanelWidth
                         if panelDragStart == nil { panelDragStart = start }
-                        // Dragging left widens the panel: it is pinned to the right edge.
-                        sidePanelWidth = min(760, max(240, start - Double(value.translation.width)))
+                        // The handle sits on the panel's inner edge, so which drag
+                        // direction widens depends on which side the panel is on.
+                        let delta = previewOnLeading
+                            ? Double(value.translation.width)
+                            : -Double(value.translation.width)
+                        sidePanelWidth = min(760, max(240, start + delta))
                     }
                     .onEnded { _ in panelDragStart = nil }
             )
@@ -1235,6 +1254,17 @@ struct GeneralChatWindowView: View {
             HStack(spacing: 8) {
                 scopePill
                 Spacer(minLength: 0)
+                Button { previewOnLeading.toggle() } label: {
+                    Image(systemName: previewOnLeading
+                        ? "rectangle.trailinghalf.inset.filled"
+                        : "rectangle.leadinghalf.inset.filled")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(previewOnLeading ? "Move panel to the right" : "Move panel to the left")
+
                 Button { chrome.toggleSidePanel() } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
@@ -1266,10 +1296,10 @@ struct GeneralChatWindowView: View {
                         threadTerminal
                     }
                 case .artifacts:
-                    ChatThreadPreviewPanel(candidates: orderedArtifactFiles)
+                    EmbeddedPreviewPanel(urls: orderedArtifactFiles)
                         .id("artifacts-" + (orderedArtifactFiles.last?.path ?? "none"))
                 default:
-                    ChatThreadPreviewPanel(candidates: previewFiles)
+                    EmbeddedPreviewPanel(urls: previewFiles)
                         .id(previewFiles.last?.path ?? "none")
                 }
                 Divider().opacity(0.4)
@@ -1666,5 +1696,25 @@ struct GeneralChatWindowView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+}
+
+/// The thread's files on the app's one preview surface.
+///
+/// A thin owner around PreviewSession: the chat window knows which files a thread is
+/// working on, and the surface knows how to show any of them. Newest last, because the
+/// file most recently mentioned is the one being worked on.
+private struct EmbeddedPreviewPanel: View {
+    let urls: [URL]
+
+    @StateObject private var session = PreviewSession(items: [], index: 0)
+
+    var body: some View {
+        PreviewSurfaceView(session: session, host: .embedded)
+            .task(id: urls.map(\.path).joined(separator: "|")) {
+                let items = urls.compactMap { PreviewItem.any($0) }
+                session.items = items
+                session.index = max(0, items.count - 1)
+            }
     }
 }
