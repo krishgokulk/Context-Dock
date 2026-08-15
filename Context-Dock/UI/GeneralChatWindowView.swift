@@ -221,10 +221,7 @@ struct GeneralChatWindowView: View {
         // look like a stray copy of one of its members.
         let isWorkspaces = chrome.mode == .work
         let all = model.sessions.filter { $0.scope != .general }
-            .filter { session in
-                if case .thread = session.scope { return isWorkspaces }
-                return !isWorkspaces
-            }
+            .filter { $0.scope.isWorkspace == isWorkspaces }
         let folderRows = all.filter { $0.scope.folderURL != nil }
         // Conversations with something in them, newest first — the rows worth returning
         // to. In Chat these were buried in installation order among every app ever opened;
@@ -232,11 +229,10 @@ struct GeneralChatWindowView: View {
         // answers the wrong question.
         let recentRows =
             (isWorkspaces
-                ? model.sessions.filter {
-                    if case .thread = $0.scope { return $0.messageCount > 0 }
-                    return false
-                }
-                : all.filter { $0.messageCount > 0 })
+                ? model.sessions.filter { $0.scope.isWorkspace && $0.messageCount > 0 }
+                : model.sessions.filter {
+                    !$0.scope.isWorkspace && $0.scope != .general && $0.messageCount > 0
+                })
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(6)
             .map { $0 }
@@ -988,7 +984,7 @@ struct GeneralChatWindowView: View {
     /// which tab you are in.
     private var workPane: some View {
         Group {
-            if case .thread = model.activeScope {
+            if model.activeScope.isWorkspace {
                 chatPane
             } else {
                 VStack(spacing: 8) {

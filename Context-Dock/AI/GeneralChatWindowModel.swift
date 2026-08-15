@@ -347,7 +347,7 @@ final class GeneralChatWindowModel: ObservableObject {
         // A combined thread's members are the thread. Clearing them would leave a thread
         // named after two apps that is about neither, so New chat here empties the
         // transcript and keeps the pairing — the same rule as General.
-        if case .thread = activeScope {
+        if activeScope.isWorkspace {
             cancel()
             messages = []
             messageApps = [:]
@@ -420,7 +420,7 @@ final class GeneralChatWindowModel: ObservableObject {
 
     /// The apps this conversation is currently about.
     var currentMembership: [String] {
-        if case .thread = activeScope { return attachedAppNames }
+        if activeScope.isWorkspace { return attachedAppNames }
         if let scopeApp = activeScopeAppName {
             return [scopeApp] + attachedAppNames.filter { $0 != scopeApp }
         }
@@ -583,7 +583,7 @@ final class GeneralChatWindowModel: ObservableObject {
         // history with it, leaving no way back to a conversation the user built.
         let remaining = currentMembership.filter { $0 != name }
         guard remaining.count != currentMembership.count else { return }
-        if case .thread = activeScope {
+        if activeScope.isWorkspace {
             openCombination(remaining)
             return
         }

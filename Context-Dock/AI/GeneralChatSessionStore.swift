@@ -50,6 +50,17 @@ enum GeneralChatScope: Codable, Hashable {
         return URL(fileURLWithPath: path)
     }
 
+    /// True only for a combined chat — a conversation about a set of apps.
+    ///
+    /// `.thread` carries two different things: an archived General conversation, and a
+    /// workspace. Telling them apart by case alone put every archived General chat into the
+    /// Work tab, which is how "change appearance to light mode" — a question involving no
+    /// apps at all — ended up filed as a workflow. The id says which it is.
+    var isWorkspace: Bool {
+        guard case .thread(let id) = self else { return false }
+        return id.hasPrefix("combined-")
+    }
+
     var isGeneralChat: Bool {
         switch self {
         case .general, .thread: return true
