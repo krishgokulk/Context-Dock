@@ -569,9 +569,21 @@ final class AgentToolRegistry {
                     displayCommand: "run_command(\(command))",
                     exitCode: exitCode)
             }
+            // Exit zero means the command ran, not that it worked. `defaults write
+            // AppleInterfaceStyle` returns nothing and exits zero whether or not the
+            // desktop changed, and the model — seeing only an exit code — reported the
+            // change as done. Where the effect can be read back, it is, and the reading
+            // travels with the output; where it cannot, the result says so, because the
+            // model cannot tell an unverifiable command from a verified one.
+            let verification = await MainActor.run {
+                CommandOutcomeVerifier.verify(command: command)
+            }
+            let verified = verification.map { "\n\n\($0)" }
+                ?? "\n\n(Not verified: this command's effect cannot be read back. Say what "
+                    + "you ran, not that it worked.)"
             return AgentToolResult(
-                success: success,
-                output: output,
+                success: success && !(verification?.hasPrefix("NOT applied") ?? false),
+                output: output + verified,
                 displayCommand: "run_command(\(command))",
                 exitCode: exitCode)
         })
