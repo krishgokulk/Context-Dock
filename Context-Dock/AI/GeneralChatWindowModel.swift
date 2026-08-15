@@ -301,13 +301,19 @@ final class GeneralChatWindowModel: ObservableObject {
     /// "Enable <app> for this chat": attach the app, then ask the question again so the
     /// user gets an answer rather than a granted permission and a dead end.
     func enableApp(_ request: EnableAppRequest) {
-        // Attach by the name the gate reported, so the two sides agree on what is in scope
-        // even when the app is not running and the installed-apps cache is cold.
-        if !attachedAppNames.contains(where: {
+        // Approving an app at the gate is how a workspace gets built: "launch Safari and
+        // Notes" asks for both, and saying yes should land the user in the Safari + Notes
+        // conversation with the question re-asked there. Appending the name in place left
+        // the answer in General, where the two apps were in scope but the conversation
+        // belonged to nothing.
+        //
+        // Matched case-insensitively against the name the gate reported, so the two sides
+        // agree even when the app is not running and the installed-apps cache is cold.
+        let already = currentMembership.contains {
             $0.caseInsensitiveCompare(request.name) == .orderedSame
-        }) {
-            attachedAppNames.append(request.name)
-            GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
+        }
+        if !already {
+            openCombination(currentMembership + [request.name])
         }
         input = request.query
         send()
@@ -406,10 +412,48 @@ final class GeneralChatWindowModel: ObservableObject {
         }
     }
 
-    /// Stable per membership, so pairing the same two apps returns to the same
+    /// Stable per membership, so the same set of apps always returns to the same
     /// conversation rather than starting a new one each time.
     static func combinedThreadID(for names: [String]) -> String {
         "combined-" + names.map { $0.lowercased() }.sorted().joined(separator: "+")
+    }
+
+    /// The apps this conversation is currently about.
+    var currentMembership: [String] {
+        if case .thread = activeScope { return attachedAppNames }
+        if let scopeApp = activeScopeAppName {
+            return [scopeApp] + attachedAppNames.filter { $0 != scopeApp }
+        }
+        return attachedAppNames
+    }
+
+    /// Opens the conversation that belongs to exactly this set of apps.
+    ///
+    /// Membership *is* the identity of a combined chat. Safari + Notes is one workspace;
+    /// adding Calendar does not grow it into a three-app version of itself, it moves to the
+    /// Safari + Notes + Calendar workspace, which has its own history and its own tools.
+    /// Coming back to the pair returns to the pair's conversation with everything still in
+    /// it — which is the whole reason to key a workspace by who is in it.
+    func openCombination(_ names: [String]) {
+        var members: [String] = []
+        for name in names where !members.contains(name) { members.append(name) }
+
+        switch members.count {
+        case 0:
+            openGeneralSession()
+        case 1:
+            // One app is that app's own thread, not a combination of one.
+            guard let bundleId = Self.bundleId(forAppNamed: members[0]) else { return }
+            openSession(.app(bundleId: bundleId), title: members[0])
+            attachedAppNames = []
+            GeneralChatSessionStore.saveAttachedApps([], scope: activeScope)
+        default:
+            let combined = GeneralChatScope.thread(id: Self.combinedThreadID(for: members))
+            openSession(combined, title: members.joined(separator: " + "))
+            attachedAppNames = members
+            GeneralChatSessionStore.saveAttachedApps(members, scope: combined)
+        }
+        sessions = GeneralChatSessionStore.index()
     }
 
     func attachApp(_ name: String) {
@@ -430,24 +474,7 @@ final class GeneralChatWindowModel: ObservableObject {
             return
         }
 
-        // A second app makes a combined chat, and a combined chat is its own thread.
-        //
-        // Attaching Messages while in Safari's thread used to leave Safari's thread holding
-        // Messages — so the combined workflow lived inside one of its members. Clicking
-        // Messages in the sidebar showed a combined row it did not own, and New chat in
-        // Safari took the pairing with it. A workflow across two apps belongs to neither.
-        if let scopeApp = activeScopeAppName, scopeApp != name {
-            let members = [scopeApp, name]
-            let combined = GeneralChatScope.thread(id: Self.combinedThreadID(for: members))
-            openSession(combined, title: members.joined(separator: " + "))
-            attachedAppNames = members
-            GeneralChatSessionStore.saveAttachedApps(members, scope: combined)
-            sessions = GeneralChatSessionStore.index()
-            return
-        }
-
-        attachedAppNames.append(name)
-        GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
+        openCombination(currentMembership + [name])
     }
 
     // MARK: - Finder selection
@@ -545,6 +572,15 @@ final class GeneralChatWindowModel: ObservableObject {
     }
 
     func removeApp(_ name: String) {
+        // Dropping a member is a move to a different workspace, not an edit to this one.
+        // Editing in place would rewrite Safari + Notes into Safari and take the pair's
+        // history with it, leaving no way back to a conversation the user built.
+        let remaining = currentMembership.filter { $0 != name }
+        guard remaining.count != currentMembership.count else { return }
+        if case .thread = activeScope {
+            openCombination(remaining)
+            return
+        }
         attachedAppNames.removeAll { $0 == name }
         GeneralChatSessionStore.saveAttachedApps(attachedAppNames, scope: activeScope)
     }
