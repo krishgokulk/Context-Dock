@@ -623,37 +623,28 @@ extension LauncherView {
     }
 
     func quickLookPanelIsVisible() -> Bool {
-        QLPreviewPanel.shared()?.isVisible ?? false
+        PreviewController.shared.isOpen
     }
 
     func showQuickLookURL(_ url: URL, toggleIfSame: Bool) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        guard let panel = QLPreviewPanel.shared() else { return false }
-        if panel.isVisible,
-            let currentDataSource = quickLookDataSource,
-            currentDataSource.urls.first == url,
-            toggleIfSame
-        {
-            panel.orderOut(nil)
-            quickLookDataSource = nil
-            restoreSelectionAfterQuickLookClose(previewedURL: url)
-            return true
-        }
+        // The dock's own preview surface, not the system panel: it carries the pin,
+        // the Open With menu and the assistant, which QLPreviewPanel's chrome cannot.
+        let shown = PreviewController.shared.present(
+            url: url,
+            siblings: visiblePreviewPaths().map { URL(fileURLWithPath: $0) },
+            toggleIfSame: toggleIfSame,
+            // The surface can also be closed from its own header or Escape, so restore
+            // the previewed selection from the close callback rather than the key path.
+            onClose: { [self] in
+                restoreSelectionAfterQuickLookClose(previewedURL: url)
+            }
+        )
+        guard shown else { return false }
+        // Toggled shut rather than opened: the close callback already restored the
+        // selection, so re-taking focus here would fight it.
+        guard PreviewController.shared.isOpen else { return true }
 
-        let dataSource = QuickLookDataSource(urls: [url])
-        // Quick Look closes itself on Space/Escape without routing through our monitor,
-        // so restore the previewed selection from the panel's own close callback too.
-        dataSource.onClose = { [self] in
-            quickLookDataSource = nil
-            restoreSelectionAfterQuickLookClose(previewedURL: url)
-        }
-        quickLookDataSource = dataSource
-        panel.dataSource = dataSource
-        panel.delegate = dataSource
-        panel.reloadData()
-        if !panel.isVisible {
-            panel.orderFront(nil)
-        }
         if let window = AppDelegate.shared?.launcherWindow {
             window.makeKey()
             // List-view (finder desktop) results: keep the RESULT focused, not the input —

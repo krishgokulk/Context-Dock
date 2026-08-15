@@ -141,6 +141,14 @@ enum AIAttachmentPreparer {
         }
     }
 
+    /// Same extraction the attachment path uses, for callers holding a bare URL — the
+    /// preview surface hands the assistant the file it is showing. Exposed rather than
+    /// reimplemented so both routes get MarkItDown, the PDF reader and the encoding
+    /// sniffing, and both truncate at the same budget.
+    static func extractedText(from url: URL) -> String? {
+        text(from: url)
+    }
+
     private static func text(from url: URL) -> String? {
         // MarkItDown preserves headings, lists, tables, links, and Office-document structure.
         // It is the preferred shared ingestion path; native readers below remain available when
