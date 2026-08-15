@@ -7093,14 +7093,24 @@ extension LauncherView {
             await MainActor.run { aiMode.loadingStatus = "Looking for MCP and app tools…" }
             let executionScope: AIConversationScope = currentAISelectionSnapshot.isEmpty
                 ? .general : .selection(currentAISelectionSnapshot)
-            let appToolsBlock = await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
-                compact: toolProvider == .onDevice,
-                query: query,
-                scope: executionScope,
-                // Per-provider budget. On-device Apple Intelligence gets a fraction of the
-                // cloud allowance — its window is small enough that an unbudgeted
-                // capability block alone overflowed it.
-                characterBudget: AIContextBudget.characterBudget(for: toolProvider))
+            // Bounded, as the window's identical call already is. The hub reaches into the
+            // MCP actor and across every enabled adapter; one unreachable server there used
+            // to hold this turn open indefinitely, and because a turn in flight blocks the
+            // next question, every Return afterwards was swallowed in silence. Losing the
+            // tool block costs the model its catalogue for one answer. Losing the turn costs
+            // the user the surface.
+            let appToolsBlock = await AsyncTimeout.run(
+                seconds: 8, fallback: "", label: "general chat capability block"
+            ) {
+                await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
+                    compact: toolProvider == .onDevice,
+                    query: query,
+                    scope: executionScope,
+                    // Per-provider budget. On-device Apple Intelligence gets a fraction of
+                    // the cloud allowance — its window is small enough that an unbudgeted
+                    // capability block alone overflowed it.
+                    characterBudget: AIContextBudget.characterBudget(for: toolProvider))
+            }
             if !appToolsBlock.isEmpty {
                 let toolSystemPrompt = sysContent + "\n\n" + appToolsBlock
 
