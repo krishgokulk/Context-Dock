@@ -87,9 +87,18 @@ final class CapabilityDiscoveryService {
         if case .candidates(let routes) = executable {
             candidates.append(contentsOf: routes)
         }
+        // Authority is per route, not per app. Requiring an App Adapter for everything
+        // discarded candidates DoraX could already carry out safely — a cached menu command
+        // is a public, observable action the user could take themselves, and refusing to
+        // click one while naming it in the same breath is the app declining work it knows
+        // how to do. What stays adapter-gated is everything that reads private state.
         return candidates.filter { candidate in
             guard let bundleID = candidate.bundleID else { return true }
-            return AppAdapterManager.shared.adapter(for: bundleID) != nil
+            let level = AppAccessPolicy.level(for: bundleID)
+            guard AppAccessPolicy.allows(candidate.route, at: level) else { return false }
+            // A read at menu-only level is the case this must not let through: knowing an
+            // app's menus says nothing about being allowed to read its documents.
+            return level == .adapter || candidate.operation != .read
         }
     }
 

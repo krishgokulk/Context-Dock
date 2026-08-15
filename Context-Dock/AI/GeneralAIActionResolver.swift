@@ -435,11 +435,15 @@ final class GeneralAIActionResolver {
     private func appScopedResolution(
         target: TargetApp, trimmed: String, chatAllowedBundleIds: Set<String>
     ) async -> GeneralAIActionResolution {
-        let grantedForThisChat = chatAllowedBundleIds.contains(target.bundleId)
-        guard grantedForThisChat || AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
+        // Turned away at the door, an app with a perfectly good cached menu bar was told to
+        // go and add an adapter — for a command DoraX could name exactly and verify live
+        // before clicking. Authority now has three levels, and only the lowest stops here.
+        let level = AppAccessPolicy.level(
+            for: target.bundleId, chatGranted: chatAllowedBundleIds)
+        guard level > .awareness else {
             return .explain(
-                "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
-                + "Add it in Settings → App Adapters → Choose App, then ask again.")
+                AppAccessPolicy.explanation(
+                    for: target.name, level: level, wantedRead: false))
         }
         // Compound "save and quit" style requests → an ordered plan, each step resolved
         // independently. Checked before single-action routing so we don't hunt for one
