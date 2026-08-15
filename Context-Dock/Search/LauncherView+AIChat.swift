@@ -2090,7 +2090,23 @@ extension LauncherView {
 
         let query = searchState.query.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
-        guard !aiMode.isLoading && aiMode.streamingId == nil else { return }
+
+        // An answer in flight blocks the next question — but only while it is plausibly
+        // still coming. A request that stalled leaves isLoading true for the rest of the
+        // session, and every Return after it is discarded without a word, which reads as a
+        // dead app rather than a busy one.
+        if aiMode.isLoading || aiMode.streamingId != nil {
+            let startedAt = aiMode.loadingStartedAt ?? .distantPast
+            guard Date().timeIntervalSince(startedAt) > 90 else { return }
+            aiMode.messages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "That took too long and was dropped. Asking again.",
+                    isError: true))
+            aiMode.isLoading = false
+            aiMode.streamingId = nil
+            aiMode.loadingStatus = nil
+        }
 
         print(
             "🤖 [AI] Submitting query: \"\(query.prefix(60))\" | provider: \(settings.selectedAIProvider.shortName)"
@@ -2119,6 +2135,7 @@ extension LauncherView {
         aiMode.attachments = []
 
         aiMode.isLoading = true
+        aiMode.loadingStartedAt = Date()
         aiMode.loadingStatus = pendingAttachments.isEmpty
             ? "Checking App Adapters…"
             : "Reading attached files…"

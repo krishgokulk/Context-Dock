@@ -71,6 +71,12 @@ struct AIModeState {
     var isActive: Bool = false
     var messages: [AIChatMessage] = []
     var isLoading: Bool = false
+    /// When the in-flight request started, so a dead one can be told from a slow one.
+    ///
+    /// `isLoading` is only ever cleared by an answer arriving or the surface being left, so
+    /// a request that never returns leaves it true forever — and every later Return is
+    /// swallowed by the guard that reads it, silently, with the question still in the field.
+    var loadingStartedAt: Date? = nil
     /// Live agentic-loop status shown beside the typing indicator
     /// ("Searching app tools…", "Running search_items via Artifacts…").
     var loadingStatus: String? = nil
