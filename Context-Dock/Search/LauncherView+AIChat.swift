@@ -1809,6 +1809,33 @@ extension LauncherView {
                             InlineAdapterApprovalCard(request: pendingAdapterApproval)
                                 .id("adapter-approval")
                         }
+                        if !aiMode.isLoading, !aiMode.messages.isEmpty,
+                            let followUp = ChatFollowUp.suggestion(for: dockChatScope)
+                        {
+                            // One earned next step, offered where the answer is. Same rule
+                            // as the window: nothing while an answer is arriving, and
+                            // nothing at all unless the last action earned it.
+                            HStack {
+                                Button {
+                                    searchState.query = followUp.prompt
+                                    submitAIQuery()
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: "arrow.turn.down.right")
+                                            .font(.system(size: 9, weight: .semibold))
+                                        Text(followUp.title)
+                                            .font(.system(size: 11.5, weight: .medium))
+                                    }
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.16)))
+                                    .foregroundStyle(Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                                Spacer(minLength: 0)
+                            }
+                            .id("follow-up")
+                        }
                         if let pending = aiMode.pendingShare {
                             selectionShareConfirmCard(pending)
                                 .id("pending-share")

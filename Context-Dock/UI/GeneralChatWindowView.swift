@@ -630,7 +630,44 @@ struct GeneralChatWindowView: View {
                 transcript
             }
             approvalCard
+            followUpChip
             composer
+        }
+    }
+
+    /// The one next step the last action earned, if it earned one.
+    ///
+    /// Only while the conversation is idle and has something in it: offering a next move
+    /// while an answer is still arriving asks the user to choose before they have read
+    /// what they are choosing about.
+    @ViewBuilder
+    private var followUpChip: some View {
+        if !model.isSending, !model.messages.isEmpty,
+            let followUp = ChatFollowUp.suggestion(for: model.activeScope)
+        {
+            HStack {
+                Button {
+                    model.input = followUp.prompt
+                    model.send()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(followUp.title)
+                            .font(.system(size: 11.5, weight: .medium))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.accentColor.opacity(0.16)))
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: 760)
+            .padding(.horizontal, 28)
+            .padding(.bottom, 6)
         }
     }
 
