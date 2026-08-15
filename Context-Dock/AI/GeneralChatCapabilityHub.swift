@@ -60,6 +60,21 @@ final class GeneralChatCapabilityHub {
     /// System-prompt section listing all app tools General Chat may call.
     /// Cached for 5 minutes — connecting to every linked MCP server per message is too slow.
     /// `compact` trims descriptions and tool counts for small-context providers (on-device).
+    /// What this conversation has already done, appended outside the cache.
+    ///
+    /// The capability block is cached for five minutes because the tools change slowly.
+    /// Actions do not — they change every turn — so folding them into the cached text would
+    /// serve the model a history that is up to five minutes out of date, which is worse
+    /// than none: it would report work as pending that had already finished.
+    private func actionHistory(for scope: AIConversationScope) -> String {
+        let chatScope: GeneralChatScope
+        switch scope {
+        case .contextDock(let bundleID, _): chatScope = .app(bundleId: bundleID)
+        default: chatScope = .general
+        }
+        return ChatConsoleLog.shared.recentActionsBlock(for: chatScope)
+    }
+
     func capabilityPromptBlock(
         compact: Bool = false,
         query: String = "",
@@ -127,6 +142,7 @@ final class GeneralChatCapabilityHub {
             )
             return AIContextBudget.fitReference(
                 compact ? compacted(block) : block, budget: characterBudget)
+                + actionHistory(for: scope)
         }
 
         Self.log.notice("hub: mcp servers")
@@ -187,7 +203,7 @@ final class GeneralChatCapabilityHub {
             cachedBlock = ""
             cachedAt = Date()
             cachedKey = cacheKey
-            return ""
+            return actionHistory(for: scope)
         }
 
         var lines: [String] = [
@@ -279,6 +295,7 @@ final class GeneralChatCapabilityHub {
         )
         return AIContextBudget.fitReference(
             compact ? compacted(full) : full, budget: characterBudget)
+            + actionHistory(for: scope)
     }
 
     /// Lines describing enabled built-in capabilities (Notes/Calendar/Contacts/Reminders/

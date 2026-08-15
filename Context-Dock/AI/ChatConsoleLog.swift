@@ -71,6 +71,38 @@ final class ChatConsoleLog: ObservableObject {
 
     private init() {}
 
+    /// What this conversation has already done, for the next question's prompt.
+    ///
+    /// Every turn used to start cold: the model could see the apps it could reach and not
+    /// one thing it had done with them, so "do that again for the other one" had no
+    /// referent, and it would re-read context it had read a minute earlier. The console
+    /// already records each action and its result — this is that record, written small
+    /// enough to carry.
+    ///
+    /// Outcomes are included, not just names. "Ran finder.duplicates" tells the model
+    /// nothing; "found 3 sets in Downloads" is what a follow-up needs, and a failure the
+    /// model cannot see is one it will confidently repeat.
+    func recentActionsBlock(for scope: GeneralChatScope, limit: Int = 6) -> String {
+        let recent = entries(for: scope)
+            .filter { !$0.isRunning }
+            .suffix(limit)
+        guard !recent.isEmpty else { return "" }
+
+        let lines = recent.map { entry -> String in
+            let mark = entry.success ? "OK" : "FAILED"
+            let output = entry.output
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\n", with: " ")
+            let summary = output.isEmpty ? "" : " - " + String(output.prefix(160))
+            return "- [" + mark + "] " + entry.title + summary
+        }
+        var out = "\n\n## Already done in this conversation\n"
+        out += "Most recent last. These have run; do not repeat one unless asked, and "
+        out += "resolve \"that\" or \"the other one\" against them.\n"
+        out += lines.joined(separator: "\n")
+        return out
+    }
+
     func entries(for scope: GeneralChatScope) -> [ChatConsoleEntry] {
         entriesByScope[scope.storageKey] ?? []
     }
