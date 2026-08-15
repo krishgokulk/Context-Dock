@@ -118,47 +118,64 @@ struct GeneralChatStartView: View {
         let prompt: String
     }
 
-    /// Known openings for apps worth opening with, then a generic one for anything else
-    /// the user has connected — so a connected app is never absent from its own start
-    /// screen just because this file has not heard of it.
+    /// How useful an app is to *open with*, highest first.
+    ///
+    /// Adapter order is installation order, which on a Mac with fifty adapters put System
+    /// Settings, a media player and a proxy utility at the top — three suggestions nobody
+    /// starts a day with. An app with a real opening beats one running beats one merely
+    /// installed, so the three on offer are the three worth offering.
+    private func rank(_ adapter: AppAdapter) -> Int {
+        if Self.openings[adapter.bundleId] != nil { return 0 }
+        let isRunning = NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == adapter.bundleId && $0.activationPolicy == .regular
+        }
+        return isRunning ? 1 : 2
+    }
+
+    /// The apps worth starting a conversation with, and what to say to them.
+    private static let openings: [String: (String, String, String)] = [
+        "com.apple.Safari": (
+            "Summarise the page I'm reading", "Safari", "Summarise the page I'm reading"
+        ),
+        "com.apple.mail": (
+            "What needs a reply?", "Mail", "What in my inbox needs a reply?"
+        ),
+        "com.apple.iCal": (
+            "What's next today?", "Calendar",
+            "What's on my calendar for the rest of today?"
+        ),
+        "com.apple.Notes": (
+            "Find something in my notes", "Notes", "Search my notes for"
+        ),
+        "com.apple.reminders": (
+            "What's still open?", "Reminders", "What reminders are still open?"
+        ),
+        "com.apple.finder": (
+            "Tidy up my Downloads", "Finder", "What's taking up space in my Downloads?"
+        ),
+        "com.microsoft.VSCode": (
+            "What changed in this project?", "Code",
+            "What changed in my project recently?"
+        ),
+        "com.apple.MobileSMS": (
+            "Catch me up on Messages", "Messages", "What messages have I not replied to?"
+        ),
+    ]
+
+    /// Known openings first, then anything else the user has connected — so a connected app
+    /// is never absent from its own start screen just because this file has not heard of it.
     private var starters: [Starter] {
-        connected.compactMap { adapter in
-            switch adapter.bundleId {
-            case "com.apple.Safari":
+        connected.sorted { rank($0) < rank($1) }.compactMap { adapter in
+            if let opening = Self.openings[adapter.bundleId] {
                 return Starter(
-                    bundleId: adapter.bundleId, title: "Summarise the page I'm reading",
-                    subtitle: "Safari", prompt: "Summarise the page I'm reading")
-            case "com.apple.mail":
-                return Starter(
-                    bundleId: adapter.bundleId, title: "What needs a reply?",
-                    subtitle: "Mail", prompt: "What in my inbox needs a reply?")
-            case "com.apple.iCal":
-                return Starter(
-                    bundleId: adapter.bundleId, title: "What's next today?",
-                    subtitle: "Calendar", prompt: "What's on my calendar for the rest of today?")
-            case "com.apple.Notes":
-                return Starter(
-                    bundleId: adapter.bundleId, title: "Find something in my notes",
-                    subtitle: "Notes", prompt: "Search my notes for")
-            case "com.apple.reminders":
-                return Starter(
-                    bundleId: adapter.bundleId, title: "What's still open?",
-                    subtitle: "Reminders", prompt: "What reminders are still open?")
-            case "com.apple.finder":
-                return Starter(
-                    bundleId: adapter.bundleId, title: "Tidy up my Downloads",
-                    subtitle: "Finder", prompt: "What's taking up space in my Downloads?")
-            case "com.microsoft.VSCode":
-                return Starter(
-                    bundleId: adapter.bundleId, title: "What changed in this project?",
-                    subtitle: "Code", prompt: "What changed in my project recently?")
-            default:
-                return Starter(
-                    bundleId: adapter.bundleId,
-                    title: "Ask about \(adapter.appName)",
-                    subtitle: adapter.appName,
-                    prompt: "What can you do with \(adapter.appName)?")
+                    bundleId: adapter.bundleId, title: opening.0,
+                    subtitle: opening.1, prompt: opening.2)
             }
+            return Starter(
+                bundleId: adapter.bundleId,
+                title: "Ask about \(adapter.appName)",
+                subtitle: adapter.appName,
+                prompt: "What can you do with \(adapter.appName)?")
         }
     }
 
@@ -173,7 +190,8 @@ struct GeneralChatStartView: View {
             Text("Connected")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
-            ForEach(connected.prefix(8), id: \.bundleId) { adapter in
+            ForEach(connected.sorted { rank($0) < rank($1) }.prefix(8), id: \.bundleId) {
+                adapter in
                 appIcon(for: adapter.bundleId)
                     .frame(width: 16, height: 16)
                     .help(adapter.appName)

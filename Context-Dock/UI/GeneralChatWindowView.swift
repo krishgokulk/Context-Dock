@@ -28,6 +28,7 @@ struct GeneralChatWindowView: View {
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @State private var hoveredSidebarRow: String?
     @State private var hoveringCombinedChat = false
+    @State private var showsAllThreads = false
     /// Kept across launches: a pinned workflow is a standing arrangement, not a gesture to
     /// repeat every session.
     @AppStorage("generalChatPinnedCombinedChat") private var pinnedCombinedChat = false
@@ -225,12 +226,20 @@ struct GeneralChatWindowView: View {
                 return !isWorkspaces
             }
         let folderRows = all.filter { $0.scope.folderURL != nil }
-        let recentRows = isWorkspaces
-            ? model.sessions.filter {
-                if case .thread = $0.scope { return $0.messageCount > 0 }
-                return false
-            }.sorted { $0.updatedAt > $1.updatedAt }
-            : []
+        // Conversations with something in them, newest first — the rows worth returning
+        // to. In Chat these were buried in installation order among every app ever opened;
+        // eighteen dormant rows above the one from ten minutes ago is a history that
+        // answers the wrong question.
+        let recentRows =
+            (isWorkspaces
+                ? model.sessions.filter {
+                    if case .thread = $0.scope { return $0.messageCount > 0 }
+                    return false
+                }
+                : all.filter { $0.messageCount > 0 })
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(6)
+            .map { $0 }
         let rows = all.filter { $0.scope.folderURL == nil && !$0.scope.isGeneralChat }
         // A lone attached app has no session of its own — it is a scope on the current
         // conversation — but from the sidebar it reads as the same thing: one app this
@@ -260,8 +269,24 @@ struct GeneralChatWindowView: View {
                     attachedAppRow(loneApp)
                 }
 
-                ForEach(rows) { session in
+                // Not the ones already listed above: a row in two places at once reads as
+                // two conversations, and the user has to compare timestamps to find out
+                // it is one.
+                let recentIDs = Set(recentRows.map(\.id))
+                let remaining = rows.filter { !recentIDs.contains($0.id) }
+                ForEach(showsAllThreads ? remaining : Array(remaining.prefix(8))) { session in
                     sessionRow(session)
+                }
+
+                if remaining.count > 8 {
+                    Button(showsAllThreads ? "Show less" : "View all (\(remaining.count))") {
+                        showsAllThreads.toggle()
+                    }
+                    .font(.system(size: 11))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
                 }
             }
         }
