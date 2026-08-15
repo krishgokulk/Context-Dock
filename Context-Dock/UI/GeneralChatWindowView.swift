@@ -26,6 +26,10 @@ struct GeneralChatWindowView: View {
     @State private var dragStartWidth: Double?
     @State private var showsSidebarAppPicker = false
     @State private var hoveredSidebarRow: String?
+    @State private var hoveringCombinedChat = false
+    /// Kept across launches: a pinned workflow is a standing arrangement, not a gesture to
+    /// repeat every session.
+    @AppStorage("generalChatPinnedCombinedChat") private var pinnedCombinedChat = false
     /// Bumped when remembered routes are cleared, so the list redraws — the store is
     /// UserDefaults-backed and publishes nothing on its own.
     @State private var routeResetToken = 0
@@ -181,7 +185,14 @@ struct GeneralChatWindowView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // Scope stays above every navigation section, even in a long history.
-                    if model.scopeAppNames.count > 1 {
+                    // Combined chat is a property of the general thread — several apps
+                    // answering one conversation. A scoped thread already *is* its app, so
+                    // showing the row there claimed Safari's chat was also about Notes,
+                    // which it was not. Pinned, it stays visible from any thread, because
+                    // that is what pinning it is for.
+                    if model.scopeAppNames.count > 1,
+                        model.activeScope.isGeneralChat || pinnedCombinedChat
+                    {
                         combinedChatEntry
                             .padding(.horizontal, 8)
                             .padding(.top, 10)
@@ -330,9 +341,30 @@ struct GeneralChatWindowView: View {
         .padding(.horizontal, 8)
     }
 
+    /// Hover fill that redraws only itself.
+    ///
+    /// The sidebar kept its hovered row in the window's own @State, so moving the pointer
+    /// across one row invalidated the entire view — transcript, side panel and composer
+    /// included — and the whole window flickered. Hover is a property of the row, so the
+    /// row is where it lives.
+    private struct HoverFill: ViewModifier {
+        let isActive: Bool
+        @State private var hovering = false
+
+        func body(content: Content) -> some View {
+            content
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(
+                            isActive
+                                ? Color.primary.opacity(0.10)
+                                : (hovering ? Color.primary.opacity(0.06) : .clear)))
+                .onHover { hovering = $0 }
+        }
+    }
+
     private func sessionRow(_ session: GeneralChatSession) -> some View {
         let isActive = session.scope == model.activeScope
-        let isHovered = hoveredSidebarRow == session.id
         let isSending = model.sendingScopeKeys.contains(session.scope.storageKey)
         return Button {
             model.openSession(session.scope, title: session.title)
@@ -366,13 +398,7 @@ struct GeneralChatWindowView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(
-                        isActive
-                            ? Color.primary.opacity(0.10)
-                            : (isHovered ? Color.primary.opacity(0.06) : .clear))
-            )
+            .modifier(HoverFill(isActive: isActive))
             .overlay(alignment: .leading) {
                 // Active thread carries a rail rather than only a fill, so the current
                 // scope is readable at a glance on a translucent sidebar.
@@ -390,11 +416,6 @@ struct GeneralChatWindowView: View {
         // A folder's name is rarely enough — two "Invoices" in the sidebar are told apart
         // by where they are, not what they are called.
         .help(session.scope.folderURL?.path ?? session.title)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.1)) {
-                hoveredSidebarRow = hovering ? session.id : nil
-            }
-        }
         .contextMenu {
             if let folder = session.scope.folderURL {
                 Button("Reveal in Finder") {
@@ -413,10 +434,31 @@ struct GeneralChatWindowView: View {
     /// both icons, and "+" adds another app to the same conversation.
     private var combinedChatEntry: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Combined chat")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 4)
+            HStack(spacing: 4) {
+                Text("Combined chat")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                // Shown on hover, or whenever it is already pinned — a pin the user set
+                // has to stay visible, or there is no way to find it again to unset it.
+                if hoveringCombinedChat || pinnedCombinedChat {
+                    Button {
+                        pinnedCombinedChat.toggle()
+                    } label: {
+                        Image(systemName: pinnedCombinedChat ? "pin.fill" : "pin")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(pinnedCombinedChat ? Color.accentColor : .secondary)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(
+                        pinnedCombinedChat
+                            ? "Unpin — hide this while working in another thread"
+                            : "Pin — keep this workflow visible from every thread")
+                }
+            }
+            .padding(.horizontal, 4)
+            .onHover { hoveringCombinedChat = $0 }
 
             HStack(spacing: 6) {
                 ForEach(model.scopeAppNames, id: \.self) { name in

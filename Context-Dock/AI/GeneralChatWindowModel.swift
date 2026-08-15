@@ -263,6 +263,7 @@ final class GeneralChatWindowModel: ObservableObject {
                 role: .assistant, content: answer.text,
                 recentFiles: named.map { RecentFileAction(url: $0) },
                 mcpToolsRan: answer.toolChips,
+                evidenceReceipts: answer.evidenceReceipts,
                 enableAppRequest: answer.enableApp,
                 actionChoices: answer.routeChoices),
             to: scope, title: title)

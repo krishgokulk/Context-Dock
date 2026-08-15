@@ -285,12 +285,23 @@ enum ChatPlanRunner {
         let outcome = await ChatRouteResolver.run(step.route, query: stepQuery)
 
         var verification: String?
+        var succeeded = outcome.success
         if outcome.success, !step.route.isReadOnly {
             try? await Task.sleep(nanoseconds: 400_000_000)
             let after = ContextResolver.resolve(scope: scope, appName: step.route.appName)
             let changes = after.changes(since: before)
             verification = changes.isEmpty
                 ? "No observable change." : changes.joined(separator: "\n")
+
+            // A change is not the same as the *right* change. Quitting Safari through its
+            // own menu launched Safari to reach the menu, so the verifier truthfully
+            // reported "app state: not running → running" — and the step, seeing that
+            // something had changed, called itself done. The receipt then showed a tick
+            // above a line saying the opposite.
+            if let violation = Self.intentViolation(step: step, after: after) {
+                verification = violation
+                succeeded = false
+            }
         }
 
         ChatConsoleLog.shared.finish(
@@ -299,14 +310,14 @@ enum ChatPlanRunner {
                 .compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: "\n")
                 .ifEmpty("(no output)"),
-            success: outcome.success,
+            success: succeeded,
             scope: scope)
 
-        if !outcome.success {
+        if !succeeded {
             log.notice("plan stopped at step \(index + 1, privacy: .public)")
         }
         return ChatPlanStepResult(
-            id: step.id, step: step, success: outcome.success,
+            id: step.id, step: step, success: succeeded,
             output: outcome.output, verification: verification)
     }
 
@@ -330,6 +341,20 @@ enum ChatPlanRunner {
     static func fullyConfirmed(_ plan: ChatPlan, results: [ChatPlanStepResult]) -> Bool {
         results.count == plan.steps.count
             && results.allSatisfy { $0.success && $0.verification != "No observable change." }
+    }
+
+    /// The end state a step's own words promise, checked against what actually happened.
+    ///
+    /// Only claims worth checking are checked. "Quit" and "close" say plainly that the app
+    /// should not be running afterwards, and that is exactly the case where acting through
+    /// the app's own menu can launch it to get there. Everything else returns nil rather
+    /// than inventing a criterion it cannot justify.
+    static func intentViolation(step: ChatPlanStep, after: ResolvedContext) -> String? {
+        let title = step.route.title.lowercased()
+        let quits = title.contains("quit") || title.hasPrefix("close ")
+        guard quits else { return nil }
+        guard after.value("app state") == "running" else { return nil }
+        return "\(step.route.appName) is still running — the step said it quit, and it did not."
     }
 
     /// A receipt the user can read without opening the console: what ran, in order, and
