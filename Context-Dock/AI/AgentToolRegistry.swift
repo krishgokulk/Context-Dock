@@ -656,11 +656,25 @@ final class AgentToolRegistry {
             let observation: String
             switch kind {
             case "file_exists":
-                passed = fileManager.fileExists(atPath: path)
-                observation = passed ? "File exists at \(path)." : "No file exists at \(path)."
+                if let installed = installedAppSummary(at: path) {
+                    passed = true
+                    observation = installed
+                } else {
+                    passed = fileManager.fileExists(atPath: path)
+                    observation = passed
+                        ? "File exists at \(path)."
+                        : "No file exists at \(path)."
+                }
             case "file_does_not_exist":
-                passed = !fileManager.fileExists(atPath: path)
-                observation = passed ? "No file exists at \(path)." : "A file still exists at \(path)."
+                if let installed = installedAppSummary(at: path) {
+                    passed = false
+                    observation = installed
+                } else {
+                    passed = !fileManager.fileExists(atPath: path)
+                    observation = passed
+                        ? "No file exists at \(path)."
+                        : "A file still exists at \(path)."
+                }
             case "file_contains":
                 guard let expected = arguments["expected_text"] as? String else {
                     return AgentToolResult(
@@ -1002,16 +1016,31 @@ final class AgentToolRegistry {
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .filter { !$0.isEmpty }
 
-                let candidate = await MainActor.run {
+                let lookup = await MainActor.run {
                     GeneralAIActionResolver.shared.menuCommandCandidate(
                         appName: appName, path: path)
                 }
-                guard let candidate else {
+                let candidate: DoraXActionCandidate
+                switch lookup {
+                case .ready(let found):
+                    candidate = found
+                case .disabled(let found, let resolvedName):
                     return AgentToolResult(
                         success: false,
-                        output: "No cached menu item \"\(rawPath)\" in \(appName). Ask for a "
-                            + "command that exists, or say the app does not offer it — do not "
-                            + "guess another path.",
+                        output: "\(resolvedName) has \"\(found)\", but it is greyed out right "
+                            + "now — the app will not accept it in its current state. Say that "
+                            + "plainly; do not click something else instead.",
+                        displayCommand: "run_menu_command(\(appName): \(rawPath))")
+                case .missing(let resolvedName, let nearest):
+                    let alternatives = nearest.isEmpty
+                        ? ""
+                        : " Closest cached commands: " + nearest.joined(separator: ", ") + "."
+                    return AgentToolResult(
+                        success: false,
+                        output: "No cached menu item \"\(rawPath)\" in \(resolvedName)."
+                            + alternatives
+                            + " Ask for one of those, or say the app does not offer it — do "
+                            + "not guess another path.",
                         displayCommand: "run_menu_command(\(appName): \(rawPath))")
                 }
                 // Authority is asked here as everywhere else: menus are permitted at
@@ -1028,9 +1057,32 @@ final class AgentToolRegistry {
                         displayCommand: "run_menu_command(\(appName))")
                 }
                 let outcome = await GeneralAIActionExecutor.shared.execute(candidate)
+                guard outcome.success else {
+                    return AgentToolResult(
+                        success: false,
+                        output: outcome.message,
+                        displayCommand: "run_menu_command(\(appName): \(rawPath))")
+                }
+                // Read back what the click did to the app's windows, and hand the model the
+                // reading rather than the click. Told only that a click was sent, it went
+                // looking for its own evidence, checked a guessed path, and announced the
+                // app was not installed while its About window stood open on screen.
+                let verification = await GeneralAIActionExecutor.shared.verify(candidate)
+                var output = outcome.message
+                switch verification {
+                case .verified(let reading):
+                    output += " " + (reading ?? "The outcome was observed.")
+                        + " This is the result — do not look for further evidence."
+                case .unverified(let reason):
+                    output += " " + reason
+                case .skipped:
+                    output += " Nothing observable changed in \(appName)'s windows, which is "
+                        + "normal for a command of this kind. Report what was clicked, not "
+                        + "whether it worked."
+                }
                 return AgentToolResult(
-                    success: outcome.success,
-                    output: outcome.message,
+                    success: true,
+                    output: output,
                     displayCommand: "run_menu_command(\(appName): \(rawPath))")
         })
 
@@ -1229,4 +1281,43 @@ final class AgentToolRegistry {
                 displayCommand: "compose_message(\(recipient))")
         })
     }
+}
+
+
+/// Where an app named by a guessed path actually lives, if it is installed at all.
+///
+/// Asked to confirm it had opened Journal's About window, the model checked
+/// /Applications/Journal.app, found nothing, and told the user Journal was not installed —
+/// with the About window open on screen in front of them. Journal ships in
+/// /System/Applications, and no amount of care in the model fixes a check that answers a
+/// different question than the one it was asked. The question is whether the app is
+/// installed; the answer is not "is it in the one directory guessed for it".
+///
+/// Returns nil for anything that is not an app bundle, so ordinary file checks are
+/// untouched — this only intervenes where the path names a `.app`.
+private func installedAppSummary(at path: String) -> String? {
+    guard path.hasSuffix(".app") else { return nil }
+    let fileManager = FileManager.default
+    if fileManager.fileExists(atPath: path) { return nil }
+
+    let name = (path as NSString).lastPathComponent
+    guard !name.isEmpty else { return nil }
+    let directories = [
+        "/Applications", "/System/Applications", "/System/Applications/Utilities",
+        "/Applications/Utilities", NSHomeDirectory() + "/Applications",
+    ]
+    for directory in directories {
+        let candidate = directory + "/" + name
+        guard candidate != path, fileManager.fileExists(atPath: candidate) else { continue }
+        return "\(name) is installed — at \(candidate), not \(path)."
+    }
+    // Running is proof of installed, wherever it lives.
+    let stem = name.replacingOccurrences(of: ".app", with: "")
+    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: stem).first
+        ?? NSWorkspace.shared.runningApplications.first(where: {
+            ($0.localizedName ?? "").caseInsensitiveCompare(stem) == .orderedSame
+        }), let url = running.bundleURL {
+        return "\(name) is installed and running — at \(url.path), not \(path)."
+    }
+    return nil
 }

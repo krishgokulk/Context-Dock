@@ -2417,10 +2417,23 @@ final class GeneralAIActionResolver {
     /// capabilities, and for an app whose only capability *is* its menu bar that left it
     /// nothing legal to call — so it recommended building an adapter pack, ten times, and
     /// then reported "commands completed" having done nothing.
-    func menuCommandCandidate(
-        appName: String, path: [String]
-    ) -> DoraXActionCandidate? {
-        guard let target = resolveTargetApp(in: appName.lowercased()) else { return nil }
+    /// The three ways a requested menu path can turn out, told apart.
+    ///
+    /// One nil for all of them read as "that command does not exist", so a greyed-out item
+    /// — Add Title with no entry open, All Entries when they are already showing — came back
+    /// as "this specific command may not exist in Journal" about a command sitting in the
+    /// cache. A command that exists and is unavailable right now is a different fact, and
+    /// the user can act on it.
+    enum MenuCommandLookup {
+        case ready(DoraXActionCandidate)
+        case disabled(path: String, appName: String)
+        case missing(appName: String, nearest: [String])
+    }
+
+    func menuCommandCandidate(appName: String, path: [String]) -> MenuCommandLookup {
+        guard let target = resolveTargetApp(in: appName.lowercased()) else {
+            return .missing(appName: appName, nearest: [])
+        }
         // Matched against the cache rather than trusted: a path the model wrote from memory
         // is a guess, and clicking a guessed menu item is how an agent ends up in Erase.
         let wanted = path.map { $0.lowercased() }
@@ -2431,13 +2444,18 @@ final class GeneralAIActionResolver {
             let recorded = record.path.map { $0.lowercased() }
             return recorded == wanted || (recorded.last == wanted.last && wanted.count == 1)
         }
-        guard let match, match.isEnabled else { return nil }
-
-        return verifiedMenuCandidate(
+        guard let match else {
+            return .missing(
+                appName: target.name, nearest: records.prefix(5).map(\.pathString))
+        }
+        guard match.isEnabled else {
+            return .disabled(path: match.pathString, appName: target.name)
+        }
+        return .ready(verifiedMenuCandidate(
             title: match.path.joined(separator: " → "),
             path: match.path,
             shortcutChar: match.shortcutChar, shortcutModifiers: match.shortcutModifiers,
-            appName: target.name, bundleID: target.bundleId, confidence: 0.9)
+            appName: target.name, bundleID: target.bundleId, confidence: 0.9))
     }
 
     private func verifiedMenuCandidate(
