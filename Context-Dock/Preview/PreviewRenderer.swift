@@ -12,6 +12,8 @@ import WebKit
 
 struct PreviewRenderer: View {
     let item: PreviewItem
+    /// Bumped when a tool changed what is on disk.
+    var reloadToken = 0
 
     var body: some View {
         switch item.kind {
@@ -20,7 +22,7 @@ struct PreviewRenderer: View {
         case .document, .image, .text:
             InlineQLPreview(url: item.url)
         case .folder:
-            PreviewFolderBrowser(url: item.url)
+            PreviewFolderBrowser(url: item.url, reloadToken: reloadToken)
         case .web:
             PreviewWebView(url: item.url)
         }

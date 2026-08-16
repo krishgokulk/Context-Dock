@@ -37,6 +37,12 @@ final class PreviewSession: ObservableObject {
         items.indices.contains(index) ? items[index] : items.first
     }
 
+    /// Bumped when something outside the view changes what is on disk, so the folder
+    /// browser re-reads instead of showing the listing from before the tool ran.
+    @Published var reloadToken = 0
+
+    func reload() { reloadToken += 1 }
+
     func step(_ delta: Int) {
         guard !items.isEmpty else { return }
         index = (index + delta + items.count) % items.count

@@ -46,7 +46,7 @@ struct PreviewSurfaceView: View {
 
                 HStack(spacing: 0) {
                     if let item = session.current {
-                        PreviewRenderer(item: item)
+                        PreviewRenderer(item: item, reloadToken: session.reloadToken)
                             .id(item.id)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else {
@@ -60,12 +60,8 @@ struct PreviewSurfaceView: View {
                         StickySplitDivider(width: $aiWidth, maximumWidth: maxAI,
                                            minimumWidth: 240)
                             .frame(width: dividerWidth)
-                        ExtensionPanelAIComposer(
-                            title: session.current?.title ?? "this file",
-                            subtitle: session.current?.url.deletingLastPathComponent().path ?? "",
-                            extraPrompt: aiContext
-                        )
-                        .frame(width: paneAI)
+                        PreviewAIComposer(session: session, extractedText: extractedText)
+                            .frame(width: paneAI)
                     }
                 }
             }
@@ -262,51 +258,4 @@ struct PreviewSurfaceView: View {
         }
     }
 
-    /// What the assistant can see. The panel shows the file, so the model is given the
-    /// same thing: its details plus whatever text could be pulled out of it.
-    private var aiContext: String {
-        guard let item = session.current else { return "" }
-        var prompt = """
-        You are looking at one file the user is previewing in Context Dock.
-
-        \(item.metadataForAI)
-        """
-        // The rest of the set, when there is one. A selection is peeked as a group —
-        // "are these duplicates?", "which is the newest?" — and a model shown one file
-        // out of five answers about the wrong thing with total confidence.
-        if session.items.count > 1 {
-            let others = session.items.enumerated().map { index, other -> String in
-                let marker = index == session.index ? " ← showing" : ""
-                return "\(index + 1). \(other.title)\(marker)"
-            }
-            prompt += """
-
-
-            This file is one of \(session.items.count) the user is previewing together:
-            \(others.joined(separator: "\n"))
-
-            Questions about "these files" mean all of them. You can see their names and \
-            order; you cannot see inside any but the one shown, so say when an answer \
-            would need that.
-            """
-        }
-        if let text = extractedText, !text.isEmpty {
-            prompt += "\n\nContents:\n\(text)"
-        } else {
-            prompt += """
-
-
-            You cannot read this file's contents — only the details above. Answer about \
-            what you can see, and say plainly when something is not visible to you rather \
-            than guessing at what is inside.
-            """
-        }
-        prompt += """
-
-
-        You cannot open, move, rename or delete anything — the panel does that. Say what \
-        you would do and let the user act. Never invent details that are not shown here.
-        """
-        return prompt
-    }
 }

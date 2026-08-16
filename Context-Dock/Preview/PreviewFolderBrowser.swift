@@ -17,6 +17,9 @@ import SwiftUI
 
 struct PreviewFolderBrowser: View {
     let url: URL
+    /// Changes when the assistant's tools touched this folder, so the listing re-reads
+    /// instead of showing what was there before the command ran.
+    var reloadToken = 0
 
     @AppStorage("previewFolderGridView") private var gridView = false
 
@@ -56,6 +59,7 @@ struct PreviewFolderBrowser: View {
             viewModeFooter
         }
         .task(id: currentURL) { load() }
+        .task(id: reloadToken) { load() }
         .onChange(of: url) { _, _ in stack = [] }
         // Focusable so the panel is navigable, but without the ring: a focus halo around
         // the whole window read as the window being broken.
