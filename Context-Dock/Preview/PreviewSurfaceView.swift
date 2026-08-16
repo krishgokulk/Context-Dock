@@ -143,7 +143,8 @@ struct PreviewSurfaceView: View {
             Spacer(minLength: 8)
 
             if let item = session.current, item.url.isFileURL {
-                openWithMenu(for: item)
+                PreviewOpenWithButton(url: item.url)
+                    .fixedSize()
                 iconButton("square.and.arrow.up", help: "Share…") { share(item) }
             }
 
@@ -208,54 +209,6 @@ struct PreviewSurfaceView: View {
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(Color.primary.opacity(0.07), in: Capsule())
-    }
-
-    private func openWithMenu(for item: PreviewItem) -> some View {
-        Menu {
-            // Default app first — LSCopyApplicationURLsForURL is already sorted that way.
-            ForEach(DefaultAppResolver.shared.getAllApps(for: item.url)) { app in
-                Button {
-                    NSWorkspace.shared.open([item.url], withApplicationAt: app.path,
-                                            configuration: NSWorkspace.OpenConfiguration())
-                } label: {
-                    // Label + .original, not a bare Image: a menu renders an icon only in
-                    // the label slot, and without .original AppKit tints the app icon flat.
-                    Label {
-                        Text(app.name)
-                    } icon: {
-                        Image(nsImage: menuIcon(app.icon ?? NSWorkspace.shared.icon(forFile: app.path.path)))
-                            .renderingMode(.original)
-                    }
-                }
-            }
-            Divider()
-            Button("Reveal in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([item.url])
-            }
-            Button("Copy Path") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(item.url.path, forType: .string)
-            }
-            Divider()
-            // Escape hatch: a few formats only render through a QL plugin the system
-            // panel loads out of process and QLPreviewView here does not.
-            Button("Open in System Quick Look") {
-                PreviewController.shared.openInSystemQuickLook(item.url)
-            }
-        } label: {
-            Text("Open With")
-                .font(.system(size: 11, weight: .medium))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    /// App icons arrive at 32pt or larger and a menu does not resize them, so a raw
-    /// icon makes every row in the list twice as tall as it should be.
-    private func menuIcon(_ icon: NSImage) -> NSImage {
-        let sized = icon.copy() as? NSImage ?? icon
-        sized.size = NSSize(width: 16, height: 16)
-        return sized
     }
 
     // MARK: - Pieces
