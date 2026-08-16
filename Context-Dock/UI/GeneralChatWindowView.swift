@@ -1454,12 +1454,31 @@ struct GeneralChatWindowView: View {
         return panelTab
     }
 
-    /// Files this thread is working on: what the user attached, plus any absolute path in
-    /// the transcript that actually exists. Derived rather than tracked, so a path the
+    /// Files this thread is working on: what the user attached, plus any path in the
+    /// transcript that actually exists. Derived rather than tracked, so a path the
     /// assistant only planned to write never appears — it isn't there.
     private var previewFiles: [URL] {
         var seen = Set<String>()
         var found: [URL] = []
+        // A command writes `> summary.txt` and the transcript only ever says
+        // "summary.txt". Resolved against the directory that thread's commands actually
+        // run in, the bare name is a real file; without this it matched nothing and the
+        // panel stayed empty next to a file that had just been created.
+        let workingDirectory = ChatWorkingDirectory.resolve(for: model.activeScope)
+
+        /// A filename with no directory in front of it. Only counted when the working
+        /// directory really holds a file by that name, so a name the model invented — or
+        /// an ordinary word that happens to contain a dot — shows nothing.
+        func considerBareNames(in text: String) {
+            let pattern = "(?<![/A-Za-z0-9._~@+-])[A-Za-z0-9._~@+-]+\\.[A-Za-z0-9]{1,8}\\b"
+            var index = text.startIndex
+            while let range = text.range(
+                of: pattern, options: .regularExpression, range: index..<text.endIndex)
+            {
+                consider(String(text[range]))
+                index = range.upperBound
+            }
+        }
 
         func considerHandoff() {
             guard let handed = model.pendingPreviewFile,
@@ -1471,13 +1490,17 @@ struct GeneralChatWindowView: View {
 
         func consider(_ path: String) {
             let trimmed = path.trimmingCharacters(in: CharacterSet(charactersIn: "`\"'.,)]"))
+            guard !trimmed.isEmpty else { return }
+            let resolved = trimmed.hasPrefix("/")
+                ? trimmed
+                : workingDirectory.appendingPathComponent(trimmed).path
             var isDirectory: ObjCBool = false
-            guard trimmed.hasPrefix("/"), !seen.contains(trimmed),
-                FileManager.default.fileExists(atPath: trimmed, isDirectory: &isDirectory),
+            guard !seen.contains(resolved),
+                FileManager.default.fileExists(atPath: resolved, isDirectory: &isDirectory),
                 !isDirectory.boolValue
             else { return }
-            seen.insert(trimmed)
-            found.append(URL(fileURLWithPath: trimmed))
+            seen.insert(resolved)
+            found.append(URL(fileURLWithPath: resolved))
         }
 
         // Tool output is where a file a command produced actually announces itself — the
@@ -1492,6 +1515,8 @@ struct GeneralChatWindowView: View {
                 consider(String(output[range]))
                 index = range.upperBound
             }
+            considerBareNames(in: entry.title)
+            considerBareNames(in: output)
         }
 
         for message in model.messages.suffix(30) {
@@ -1505,6 +1530,7 @@ struct GeneralChatWindowView: View {
                 consider(String(content[range]))
                 index = range.upperBound
             }
+            considerBareNames(in: content)
         }
         model.attachments.forEach { consider($0.path) }
         // What this thread built, after what it merely mentioned: a chart the answer just

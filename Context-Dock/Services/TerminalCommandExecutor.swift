@@ -23,8 +23,12 @@ final class TerminalCommandExecutor {
         let rowID = consoleScope.map {
             ChatConsoleLog.shared.begin(.command, title: command, scope: $0)
         }
+        // Derived from the thread rather than passed in: every surface already routes
+        // shell work through here with its scope, so this is the one place that has to
+        // know where that thread's work belongs.
         let result = await bridge.processAICommand(
-            command, purpose: purpose, modelRequiresApproval: modelRequiresApproval)
+            command, purpose: purpose, modelRequiresApproval: modelRequiresApproval,
+            workingDirectory: ChatWorkingDirectory.resolve(for: consoleScope))
         if let rowID, let consoleScope {
             ChatConsoleLog.shared.finish(
                 rowID, output: consoleOutput(result.output, success: result.success),
@@ -43,7 +47,9 @@ final class TerminalCommandExecutor {
         let rowID = consoleScope.map {
             ChatConsoleLog.shared.begin(.command, title: command, scope: $0)
         }
-        let result = await bridge.runPreApprovedCommand(command, onLine: onLine)
+        let result = await bridge.runPreApprovedCommand(
+            command, onLine: onLine,
+            workingDirectory: ChatWorkingDirectory.resolve(for: consoleScope))
         if let rowID, let consoleScope {
             ChatConsoleLog.shared.finish(
                 rowID, output: consoleOutput(result.output, success: result.success),

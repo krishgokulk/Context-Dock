@@ -141,7 +141,8 @@ class TerminalAIBridge: ObservableObject {
     func processAICommand(
         _ command: String,
         purpose: String,
-        modelRequiresApproval: Bool = false
+        modelRequiresApproval: Bool = false,
+        workingDirectory: URL? = nil
     ) async -> (success: Bool, output: String, exitCode: Int32) {
         // AI placeholder tokens (CURRENT_VIDEO_URL, <url>, PASTE_LINK_HERE…) must never
         // reach the shell. URL-shaped placeholders are substituted with the live page
@@ -194,7 +195,8 @@ class TerminalAIBridge: ObservableObject {
                     command,
                     classification: classification,
                     wasApproved: true,
-                    argv: (executable, arguments)
+                    argv: (executable, arguments),
+                    workingDirectory: workingDirectory
                 )
                 return detailed
             case .rejected(let reason):
@@ -218,7 +220,8 @@ class TerminalAIBridge: ObservableObject {
         switch result {
         case .approved(let approvedCommand):
             let detailed = await executeCommand(
-                approvedCommand, classification: classification, wasApproved: true)
+                approvedCommand, classification: classification, wasApproved: true,
+                workingDirectory: workingDirectory)
             return detailed
         case .denied:
             return (false, "Command denied by user", -1)
@@ -281,7 +284,8 @@ class TerminalAIBridge: ObservableObject {
     ///   live progress instead of a frozen spinner until the command exits.
     func runPreApprovedCommand(
         _ command: String,
-        onLine: (@Sendable (String) -> Void)? = nil
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
     ) async -> (success: Bool, output: String, exitCode: Int32) {
         var command = command
         switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
@@ -306,7 +310,8 @@ class TerminalAIBridge: ObservableObject {
             return (false, message, -1)
         }
         return await executeCommand(
-            command, classification: classification, wasApproved: true, onLine: onLine)
+            command, classification: classification, wasApproved: true, onLine: onLine,
+            workingDirectory: workingDirectory)
     }
 
     // MARK: - Direct Execution
@@ -320,7 +325,8 @@ class TerminalAIBridge: ObservableObject {
         classification: TerminalCommandClassifier.CommandClassification,
         wasApproved: Bool,
         argv: (executable: URL, arguments: [String])? = nil,
-        onLine: (@Sendable (String) -> Void)? = nil
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
     ) async -> (success: Bool, output: String, exitCode: Int32) {
         isExecuting = true
         currentCommand = command
@@ -351,9 +357,11 @@ class TerminalAIBridge: ObservableObject {
         let (output, exitCode): (String, Int32)
         if let argv {
             (output, exitCode) = await Self.runArgv(
-                executable: argv.executable, arguments: argv.arguments, onLine: onLine)
+                executable: argv.executable, arguments: argv.arguments, onLine: onLine,
+                workingDirectory: workingDirectory)
         } else {
-            (output, exitCode) = await executeInTerminalOrBackground(command, onLine: onLine)
+            (output, exitCode) = await executeInTerminalOrBackground(
+                command, onLine: onLine, workingDirectory: workingDirectory)
         }
 
         // CLI scope terminals are transcript surfaces for non-interactive work:
@@ -608,7 +616,8 @@ class TerminalAIBridge: ObservableObject {
     /// Execute command either in visible terminal or background
     private func executeInTerminalOrBackground(
         _ command: String,
-        onLine: (@Sendable (String) -> Void)? = nil
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
     ) async -> (output: String, exitCode: Int32) {
         let route = routing(for: command)
 
@@ -627,7 +636,8 @@ class TerminalAIBridge: ObservableObject {
         if route == .probe {
             let probe = await executeInBackground(
                 command, onLine: onLine ?? lineHandler,
-                probeDeadline: CommandInteractivity.probeDeadline)
+                probeDeadline: CommandInteractivity.probeDeadline,
+                workingDirectory: workingDirectory)
             if probe.exitCode == Self.probeDeadlineExitCode {
                 CommandInteractivity.record(true, for: command)
                 return launchInTerminal(command, purpose: "Interactive terminal command")
@@ -637,7 +647,8 @@ class TerminalAIBridge: ObservableObject {
             bgResult = probe
         } else {
             // Non-interactive commands: stream line-by-line to active panel, capture full output
-            bgResult = await executeInBackground(command, onLine: onLine ?? lineHandler)
+            bgResult = await executeInBackground(
+                command, onLine: onLine ?? lineHandler, workingDirectory: workingDirectory)
         }
 
         // If the command itself complains it needs a TTY, re-route to visible terminal
@@ -786,7 +797,8 @@ class TerminalAIBridge: ObservableObject {
     nonisolated static func runArgv(
         executable: URL,
         arguments: [String],
-        onLine: (@Sendable (String) -> Void)? = nil
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
     ) async -> (output: String, exitCode: Int32) {
         await withCheckedContinuation { continuation in
             let process = Process()
@@ -798,7 +810,9 @@ class TerminalAIBridge: ObservableObject {
                 "LANG": "en_US.UTF-8",
                 "TERM": "dumb",
             ]
-            process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+            // Where the thread is about a directory, that is where its commands run.
+            process.currentDirectoryURL =
+                workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
 
             let outputPipe = Pipe()
             let errorPipe = Pipe()
@@ -842,7 +856,8 @@ class TerminalAIBridge: ObservableObject {
     func executeInBackground(
         _ command: String,
         onLine: (@Sendable (String) -> Void)? = nil,
-        probeDeadline: TimeInterval? = nil
+        probeDeadline: TimeInterval? = nil,
+        workingDirectory: URL? = nil
     ) async -> (output: String, exitCode: Int32) {
         let toolDirectories = TerminalPackageManager.shared.pinnedToolDirectories()
         return await withCheckedContinuation { continuation in
@@ -877,8 +892,9 @@ class TerminalAIBridge: ObservableObject {
                     ]).joined(separator: ":") + ":" + currentPath
             process.environment = environment
 
-            // Set working directory to home
-            process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+            // The thread's directory when it has one, home otherwise.
+            process.currentDirectoryURL =
+                workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
 
             let outputPipe = Pipe()
             let errorPipe  = Pipe()
