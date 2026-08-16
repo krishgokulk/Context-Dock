@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -2293,6 +2294,9 @@ extension LauncherView {
                                         }
                                     }
                                     .onSubmit {
+                                        generalChatReturnLog(
+                                            "onSubmit mode=\(currentDockSurfaceMode) "
+                                                + "l2=\(isL2ContextActive)")
                                         // A "/" filter owns Return before any surface
                                         // route does — the field holds a filter, not a
                                         // question.
@@ -2416,9 +2420,11 @@ extension LauncherView {
                                             // "/rem" + Return means "focus that app", not
                                             // "ask the model about the string /rem".
                                             if handleGeneralChatSlashPickIfNeeded() {
+                                                generalChatReturnLog("slash pick")
                                                 return
                                             }
                                             if launchTypedAppMatchIfNeeded() {
+                                                generalChatReturnLog("launched typed app")
                                                 return
                                             }
                                             let q = searchState.query.trimmingCharacters(
@@ -4342,4 +4348,13 @@ extension LauncherView {
             .help(feedback.title)
     }
 
+}
+
+
+/// Where Return went. Three routes can claim it in General Chat and two of them return
+/// silently, so "Enter does nothing" has been indistinguishable from "Enter was handled by
+/// something that had nothing to say" from outside the debugger.
+func generalChatReturnLog(_ what: String) {
+    Logger(subsystem: "com.krishgokul.ContextDock", category: "GeneralChat")
+        .notice("return: \(what, privacy: .public)")
 }

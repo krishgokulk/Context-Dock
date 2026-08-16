@@ -223,6 +223,11 @@ extension LauncherView {
             // SwiftUI's TextField.onSubmit never receives Return.  Route that *unfocused* path
             // here, before the L2/global-only key guard below.  A focused editor still owns
             // Return and uses its normal .onSubmit route, so this cannot double-send.
+            if event.keyCode == 36, self.currentDockSurfaceMode == .generalChat {
+                generalChatReturnLog(
+                    "monitor firstResponder="
+                        + String(describing: type(of: NSApp.keyWindow?.firstResponder)))
+            }
             if event.keyCode == 36,
                 self.currentDockSurfaceMode == .generalChat,
                 !(NSApp.keyWindow?.firstResponder is NSTextView)

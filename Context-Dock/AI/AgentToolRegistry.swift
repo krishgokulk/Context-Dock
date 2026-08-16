@@ -1010,11 +1010,11 @@ final class AgentToolRegistry {
         // times in a row, and then reported "commands completed" having done nothing.
         register(AgentTool(
             name: "run_menu_command",
-            description: "Click a menu command in a Mac app, e.g. app \"Disk Utility\" with "
-                + "path [\"Disk Utility\", \"About Disk Utility\"]. Use for apps whose menus "
-                + "DoraX has cached but which have no adapter. The path must match a real "
-                + "cached menu item — it is checked against the cache and live-verified in "
-                + "the app before clicking, and a path that does not exist is refused.",
+            description: "Click a menu command in a Mac app — app: \"Disk Utility\", path: "
+                + "\"Disk Utility > About Disk Utility\". Use for apps whose menus DoraX has "
+                + "cached but which have no adapter. The path must match a real cached menu "
+                + "item — it is checked against the cache and live-verified in the app before "
+                + "clicking, and a path that does not exist is refused.",
             properties: [
                 "app": ["type": "string", "description": "The app's name."],
                 "path": [
@@ -1027,8 +1027,20 @@ final class AgentToolRegistry {
         ) { arguments, _ in
                 let appName = (arguments["app"] as? String ?? "")
                     .trimmingCharacters(in: .whitespacesAndNewlines)
-                let rawPath = (arguments["path"] as? String ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                // Accepts the array form as well as the string. The description used to
+                // show the path as ["Disk Utility", "About Disk Utility"], so the model sent
+                // an array, the string cast returned nil, and the tool answered that it
+                // needed a path it had just been given — then the model went off and ran
+                // `open -b` instead. A tool that only accepts one shape of an argument it
+                // documents in another shape is a trap of its own making.
+                let rawPath: String
+                if let text = arguments["path"] as? String {
+                    rawPath = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                } else if let parts = arguments["path"] as? [String] {
+                    rawPath = parts.joined(separator: " > ")
+                } else {
+                    rawPath = ""
+                }
                 guard !appName.isEmpty, !rawPath.isEmpty else {
                     return AgentToolResult(
                         success: false,

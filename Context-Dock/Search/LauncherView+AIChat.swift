@@ -6,6 +6,7 @@ import Foundation
 import FoundationModels
 import PDFKit
 import SwiftTerm
+import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 import Vision
@@ -2149,9 +2150,10 @@ extension LauncherView {
             aiMode.loadingStatus = nil
         }
 
-        print(
-            "🤖 [AI] Submitting query: \"\(query.prefix(60))\" | provider: \(settings.selectedAIProvider.shortName)"
-        )
+        // notice, not print: dev-run.sh launches the app detached, so stdout goes nowhere
+        // and "did Return reach the send path" has been unanswerable from outside Xcode.
+        Logger(subsystem: "com.krishgokul.ContextDock", category: "GeneralChat")
+            .notice("submit: \(query.prefix(60), privacy: .public)")
 
         hasUserSentMessageInCurrentSession = true
 
