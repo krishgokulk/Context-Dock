@@ -1003,6 +1003,24 @@ final class GeneralAIActionResolver {
                 title: match.title, path: match.path,
                 shortcutChar: match.shortcutChar, shortcutModifiers: match.shortcutModifiers,
                 appName: appName, bundleID: bundleID, confidence: 0.76))
+        } else if !menuMatches.isEmpty {
+            // Ranked but not exact. "open disk utility about window" matched nothing under
+            // the every-token rule — "window" appears in no Disk Utility menu — so the whole
+            // request fell through to launching the app and admitting defeat, while the very
+            // item wanted, "About Disk Utility", sat in the cache the resolver had just read.
+            //
+            // The every-token rule stays: it is what stops "new private window" settling for
+            // "New Window", and a near match must never be *run* as if it were the thing
+            // asked for. But near matches are worth *offering*. Below the ask-first
+            // threshold, so they arrive as a pick list — the user confirms the one they
+            // meant, which is what someone who knew this app would have said back.
+            for near in menuMatches.prefix(3) {
+                candidates.append(verifiedMenuCandidate(
+                    title: near.title, path: near.path,
+                    shortcutChar: near.shortcutChar, shortcutModifiers: near.shortcutModifiers,
+                    appName: appName, bundleID: bundleID, confidence: 0.5))
+            }
+            step("\(appName) menus: offering \(min(menuMatches.count, 3)) near match(es) to pick from")
         }
 
         // 3. Seeded shortcuts for common intents when the menu cache is cold.
@@ -1047,10 +1065,18 @@ final class GeneralAIActionResolver {
             // Executable request against a real app, but no verified route — launch the app
             // and say honestly what could not be automated. Never fake success.
             var launch = launchCandidate(appName: appName, bundleID: bundleID, confidence: 0.72)
+            // Two different failures wore one sentence. Telling someone to open the app so
+            // DoraX can warm its menu cache is useless advice when the cache already holds
+            // sixty-nine of that app's commands — it sends them to do a thing that is done,
+            // and hides that the real answer is the app has no such command.
+            let cached = AppMenuCapabilityCache.shared.summary(bundleIdentifier: bundleID) != nil
             launch.caveat =
                 "I couldn't find a verified route for “\(actionPhrase)” in \(appName) — "
-                + "no adapter action, cached menu command, or shortcut matches it. "
-                + "Open \(appName) once so DoraX can warm its menu cache, then try again."
+                + (cached
+                    ? "nothing in its menus, adapters or shortcuts matches that. It may not "
+                        + "be something \(appName) can do."
+                    : "and I haven't read its menus yet. Open \(appName) once so DoraX can "
+                        + "warm its menu cache, then try again.")
             return .candidates([launch])
         }
 

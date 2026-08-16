@@ -883,10 +883,14 @@ extension LauncherView {
                         return "Opened \(appLabel) and confirmed it is active.\n\n" + followUp
                     }
                     await MainActor.run { aiMode.loadingStatus = nil }
+                    // Ranked against what was actually asked. With an empty query the cache
+                    // returns its first five records in stored order, so "closest available"
+                    // was whatever happened to sit at the top of the app's menu bar — a list
+                    // that looked considered and was not.
                     let closest = AppMenuCapabilityCache.shared.menuItems(
                         bundleIdentifier: bundleID,
                         appName: appLabel,
-                        query: "",
+                        query: query,
                         maxResults: 5
                     ).map(\.pathString)
                     let suggestion = closest.isEmpty
