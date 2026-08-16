@@ -89,6 +89,12 @@ enum PreviewAIContext {
               folder exists, and the && means nothing after it runs.
             - Check afterwards. List the folder again and say what actually moved, not what \
               you asked for.
+
+            When a command fails, quote the error it returned, word for word, and say what \
+            it means. Do not summarise it as "access issues" or "something went wrong", and \
+            never fall back to telling the user to do it by hand in Finder before you have \
+            shown them what actually failed — "Command denied by user" and "Operation not \
+            permitted" send them looking in completely different places.
             """)
 
         return sections.joined(separator: "\n\n")

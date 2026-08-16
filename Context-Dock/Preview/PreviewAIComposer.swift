@@ -32,7 +32,14 @@ struct PreviewAIComposer: View {
     @State private var errorText: String?
     /// What the model actually ran this turn, shown under its answer. A tool loop that
     /// works invisibly is indistinguishable from one that made its answer up.
-    @State private var lastCommands: [String] = []
+    @State private var lastCommands: [RanCommand] = []
+    struct RanCommand: Identifiable {
+        let id = UUID()
+        let command: String
+        let output: String
+        let success: Bool
+    }
+
     /// Files the user pinned onto the conversation on top of what is being previewed.
     @State private var attachedFiles: [URL] = []
 
@@ -129,13 +136,33 @@ struct PreviewAIComposer: View {
                     }
 
                     if !lastCommands.isEmpty {
-                        VStack(alignment: .leading, spacing: 2) {
-                            ForEach(lastCommands, id: \.self) { command in
-                                Text(command)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundStyle(.tertiary)
-                                    .lineLimit(2)
-                                    .truncationMode(.middle)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(lastCommands) { ran in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                        Image(systemName: ran.success
+                                            ? "checkmark.circle" : "exclamationmark.circle")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(ran.success ? .green : .orange)
+                                        Text(ran.command)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(2)
+                                            .truncationMode(.middle)
+                                    }
+                                    // The reason it failed, verbatim. The model paraphrased
+                                    // "Command denied by user" as "access issues", which sent
+                                    // the user looking for a permissions problem that was not
+                                    // there.
+                                    if !ran.success, !ran.output.isEmpty {
+                                        Text(ran.output)
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.orange.opacity(0.9))
+                                            .textSelection(.enabled)
+                                            .lineLimit(4)
+                                            .padding(.leading, 13)
+                                    }
+                                }
                             }
                         }
                     }
@@ -228,7 +255,9 @@ struct PreviewAIComposer: View {
                     chatScope: scope
                 )
                 history.append(ChatMessage(role: .assistant, content: reply))
-                lastCommands = executed.map { "$ " + $0.command }
+                lastCommands = executed.map {
+                    RanCommand(command: "$ " + $0.command, output: $0.output, success: $0.success)
+                }
                 // A command that wrote something usually wrote it here. Re-read the
                 // folder so the new file is on screen instead of behind a manual reopen.
                 if !executed.isEmpty { session.reload() }
