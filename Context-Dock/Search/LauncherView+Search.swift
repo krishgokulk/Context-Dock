@@ -107,11 +107,6 @@ extension LauncherView {
         }
 
         guard !query.isEmpty else {
-            if showFolderPreview {
-                searchState.results = []
-                debounceTask?.cancel()
-                return
-            }
             withAnimation(.easeInOut(duration: 0.2)) {
                 searchState.results = []
                 searchState.selectedIndex = nil
@@ -132,9 +127,6 @@ extension LauncherView {
             if detectSmartQuery(query: query) == nil {
                 searchState.isInSmartMode = false
                 searchState.lastSmartQuery = ""
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showFolderPreview = false
-                }
             }
         }
 

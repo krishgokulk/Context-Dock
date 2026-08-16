@@ -311,50 +311,5 @@ struct ResizeHandle: View {
 }
 
 // MARK: - Folder Item Row
-struct FolderItemRow: View {
-    let item: FolderPreviewView.FolderItem
-    let isSelected: Bool
-    var iconSize: CGFloat = 32
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(nsImage: item.icon)
-                .resizable()
-                .frame(width: iconSize, height: iconSize)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.name)
-                    .font(.system(size: 14, weight: .medium))
-                    .lineLimit(1)
-
-                HStack(spacing: 8) {
-                    Text(item.size)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    Text("•")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-
-                    Text(item.modifiedDate)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer()
-
-            if item.isDirectory {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
-    }
-}
-
 // MARK: - AI Chat Models
 /// Spotlight-style context: set when user presses Tab/→ on any search result

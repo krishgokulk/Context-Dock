@@ -2062,8 +2062,7 @@ extension LauncherView {
 
         // Context: is there a selected file or text right now?
         let hasFileSelection: Bool =
-            folderPreviewSelectedFile != nil
-            || (searchState.selectedIndex.map {
+            (searchState.selectedIndex.map {
                 $0 < searchState.results.count && searchState.results[$0].filePath != nil
             } ?? false)
             || !axContext.selectedFilePaths.isEmpty
@@ -2156,11 +2155,9 @@ extension LauncherView {
 
     func executeAppShortcut(_ sc: AppShortcut) {
         // ── Gather context ───────────────────────────────────────────────
-        // Selected file(s): folder preview selection first, then highlighted search result
+        // Selected file: the highlighted search result.
         var selectedFilePaths: [String] = []
-        if let previewFile = folderPreviewSelectedFile, !previewFile.isEmpty {
-            selectedFilePaths = [previewFile]
-        } else if let idx = searchState.selectedIndex, idx < searchState.results.count,
+        if let idx = searchState.selectedIndex, idx < searchState.results.count,
             let path = searchState.results[idx].filePath, !path.isEmpty
         {
             selectedFilePaths = [path]
@@ -2327,9 +2324,6 @@ extension LauncherView {
 
         let queryText = launchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedFile: String = {
-            if let previewFile = folderPreviewSelectedFile, !previewFile.isEmpty {
-                return previewFile
-            }
             if let idx = searchState.selectedIndex, idx < searchState.results.count,
                 let path = searchState.results[idx].filePath, !path.isEmpty
             {
@@ -2383,11 +2377,6 @@ extension LauncherView {
 
     /// Shortcuts relevant to the currently highlighted search result's file type
     var fileTypeShortcutsForSelection: [AppShortcut] {
-        // File selected inside folder preview takes priority
-        if let selectedFile = folderPreviewSelectedFile, !selectedFile.isEmpty {
-            let ext = URL(fileURLWithPath: selectedFile).pathExtension.lowercased()
-            return fileTypeShortcuts(for: ext)
-        }
         guard let idx = searchState.selectedIndex,
             idx < searchState.results.count
         else { return [] }
@@ -2396,12 +2385,6 @@ extension LauncherView {
         let ext =
             (result.filePath.map { URL(fileURLWithPath: $0).pathExtension.lowercased() }) ?? ""
         return fileTypeShortcuts(for: ext)
-    }
-
-    /// Name of the currently selected file in the folder preview (for display)
-    var selectedFolderFileName: String? {
-        guard let path = folderPreviewSelectedFile, !path.isEmpty else { return nil }
-        return URL(fileURLWithPath: path).lastPathComponent
     }
 
     func fileTypeShortcuts(for ext: String) -> [AppShortcut] {
@@ -2432,25 +2415,6 @@ extension LauncherView {
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    // File name chip (folder preview only)
-                    if let fileName = selectedFolderFileName {
-                        let ext = URL(fileURLWithPath: folderPreviewSelectedFile ?? "")
-                            .pathExtension.lowercased()
-                        HStack(spacing: 5) {
-                            Image(systemName: fileIcon(for: ext))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Text(fileName)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .frame(maxWidth: 120)
-                        }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(.secondary.opacity(0.12), in: Capsule())
-                    }
-
                     // Context-based action pills — auto-scored by file type, app, selection
                     ForEach(l2.contextExtensions, id: \.ilExtension.id) { result in
                         L2ExtensionChipButton(

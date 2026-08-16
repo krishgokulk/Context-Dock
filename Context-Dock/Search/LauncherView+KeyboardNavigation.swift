@@ -1521,18 +1521,6 @@ extension LauncherView {
                     }
                     return
                 }
-                if showFolderPreview {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showFolderPreview = false
-                        folderPreviewPath = nil
-                        folderPreviewSelectedFile = nil
-                        searchState.isInSmartMode = false
-                        searchState.lastSmartQuery = ""
-                        searchState.results = []
-                        searchState.selectedIndex = nil
-                    }
-                    return
-                }
                 // App scope: exit scope, close dock, switch to scoped app
                 if let targetInfo = l2.targetApp {
                     let bundleId = targetInfo.bundleId
@@ -1617,11 +1605,8 @@ extension LauncherView {
                     navigateResults(direction: -1)
                     return .handled
                 }
-                if !showFolderPreview {
-                    navigateResults(direction: -1)
-                    return .handled
-                }
-                return .ignored
+                navigateResults(direction: -1)
+                return .handled
             }
             .onKeyPress(.downArrow) {
                 // Quick Note split editor owns arrows (cursor / list); never switch layer.
@@ -1708,11 +1693,8 @@ extension LauncherView {
                     navigateResults(direction: 1)
                     return .handled
                 }
-                if !showFolderPreview {
-                    navigateResults(direction: 1)
-                    return .handled
-                }
-                return .ignored
+                navigateResults(direction: 1)
+                return .handled
             }
             .onKeyPress(.space) {
                 // Quick Note editor: space is text — never steal it back to the input.
@@ -1743,8 +1725,8 @@ extension LauncherView {
 
                 // Only handle space for Quick Look when the search field is NOT focused
                 // This allows typing spaces in the search field
-                if !showFolderPreview && !isSearchFieldFocused && searchState.selectedIndex != nil
-                    && !searchState.results.isEmpty
+                if !isSearchFieldFocused, searchState.selectedIndex != nil,
+                    !searchState.results.isEmpty
                 {
                     quickLookSelectedItem()
                     return .handled
@@ -1753,8 +1735,8 @@ extension LauncherView {
             }
             .onKeyPress(keys: [.init("y")], phases: .down) { keyPress in
                 // Cmd+Y for Quick Look (like Finder)
-                if keyPress.modifiers.contains(.command) && !showFolderPreview
-                    && searchState.selectedIndex != nil && !searchState.results.isEmpty
+                if keyPress.modifiers.contains(.command), searchState.selectedIndex != nil,
+                    !searchState.results.isEmpty
                 {
                     quickLookSelectedItem()
                     return .handled
@@ -1764,135 +1746,132 @@ extension LauncherView {
             .onKeyPress(.return) {
                 // Quick Note editor: Return / Shift+Return insert a newline.
                 if activeNotepadScopeCommand != nil { return .ignored }
-                if !showFolderPreview {
-                    if executeScopedRunningAppIfIdle() {
-                        return .handled
-                    }
-                    // Submenu ghost: Enter executes the first matching child directly
-                    if let subCtx = submenuGhostContext, let firstChild = subCtx.children.first {
-                        let frontPID =
-                            AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
-                        let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
-                        searchState.query = ""
-                        lockedSubmenuParent = nil
-                        executeDockMenuAction(
-                            sourcePID: pid, path: firstChild.path,
-                            shortcutChar: firstChild.shortcutChar,
-                            shortcutModifiers: firstChild.shortcutModifiers
-                        )
-                        return .handled
-                    }
-                    // Execute inline pill ghost completion if available
-                    if let ghost = ghostPillCompletion {
-                        ghost.execute()
-                        searchState.query = ""
-                        l2.focusedPillIndex = nil
-                        return .handled
-                    }
-                    if isCLIToolScopeLocked {
-                        let trimmed = searchState.query.trimmingCharacters(
-                            in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return .handled }
-                        if let target = currentGlobalScopedChatTarget {
-                            armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
-                            dismissMediaLayer()
-                            handleL2QuerySkippingMenuRouter(trimmed)
-                        }
-                        return .handled
-                    }
-                    if isL2ContextActive,
-                        l2.focusedPillIndex != nil,
-                        executeFocusedOrDirectAppPillIfNeeded()
-                    {
-                        return .handled
-                    }
-                    if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
-                        return .handled
-                    }
-                    // Finder desktop scope never launches a typed app — file search only.
-                    if isFinderDesktopOnlyMode {
-                        if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
-                        if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
-                            return .handled
-                        }
-                        return .handled
-                    }
-                    if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
-                        return .handled
-                    }
-                    // Enter runs the row the user is looking at. The highlighted row is what
-                    // the leading icon and the ghost are both drawn from, and
-                    // executeFocusedGlobalGroupedListRow is the accessor that reads it —
-                    // three NSEvent monitors already use it.
-                    //
-                    // This handler reached launchTypedAppMatchIfNeeded first, which resolves
-                    // an app from the *typed text* through L2AppActionRouter: a fourth
-                    // resolver, independent of the icon, the ghost and Tab. So "remi" could
-                    // show Reminders and launch something else, and which happened depended
-                    // on whether this handler or a monitor saw the key first.
-                    if isGlobalContextActive, executeFocusedGlobalGroupedListRow() {
-                        return .handled
-                    }
-                    if launchTypedAppMatchIfNeeded() {
-                        return .handled
-                    }
-                    if searchState.activeSmartQueryKey == "clipboard" {
-                        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if q.isEmpty {
-                            _ = pasteFocusedClipboardEntriesToFrontmost()
-                        } else {
-                            _ = submitClipboardScopeAIQuery(q)
-                        }
-                        return .handled
-                    }
-                    // Only explicit chat mode routes Enter to AI. App panels stay menu-first.
-                    let isAIAppPanel =
-                        searchState.contextApp != nil || searchState.activeSmartQueryKey != nil
-                    if isAIAppPanel
-                        && (l2.chatArmed || l2.showChatPopover)
-                        && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .isEmpty
-                    {
-                        handleRemPanelQuery()
-                        return .handled
-                    } else if isL2ContextActive {
-                        // NSEvent monitor handles Enter when pills exist (returns nil, consuming the event).
-                        // We only reach here when no pills are visible — escalate to AI.
-                        let trimmed = searchState.query.trimmingCharacters(
-                            in: .whitespacesAndNewlines)
-                        guard !trimmed.isEmpty else { return .handled }
-                        if shouldShowSelectionCompactAIAction
-                            || shouldShowContextDockAIQueryFallback
-                        {
-                            runCompactAIActionFromInput()
-                            return .handled
-                        }
-                        // Send when arming the chat (first message, before the sheet opens) AND when a
-                        // conversation is already open — otherwise once showChatPopover is true every
-                        // follow-up Enter fell through to `.handled` below and was silently dropped.
-                        if l2.chatArmed
-                            || shouldShowContextDockChatSheet
-                            || shouldShowContextDockAIQueryFallback
-                        {
-                            dismissMediaLayer()
-                            handleL2QuerySkippingMenuRouter(trimmed)
-                            return .handled
-                        }
-                        if executeFirstMatchingFinderFolderPillIfNeeded() {
-                            return .handled
-                        }
-                        // Normal Context Dock is menu-first. AI chat only sends after the
-                        // user explicitly connects chat with the right-side control.
-                        return .handled
-                    } else if aiMode.isActive {
-                        submitAIQuery()
-                    } else {
-                        // L1/L2: Execute selected result
-                        executeSelectedResult()
+                if executeScopedRunningAppIfIdle() {
+                    return .handled
+                }
+                // Submenu ghost: Enter executes the first matching child directly
+                if let subCtx = submenuGhostContext, let firstChild = subCtx.children.first {
+                    let frontPID =
+                        AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+                    let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
+                    searchState.query = ""
+                    lockedSubmenuParent = nil
+                    executeDockMenuAction(
+                        sourcePID: pid, path: firstChild.path,
+                        shortcutChar: firstChild.shortcutChar,
+                        shortcutModifiers: firstChild.shortcutModifiers
+                    )
+                    return .handled
+                }
+                // Execute inline pill ghost completion if available
+                if let ghost = ghostPillCompletion {
+                    ghost.execute()
+                    searchState.query = ""
+                    l2.focusedPillIndex = nil
+                    return .handled
+                }
+                if isCLIToolScopeLocked {
+                    let trimmed = searchState.query.trimmingCharacters(
+                        in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return .handled }
+                    if let target = currentGlobalScopedChatTarget {
+                        armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                        dismissMediaLayer()
+                        handleL2QuerySkippingMenuRouter(trimmed)
                     }
                     return .handled
                 }
-                return .ignored
+                if isL2ContextActive,
+                    l2.focusedPillIndex != nil,
+                    executeFocusedOrDirectAppPillIfNeeded()
+                {
+                    return .handled
+                }
+                if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
+                    return .handled
+                }
+                // Finder desktop scope never launches a typed app — file search only.
+                if isFinderDesktopOnlyMode {
+                    if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
+                    if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
+                        return .handled
+                    }
+                    return .handled
+                }
+                if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
+                    return .handled
+                }
+                // Enter runs the row the user is looking at. The highlighted row is what
+                // the leading icon and the ghost are both drawn from, and
+                // executeFocusedGlobalGroupedListRow is the accessor that reads it —
+                // three NSEvent monitors already use it.
+                //
+                // This handler reached launchTypedAppMatchIfNeeded first, which resolves
+                // an app from the *typed text* through L2AppActionRouter: a fourth
+                // resolver, independent of the icon, the ghost and Tab. So "remi" could
+                // show Reminders and launch something else, and which happened depended
+                // on whether this handler or a monitor saw the key first.
+                if isGlobalContextActive, executeFocusedGlobalGroupedListRow() {
+                    return .handled
+                }
+                if launchTypedAppMatchIfNeeded() {
+                    return .handled
+                }
+                if searchState.activeSmartQueryKey == "clipboard" {
+                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if q.isEmpty {
+                        _ = pasteFocusedClipboardEntriesToFrontmost()
+                    } else {
+                        _ = submitClipboardScopeAIQuery(q)
+                    }
+                    return .handled
+                }
+                // Only explicit chat mode routes Enter to AI. App panels stay menu-first.
+                let isAIAppPanel =
+                    searchState.contextApp != nil || searchState.activeSmartQueryKey != nil
+                if isAIAppPanel
+                    && (l2.chatArmed || l2.showChatPopover)
+                    && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .isEmpty
+                {
+                    handleRemPanelQuery()
+                    return .handled
+                } else if isL2ContextActive {
+                    // NSEvent monitor handles Enter when pills exist (returns nil, consuming the event).
+                    // We only reach here when no pills are visible — escalate to AI.
+                    let trimmed = searchState.query.trimmingCharacters(
+                        in: .whitespacesAndNewlines)
+                    guard !trimmed.isEmpty else { return .handled }
+                    if shouldShowSelectionCompactAIAction
+                        || shouldShowContextDockAIQueryFallback
+                    {
+                        runCompactAIActionFromInput()
+                        return .handled
+                    }
+                    // Send when arming the chat (first message, before the sheet opens) AND when a
+                    // conversation is already open — otherwise once showChatPopover is true every
+                    // follow-up Enter fell through to `.handled` below and was silently dropped.
+                    if l2.chatArmed
+                        || shouldShowContextDockChatSheet
+                        || shouldShowContextDockAIQueryFallback
+                    {
+                        dismissMediaLayer()
+                        handleL2QuerySkippingMenuRouter(trimmed)
+                        return .handled
+                    }
+                    if executeFirstMatchingFinderFolderPillIfNeeded() {
+                        return .handled
+                    }
+                    // Normal Context Dock is menu-first. AI chat only sends after the
+                    // user explicitly connects chat with the right-side control.
+                    return .handled
+                } else if aiMode.isActive {
+                    submitAIQuery()
+                } else {
+                    // L1/L2: Execute selected result
+                    executeSelectedResult()
+                }
+                return .handled
             }
             .onKeyPress(.tab) {
                 if activeNotepadScopeCommand != nil { return .ignored }
@@ -2017,19 +1996,6 @@ extension LauncherView {
                 return .handled
             }
             .onKeyPress(.escape) {
-                // Folder preview: ESC exits back to normal search
-                if showFolderPreview {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showFolderPreview = false
-                        folderPreviewPath = nil
-                        folderPreviewSelectedFile = nil
-                        searchState.isInSmartMode = false
-                        searchState.lastSmartQuery = ""
-                        searchState.results = []
-                        searchState.selectedIndex = nil
-                    }
-                    return .handled
-                }
                 // Inline Share Sheet: ESC exits back to normal dock
                 if inlineShareActive {
                     inlineShareActive = false

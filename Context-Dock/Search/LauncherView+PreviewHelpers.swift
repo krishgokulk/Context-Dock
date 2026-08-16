@@ -14,11 +14,10 @@ import Vision
 
 extension LauncherView {
     // MARK: - Folder Preview Helper
-    /// Folders go to the preview surface like everything else. `showFolderPreview` is
-    /// deliberately NOT set: the inline folder view it used to gate was deleted long ago
-    /// — nothing rendered it — so raising the flag only convinced twenty keyboard
-    /// branches that a preview was open when the screen was showing nothing.
-    /// `folderPreviewPath` stays, because the scope key and the action context read it.
+    /// Folders go to the preview surface like everything else. `folderPreviewPath` stays
+    /// because the scope key reads it — it says which folder is being looked at, which is
+    /// still true.
+    ///
     /// `toggleIfSame` is false when the caller is retargeting an open preview as the
     /// selection moves — there, landing back on the same folder must re-show it, not
     /// close the window out from under the arrow keys.

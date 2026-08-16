@@ -88,19 +88,6 @@ extension LauncherView {
             return
         }
 
-        // Priority 0: File selected in folder preview (highest priority!)
-        if showFolderPreview, let selectedFile = folderPreviewSelectedFile, !selectedFile.isEmpty {
-            let fileURL = URL(fileURLWithPath: selectedFile)
-            rememberFinderFollowUpTargets(
-                [fileURL],
-                folderPath: fileURL.deletingLastPathComponent().path,
-                sourceQuery: fileURL.lastPathComponent
-            )
-            currentContext = .filesSelected([fileURL])
-            updateContextSuggestions()
-            return
-        }
-
         // Priority 1: Files selected in search results (internal selection)
         if !selectedFiles.isEmpty {
             let selectedURLs =

@@ -45,9 +45,7 @@ final class LauncherViewModel: ObservableObject {
     /// sheet height so it hugs the actually-rendered rows (no half-empty box, no
     /// count/state mismatch).
     @Published var measuredGlobalListContentHeight: CGFloat = 0
-    @Published var showFolderPreview = false
     @Published var folderPreviewPath: String?
-    @Published var folderPreviewSelectedFile: String?
     @Published var showContactPreview = false
     @Published var contactPreviewData: SearchResult?
     /// Bumped on field-editor selection changes so the inline-scope overlay

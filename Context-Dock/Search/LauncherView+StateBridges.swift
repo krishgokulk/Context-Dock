@@ -88,33 +88,9 @@ extension LauncherView {
         nonmutating set { launcherViewModel.measuredChatContentHeight = newValue }
     }
 
-    var showFolderPreview: Bool {
-        get { launcherViewModel.showFolderPreview }
-        nonmutating set { launcherViewModel.showFolderPreview = newValue }
-    }
-
-    var showFolderPreviewBinding: Binding<Bool> {
-        Binding(
-            get: { launcherViewModel.showFolderPreview },
-            set: { launcherViewModel.showFolderPreview = $0 }
-        )
-    }
-
     var folderPreviewPath: String? {
         get { launcherViewModel.folderPreviewPath }
         nonmutating set { launcherViewModel.folderPreviewPath = newValue }
-    }
-
-    var folderPreviewSelectedFile: String? {
-        get { launcherViewModel.folderPreviewSelectedFile }
-        nonmutating set { launcherViewModel.folderPreviewSelectedFile = newValue }
-    }
-
-    var folderPreviewSelectedFileBinding: Binding<String?> {
-        Binding(
-            get: { launcherViewModel.folderPreviewSelectedFile },
-            set: { launcherViewModel.folderPreviewSelectedFile = $0 }
-        )
     }
 
     var showContactPreview: Bool {

@@ -1226,7 +1226,6 @@ extension LauncherView {
             }
             if l2.chatArmed {
                 livePanelVisible = false
-                showFolderPreview = false
                 l2.focusedPillIndex = nil
                 focusedAppPillIndex = nil
             }
@@ -1238,7 +1237,6 @@ extension LauncherView {
         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
             armContextDockChat()
             livePanelVisible = false
-            showFolderPreview = false
             l2.focusedPillIndex = nil
             focusedAppPillIndex = nil
         }
@@ -1279,7 +1277,6 @@ extension LauncherView {
         l2.showChatPopover = true
         l2.chatDismissed = false
         livePanelVisible = false
-        showFolderPreview = false
         l2.focusedPillIndex = nil
         focusedAppPillIndex = nil
         syncScopeChatSpaceHold()

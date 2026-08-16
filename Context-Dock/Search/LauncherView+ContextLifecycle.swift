@@ -677,18 +677,6 @@ extension LauncherView {
         contentLifecycleHandlersView
             // AppKit-level Escape fallback — fires only when SwiftUI doesn't capture it
             .onReceive(NotificationCenter.default.publisher(for: .escapePressed)) { _ in
-                if showFolderPreview {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showFolderPreview = false
-                        folderPreviewPath = nil
-                        folderPreviewSelectedFile = nil
-                        searchState.isInSmartMode = false
-                        searchState.lastSmartQuery = ""
-                        searchState.results = []
-                        searchState.selectedIndex = nil
-                    }
-                    return
-                }
                 if exitClipboardScopeClosingLauncher() { return }
                 if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
                     || searchState.contextApp != nil
@@ -1197,7 +1185,6 @@ extension LauncherView {
         // Reset transient UI state unconditionally on every open
         aiMode.isActive = false
         showMediaLayer = false
-        showFolderPreview = false
         searchState.isInSmartMode = false
 
         if !openingForDockContext {
@@ -1365,7 +1352,6 @@ extension LauncherView {
             l2.showChatPopover = false
             showContextInDock = true
             showMediaLayer = false
-            showFolderPreview = false
             aiMode.isActive = false
             globalContextActivation = nil
             globalInlineAppScope = nil
