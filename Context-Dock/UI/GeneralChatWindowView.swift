@@ -1253,6 +1253,12 @@ struct GeneralChatWindowView: View {
             // named by its app.
             HStack(spacing: 8) {
                 scopePill
+                // Beside the scope, not under it: the tabs say which face of this thread
+                // the panel is showing, which is the same kind of fact as which thread it
+                // is. On its own row it read as a second, unrelated toolbar.
+                if hasTerminal || !previewFiles.isEmpty || !artifactFiles.isEmpty {
+                    panelTabs
+                }
                 Spacer(minLength: 0)
                 Button { previewOnLeading.toggle() } label: {
                     Image(systemName: previewOnLeading
@@ -1282,7 +1288,6 @@ struct GeneralChatWindowView: View {
             // the file the thread is working on. They share the space — the panel is narrow,
             // and stacking both leaves neither enough room to be useful.
             if hasTerminal || !previewFiles.isEmpty || !artifactFiles.isEmpty {
-                panelTabs
                 switch effectivePanelTab {
                 case .terminal where hasTerminal:
                     if let reason = unsupportedToolReason {
@@ -1567,10 +1572,7 @@ struct GeneralChatWindowView: View {
                     "Artifacts", tab: .artifacts, symbol: "square.on.square",
                     badge: artifactFiles.count)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 10)
     }
 
     private func tabPill(

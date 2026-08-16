@@ -318,6 +318,25 @@ struct PreviewSurfaceView: View {
 
         \(item.metadataForAI)
         """
+        // The rest of the set, when there is one. A selection is peeked as a group —
+        // "are these duplicates?", "which is the newest?" — and a model shown one file
+        // out of five answers about the wrong thing with total confidence.
+        if session.items.count > 1 {
+            let others = session.items.enumerated().map { index, other -> String in
+                let marker = index == session.index ? " ← showing" : ""
+                return "\(index + 1). \(other.title)\(marker)"
+            }
+            prompt += """
+
+
+            This file is one of \(session.items.count) the user is previewing together:
+            \(others.joined(separator: "\n"))
+
+            Questions about "these files" mean all of them. You can see their names and \
+            order; you cannot see inside any but the one shown, so say when an answer \
+            would need that.
+            """
+        }
         if let text = extractedText, !text.isEmpty {
             prompt += "\n\nContents:\n\(text)"
         } else {
