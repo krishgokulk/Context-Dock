@@ -30,6 +30,10 @@ extension AIProviderService {
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
+        // A repeated call is only pointless *within* one turn. Asking the same question in
+        // the next message is the user asking again, and deserves a fresh reading.
+        await AgentToolRegistry.shared.beginTurn()
+
         var executedCommands: [ExecutedCommand] = []
 
         // Subscription bridges serve a coding agent with its own sandboxed tools; without this
@@ -146,6 +150,10 @@ extension AIProviderService {
         chatScope: GeneralChatScope? = nil,
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
+
+        // A repeated call is only pointless *within* one turn. Asking the same question in
+        // the next message is the user asking again, and deserves a fresh reading.
+        await AgentToolRegistry.shared.beginTurn()
 
         var executedCommands: [ExecutedCommand] = []
 
@@ -300,6 +308,10 @@ extension AIProviderService {
         chatScope: GeneralChatScope? = nil,
         simulateAllTools: Bool
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
+
+        // A repeated call is only pointless *within* one turn. Asking the same question in
+        // the next message is the user asking again, and deserves a fresh reading.
+        await AgentToolRegistry.shared.beginTurn()
 
         var executedCommands: [ExecutedCommand] = []
 
