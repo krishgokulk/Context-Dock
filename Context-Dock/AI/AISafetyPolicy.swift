@@ -20,6 +20,7 @@ final class AIPrivacyApprovalCenter: ObservableObject {
 
     @Published private(set) var pending: PendingApproval?
     private var expiryTask: Task<Void, Never>?
+    private var isResolving = false
 
     private init() {}
 
@@ -39,20 +40,21 @@ final class AIPrivacyApprovalCenter: ObservableObject {
         }
     }
 
-    func approve() {
-        guard let pending else { return }
-        expiryTask?.cancel()
-        expiryTask = nil
-        self.pending = nil
-        pending.continuation.resume(returning: true)
-    }
+    func approve() { resolve(true) }
 
-    func deny() {
-        guard let pending else { return }
+    func deny() { resolve(false) }
+
+    /// One answer per request — see AICapabilityApprovalCenter.resolve for why clearing
+    /// `pending` is not enough on its own: @Published notifies on willSet, so an observer
+    /// that closes the approval window re-enters this with the old value still stored.
+    private func resolve(_ granted: Bool) {
+        guard !isResolving, let request = pending else { return }
+        isResolving = true
         expiryTask?.cancel()
         expiryTask = nil
-        self.pending = nil
-        pending.continuation.resume(returning: false)
+        pending = nil
+        isResolving = false
+        request.continuation.resume(returning: granted)
     }
 }
 

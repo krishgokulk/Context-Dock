@@ -852,6 +852,7 @@ final class AICapabilityApprovalCenter: ObservableObject {
 
     @Published private(set) var pending: PendingApproval?
     private var expiryTask: Task<Void, Never>?
+    private var isResolving = false
 
     private init() {}
 
@@ -876,20 +877,25 @@ final class AICapabilityApprovalCenter: ObservableObject {
         }
     }
 
-    func approve() {
-        guard let pending else { return }
-        expiryTask?.cancel()
-        expiryTask = nil
-        self.pending = nil
-        pending.continuation.resume(returning: true)
-    }
+    func approve() { resolve(true) }
 
-    func deny() {
-        guard let pending else { return }
+    func deny() { resolve(false) }
+
+    /// One answer per request, even when answering it re-enters this method.
+    ///
+    /// @Published notifies on willSet, so clearing `pending` runs every observer while
+    /// the old value is still stored. The dock closes the approval window on that
+    /// notification, the window's willClose handler denies "the pending request", it
+    /// reads the value still sitting there, and the same continuation is resumed twice —
+    /// which traps. The flag closes that window; nil-ing first is not enough on its own.
+    private func resolve(_ granted: Bool) {
+        guard !isResolving, let request = pending else { return }
+        isResolving = true
         expiryTask?.cancel()
         expiryTask = nil
-        self.pending = nil
-        pending.continuation.resume(returning: false)
+        pending = nil
+        isResolving = false
+        request.continuation.resume(returning: granted)
     }
 }
 

@@ -71,6 +71,24 @@ final class PreviewController: ObservableObject {
 
     var currentURL: URL? { liveSession?.current?.url }
 
+    /// True when a preview window is the one the user is answering in. Approvals raised
+    /// from its assistant render inside it rather than as a panel thrown over the file
+    /// the question is about.
+    var isKeyWindow: Bool {
+        guard let key = NSApp.keyWindow else { return false }
+        if key === liveWindow { return true }
+        return pinnedWindows.contains { $0 === key }
+    }
+
+    /// A preview assistant is on screen and will show approval cards itself.
+    var hasVisibleComposer: Bool {
+        if liveSession?.showsAI == true, liveWindow?.isVisible == true { return true }
+        return pinnedWindows.contains { $0.isVisible }
+            && pinnedSessions.contains { $0.showsAI }
+    }
+
+    fileprivate var pinnedSessions: [PreviewSession] = []
+
     /// True when the event belongs to a preview window rather than the dock. Note this
     /// does NOT return true merely because a preview is open: unlike the system panel,
     /// our window is not keyboard-modal, so the dock keeps its arrow keys and the
@@ -143,6 +161,7 @@ final class PreviewController: ObservableObject {
         let window = makeWindow(for: session)
         session.window = window
         pinnedWindows.append(window)
+        pinnedSessions.append(session)
         window.orderFrontRegardless()
     }
 
@@ -163,6 +182,7 @@ final class PreviewController: ObservableObject {
         guard session === liveSession, let window = liveWindow else { return }
         // Detach: this window stops following the dock, and the next Space opens a new one.
         pinnedWindows.append(window)
+        pinnedSessions.append(session)
         liveSession = nil
         liveWindow = nil
         removeEscapeMonitor()
@@ -208,6 +228,7 @@ final class PreviewController: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.pinnedWindows.removeAll { $0 === panel }
+                self.pinnedSessions.removeAll { $0.window == nil || $0.window === panel }
                 if panel === self.liveWindow {
                     self.liveWindow = nil
                     self.liveSession = nil

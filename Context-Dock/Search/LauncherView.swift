@@ -1450,6 +1450,11 @@ struct LauncherView: View {
                         pendingCapabilityApproval = pending
                     }
                     requestWindowSizeUpdate(reason: .chatChanged)
+                } else if PreviewController.shared.hasVisibleComposer {
+                    // The preview's own assistant renders this card, over the file the
+                    // question is about. A window on top of it would hide the answer.
+                    pendingCapabilityApproval = nil
+                    AICapabilityApprovalWindowHost.close()
                 } else {
                     pendingCapabilityApproval = nil
                     openAICapabilityApprovalWindow(pending: pending)

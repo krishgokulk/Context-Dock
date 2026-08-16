@@ -36,6 +36,7 @@ class TerminalAIBridge: ObservableObject {
     @Published var executionHistory: [CommandExecution] = []
     @Published var pendingApproval: PendingCommand?
     private var approvalExpiryTask: Task<Void, Never>?
+    private var isResolvingApproval = false
 
     /// Optional per-line streaming callback set by the active panel.
     /// Called on a background thread — callers must dispatch to MainActor themselves.
@@ -80,7 +81,7 @@ class TerminalAIBridge: ObservableObject {
     /// requested in the chat window put its "Run command?" card into whatever dock chat
     /// happened to be open — the user watched Finder's conversation fill up with Safari
     /// commands it had never asked for.
-    enum ApprovalOrigin { case dock, window }
+    enum ApprovalOrigin { case dock, window, preview }
 
     struct PendingCommand: Identifiable {
         let id = UUID()
@@ -246,7 +247,9 @@ class TerminalAIBridge: ObservableObject {
                 // than threaded through every caller: the request arrives from deep inside
                 // an async chain, and the key window is the one fact that is true at the
                 // moment the question needs answering.
-                origin: GeneralChatWindowController.shared.isKeyWindow ? .window : .dock,
+                origin: PreviewController.shared.isKeyWindow
+                    ? .preview
+                    : (GeneralChatWindowController.shared.isKeyWindow ? .window : .dock),
                 continuation: continuation
             )
             approvalExpiryTask = Task { [weak self] in
@@ -259,20 +262,28 @@ class TerminalAIBridge: ObservableObject {
 
     /// Called when user approves the command
     func approveCommand(_ command: String) {
-        guard let pending = pendingApproval else { return }
-        approvalExpiryTask?.cancel()
-        approvalExpiryTask = nil
-        pending.continuation.resume(returning: .approved(command: command))
-        pendingApproval = nil
+        resolveApproval(.approved(command: command))
     }
 
     /// Called when user denies the command
     func denyCommand() {
-        guard let pending = pendingApproval else { return }
+        resolveApproval(.denied)
+    }
+
+    /// One answer per request, even when answering it re-enters this method.
+    ///
+    /// @Published notifies on willSet, so clearing `pendingApproval` runs every observer
+    /// while the old value is still stored. A surface that closes its approval window on
+    /// that notification denies "the pending request", reads the value still sitting
+    /// there, and the same continuation is resumed twice — which traps.
+    private func resolveApproval(_ result: CommandResult) {
+        guard !isResolvingApproval, let pending = pendingApproval else { return }
+        isResolvingApproval = true
         approvalExpiryTask?.cancel()
         approvalExpiryTask = nil
-        pending.continuation.resume(returning: .denied)
         pendingApproval = nil
+        isResolvingApproval = false
+        pending.continuation.resume(returning: result)
     }
 
     /// Run a command the user already approved via an inline chat card. Applies the same
