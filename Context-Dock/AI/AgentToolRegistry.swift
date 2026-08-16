@@ -631,26 +631,50 @@ final class AgentToolRegistry {
                     ],
                     "description": "The exact read-only verification to perform",
                 ],
-                "path": ["type": "string", "description": "Absolute path to verify"],
+                "path": [
+                    "type": "string",
+                    "description": "Path to verify. Absolute, or relative to the folder this "
+                        + "conversation is scoped to — the same folder commands run in.",
+                ],
                 "expected_text": [
                     "type": "string",
                     "description": "Required only for file_contains",
                 ],
             ],
             required: ["kind", "path"]
-        ) { arguments, _ in
+        ) { arguments, context in
+            // Commands run in the thread's folder, so the model answers with the paths it
+            // used — "Images/IMG_4151.heic". Demanding an absolute path failed a
+            // verification of work that had actually succeeded, and reported it as though
+            // the model had invented the path. Relative paths resolve against the same
+            // folder the command ran in; only a placeholder is refused now.
             guard let kind = arguments["kind"] as? String,
                   let rawPath = arguments["path"] as? String,
-                  rawPath.hasPrefix("/"),
-                  !rawPath.lowercased().hasPrefix("/path/to/")
+                  !rawPath.trimmingCharacters(in: .whitespaces).isEmpty,
+                  !rawPath.lowercased().hasPrefix("/path/to/"),
+                  !rawPath.lowercased().hasPrefix("path/to/")
             else {
                 return AgentToolResult(
                     success: false,
-                    output: "Verification requires a supported kind and a real absolute path; placeholder paths are not evidence.",
+                    output: "Verification requires a supported kind and a real path; "
+                        + "placeholder paths are not evidence.",
                     displayCommand: "verify_outcome(invalid)")
             }
 
-            let path = NSString(string: rawPath).standardizingPath
+            let expanded = NSString(string: rawPath).expandingTildeInPath
+            let absolute: String
+            if expanded.hasPrefix("/") {
+                absolute = expanded
+            } else if let root = context.chatScope?.folderURL {
+                absolute = root.appendingPathComponent(expanded).path
+            } else {
+                return AgentToolResult(
+                    success: false,
+                    output: "Verification needs an absolute path here: this conversation is "
+                        + "not scoped to a folder, so \(rawPath) could be anywhere.",
+                    displayCommand: "verify_outcome(invalid)")
+            }
+            let path = NSString(string: absolute).standardizingPath
             let fileManager = FileManager.default
             let passed: Bool
             let observation: String
