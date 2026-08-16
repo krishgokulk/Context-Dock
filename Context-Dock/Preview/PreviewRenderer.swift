@@ -38,11 +38,21 @@ private struct PreviewWebView: NSViewRepresentable {
         let view = WKWebView()
         view.setValue(false, forKey: "drawsBackground")
         view.load(URLRequest(url: url))
+        // Registered so the assistant can read the page the user is actually looking at,
+        // rather than re-fetching a URL that may need a login or run its own JavaScript.
+        PreviewWebContent.shared.register(view, for: url)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        PreviewWebContent.shared.register(view, for: url)
         guard view.url != url else { return }
         view.load(URLRequest(url: url))
+    }
+
+    static func dismantleNSView(_ view: WKWebView, coordinator: ()) {
+        MainActor.assumeIsolated {
+            if let url = view.url { PreviewWebContent.shared.unregister(for: url) }
+        }
     }
 }

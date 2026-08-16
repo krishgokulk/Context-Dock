@@ -22,15 +22,34 @@ struct PreviewFolderBrowser: View {
     var reloadToken = 0
 
     @AppStorage("previewFolderGridView") private var gridView = false
+    @AppStorage("previewFolderSort") private var sortRaw = SortOrder.name.rawValue
+    @AppStorage("previewFolderSortAscending") private var ascending = true
 
     @State private var entries: [Entry] = []
     /// Folders walked into from here, so Back does not have to reopen anything.
     @State private var stack: [URL] = []
     @State private var selectedID: String?
+    /// More than one, because acting on a folder usually means acting on a handful of
+    /// its files. Command-click adds, Shift-click takes the run between.
+    @State private var selection: Set<String> = []
+    @State private var anchorID: String?
     /// Measured, not guessed: a hardcoded column count makes Down crawl in a wide window.
     @State private var gridColumns = 4
 
     private var currentURL: URL { stack.last ?? url }
+
+    enum SortOrder: String, CaseIterable {
+        case name, date, size, kind
+
+        var label: String {
+            switch self {
+            case .name: return "Name"
+            case .date: return "Date Modified"
+            case .size: return "Size"
+            case .kind: return "Kind"
+            }
+        }
+    }
 
     struct Entry: Identifiable {
         let id: String
@@ -38,6 +57,19 @@ struct PreviewFolderBrowser: View {
         let name: String
         let detail: String
         let isDirectory: Bool
+        let size: Int
+        let modified: Date
+        let ext: String
+    }
+
+    private var sort: SortOrder { SortOrder(rawValue: sortRaw) ?? .name }
+
+    /// What the user has actually picked. Falls back to the keyboard selection so a
+    /// single row never needs command-clicking to be acted on.
+    private var actionTargets: [Entry] {
+        let chosen = entries.filter { selection.contains($0.id) }
+        if !chosen.isEmpty { return chosen }
+        return selectedEntry.map { [$0] } ?? []
     }
 
     var body: some View {
@@ -60,6 +92,8 @@ struct PreviewFolderBrowser: View {
         }
         .task(id: currentURL) { load() }
         .task(id: reloadToken) { load() }
+        .onChange(of: sortRaw) { _, _ in entries = sorted(entries) }
+        .onChange(of: ascending) { _, _ in entries = sorted(entries) }
         .onChange(of: url) { _, _ in stack = [] }
         // Focusable so the panel is navigable, but without the ring: a focus halo around
         // the whole window read as the window being broken.
@@ -105,10 +139,36 @@ struct PreviewFolderBrowser: View {
 
     private var viewModeFooter: some View {
         HStack(spacing: 6) {
-            Text("\(entries.count) item\(entries.count == 1 ? "" : "s")")
+            Text(selection.count > 1
+                ? "\(selection.count) of \(entries.count) selected"
+                : "\(entries.count) item\(entries.count == 1 ? "" : "s")")
                 .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
             Spacer()
+
+            Menu {
+                ForEach(SortOrder.allCases, id: \.self) { order in
+                    Button {
+                        if sort == order { ascending.toggle() } else { sortRaw = order.rawValue }
+                    } label: {
+                        if sort == order {
+                            Label(order.label, systemImage: ascending ? "chevron.up" : "chevron.down")
+                        } else {
+                            Text(order.label)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(sort.label).font(.system(size: 10))
+                }
+                .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
             ForEach([false, true], id: \.self) { isGrid in
                 Button { gridView = isGrid } label: {
                     Image(systemName: isGrid ? "square.grid.2x2" : "list.bullet")
@@ -167,14 +227,21 @@ struct PreviewFolderBrowser: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .background(
-                            selectedID == entry.id
+                            isHighlighted(entry)
                                 ? Color.accentColor.opacity(0.18) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 6))
                         .padding(.horizontal, 6)
                         .contentShape(Rectangle())
-                        .onTapGesture { selectedID = entry.id }
                         .onTapGesture(count: 2) { activate(entry) }
+                        .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
+                            toggle(entry)
+                        })
+                        .simultaneousGesture(TapGesture().modifiers(.shift).onEnded {
+                            extendSelection(to: entry)
+                        })
+                        .onTapGesture { choose(entry) }
                         .contextMenu { rowMenu(entry) }
+                        .modifier(PreviewFileDrag(entry: entry, all: actionTargets))
                         .id(entry.id)
                     }
                 }
@@ -217,12 +284,19 @@ struct PreviewFolderBrowser: View {
                             .padding(.vertical, 6)
                             .contentShape(Rectangle())
                             .background(
-                                selectedID == entry.id
+                                isHighlighted(entry)
                                     ? Color.accentColor.opacity(0.18) : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 8))
-                            .onTapGesture { selectedID = entry.id }
                             .onTapGesture(count: 2) { activate(entry) }
+                            .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
+                                toggle(entry)
+                            })
+                            .simultaneousGesture(TapGesture().modifiers(.shift).onEnded {
+                                extendSelection(to: entry)
+                            })
+                            .onTapGesture { choose(entry) }
                             .contextMenu { rowMenu(entry) }
+                            .modifier(PreviewFileDrag(entry: entry, all: actionTargets))
                             .id(entry.id)
                         }
                     }
@@ -242,18 +316,66 @@ struct PreviewFolderBrowser: View {
 
     @ViewBuilder
     private func rowMenu(_ entry: Entry) -> some View {
-        Button(entry.isDirectory ? "Enter Folder" : "Preview") { activate(entry) }
-        Button("Open") { NSWorkspace.shared.open(entry.url) }
-        Button("Reveal in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting([entry.url])
+        // A context menu on a row inside a selection acts on the selection; on a row
+        // outside it, on that row. Same rule Finder uses.
+        let targets = selection.contains(entry.id) ? actionTargets : [entry]
+        let suffix = targets.count > 1 ? " (\(targets.count))" : ""
+
+        Button(entry.isDirectory && targets.count == 1 ? "Enter Folder" : "Preview" + suffix) {
+            if targets.count > 1 {
+                let files = targets.filter { !$0.isDirectory }.map(\.url)
+                if let first = files.first {
+                    PreviewController.shared.present(
+                        url: first, siblings: files, toggleIfSame: false)
+                }
+            } else {
+                activate(entry)
+            }
         }
-        Button("Copy Path") {
+        Button("Open" + suffix) { targets.forEach { NSWorkspace.shared.open($0.url) } }
+        Button("Reveal in Finder" + suffix) {
+            NSWorkspace.shared.activateFileViewerSelecting(targets.map(\.url))
+        }
+        Button("Copy Path" + suffix) {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(entry.url.path, forType: .string)
+            NSPasteboard.general.setString(
+                targets.map(\.url.path).joined(separator: "\n"), forType: .string)
         }
     }
 
     // MARK: - Behaviour
+
+    private func isHighlighted(_ entry: Entry) -> Bool {
+        selection.contains(entry.id) || (selection.isEmpty && selectedID == entry.id)
+    }
+
+    /// A plain click replaces the selection — the ordinary case, and the one that must
+    /// not require modifiers.
+    private func choose(_ entry: Entry) {
+        selectedID = entry.id
+        anchorID = entry.id
+        selection = []
+    }
+
+    private func toggle(_ entry: Entry) {
+        if selection.isEmpty, let selectedID { selection.insert(selectedID) }
+        if selection.contains(entry.id) {
+            selection.remove(entry.id)
+        } else {
+            selection.insert(entry.id)
+        }
+        selectedID = entry.id
+        anchorID = entry.id
+    }
+
+    private func extendSelection(to entry: Entry) {
+        let ids = entries.map(\.id)
+        guard let from = ids.firstIndex(of: anchorID ?? selectedID ?? entry.id),
+            let to = ids.firstIndex(of: entry.id)
+        else { return }
+        selection = Set(ids[min(from, to)...max(from, to)])
+        selectedID = entry.id
+    }
 
     /// Grid moves by a row of tiles; the list moves one line — the same arithmetic the
     /// pinned scope panels use, so both folders feel like one control.
@@ -271,6 +393,8 @@ struct PreviewFolderBrowser: View {
         default: return
         }
         selectedID = ids[min(max(next, 0), ids.count - 1)]
+        anchorID = selectedID
+        selection = []
     }
 
     /// Folders open in place; files hand this window over to their own preview, so a
@@ -297,39 +421,75 @@ struct PreviewFolderBrowser: View {
 
     private func load() {
         let target = currentURL
+        let keys: [URLResourceKey] = [.fileSizeKey, .isDirectoryKey, .contentModificationDateKey]
         let contents = (try? FileManager.default.contentsOfDirectory(
-            at: target,
-            includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
+            at: target, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
 
-        entries = contents
-            .sorted {
-                $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
-                    == .orderedAscending
+        let mapped = contents.map { child -> Entry in
+            let values = try? child.resourceValues(forKeys: Set(keys))
+            let isDirectory = values?.isDirectory ?? false
+            let size = values?.fileSize ?? 0
+            let modified = values?.contentModificationDate ?? .distantPast
+            var detail = isDirectory
+                ? "Folder"
+                : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+            if modified != .distantPast {
+                detail += " · " + modified.formatted(date: .abbreviated, time: .omitted)
             }
-            .map { child in
-                let values = try? child.resourceValues(
-                    forKeys: [.fileSizeKey, .isDirectoryKey, .contentModificationDateKey])
-                let isDirectory = values?.isDirectory ?? false
-                let size = values?.fileSize ?? 0
-                var detail = isDirectory
-                    ? "Folder"
-                    : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
-                if let modified = values?.contentModificationDate {
-                    detail += " · " + modified.formatted(date: .abbreviated, time: .omitted)
-                }
-                return Entry(
-                    id: child.path,
-                    url: child,
-                    name: child.lastPathComponent,
-                    detail: detail,
-                    isDirectory: isDirectory
-                )
-            }
+            return Entry(
+                id: child.path,
+                url: child,
+                name: child.lastPathComponent,
+                detail: detail,
+                isDirectory: isDirectory,
+                size: size,
+                modified: modified,
+                ext: child.pathExtension.lowercased()
+            )
+        }
 
+        entries = sorted(mapped)
+        selection = selection.filter { id in entries.contains { $0.id == id } }
         if selectedID == nil || !entries.contains(where: { $0.id == selectedID }) {
             selectedID = entries.first?.id
+        }
+    }
+
+    /// Folders stay above files whatever the sort — a directory is a place, not a
+    /// document, and mixing them by size or date buries the way out of the folder.
+    private func sorted(_ input: [Entry]) -> [Entry] {
+        let ordered = input.sorted { lhs, rhs in
+            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            let result: Bool
+            switch sort {
+            case .name:
+                result = lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+            case .date:
+                result = lhs.modified < rhs.modified
+            case .size:
+                result = lhs.size < rhs.size
+            case .kind:
+                result = lhs.ext == rhs.ext
+                    ? lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+                    : lhs.ext < rhs.ext
+            }
+            return ascending ? result : !result
+        }
+        return ordered
+    }
+}
+
+/// Files dragged straight out of the preview, the whole selection at once when there
+/// is one. A folder you can look at but not take anything from is half a folder.
+private struct PreviewFileDrag: ViewModifier {
+    let entry: PreviewFolderBrowser.Entry
+    let all: [PreviewFolderBrowser.Entry]
+
+    func body(content: Content) -> some View {
+        content.onDrag {
+            let dragged = all.contains(where: { $0.id == entry.id }) ? all : [entry]
+            let providers = dragged.compactMap { NSItemProvider(contentsOf: $0.url) }
+            return providers.first ?? NSItemProvider()
         }
     }
 }

@@ -21,6 +21,11 @@ enum PreviewTextExtractor {
     static func text(for item: PreviewItem) async -> String? {
         let url = item.url
         let kind = item.kind
+        // A page is read from the live view on the main actor; everything else is file
+        // work that has no business there.
+        if kind == .web {
+            return await PreviewWebContent.shared.markdown(for: url)
+        }
         return await Task.detached(priority: .userInitiated) { () -> String? in
             switch kind {
             case .text, .document:

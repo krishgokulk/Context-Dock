@@ -53,7 +53,15 @@ enum PreviewAIContext {
                     """)
             }
         case .web:
-            sections.append("This is a web page: \(item.url.absoluteString)")
+            if let extractedText, !extractedText.isEmpty {
+                sections.append("The page, as markdown:\n\(extractedText)")
+            } else {
+                sections.append(
+                    """
+                    This is a web page: \(item.url.absoluteString). Its text could not be \
+                    read — say so rather than guessing what the page says from its address.
+                    """)
+            }
         }
 
         if siblings.count > 1 {
