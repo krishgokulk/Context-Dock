@@ -926,8 +926,17 @@ final class AgentToolRegistry {
             }
             return AgentToolResult(
                 success: true,
+                // The closing rule matters more than the list. Handed these ids, a model
+                // asked for something none of them covered invented a capability, then a
+                // log path under the app's Application Support, and reported that the file
+                // was missing — turning "I can't read that" into a plausible-sounding
+                // investigation of a file that never existed.
                 output: "Matching capabilities — call one with run_capability:\n"
-                    + (lines + adapterLines).joined(separator: "\n"),
+                    + (lines + adapterLines).joined(separator: "\n")
+                    + "\n\nThese are the only capabilities for this request. If none of them "
+                    + "can answer it, say so plainly and stop. Do not invent a capability id, "
+                    + "and do not guess at file paths, log locations or support directories to "
+                    + "read instead — a guessed path is not a source.",
                 displayCommand: "find_capability(\(query))")
         })
 

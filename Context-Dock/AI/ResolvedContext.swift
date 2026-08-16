@@ -275,10 +275,18 @@ enum ContextResolver {
                     + "\(servers) MCP servers, \(builtIns) built-in tools",
                 source: "capability layer"))
         if actions + menus + clis + servers + builtIns == 0 {
+            // What is missing decides what to suggest. Sending someone to App Adapters when
+            // the real gap is that DoraX has never seen the app's menu bar asks them to fix
+            // in Settings something only opening the app can fix.
             context.gaps.append(
                 .init(
                     name: "capabilities",
-                    reason: "nothing is linked to \(appName) yet — offer to add it in Settings → App Adapters"))
+                    reason: menus == 0
+                        ? "\(appName)'s menus have not been read yet — opening the app once "
+                            + "lets DoraX learn its menu commands; deeper access needs an "
+                            + "App Adapter"
+                        : "nothing is linked to \(appName) yet — offer to add it in "
+                            + "Settings → App Adapters"))
         }
     }
 
