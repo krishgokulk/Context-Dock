@@ -328,7 +328,8 @@ final class MenuExecutionCoordinator {
         bundleIdentifier: String,
         path: [String],
         cachedShortcutChar: String? = nil,
-        cachedShortcutModifiers: Int = 0
+        cachedShortcutModifiers: Int = 0,
+        allowSlowMenuBar: Bool = false
     ) async -> (success: Bool, message: String) {
         guard !path.isEmpty else { return (false, "Empty menu path.") }
         guard Self.ensureAccessibilityTrustOrPrompt() else {
@@ -345,8 +346,13 @@ final class MenuExecutionCoordinator {
         await AXActionResolver.waitForActivation(of: app)
         try? await Task.sleep(nanoseconds: 80_000_000)
 
+        // Three tries over three hundred milliseconds is plenty for an app that was already
+        // open and is generous for one that was not — isFinishedLaunching goes true well
+        // before a large app has published its menu bar to accessibility.
         guard let liveMatch = await Self.waitForExecutableMenuItem(
-            path: path, app: app, in: pid, attempts: 3, pauseNanoseconds: 100_000_000
+            path: path, app: app, in: pid,
+            attempts: allowSlowMenuBar ? 12 : 4,
+            pauseNanoseconds: 150_000_000
         ), liveMatch.isEnabled else {
             return (false, "\(path.joined(separator: " → ")) isn't available in "
                 + "\(app.localizedName ?? bundleIdentifier) right now — nothing was executed.")

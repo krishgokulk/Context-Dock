@@ -921,7 +921,14 @@ extension LauncherView {
             aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)"]
         }
         var answer = "That didn't work: \(result.message)"
-        if let fallback = alternatives.first {
+        // A fallback for a request naming an app has to be in that app. Asked to open App
+        // Store's Updates, the failure offered "Gemini: Live App Menu Bar Updates" — a
+        // different app's menu that happens to share the word "updates", presented as the
+        // next thing to try. The ranked list is allowed to span apps; the consolation prize
+        // is not.
+        if let fallback = alternatives.first(where: {
+            candidate.bundleID == nil || $0.bundleID == candidate.bundleID
+        }) {
             answer += "\n\nI also found a fallback route — \(fallback.title) "
                 + "(\(fallback.routeLabel)). Say “try the fallback” and I'll run it."
         }

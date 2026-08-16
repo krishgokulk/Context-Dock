@@ -425,6 +425,13 @@ final class GeneralAIActionExecutor {
         guard let bundleID = candidate.bundleID, let path = candidate.menuPath, !path.isEmpty else {
             return .init(success: false, message: "Menu route is missing its path.")
         }
+        // An app that has to be launched for this click has not finished building its menu
+        // bar when it reports itself launched. App Store, cold-started to run Store ▸
+        // Updates, answered "isn't available right now — nothing was executed" about a menu
+        // it does have and that the Context Dock runs on ⌘8 all day.
+        let wasRunning = NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }
         guard await launchAndActivate(bundleID: bundleID) != nil else {
             return .init(success: false, message: "Couldn't activate \(candidate.appName ?? bundleID).")
         }
@@ -437,7 +444,8 @@ final class GeneralAIActionExecutor {
             bundleIdentifier: bundleID,
             path: path,
             cachedShortcutChar: candidate.shortcutChar,
-            cachedShortcutModifiers: candidate.shortcutModifiers)
+            cachedShortcutModifiers: candidate.shortcutModifiers,
+            allowSlowMenuBar: !wasRunning)
         return .init(success: success, message: message)
     }
 
