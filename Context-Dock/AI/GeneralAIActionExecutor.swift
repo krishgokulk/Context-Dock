@@ -143,6 +143,11 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Verification (Stage 7)
 
+    /// The window list as it stood just before the last menu click, keyed by the candidate
+    /// that took it — so a snapshot left behind by an abandoned run can never be compared
+    /// against a different action's result.
+    private var menuStateBeforeClick: (candidateID: String, snapshot: MenuOutcomeVerifier.Snapshot)?
+
     /// Outcome of a single lightweight read-back after a successful write action.
     enum VerificationOutcome {
         /// Confirmed. Optional refined success message ("I've added reminder …").
@@ -163,6 +168,20 @@ final class GeneralAIActionExecutor {
         if case .skipped = byCapability {} else { return byCapability }
 
         switch candidate.route {
+        case .verifiedMenu, .keyboardShortcut:
+            guard let (id, before) = menuStateBeforeClick, id == candidate.id,
+                let path = candidate.menuPath
+            else { return .skipped }
+            menuStateBeforeClick = nil
+            // The window list settles a beat after the click; reading it in the same run
+            // loop turn reports the state before the app drew anything.
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let outcome = MenuOutcomeVerifier.compare(
+                before: before, appName: candidate.appName ?? "The app", path: path)
+            else { return .skipped }
+            return outcome.verified
+                ? .verified(outcome.message)
+                : .unverified(fallback: outcome.message)
         case .appLaunch:
             guard let bundleID = candidate.bundleID else { return .skipped }
             let running = NSRunningApplication
@@ -409,6 +428,11 @@ final class GeneralAIActionExecutor {
         guard await launchAndActivate(bundleID: bundleID) != nil else {
             return .init(success: false, message: "Couldn't activate \(candidate.appName ?? bundleID).")
         }
+        // Counted before the click, because the effect of a menu item is only legible as a
+        // difference. Taken after activation so that launching the app is not itself read
+        // as the window the menu item opened.
+        menuStateBeforeClick = MenuOutcomeVerifier.snapshot(bundleID: bundleID)
+            .map { (candidate.id, $0) }
         let (success, message) = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
             bundleIdentifier: bundleID,
             path: path,

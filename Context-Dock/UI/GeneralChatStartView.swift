@@ -238,10 +238,18 @@ struct GeneralChatStartView: View {
         }
     }
 
+    /// Opens Settings *on* App Adapters, rather than opening Settings and leaving the user
+    /// to find it. The old post went to "openSettingsAppAdapters", a name nothing listens
+    /// for — so the button landed on whichever page was last open, and a button named
+    /// Manage that arrives somewhere unrelated reads as a bug in the app.
     private func openAdapterSettings() {
-        NotificationCenter.default.post(
-            name: NSNotification.Name("openSettingsAppAdapters"), object: nil)
         AppDelegate.shared?.showSettings()
+        // The settings window has to exist before it can be navigated.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            NotificationCenter.default.post(
+                name: .openSettingsPage, object: nil,
+                userInfo: ["page": SettingsPage.frontmostAppAdapters.rawValue])
+        }
     }
 
     private func appIcon(for bundleId: String) -> some View {
