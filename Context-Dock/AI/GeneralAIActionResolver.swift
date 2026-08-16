@@ -2365,6 +2365,35 @@ final class GeneralAIActionResolver {
         return candidate
     }
 
+    /// A menu command for an app, by name, for callers outside the resolver.
+    ///
+    /// The agent loop had no way to click a menu. It could run shell commands and named
+    /// capabilities, and for an app whose only capability *is* its menu bar that left it
+    /// nothing legal to call — so it recommended building an adapter pack, ten times, and
+    /// then reported "commands completed" having done nothing.
+    func menuCommandCandidate(
+        appName: String, path: [String]
+    ) -> DoraXActionCandidate? {
+        guard let target = resolveTargetApp(in: appName.lowercased()) else { return nil }
+        // Matched against the cache rather than trusted: a path the model wrote from memory
+        // is a guess, and clicking a guessed menu item is how an agent ends up in Erase.
+        let wanted = path.map { $0.lowercased() }
+        let records = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: target.bundleId, appName: target.name,
+            query: path.last ?? "", maxResults: 24)
+        let match = records.first { record in
+            let recorded = record.path.map { $0.lowercased() }
+            return recorded == wanted || (recorded.last == wanted.last && wanted.count == 1)
+        }
+        guard let match, match.isEnabled else { return nil }
+
+        return verifiedMenuCandidate(
+            title: match.path.joined(separator: " → "),
+            path: match.path,
+            shortcutChar: match.shortcutChar, shortcutModifiers: match.shortcutModifiers,
+            appName: target.name, bundleID: target.bundleId, confidence: 0.9)
+    }
+
     private func verifiedMenuCandidate(
         title: String, path: [String], shortcutChar: String?, shortcutModifiers: Int,
         appName: String, bundleID: String, confidence: Double

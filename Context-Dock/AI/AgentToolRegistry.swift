@@ -251,13 +251,39 @@ final class AgentToolRegistry {
     /// Runs a tool by name. Returns nil when no tool is registered under that name, so the
     /// caller can fall back — today that means an L2 extension tool, which is resolved
     /// dynamically and therefore cannot be pre-registered here.
+    /// Calls seen in the current turn, so an identical one is not run again.
+    ///
+    /// Watched adapterpack.recommend run ten times in a row with the same arguments and the
+    /// same reply, then the turn announce "commands completed" having done nothing. Repeating
+    /// a call whose answer has not changed cannot make progress — it burns the user's tokens
+    /// and their time, and produces a receipt that looks like work.
+    private var callsThisTurn: [String: String] = [:]
+
+    func beginTurn() { callsThisTurn.removeAll() }
+
     func dispatch(
         name: String,
         arguments: [String: Any],
         context: AgentToolContext
     ) async -> AgentToolResult? {
         guard let tool = tool(named: name) else { return nil }
-        return await tool.handler(arguments, context)
+
+        let signature = name + "|"
+            + arguments.keys.sorted()
+                .map { "\($0)=\(String(describing: arguments[$0] ?? ""))" }
+                .joined(separator: ",")
+        if let previous = callsThisTurn[signature] {
+            return AgentToolResult(
+                success: false,
+                output: "Already called \(name) with these exact arguments this turn, and the "
+                    + "answer was:\n\(previous)\n\nIt will not change. Use that result, try a "
+                    + "different approach, or tell the user what is missing.",
+                displayCommand: "\(name) (repeat suppressed)")
+        }
+
+        let result = await tool.handler(arguments, context)
+        callsThisTurn[signature] = String(result.output.prefix(400))
+        return result
     }
 
     // MARK: - Schemas
@@ -938,6 +964,74 @@ final class AgentToolRegistry {
                     + "and do not guess at file paths, log locations or support directories to "
                     + "read instead — a guessed path is not a source.",
                 displayCommand: "find_capability(\(query))")
+        })
+
+        // Clicking a menu item is the one capability an app always has, and the loop had no
+        // way to ask for it. For an app whose only integration *is* its menu bar that left
+        // nothing legal to call — so the model recommended building an adapter pack, ten
+        // times in a row, and then reported "commands completed" having done nothing.
+        register(AgentTool(
+            name: "run_menu_command",
+            description: "Click a menu command in a Mac app, e.g. app \"Disk Utility\" with "
+                + "path [\"Disk Utility\", \"About Disk Utility\"]. Use for apps whose menus "
+                + "DoraX has cached but which have no adapter. The path must match a real "
+                + "cached menu item — it is checked against the cache and live-verified in "
+                + "the app before clicking, and a path that does not exist is refused.",
+            properties: [
+                "app": ["type": "string", "description": "The app's name."],
+                "path": [
+                    "type": "string",
+                    "description": "Menu path, e.g. \"View > Show Sidebar\", or just the "
+                        + "item's title.",
+                ],
+            ],
+            required: ["app", "path"]
+        ) { arguments, _ in
+                let appName = (arguments["app"] as? String ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let rawPath = (arguments["path"] as? String ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !appName.isEmpty, !rawPath.isEmpty else {
+                    return AgentToolResult(
+                        success: false,
+                        output: "run_menu_command needs 'app' and 'path'.",
+                        displayCommand: "run_menu_command")
+                }
+                let path = rawPath
+                    .components(separatedBy: CharacterSet(charactersIn: ">›→"))
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+
+                let candidate = await MainActor.run {
+                    GeneralAIActionResolver.shared.menuCommandCandidate(
+                        appName: appName, path: path)
+                }
+                guard let candidate else {
+                    return AgentToolResult(
+                        success: false,
+                        output: "No cached menu item \"\(rawPath)\" in \(appName). Ask for a "
+                            + "command that exists, or say the app does not offer it — do not "
+                            + "guess another path.",
+                        displayCommand: "run_menu_command(\(appName): \(rawPath))")
+                }
+                // Authority is asked here as everywhere else: menus are permitted at
+                // menu-only, private state is not.
+                let allowed = await MainActor.run {
+                    AppAccessPolicy.allows(
+                        .verifiedMenu,
+                        at: AppAccessPolicy.level(for: candidate.bundleID ?? ""))
+                }
+                guard allowed else {
+                    return AgentToolResult(
+                        success: false,
+                        output: "\(appName) has not granted menu control.",
+                        displayCommand: "run_menu_command(\(appName))")
+                }
+                let outcome = await GeneralAIActionExecutor.shared.execute(candidate)
+                return AgentToolResult(
+                    success: outcome.success,
+                    output: outcome.message,
+                    displayCommand: "run_menu_command(\(appName): \(rawPath))")
         })
 
         register(AgentTool(
