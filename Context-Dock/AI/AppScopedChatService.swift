@@ -1093,6 +1093,29 @@ enum AppScopedChatService {
 
         text = ChatAnswerSanitizer.clean(text)
 
+        // The model sometimes writes its tool call out as text instead of calling it, and
+        // a bare JSON object is a call that never ran. The surface refuses to show one as
+        // an answer — correctly — and until now that was the end of the request here, while
+        // the dock recovered the same failure by resolving the words deterministically.
+        //
+        // Routes are the deterministic path in this surface. If one exists for what was
+        // asked, run it; the request is carried out rather than reported undeliverable.
+        if ChatAnswerSanitizer.isProtocolOnly(text), case .app(let bundleId) = scope {
+            log.notice("protocol-only answer; resolving via routes")
+            let recovered = await ChatRouteResolver.routes(
+                for: query, bundleId: bundleId, appName: appName)
+            if let route = recovered.first {
+                let result = await ChatRouteResolver.run(route, query: query)
+                ChatConsoleLog.shared.append(
+                    .route, title: route.title,
+                    output: result.output.isEmpty ? "(no output)" : result.output,
+                    success: result.success, scope: scope)
+                text = result.success
+                    ? "Done — \(route.title)."
+                    : "`\(route.title)` didn't run — \(result.output)"
+            }
+        }
+
         // Everything the model ran during this turn, on the record with its real output.
         // The chips say a tool ran; the console says what it produced, which is the part
         // a user can check.

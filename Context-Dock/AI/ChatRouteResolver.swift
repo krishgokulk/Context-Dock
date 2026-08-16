@@ -297,6 +297,31 @@ enum ChatRouteResolver {
         // choice, and cap the list: five ways to do one thing is not a decision, it is a
         // quiz. Ranked first, so the cap keeps the best routes rather than the first-found
         // ones, and so the leading choice is the one the layer would take unattended.
+        // Authority, asked here as the dock's resolver asks it.
+        //
+        // This list decides what an app may be made to do, and it never asked. The three
+        // access levels landed in the dock's resolver, in discovery and in the agent tool
+        // registry — and not here, so a window thread for an app with no adapter could
+        // still reach that app's linked CLI tools, its MCP servers and the user's skills
+        // for it. Two engines, one of them guarded, is how every bug in this area has
+        // started.
+        let level = await MainActor.run { AppAccessPolicy.level(for: bundleId) }
+        routes = routes.filter { route in
+            let executionRoute: DoraXActionCandidate.ExecutionRoute
+            switch route.kind {
+            case .cli: executionRoute = .cli
+            case .adapterAction: executionRoute = .adapter
+            case .menuCommand: executionRoute = .verifiedMenu
+            case .mcpTool: executionRoute = .mcp
+            // A skill orchestrates the app's own capabilities, so it inherits their
+            // authority rather than sitting outside it.
+            case .skill: executionRoute = .adapter
+            // Answering without running anything needs no permission to run anything.
+            case .model: return true
+            }
+            return AppAccessPolicy.allows(executionRoute, at: level)
+        }
+
         var seen = Set<String>()
         return
             routes
