@@ -232,16 +232,8 @@ struct PreviewFolderBrowser: View {
                             in: RoundedRectangle(cornerRadius: 6))
                         .padding(.horizontal, 6)
                         .contentShape(Rectangle())
-                        .onTapGesture(count: 2) { activate(entry) }
-                        .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
-                            toggle(entry)
-                        })
-                        .simultaneousGesture(TapGesture().modifiers(.shift).onEnded {
-                            extendSelection(to: entry)
-                        })
-                        .onTapGesture { choose(entry) }
+                        .overlay(dragSource(for: entry))
                         .contextMenu { rowMenu(entry) }
-                        .modifier(PreviewFileDrag(entry: entry, all: actionTargets))
                         .id(entry.id)
                     }
                 }
@@ -287,16 +279,8 @@ struct PreviewFolderBrowser: View {
                                 isHighlighted(entry)
                                     ? Color.accentColor.opacity(0.18) : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 8))
-                            .onTapGesture(count: 2) { activate(entry) }
-                            .simultaneousGesture(TapGesture().modifiers(.command).onEnded {
-                                toggle(entry)
-                            })
-                            .simultaneousGesture(TapGesture().modifiers(.shift).onEnded {
-                                extendSelection(to: entry)
-                            })
-                            .onTapGesture { choose(entry) }
+                            .overlay(dragSource(for: entry))
                             .contextMenu { rowMenu(entry) }
-                            .modifier(PreviewFileDrag(entry: entry, all: actionTargets))
                             .id(entry.id)
                         }
                     }
@@ -344,6 +328,24 @@ struct PreviewFolderBrowser: View {
     }
 
     // MARK: - Behaviour
+
+    /// Clicks and drags for one row. AppKit owns both because a drag has to carry every
+    /// selected file, and one view cannot start a drag it never saw begin.
+    private func dragSource(for entry: Entry) -> some View {
+        PreviewFileDragSource(
+            urls: (selection.contains(entry.id) ? actionTargets : [entry]).map(\.url),
+            onClick: { modifiers in
+                if modifiers.contains(.command) {
+                    toggle(entry)
+                } else if modifiers.contains(.shift) {
+                    extendSelection(to: entry)
+                } else {
+                    choose(entry)
+                }
+            },
+            onDoubleClick: { activate(entry) }
+        )
+    }
 
     private func isHighlighted(_ entry: Entry) -> Bool {
         selection.contains(entry.id) || (selection.isEmpty && selectedID == entry.id)
@@ -476,20 +478,5 @@ struct PreviewFolderBrowser: View {
             return ascending ? result : !result
         }
         return ordered
-    }
-}
-
-/// Files dragged straight out of the preview, the whole selection at once when there
-/// is one. A folder you can look at but not take anything from is half a folder.
-private struct PreviewFileDrag: ViewModifier {
-    let entry: PreviewFolderBrowser.Entry
-    let all: [PreviewFolderBrowser.Entry]
-
-    func body(content: Content) -> some View {
-        content.onDrag {
-            let dragged = all.contains(where: { $0.id == entry.id }) ? all : [entry]
-            let providers = dragged.compactMap { NSItemProvider(contentsOf: $0.url) }
-            return providers.first ?? NSItemProvider()
-        }
     }
 }
