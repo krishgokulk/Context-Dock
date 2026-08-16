@@ -38,7 +38,9 @@ struct GeneralChatWindowView: View {
     @State private var cachedInventory: ScopeInventory?
     /// Bumped to rebuild the terminal view after its shell is restarted.
     @State private var terminalToken = 0
-    @State private var panelTab: PanelTab = .terminal
+    /// A thread with a file open on it should open on that file; a thread with nothing
+    /// to show falls through to Scope.
+    @State private var panelTab: PanelTab = .preview
     /// The artifact a transcript card asked for. The panel shows the last candidate, so
     /// choosing one moves it to the end rather than teaching the panel a second concept.
     @State private var focusedArtifact: URL?
@@ -1287,7 +1289,7 @@ struct GeneralChatWindowView: View {
             // Two things the panel shows rather than describes: the tool's own screen, and
             // the file the thread is working on. They share the space — the panel is narrow,
             // and stacking both leaves neither enough room to be useful.
-            if hasTerminal || !previewFiles.isEmpty || !artifactFiles.isEmpty {
+            if effectivePanelTab != .scope {
                 switch effectivePanelTab {
                 case .terminal where hasTerminal:
                     if let reason = unsupportedToolReason {
@@ -1307,10 +1309,10 @@ struct GeneralChatWindowView: View {
                     EmbeddedPreviewPanel(urls: previewFiles)
                         .id(previewFiles.last?.path ?? "none")
                 }
-                Divider().opacity(0.4)
             }
 
-            ScrollView {
+            if effectivePanelTab == .scope {
+                ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if let subtitle = inventory.subtitle {
                         Text(subtitle)
@@ -1414,12 +1416,17 @@ struct GeneralChatWindowView: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
         .background(Theme.surface(dark))
     }
 
-    private enum PanelTab: String { case terminal, preview, artifacts }
+    /// Scope is a tab like the others. It used to sit permanently under whatever the
+    /// panel was showing, so a file preview always had a folder's inventory bolted to its
+    /// underside — two unrelated things in one column, and the reason the Preview tab
+    /// looked like it was reporting on Downloads.
+    private enum PanelTab: String { case terminal, preview, artifacts, scope }
 
     /// Artifacts with the chosen one last, because the panel opens on the last candidate.
     private var orderedArtifactFiles: [URL] {
@@ -1447,14 +1454,17 @@ struct GeneralChatWindowView: View {
     /// preview, and one with no files opens on the terminal.
     private var effectivePanelTab: PanelTab {
         if panelTab == .artifacts, artifactFiles.isEmpty {
-            return previewFiles.isEmpty ? .terminal : .preview
+            if !previewFiles.isEmpty { return .preview }
+            return hasTerminal ? .terminal : .scope
         }
         if panelTab == .terminal, !hasTerminal {
-            return previewFiles.isEmpty && !artifactFiles.isEmpty ? .artifacts : .preview
+            if !previewFiles.isEmpty { return .preview }
+            return artifactFiles.isEmpty ? .scope : .artifacts
         }
         if panelTab == .preview, previewFiles.isEmpty {
             if !artifactFiles.isEmpty { return .artifacts }
             if hasTerminal { return .terminal }
+            return .scope
         }
         return panelTab
     }
@@ -1572,6 +1582,7 @@ struct GeneralChatWindowView: View {
                     "Artifacts", tab: .artifacts, symbol: "square.on.square",
                     badge: artifactFiles.count)
             }
+            tabPill("Scope", tab: .scope, symbol: "circle.grid.2x2")
         }
     }
 

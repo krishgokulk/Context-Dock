@@ -64,18 +64,11 @@ extension LauncherView {
             return true
         }
 
-        // 5. Selection scope: the files the user arrived with. All of them, so a peek at
-        //    a five-file selection steps through the five instead of stranding the user
-        //    on whichever one the scope happened to name first.
-        if hasSelectionScopeSurface,
-            case .filesSelected(let urls) = currentContext,
-            let first = urls.first
-        {
-            PreviewController.shared.present(url: first, siblings: urls, toggleIfSame: true)
-            return true
-        }
+        // Selection Scope deliberately has no rung here. It is a surface for acting on
+        // what the user brought with them, not for looking at it: Space belongs to the
+        // actions there, and a preview thrown over them is in the way.
 
-        // 6. The results list. Files, folders and contacts all preview; anything else
+        // 5. The results list. Files, folders and contacts all preview; anything else
         //    lets the space through.
         guard let index = searchState.selectedIndex,
             searchState.results.indices.contains(index)
