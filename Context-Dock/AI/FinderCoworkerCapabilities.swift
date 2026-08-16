@@ -401,6 +401,15 @@ enum FinderCoworkerCapabilities {
 
                 let monthFormatter = DateFormatter()
                 monthFormatter.dateFormat = "yyyy-MM"
+                // Folders already here, by lower-cased name. A tidy-up that ignores them
+                // leaves Images beside images beside JPG, which is untidier than what it
+                // started with.
+                var existingFolders: [String: URL] = [:]
+                for item in items
+                where (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    existingFolders[item.lastPathComponent.lowercased()] = item
+                }
+
                 var moved = 0
                 var perFolder: [String: Int] = [:]
                 for file in files {
@@ -408,10 +417,12 @@ enum FinderCoworkerCapabilities {
                     if by == "month" {
                         folderName = monthFormatter.string(from: modified(file))
                     } else {
-                        let ext = file.pathExtension.lowercased()
-                        folderName = ext.isEmpty ? "Other" : ext.uppercased()
+                        folderName = kindFolderName(for: file.pathExtension)
                     }
-                    let folder = destination.appendingPathComponent(folderName, isDirectory: true)
+                    // Reuse whatever is already called that, whatever its capitalisation.
+                    let folder = existingFolders[folderName.lowercased()]
+                        ?? destination.appendingPathComponent(folderName, isDirectory: true)
+                    existingFolders[folderName.lowercased()] = folder
                     try? fm.createDirectory(at: folder, withIntermediateDirectories: true)
                     let target = folder.appendingPathComponent(file.lastPathComponent)
                     // Never overwrite: a name collision keeps both, because losing a file to
@@ -435,6 +446,34 @@ enum FinderCoworkerCapabilities {
                             : ""))
             }
         )
+    }
+
+
+    /// Files grouped the way a person would name the pile, not by raw extension: a folder
+    /// called JPG beside one called PNG is filing by trivia. Names are chosen to match
+    /// what people already have — Images, Documents, Audio — so an existing folder is
+    /// reused instead of gaining a near-duplicate.
+    private static func kindFolderName(for pathExtension: String) -> String {
+        switch pathExtension.lowercased() {
+        case "jpg", "jpeg", "png", "gif", "heic", "heif", "tiff", "tif", "bmp", "webp",
+            "dng", "raw", "cr2", "nef", "svg":
+            return "Images"
+        case "pdf", "doc", "docx", "txt", "md", "rtf", "pages", "key", "numbers",
+            "xls", "xlsx", "csv", "json", "epub":
+            return "Documents"
+        case "mp3", "m4a", "wav", "aiff", "aif", "flac", "aac", "ogg":
+            return "Audio"
+        case "mov", "mp4", "m4v", "avi", "mkv", "webm":
+            return "Video"
+        case "zip", "tar", "gz", "tgz", "bz2", "7z", "rar", "dmg", "pkg":
+            return "Archives"
+        case "app":
+            return "Apps"
+        case "":
+            return "Other"
+        default:
+            return "Other"
+        }
     }
 
     // MARK: - Disk usage

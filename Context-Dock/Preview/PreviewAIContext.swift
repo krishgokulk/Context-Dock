@@ -83,6 +83,10 @@ enum PreviewAIContext {
               exactly which ones exist — use those.
             - Move one kind per command. A single command that moves several kinds reports \
               one result for all of them, so a partial failure looks like a total one.
+            - Reuse a folder that is already there. The listing shows which exist; a second \
+              Images beside the user's own Images is worse than not tidying at all.
+            - Always `mkdir -p Name`, never `mkdir Name && mv …`. mkdir fails when the \
+              folder exists, and the && means nothing after it runs.
             - Check afterwards. List the folder again and say what actually moved, not what \
               you asked for.
             """)
