@@ -135,6 +135,29 @@ enum ContextResolver {
     ) -> ResolvedContext {
         var context = ResolvedContext(scope: scope, appName: appName, bundleId: bundleId)
 
+        // Version and location come from the app bundle, so they are known whether or not
+        // the app is running. Asked "current version?" in a HandBrake thread, the answer
+        // was "I don't have access to that since it's not running — open HandBrake and look
+        // under About HandBrake": a fact sitting in a plist on this disk, handed back to
+        // the user as an errand.
+        if let bundleURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: bundleId),
+            let info = Bundle(url: bundleURL)?.infoDictionary
+        {
+            let version = (info["CFBundleShortVersionString"] as? String) ?? ""
+            let build = (info["CFBundleVersion"] as? String) ?? ""
+            if !version.isEmpty {
+                context.slots.append(
+                    .init(
+                        name: "version",
+                        value: build.isEmpty || build == version
+                            ? version : "\(version) (\(build))",
+                        source: "app bundle"))
+            }
+            context.slots.append(
+                .init(name: "installed at", value: bundleURL.path, source: "app bundle"))
+        }
+
         let running = NSRunningApplication
             .runningApplications(withBundleIdentifier: bundleId).first
         guard let running, running.processIdentifier > 0 else {

@@ -698,6 +698,13 @@ struct GeneralChatWindowView: View {
                     model.input = prompt
                     model.send()
                 }
+            } else if let bundleId = model.activeScopeBundleId {
+                AppScopedStartView(
+                    appName: model.activeScopeTitle, bundleId: bundleId
+                ) { prompt in
+                    model.input = prompt
+                    model.send()
+                }
             } else {
                 Spacer()
                 Text("Where should we begin?")
