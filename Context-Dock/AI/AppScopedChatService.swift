@@ -39,6 +39,9 @@ enum AppScopedChatService {
         /// Files the answer named that exist on disk, so the surface can offer them
         /// instead of leaving a path in a paragraph for the user to retype.
         var files: [URL] = []
+        /// Typed proof of what ran and what was freshly read back. The Console keeps the
+        /// complete log; these receipts make the important outcome visible in the message.
+        var evidenceReceipts: [EvidenceReceipt] = []
     }
 
     /// Paths an answer mentions, kept only when they are real.
@@ -179,8 +182,30 @@ enum AppScopedChatService {
             phrased = reason.isEmpty
                 ? "`\(route.title)` didn't run."
                 : "`\(route.title)` didn't run — \(reason)"
-        } else if result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            phrased = verification.map { "Done — \(route.title).\n\n\($0)" }
+        } else if actionOutputIsTrivial(result.output) {
+            // An executor that says "Done" and nothing else has reported an outcome, not
+            // produced a result. Handing that to the model as output to answer from is what
+            // made "open journal about window" — a request the app had just carried out —
+            // come back as "the About Journal window is not currently readable, so I cannot
+            // provide details about it": an apology for a task nobody set.
+            phrased = "Done — \(route.title)."
+        } else if !route.isReadOnly {
+            // An action is reported, not answered. The user asked for something to happen;
+            // the answer says whether it did, and the state block stays in the Console
+            // where it is evidence rather than subject matter.
+            phrased =
+                (try? await AIProviderService.shared.sendMessage(
+                    "Ran `\(route.title)` for \(route.appName). It succeeded. Output:\n\n"
+                        + result.output.prefix(2_000)
+                        + "\n\nTell the user in one sentence what was done. Do not answer "
+                        + "any other question, do not describe the app's state, and do not "
+                        + "apologise for information you were not asked for.",
+                    context: .appFocused(name: route.appName, bundleID: route.bundleId),
+                    provider: provider,
+                    apiKey: rawKey.isEmpty ? nil : rawKey,
+                    conversationHistory: history,
+                    surfaceScoped: true))
+                .map(ChatAnswerSanitizer.clean)
                 ?? "Done — \(route.title)."
         } else {
             // The model turns output into an answer; it never invents one, because the
@@ -199,10 +224,27 @@ enum AppScopedChatService {
                 .map(ChatAnswerSanitizer.clean)
                 ?? result.output
         }
+        var receipts = [EvidenceReceipt(AIProviderService.ExecutedCommand(
+            command: "route(\(route.kind.rawValue), \(route.title))",
+            output: result.output.isEmpty
+                ? (result.success ? "Executor confirmed success." : "Executor returned no output.")
+                : result.output,
+            success: result.success,
+            isVerification: false
+        ))]
+        if let verification {
+            receipts.append(EvidenceReceipt(AIProviderService.ExecutedCommand(
+                command: "verify_app_state(\(route.appName))",
+                output: verification,
+                success: true,
+                isVerification: true
+            )))
+        }
         return Answer(
             text: phrased,
             toolChips: ["\(route.kind.rawValue) · \(route.title)"],
-            consoleOutput: result.output.isEmpty ? nil : result.output)
+            consoleOutput: result.output.isEmpty ? nil : result.output,
+            evidenceReceipts: receipts)
     }
 
     /// Adds a plural form of every word alongside the original, so a query written in the
@@ -1072,4 +1114,16 @@ enum AppScopedChatService {
         if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }
         return Answer(text: text, toolChips: chips)
     }
+}
+
+
+/// Whether an executor's output is an outcome rather than a result.
+///
+/// "Done", "OK", an empty string: these say the thing happened. They are not material to
+/// answer a question from, and treating them as such invites the model to go looking for
+/// something to say — which it finds in whatever state block sits beside them.
+private func actionOutputIsTrivial(_ output: String) -> Bool {
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return trimmed.isEmpty
+        || ["done", "ok", "okay", "success", "succeeded", "(no output)"].contains(trimmed)
 }
