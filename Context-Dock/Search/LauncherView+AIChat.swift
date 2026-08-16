@@ -2324,6 +2324,25 @@ extension LauncherView {
         ChatAnswerSanitizer.clean(text)
     }
 
+    /// Does the work when the model wrote its tool call out as text instead of calling it.
+    ///
+    /// "open appstore updates window" came back as a bare JSON object — a call that never
+    /// executed — and the surface replaced it with "I worked out what to run but couldn't
+    /// carry it out on this surface", while the Context Dock two hundred pixels away
+    /// resolves the very same request to App Store ▸ Updates and runs it on ⌘8. The
+    /// capability was there the whole time; only the model's way of asking for it failed.
+    ///
+    /// So the request goes to the deterministic resolver, which is the path that does not
+    /// depend on the model formatting anything correctly. Parsing the model's broken JSON
+    /// would be the other option, and it would rest on the output that has already proven
+    /// unreliable. If the resolver finds nothing either, the honest fallback stands.
+    func recoveredFromProtocolOnly(_ response: String, query: String) async -> String {
+        guard ChatAnswerSanitizer.isProtocolOnly(response) else { return response }
+        Logger(subsystem: "com.krishgokul.ContextDock", category: "GeneralChat")
+            .notice("protocol-only answer; resolving \(query.prefix(60), privacy: .public)")
+        return await generalAIExecutableActionAnswer(query: query) ?? response
+    }
+
     /// The workspace the dock's general chat is currently in.
     ///
     /// Two or more apps is a combined chat, and a combined chat is a conversation of its
@@ -7310,7 +7329,7 @@ extension LauncherView {
                         aiMode.pendingEvidenceReceipts = executed.map(EvidenceReceipt.init)
                         aiMode.pendingSubjectiveEvaluation = subjectiveEvaluation
                     }
-                    return finalResponse
+                    return await recoveredFromProtocolOnly(finalResponse, query: query)
                 }
 
                 var loopHistory = history
@@ -7347,7 +7366,7 @@ extension LauncherView {
                             aiMode.loadingStatus = nil
                             aiMode.pendingToolChips = toolChips
                         }
-                        return response
+                        return await recoveredFromProtocolOnly(response, query: query)
                     }
                     toolChips.append(call.label)
                     await MainActor.run { aiMode.loadingStatus = "Running \(call.label)…" }
@@ -7392,7 +7411,7 @@ extension LauncherView {
                     aiMode.loadingStatus = nil
                     aiMode.pendingToolChips = toolChips
                 }
-                return finalAnswer
+                return await recoveredFromProtocolOnly(finalAnswer, query: query)
             }
             await MainActor.run { aiMode.loadingStatus = nil }
         }
@@ -7415,7 +7434,7 @@ extension LauncherView {
             )
         ).text
         await MainActor.run { aiMode.pendingToolChips = memoryToolChips }
-        return answer
+        return await recoveredFromProtocolOnly(answer, query: query)
     }
 
     /// Expand only explicit retry phrases. The current user message may already be present
