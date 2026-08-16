@@ -2417,6 +2417,16 @@ extension LauncherView {
                                                 handleL2QuerySkippingMenuRouter(trimmed)
                                             }
                                         } else if currentDockSurfaceMode == .generalChat {
+                                            // The key monitor owns Return here. If it just
+                                            // sent this question, this route is the second
+                                            // half of a double-send, not a send.
+                                            if GeneralChatReturnOwner.justHandled(
+                                                searchState.query.trimmingCharacters(
+                                                    in: .whitespacesAndNewlines))
+                                            {
+                                                generalChatReturnLog("already sent by monitor")
+                                                return
+                                            }
                                             // "/rem" + Return means "focus that app", not
                                             // "ask the model about the string /rem".
                                             if handleGeneralChatSlashPickIfNeeded() {
@@ -4350,6 +4360,28 @@ extension LauncherView {
 
 }
 
+
+/// Which route sent the question, so the other one does not send it again.
+///
+/// The key monitor is the owner because it is the only route that fires reliably — on a
+/// desktop with no app in front, SwiftUI's .onSubmit never arrives. Where .onSubmit does
+/// work it now finds the question already sent and stands down.
+@MainActor
+enum GeneralChatReturnOwner {
+    private static var lastQuery = ""
+    private static var lastSentAt = Date.distantPast
+
+    static func claim(_ query: String) {
+        lastQuery = query
+        lastSentAt = Date()
+    }
+
+    /// A window narrow enough that it cannot swallow a genuine repeat of the same question
+    /// typed again, and wide enough to cover one keystroke's worth of routing.
+    static func justHandled(_ query: String) -> Bool {
+        query == lastQuery && Date().timeIntervalSince(lastSentAt) < 0.4
+    }
+}
 
 /// Where Return went. Three routes can claim it in General Chat and two of them return
 /// silently, so "Enter does nothing" has been indistinguishable from "Enter was handled by

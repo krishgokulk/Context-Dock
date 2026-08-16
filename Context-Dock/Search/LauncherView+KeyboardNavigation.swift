@@ -223,15 +223,18 @@ extension LauncherView {
             // SwiftUI's TextField.onSubmit never receives Return.  Route that *unfocused* path
             // here, before the L2/global-only key guard below.  A focused editor still owns
             // Return and uses its normal .onSubmit route, so this cannot double-send.
+            // Return in General Chat is handled here, whoever holds first responder.
+            //
+            // It used to defer to SwiftUI's .onSubmit whenever an NSTextView was first
+            // responder, on the reasoning that a focused editor owns Return. On a desktop
+            // with no app in front that assumption breaks in both directions at once: the
+            // field is first responder, so this route stands aside — and .onSubmit never
+            // fires, so nothing sends. The log shows Return arriving here again and again
+            // while the user held the key, and being dropped every time.
+            //
+            // One owner, and .onSubmit's General Chat branch stands down for a moment after
+            // this fires so a working focused path cannot send the same question twice.
             if event.keyCode == 36, self.currentDockSurfaceMode == .generalChat {
-                generalChatReturnLog(
-                    "monitor firstResponder="
-                        + String(describing: type(of: NSApp.keyWindow?.firstResponder)))
-            }
-            if event.keyCode == 36,
-                self.currentDockSurfaceMode == .generalChat,
-                !(NSApp.keyWindow?.firstResponder is NSTextView)
-            {
                 let generalChatQuery = self.searchState.query
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if !generalChatQuery.isEmpty {
@@ -240,6 +243,7 @@ extension LauncherView {
                         return nil
                     }
                     if !self.launchTypedAppMatchIfNeeded() {
+                        GeneralChatReturnOwner.claim(generalChatQuery)
                         self.submitAIQuery()
                     }
                     self.ensureSearchInputFocusReady()
