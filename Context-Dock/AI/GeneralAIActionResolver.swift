@@ -462,7 +462,8 @@ final class GeneralAIActionResolver {
             appName: target.name,
             bundleID: target.bundleId,
             actionPhrase: target.remainingPhrase,
-            original: trimmed
+            original: trimmed,
+            accessLevel: level
         )
         // Fold in MCP tools the app exposes so they compete in the same ranked list.
         return await augmentWithMCPCandidates(
@@ -935,8 +936,13 @@ final class GeneralAIActionResolver {
         appName: String,
         bundleID: String,
         actionPhrase: String,
-        original: String
+        original: String,
+        accessLevel: AppAccessLevel? = nil
     ) -> GeneralAIActionResolution {
+        // Passed in where the caller already asked, because only the caller knows what the
+        // user granted this chat; recomputed otherwise so no route reaches the ranker
+        // unchecked.
+        let level = accessLevel ?? AppAccessPolicy.level(for: bundleID)
         var candidates: [DoraXActionCandidate] = []
 
         // Bare "open <app>" → plain launch, high confidence.
@@ -1080,8 +1086,22 @@ final class GeneralAIActionResolver {
             return .candidates([launch])
         }
 
+        // Authority is checked per route, and this list is where the routes are. The door
+        // check above only asks whether the app may be touched at all; discovery filtered
+        // per route and this path did not, so an app with nothing but a cached menu bar
+        // could still be handed an adapter or CLI route out of the registered catalog —
+        // two paths, one of them guarded, which is the shape of bug this codebase keeps
+        // producing.
+        let permitted = candidates.filter { AppAccessPolicy.allows($0.route, at: level) }
+        guard !permitted.isEmpty else {
+            var launch = launchCandidate(appName: appName, bundleID: bundleID, confidence: 0.6)
+            launch.caveat = AppAccessPolicy.explanation(
+                for: appName, level: level, wantedRead: true)
+            return .candidates([launch])
+        }
+
         let intentKey = Self.normalizedIntentKey(original)
-        return .candidates(rankedWithPreferences(candidates, intentKey: intentKey))
+        return .candidates(rankedWithPreferences(permitted, intentKey: intentKey))
     }
 
     /// Split a compound action phrase ("save and quit", "save all then quit") into ordered
