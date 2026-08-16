@@ -1,3 +1,25 @@
+@MainActor
+private func runningApplication(named name: String) -> NSRunningApplication? {
+    let query = name.trimmingCharacters(in: .whitespaces).lowercased()
+    guard !query.isEmpty else { return nil }
+    let running = NSWorkspace.shared.runningApplications.filter {
+        $0.activationPolicy == .regular
+            && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+    }
+    if let exact = running.first(where: { $0.localizedName?.lowercased() == query }) {
+        return exact
+    }
+    if let byBundle = running.first(where: { $0.bundleIdentifier?.lowercased() == query }) {
+        return byBundle
+    }
+    // "Code" for Visual Studio Code, "Chrome" for Google Chrome — the name the user says
+    // is rarely the name in the bundle.
+    return running.first {
+        guard let localised = $0.localizedName?.lowercased() else { return false }
+        return localised.contains(query) || query.contains(localised)
+    }
+}
+
 // AgentToolRegistry.swift
 // One place that knows what tools exist, what they look like to a provider, and how to run
 // one by name.
@@ -1051,6 +1073,26 @@ final class AgentToolRegistry {
                     .components(separatedBy: CharacterSet(charactersIn: ">›→"))
                     .map { $0.trimmingCharacters(in: .whitespaces) }
                     .filter { !$0.isEmpty }
+
+                // A window operation is done directly, not by clicking a menu. VS Code has
+                // no cached "Window ▸ Minimize", so asking to minimise it failed and the
+                // model offered to close the window instead — while the app has minimised
+                // windows natively all along.
+                let windowOutcome: AgentToolResult? = await MainActor.run {
+                    guard let command = WindowManagementService.shared.command(forMenuPath: path),
+                        let app = runningApplication(named: appName)
+                    else { return nil }
+                    let ok = WindowManagementService.shared.execute(command, sourceApp: app)
+                    let name = app.localizedName ?? appName
+                    return AgentToolResult(
+                        success: ok,
+                        output: ok
+                            ? "\(command.title) applied to \(name)."
+                            : "Could not \(command.title.lowercased()) \(name) — it may have "
+                                + "no window open.",
+                        displayCommand: "window(\(name): \(command.title))")
+                }
+                if let windowOutcome { return windowOutcome }
 
                 let lookup = await MainActor.run {
                     GeneralAIActionResolver.shared.menuCommandCandidate(

@@ -123,6 +123,22 @@ final class WindowManagementService {
         }
     }
 
+    /// The window command a menu path stands for, if it stands for one.
+    ///
+    /// "Window ▸ Minimize" is a window operation whoever is asked to perform it: Electron
+    /// apps like VS Code often expose no such menu item, and clicking a menu is the least
+    /// reliable way to do something the Accessibility API does directly. Full screen is
+    /// matched wherever it lives, because apps file it under View as often as Window.
+    func command(forMenuPath path: [String]) -> Command? {
+        let normalized = path.map(normalize)
+        guard let title = normalized.last else { return nil }
+        if title.contains("full screen") || title.contains("fullscreen") { return .fullScreen }
+        // Otherwise the path has to actually be the Window menu — "View ▸ Zoom" is a
+        // browser's page zoom, not the green button.
+        guard normalized.contains("window") else { return nil }
+        return command(for: title, path: normalized)
+    }
+
     func handlesMenuPath(_ path: [String]) -> Bool {
         let normalized = path.map(normalize)
         guard normalized.contains("window"), let title = normalized.last else { return false }
