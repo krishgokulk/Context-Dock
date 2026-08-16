@@ -586,13 +586,26 @@ final class WindowManagementService {
 
     private func toggleFullScreen(pid: pid_t, appName: String) -> Bool {
         guard let window = frontmostWindow(pid: pid) else { return showNoWindow(appName) }
+        if isFullScreen(window) {
+            return setFullScreen(false, on: window)
+        }
+        // Snapshot before filling the screen, so "put it back" has something to put back.
+        // Full screen is the most common way a window loses its size, and it was the one
+        // route that recorded nothing.
+        rememberFrame(window, pid: pid)
+        return setFullScreen(true, on: window)
+    }
+
+    private func isFullScreen(_ window: AXUIElement) -> Bool {
         var value: CFTypeRef?
-        let isFullScreen =
-            AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value) == .success
+        return AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value) == .success
             && (value as? Bool) == true
-        return AXUIElementSetAttributeValue(
-            window, "AXFullScreen" as CFString,
-            (isFullScreen ? kCFBooleanFalse : kCFBooleanTrue)) == .success
+    }
+
+    @discardableResult
+    private func setFullScreen(_ on: Bool, on window: AXUIElement) -> Bool {
+        AXUIElementSetAttributeValue(
+            window, "AXFullScreen" as CFString, on ? kCFBooleanTrue : kCFBooleanFalse) == .success
     }
 
     private func bringAllToFront(pid: pid_t, appName: String) -> Bool {
@@ -619,15 +632,36 @@ final class WindowManagementService {
         return AXUIElementPerformAction(next, kAXRaiseAction as CFString) == .success
     }
 
+    /// "Put the window back."
+    ///
+    /// Leaving full screen is part of that and used to be missing entirely: a full-screen
+    /// window cannot be reframed at all, so restoring one either did nothing or reported
+    /// that the app had no window. Exiting counts as a restore on its own, because a user
+    /// who asks for their window back while it fills the screen means exactly that.
     private func restorePreviousFrames(pid: pid_t, appName: String) -> Bool {
+        var changed = false
+        if let window = frontmostWindow(pid: pid), isFullScreen(window) {
+            changed = setFullScreen(false, on: window)
+        }
+
         guard let snapshots = previousFrames.removeValue(forKey: pid), !snapshots.isEmpty else {
+            if changed { return true }
             return showNoWindow(appName)
         }
-        var changed = false
-        for snapshot in snapshots {
-            changed = apply(snapshot.frame, to: snapshot.window) || changed
+        // The window is still animating out of full screen; framing it in the same
+        // runloop turn is ignored by most apps.
+        let apply: () -> Bool = {
+            var restored = false
+            for snapshot in snapshots {
+                restored = self.apply(snapshot.frame, to: snapshot.window) || restored
+            }
+            return restored
         }
-        return changed
+        if changed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { _ = apply() }
+            return true
+        }
+        return apply()
     }
 
     private func windows(pid: pid_t) -> [AXUIElement] {

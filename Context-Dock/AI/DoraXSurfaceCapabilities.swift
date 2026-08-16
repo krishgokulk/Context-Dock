@@ -195,13 +195,27 @@ enum DoraXSurfaceCapabilities {
 
         registry.register(AICapability(
             id: "window.arrange",
-            title: "Arrange the Frontmost Window",
+            title: "Resize, move, full-screen or restore a window",
             appBundleID: nil,
             inputSchema: AICapabilityInputSchema(fields: [
                 AICapabilityInputField(
                     name: "command",
-                    description: "One of: \(commandList)",
+                    description: """
+                        What to do with the window. One of: \(commandList).
+
+                        In plain words: restorePreviousSize puts a window back to the size it \
+                        had and leaves full screen — use it for "restore", "put it back", \
+                        "exit full screen", "unmaximise". fullScreen toggles full screen. \
+                        fill maximises without going full screen. zoom is the green button. \
+                        left / right / top / bottom and the corners snap to halves and \
+                        quarters. center centres without resizing.
+                        """,
                     required: true),
+                AICapabilityInputField(
+                    name: "app",
+                    description: "Which app's window, by name or bundle id. Defaults to the "
+                        + "app this conversation is about.",
+                    required: false),
             ]),
             // Moves what is on the user's screen. Not destructive, but visible and
             // unrequested-looking if the model guesses, so it goes through approval.
@@ -213,16 +227,54 @@ enum DoraXSurfaceCapabilities {
                     success: false,
                     output: "Unknown window command \"\(raw)\". Valid: \(commandList)")
             }
-            guard let app = NSWorkspace.shared.frontmostApplication else {
+            guard let app = targetApp(named: request.input["app"], scope: request.chatScope) else {
                 return AICapabilityExecutionResult(
-                    success: false, output: "No frontmost app to arrange.")
+                    success: false, output: "No app window to arrange.")
             }
             let ok = WindowManagementService.shared.execute(command, sourceApp: app)
             return AICapabilityExecutionResult(
                 success: ok,
                 output: ok
-                    ? "Applied \(command.rawValue) to \(app.localizedName ?? "the frontmost window")."
-                    : "Could not apply \(command.rawValue) — the app may not expose a resizable window.")
+                    ? "Applied \(command.rawValue) to \(app.localizedName ?? "the window")."
+                    : "Could not apply \(command.rawValue) — the app may not expose a "
+                        + "resizable window.")
         })
+    }
+
+    /// Whose window the user means.
+    ///
+    /// Never Context Dock itself: the dock and its panels are usually what is frontmost
+    /// while the user is typing, so "make this full screen" in a chat about Pearcleaner
+    /// used to be aimed at the chat window. The conversation's own app comes first, then
+    /// whatever was in front before the dock appeared.
+    private static func targetApp(
+        named name: String?, scope: GeneralChatScope?
+    ) -> NSRunningApplication? {
+        let running = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular
+                && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+        }
+
+        if let name = name?.trimmingCharacters(in: .whitespaces), !name.isEmpty {
+            if let match = running.first(where: {
+                $0.bundleIdentifier?.caseInsensitiveCompare(name) == .orderedSame
+                    || $0.localizedName?.caseInsensitiveCompare(name) == .orderedSame
+            }) {
+                return match
+            }
+        }
+        if case .app(let bundleId) = scope,
+            let scoped = running.first(where: { $0.bundleIdentifier == bundleId })
+        {
+            return scoped
+        }
+        if let previous = AppDelegate.shared?.previousFrontmostApp,
+            previous.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            return previous
+        }
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        if frontmost?.bundleIdentifier != Bundle.main.bundleIdentifier { return frontmost }
+        return running.first
     }
 }
