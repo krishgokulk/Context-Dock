@@ -701,18 +701,26 @@ final class GeneralAIActionResolver {
         let intentKey = Self.normalizedIntentKey(trimmed)
 
         var candidates: [DoraXActionCandidate] = []
+
+        // Reading is the half of authority that a menu cache does not buy. Knowing an app's
+        // menu bar means DoraX can press what the user could press; it says nothing about
+        // being allowed to read what the app holds, and the two were being granted together
+        // because one function gathered both.
+        func reads(for app: (name: String, bundleId: String)) async -> [DoraXActionCandidate] {
+            guard AppAccessPolicy.level(for: app.bundleId) == .adapter else { return [] }
+            var out = adapterReadCandidates(app: app, query: trimmed)
+            out += menuCacheReadCandidates(app: app, query: trimmed)
+            out += await mcpReadCandidates(app: app, query: trimmed)
+            out += cliReadCandidates(app: app, query: trimmed)
+            return out
+        }
+
         if let target = resolveTargetApp(in: lowered) {
-            let app = (name: target.name, bundleId: target.bundleId)
-            candidates.append(contentsOf: adapterReadCandidates(app: app, query: trimmed))
-            candidates.append(contentsOf: menuCacheReadCandidates(app: app, query: trimmed))
-            candidates.append(contentsOf: await mcpReadCandidates(app: app, query: trimmed))
-            candidates.append(contentsOf: cliReadCandidates(app: app, query: trimmed))
+            candidates.append(
+                contentsOf: await reads(for: (name: target.name, bundleId: target.bundleId)))
         } else {
             for app in readDiscoveryApps(for: trimmed).prefix(10) {
-                candidates.append(contentsOf: adapterReadCandidates(app: app, query: trimmed))
-                candidates.append(contentsOf: menuCacheReadCandidates(app: app, query: trimmed))
-                candidates.append(contentsOf: await mcpReadCandidates(app: app, query: trimmed))
-                candidates.append(contentsOf: cliReadCandidates(app: app, query: trimmed))
+                candidates.append(contentsOf: await reads(for: app))
             }
         }
 

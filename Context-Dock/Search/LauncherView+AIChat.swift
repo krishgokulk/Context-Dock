@@ -1052,6 +1052,23 @@ extension LauncherView {
         AppDelegate.shared?.hideLauncher(force: true)
     }
 
+    /// Moves the general conversation into the window, transcript included.
+    ///
+    /// Its own function rather than the app-scoped handover beside it: that one exits the
+    /// context-dock chat and saves an app session, neither of which applies here and both
+    /// of which would leave the dock in a scope this chat never had.
+    func openGeneralChatInWindow() {
+        persistGeneralAIConversation()
+        let scope = dockChatScope
+        GeneralChatWindowModel.shared.openSession(
+            scope, title: scope == .general ? "General" : dockWorkspaceTitle,
+            seed: aiMode.messages)
+        searchState.query = ""
+        isSearchFieldFocused = false
+        AppDelegate.shared?.hideLauncher(force: true)
+        GeneralChatWindowController.shared.show()
+    }
+
     func handOffChatToWindow() {
         if let key = l2.activeDockSessionKey {
             AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
@@ -2343,7 +2360,7 @@ extension LauncherView {
             [], scope: dockChatScope, title: dockWorkspaceTitle)
     }
 
-    private var dockWorkspaceTitle: String {
+    var dockWorkspaceTitle: String {
         let names = chatFocusApps.map(\.name)
         return names.count > 1 ? names.joined(separator: " + ") : "General"
     }

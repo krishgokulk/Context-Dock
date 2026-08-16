@@ -92,6 +92,21 @@ extension LauncherView {
             .fixedSize()
             .help("Attach file, photo, or screenshot")
 
+            // The same handover the frontmost-app chat has, for the conversation that most
+            // often outgrows the strip. General chat is where multi-step work and long
+            // answers land, and it was the one surface with no way out of a bar.
+            Button {
+                openGeneralChatInWindow()
+            } label: {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Continue this chat in the window")
+
             // App icon: compact, independently scrollable picker for chat focus.
             Button {
                 isShowingChatFocusAppPicker.toggle()
