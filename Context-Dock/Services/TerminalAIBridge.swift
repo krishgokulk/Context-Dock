@@ -882,8 +882,13 @@ class TerminalAIBridge: ObservableObject {
             // The shell still sources those files — commands rely on the aliases, functions and
             // PATH they set — but the script announces itself on stderr first, so everything
             // before that marker is provably startup noise and not this command's output.
+            // null_glob: zsh aborts an ENTIRE command when any pattern matches nothing, so
+            // `mv *.jpg *.png *.dng Images/` moved not one file because no .dng existed.
+            // nocaseglob: *.jpg must match IMG_4722.JPG — on a case-insensitive volume the
+            // user cannot see why it would not, and neither can the model.
             process.arguments = [
-                "-lc", "printf '%s\\n' '\(Self.stderrBeginMarker)' >&2\n" + command,
+                "-lc",
+                "setopt null_glob nocaseglob\n" + "printf '%s\\n' '\(Self.stderrBeginMarker)' >&2\n" + command,
             ]
 
             // Set up environment with full tool paths (Homebrew Apple Silicon + Intel)

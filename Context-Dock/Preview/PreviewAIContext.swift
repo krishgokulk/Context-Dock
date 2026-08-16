@@ -75,6 +75,16 @@ enum PreviewAIContext {
             user first — propose it and let the approval happen; do not pretend it is done. \
             Read-only inspection needs no permission, so prefer looking over asking the \
             user to describe what you could have read yourself.
+
+            When you move or rename files:
+            - Match by extension in lower case only. Globbing is case-insensitive here, so \
+              *.jpg already covers .JPG; listing both moves the same file twice.
+            - Do not guess at extensions that might not be there. The listing above says \
+              exactly which ones exist — use those.
+            - Move one kind per command. A single command that moves several kinds reports \
+              one result for all of them, so a partial failure looks like a total one.
+            - Check afterwards. List the folder again and say what actually moved, not what \
+              you asked for.
             """)
 
         return sections.joined(separator: "\n\n")
