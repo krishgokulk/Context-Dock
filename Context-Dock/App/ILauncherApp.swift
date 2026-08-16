@@ -472,6 +472,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // one) otherwise stalls every reader for seconds, and the ones on the main thread
         // take the whole dock down with them.
         AXMessagingTimeout.installProcessDefault()
+        // Which apps exist on this Mac, read once in the background. Nothing owned this
+        // before, so the catalog was built by whichever feature happened to touch an app
+        // first — and General Chat, asked about an app on an empty desktop, resolved
+        // against an empty list.
+        InstalledApplicationsCatalog.warmUp()
         // Enforce single instance — if another copy is already running, tell it to show and quit
         let bundleID = Bundle.main.bundleIdentifier ?? ""
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)

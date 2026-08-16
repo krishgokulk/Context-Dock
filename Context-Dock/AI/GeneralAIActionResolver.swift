@@ -858,8 +858,11 @@ final class GeneralAIActionResolver {
                     bundleId: bundleId, matchedPhrase: alias))
         }
 
-        // Installed-apps catalog (already warmed at startup; in-memory read).
-        for entry in InstalledApplicationsCatalog.cachedInstalledApps() {
+        // Installed-apps catalog. Discovery rather than a cached read, because this is the
+        // list that decides whether an app the user named exists at all — and a cold cache
+        // answers that question with "nothing is installed". After the first call it is the
+        // same in-memory read it always was.
+        for entry in InstalledApplicationsCatalog.discoverInstalledApps() {
             let name = entry.name.lowercased()
             guard name.count > 2, let offset = wordPhraseOffset(lowered, phrase: name) else {
                 continue
@@ -1323,7 +1326,7 @@ final class GeneralAIActionResolver {
         bundleIds.formUnion(runningBundleIds)
         if let frontmostBundleId { bundleIds.insert(frontmostBundleId) }
 
-        let installed = InstalledApplicationsCatalog.cachedInstalledApps()
+        let installed = InstalledApplicationsCatalog.discoverInstalledApps()
         let installedByBundle = Dictionary(uniqueKeysWithValues: installed.map { ($0.bundleId, $0) })
         let named = bundleIds.compactMap { bundleId -> (name: String, bundleId: String)? in
             if let adapter = adapterByBundle[bundleId] { return (adapter.appName, bundleId) }

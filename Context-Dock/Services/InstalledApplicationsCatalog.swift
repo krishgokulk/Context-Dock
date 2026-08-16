@@ -26,8 +26,20 @@ enum InstalledApplicationsCatalog {
 
     nonisolated static func cachedInstalledApps() -> [InstalledApplicationEntry] {
         installedApplicationsCatalogCache.lock.lock()
-        defer { installedApplicationsCatalogCache.lock.unlock() }
-        return installedApplicationsCatalogCache.apps ?? []
+        let cached = installedApplicationsCatalogCache.apps
+        installedApplicationsCatalogCache.lock.unlock()
+        if let cached { return cached }
+        // A cold read used to answer "no applications are installed" and leave the cache
+        // cold, so the next caller got the same answer. Nothing owned warming it: whichever
+        // flow happened to touch an app first did, which made General Chat work only after
+        // some other app had been in front — on an empty desktop it could not resolve a
+        // single app name, and said so as though the app were not installed.
+        //
+        // Warmed here instead, once, by whoever asks first. A scan of four directories
+        // costs a fraction of the network round trip the caller is already waiting on, and
+        // it happens once per launch.
+        warmUp()
+        return []
     }
 
     nonisolated static func discoverInstalledApps() -> [InstalledApplicationEntry] {
