@@ -1283,11 +1283,9 @@ class AIProviderService: ObservableObject {
                 maxIterations: maxIterations,
                 imageAttachments: imageAttachments,
                 userContext: context,
-                // Gemini's streaming endpoint is a different URL with a different envelope,
-                // so this loop stays buffered. A caller passing `onStream` still gets a
-                // correct answer here, just not an incremental one.
                 chatScope: chatScope,
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         case .ollama:

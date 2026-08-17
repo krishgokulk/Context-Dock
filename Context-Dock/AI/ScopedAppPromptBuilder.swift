@@ -174,11 +174,10 @@ enum ScopedAppPromptBuilder {
             lines.append("- Actions: none")
         } else {
             lines.append(
-                "- Actions — RUN one by outputting exactly one JSON line "
-                + "{\"adapter_call\":{\"actionId\":\"<id>\"}}. When a request matches an action, "
-                + "CALL it immediately — do NOT describe it, do NOT ask \"would you like me to?\". "
-                + "Actions marked [approval] pop a native confirmation on their own, so still just "
-                + "call them. Available:")
+                "- Actions — RUN one with the run_adapter_action tool, passing the id below. "
+                + "When a request matches an action, CALL it immediately — do NOT describe it, "
+                + "do NOT ask \"would you like me to?\". Actions marked [approval] pop a native "
+                + "confirmation on their own, so still just call them. Available:")
             for a in actions.prefix(30) {
                 let flag = (a.requiresApproval || a.isDestructive) ? " [approval]" : ""
                 lines.append("    • \(a.id) — \(a.name)\(flag)")
@@ -193,7 +192,8 @@ enum ScopedAppPromptBuilder {
         lines.append(
             mcpServers.isEmpty
                 ? "- MCP servers: none linked"
-                : "- MCP servers: " + mcpServers.map(\.name).joined(separator: ", "))
+                : "- MCP servers (read the app's data with the run_mcp_tool tool): "
+                    + mcpServers.map(\.name).joined(separator: ", "))
         if !apiConns.isEmpty {
             // Stored credentials and a base URL, with no endpoint spec and no executor —
             // so they are context, not a route. Advertising them as callable would have
@@ -219,12 +219,11 @@ enum ScopedAppPromptBuilder {
             let leaves = menuItems.filter { $0.isLeaf && !$0.path.isEmpty }
             if !leaves.isEmpty {
                 lines.append(
-                    "- Menu commands — RUN one by outputting exactly one JSON line "
-                    + "{\"menu_call\":{\"path\":[\"Window\",\"Minimize\"]}} using the FULL path "
-                    + "below. When a request maps to a menu command, CALL it immediately — do "
-                    + "NOT tell the user which keyboard shortcut to press, do NOT ask permission "
-                    + "(destructive commands like Close/Quit/Delete pop their own confirmation). "
-                    + "Available menu commands:")
+                    "- Menu commands — RUN one with the run_menu_command tool, passing the FULL "
+                    + "path below. When a request maps to a menu command, CALL it immediately — "
+                    + "do NOT tell the user which keyboard shortcut to press, do NOT ask "
+                    + "permission (destructive commands like Close/Quit/Delete pop their own "
+                    + "confirmation). Available menu commands:")
                 var seen = Set<String>()
                 for item in leaves {
                     let key = item.path.joined(separator: " > ").lowercased()
@@ -251,11 +250,18 @@ enum ScopedAppPromptBuilder {
             + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI).")
         if !clis.isEmpty {
             lines.append(
-                "CLI fallback rule: only when no adapter/native/MCP/API/Shortcut/menu capability fits, and a linked CLI can print the information the user wants "
-                + "(status, list, current state), emit one JSON line exactly as "
-                + "{\"terminal_call\":{\"command\":\"<command>\",\"purpose\":\"<reason>\"}} instead of "
-                + "asking the user to provide it.")
+                "CLI fallback rule: only when no adapter/native/MCP/API/Shortcut/menu capability "
+                + "fits, and a linked CLI can print the information the user wants (status, "
+                + "list, current state), run it with the run_command tool instead of asking the "
+                + "user to provide it.")
         }
+        // One protocol, said once. Every route above is a tool call; a JSON line written into
+        // an answer is not a call, it is a description of one, and the user reads the
+        // description while nothing happens.
+        lines.append(
+            "Every route above is called as a TOOL. Never write a tool call as JSON in your "
+            + "reply — a line of JSON in an answer runs nothing and is shown to the user as "
+            + "gibberish. Call the tool, wait for its result, then answer in plain language.")
         return lines.joined(separator: "\n")
     }
 }

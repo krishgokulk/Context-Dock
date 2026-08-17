@@ -35,11 +35,98 @@ enum AIProviderStreaming {
     /// rather than a reason to fail the turn.
     static func isKnownStreamingProvider(_ provider: AIProvider) -> Bool {
         switch provider {
-        case .anthropic, .openAI, .kimi, .openAICompatible, .claudeBridge, .chatGPTBridge:
+        case .anthropic, .openAI, .kimi, .openAICompatible, .claudeBridge, .chatGPTBridge,
+            .googleGemini, .ollama:
             return true
-        case .googleGemini, .ollama, .onDevice, .shortcuts:
+        case .onDevice, .shortcuts:
+            // On-device streams through FoundationModels' own API, not SSE. Shortcuts runs a
+            // shortcut and returns its result; there is nothing to stream.
             return false
         }
+    }
+
+    // MARK: - Gemini
+
+    /// Streams `:streamGenerateContent?alt=sse` and rebuilds a `GeminiToolResponse`.
+    ///
+    /// Gemini streams the same envelope in pieces rather than a delta format of its own: each
+    /// event carries a whole candidate whose parts continue the previous one. Text parts are
+    /// concatenated; a function call arrives complete in a single part, so it is taken as it
+    /// stands rather than accumulated.
+    static func gemini(
+        apiKey: String,
+        body: [String: Any],
+        model: String,
+        onEvent: @escaping @Sendable (AIProviderStreamEvent) -> Void
+    ) async throws -> GeminiToolResponse {
+        let endpoint =
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            + "\(GeminiModelCatalog.normalized(model)):streamGenerateContent?alt=sse"
+        guard let url = URL(string: endpoint) else {
+            throw AIServiceError.networkError("Invalid Gemini streaming endpoint")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 120
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        var text = ""
+        var functionParts: [GeminiToolResponse.Part] = []
+        var finishReason: String?
+        var usage: GeminiToolResponse.UsageMetadata?
+
+        for try await line in try await eventLines(for: request, label: "Gemini") {
+            guard let payload = jsonPayload(of: line) else { continue }
+            if let raw = payload["usageMetadata"],
+                let data = try? JSONSerialization.data(withJSONObject: raw)
+            {
+                usage = try? JSONDecoder().decode(
+                    GeminiToolResponse.UsageMetadata.self, from: data)
+            }
+            guard let candidate = (payload["candidates"] as? [[String: Any]])?.first else {
+                continue
+            }
+            finishReason = candidate["finishReason"] as? String ?? finishReason
+            let parts = (candidate["content"] as? [String: Any])?["parts"] as? [[String: Any]]
+            for part in parts ?? [] {
+                if let fragment = part["text"] as? String, !fragment.isEmpty {
+                    text += fragment
+                    onEvent(.text(fragment))
+                }
+                if let call = part["functionCall"] as? [String: Any],
+                    let name = call["name"] as? String
+                {
+                    let arguments = call["args"] as? [String: Any] ?? [:]
+                    guard let data = try? JSONSerialization.data(withJSONObject: arguments),
+                        let decoded = try? JSONDecoder().decode(
+                            [String: AIProviderAnyCodable].self, from: data)
+                    else { continue }
+                    onEvent(.toolCallStarted(name))
+                    functionParts.append(
+                        GeminiToolResponse.Part(
+                            text: nil,
+                            functionCall: GeminiToolResponse.FunctionCall(
+                                name: name, args: decoded)))
+                }
+            }
+        }
+
+        var parts = functionParts
+        if !text.isEmpty {
+            parts.insert(GeminiToolResponse.Part(text: text, functionCall: nil), at: 0)
+        }
+        guard !parts.isEmpty else {
+            throw AIServiceError.emptyResponse("The provider streamed no content.")
+        }
+        return GeminiToolResponse(
+            candidates: [
+                GeminiToolResponse.Candidate(
+                    content: GeminiToolResponse.Content(parts: parts, role: "model"),
+                    finishReason: finishReason)
+            ],
+            usageMetadata: usage)
     }
 
     // MARK: - Anthropic

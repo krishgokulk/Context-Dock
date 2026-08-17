@@ -103,11 +103,12 @@ extension AIProviderService {
                 // proxies reject sampling parameters with HTTP 400.
                 "max_tokens": ToolLoopBudget.maxTokens
             ]
-            if apiKey == nil { body["stream"] = false; body.removeValue(forKey: "max_tokens") }
-            // Ollama is reached through this loop with no key, on the buffered path it has
-            // always used; leave it alone. Everything else streams when the caller wants the
-            // answer as it is written.
-            let mayStream = onStream != nil && !streamingUnavailable && apiKey != nil
+            if apiKey == nil { body.removeValue(forKey: "max_tokens") }
+            let mayStream = onStream != nil && !streamingUnavailable
+            // A buffered round must say so explicitly: Ollama defaults `stream` to true and
+            // would otherwise answer a buffered request with an event stream the transport
+            // cannot decode.
+            if !mayStream { body["stream"] = false }
             var streamed: OpenAIToolResponse?
             if mayStream, let onStream {
                 do {
@@ -429,7 +430,8 @@ extension AIProviderService {
         imageAttachments: [URL] = [],
         userContext: UserContext = .none,
         chatScope: GeneralChatScope? = nil,
-        simulateAllTools: Bool
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
@@ -440,6 +442,7 @@ extension AIProviderService {
         defer { AgentToolRegistry.shared.endTurn(turn) }
 
         var executedCommands: [ExecutedCommand] = []
+        var streamingUnavailable = false
 
         var contents: [[String: Any]] = [
             ["role": "user",  "parts": [["text": contextPrompt]]],
@@ -475,9 +478,24 @@ extension AIProviderService {
                     "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens,
                 ],
             ]
-            let decoded = try await GeminiToolProviderAdapter().send(
-                apiKey: apiKey, body: body,
-                model: AppSettings.shared.selectedGeminiModel)
+            let geminiModel = AppSettings.shared.selectedGeminiModel
+            var streamed: GeminiToolResponse?
+            if onStream != nil, !streamingUnavailable, let onStream {
+                do {
+                    streamed = try await AIProviderStreaming.gemini(
+                        apiKey: apiKey, body: body, model: geminiModel, onEvent: onStream)
+                } catch let error as AIServiceError {
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                }
+            }
+            let decoded: GeminiToolResponse
+            if let streamed {
+                decoded = streamed
+            } else {
+                decoded = try await GeminiToolProviderAdapter().send(
+                    apiKey: apiKey, body: body, model: geminiModel)
+            }
             if let usage = decoded.usageMetadata {
                 AITokenLedger.shared.record(
                     provider: .googleGemini,
