@@ -92,6 +92,14 @@ struct ApprovalRequest: Identifiable {
     }
 }
 
+/// Where a decision can be answered. A command belongs to the surface that asked for it;
+/// everything else belongs to whichever surface the user is actually looking at.
+enum ApprovalSurface {
+    case dock
+    case chatWindow
+    case preview
+}
+
 @MainActor
 final class ApprovalCenter: ObservableObject {
     static let shared = ApprovalCenter()
@@ -186,6 +194,47 @@ final class ApprovalCenter: ObservableObject {
         case .adapter(let adapter):
             adapter.onDeny()
         }
+    }
+
+    /// The request this surface should draw, if any.
+    ///
+    /// The rule used to live in the dock as three near-identical onReceive blocks, each
+    /// deciding for itself whether a chat surface was visible and whether to open a
+    /// floating window instead. Every new surface had to reimplement it, and the preview
+    /// got it wrong in two of three cases. It is one rule, so it lives in one place.
+    func pending(for surface: ApprovalSurface) -> ApprovalRequest? {
+        guard let request = pending else { return nil }
+
+        // A command is answered where it was asked. Two conversations can be running at
+        // once, and a card from one appearing in the other is someone else's question.
+        if case .command = request.kind {
+            switch (request.origin, surface) {
+            case (.window, .chatWindow), (.dock, .dock), (.preview, .preview):
+                return request
+            default:
+                return nil
+            }
+        }
+
+        // Capabilities and adapter actions name no surface, so they go to the one in
+        // front: the preview window if its assistant is open, then the chat window, then
+        // the dock.
+        return surface == frontmostSurface ? request : nil
+    }
+
+    /// Which surface a surface-less request belongs to right now.
+    var frontmostSurface: ApprovalSurface {
+        if PreviewController.shared.hasVisibleComposer { return .preview }
+        if GeneralChatWindowController.shared.isVisible { return .chatWindow }
+        return .dock
+    }
+
+    /// True when no in-app surface will draw the request, so the caller may fall back to
+    /// its floating window rather than leaving the question unanswered.
+    var needsFloatingWindow: Bool {
+        guard let request = pending else { return false }
+        if case .command = request.kind { return request.origin == nil }
+        return frontmostSurface == .dock
     }
 
     /// Only offered when the request itself allows it — a destructive adapter action has

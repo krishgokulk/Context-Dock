@@ -71,7 +71,7 @@ struct PreviewAIComposer: View {
     /// different cards, which is how two of them went missing.
     @ViewBuilder
     private var approvalCard: some View {
-        if let request = approvals.pending {
+        if let request = approvals.pending(for: .preview) {
             ApprovalCard(request: request)
         }
         if let pending = privacyApprovals.pending {

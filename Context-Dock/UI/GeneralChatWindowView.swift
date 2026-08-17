@@ -26,6 +26,9 @@ struct GeneralChatWindowView: View {
     @State private var dragStartWidth: Double?
     @State private var showsSidebarAppPicker = false
     @ObservedObject private var adapterManager = AppAdapterManager.shared
+    /// Observed, not read statically: the card has to appear when a request lands, and a
+    /// capability approval publishes through this centre alone.
+    @ObservedObject private var approvals = ApprovalCenter.shared
     @State private var hoveredSidebarRow: String?
     @State private var hoveringCombinedChat = false
     @State private var showsAllThreads = false
@@ -810,51 +813,13 @@ struct GeneralChatWindowView: View {
     /// the dock reads, so a request is answered wherever the user actually is.
     @ViewBuilder
     private var approvalCard: some View {
-        if let adapterPending = adapterManager.pendingApproval {
-            // The same decision the dock shows inline, in the conversation that asked.
-            InlineAdapterApprovalCard(request: adapterPending)
-                .padding(.horizontal, 28)
-                .padding(.bottom, 8)
-        }
-        if let pending = terminalBridge.pendingApproval, pending.origin == .window {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.green)
-                    Text("Run command?")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    Text(pending.classification.riskLevel.displayName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.orange)
-                }
-                if !pending.purpose.isEmpty {
-                    Text(pending.purpose)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                Text(pending.command)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(
-                        Color.primary.opacity(0.06),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                HStack(spacing: 8) {
-                    Button("Deny") { terminalBridge.denyCommand() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    Button("Approve & Run") { terminalBridge.approveCommand(pending.command) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.orange.opacity(0.08))
-            .overlay(alignment: .top) { Divider().opacity(0.4) }
+        // One card, one inbox. This used to be a hand-rolled command card and an adapter
+        // card, drawn here and separately in the dock, each deciding for itself whether
+        // the request belonged to this window.
+        if let request = approvals.pending(for: .chatWindow) {
+            ApprovalCard(request: request)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 6)
         }
     }
 
