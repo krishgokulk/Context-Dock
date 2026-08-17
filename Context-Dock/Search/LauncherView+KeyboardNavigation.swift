@@ -867,6 +867,14 @@ extension LauncherView {
                     return nil
                 case 124:  // Right — vertical list: scope the focused app into a pill.
                     //          Horizontal pill row: move focus right / wrap to input.
+                    // A focused folder in Finder desktop mode wins: this monitor runs
+                    // before SwiftUI's own Right-arrow handler, so the drill has to be
+                    // offered here or app-scoping consumes the key first.
+                    if self.isFinderDesktopOnlyMode, self.searchInputCursorIsAtEnd(),
+                        self.drillIntoFocusedFinderFolderIfPossible()
+                    {
+                        return nil
+                    }
                     if self.usesVerticalListDockLayout {
                         guard self.currentGlobalScopedBundleID == nil else { return event }
                         if self.searchInputHasHighlightedText() { return event }

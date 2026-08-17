@@ -25,17 +25,38 @@ extension LauncherView {
     }
 
     /// Right-arrow: if the focused Finder-desktop row is a folder, drill into it.
+    ///
+    /// The focused row can come from either list. A typed query renders the grouped
+    /// sheet — FOLDERS, then DOCUMENTS — whose rows live in the grouped navigation
+    /// state, not in renderedOrderDockPills. Looking only at the latter meant Right
+    /// arrow on a folder in a search result found nothing to drill into and fell
+    /// through to app-scoping, which is why it appeared to do nothing at all.
     @discardableResult
     func drillIntoFocusedFinderFolderIfPossible() -> Bool {
         guard isFinderDesktopOnlyMode else { return false }
-        guard let pill = currentFocusedDockPillForQuickLook() ?? firstFinderFolderPill(),
-            let url = pill.resolvedURL
-        else { return false }
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue
-        else { return false }
+        guard let url = focusedFinderFolderURL() else { return false }
         browseFinderFolder(path: url.path)
         return true
+    }
+
+    /// The folder under the focus right now, wherever the focus lives.
+    private func focusedFinderFolderURL() -> URL? {
+        let candidates: [URL?] = [
+            currentFocusedDockPillForQuickLook()?.resolvedURL,
+            focusedGlobalGroupedListPill()?.resolvedURL,
+            focusedGlobalAppResultForInputPreview()?.filePath.map {
+                URL(fileURLWithPath: $0)
+            },
+            firstFinderFolderPill()?.resolvedURL,
+        ]
+        for case let url? in candidates where isDirectory(url) { return url }
+        return nil
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        var isDir: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            && isDir.boolValue
     }
 
     private func firstFinderFolderPill() -> DockPill? {
