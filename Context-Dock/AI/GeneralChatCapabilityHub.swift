@@ -96,7 +96,7 @@ final class GeneralChatCapabilityHub {
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
         Self.log.notice("hub: builtins")
-        let builtinLines = builtInCapabilityLines()
+        let builtinLines = builtInCapabilityLines(scope: scope)
         let enabledAdapters = AppAdapterManager.shared.adapters.filter(\.isEnabled)
         let allowlistFingerprint = enabledAdapters
             .map { "\($0.bundleId):\($0.actions.count):\($0.contextReaders.count)" }
@@ -113,10 +113,24 @@ final class GeneralChatCapabilityHub {
             normalizedQuery.contains($0.appName.lowercased())
                 || normalizedQuery.contains($0.bundleId.lowercased())
         }
-        let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
+        var adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
+        // A scoped thread gets one app's adapter and no other. This list feeds the MCP tool
+        // section below, which was still handing a Code conversation the MCP servers linked
+        // to Notes, Calendar and Reminders — the same leak as the built-in capabilities, one
+        // section further down.
+        if let scopedBundleID = scopedBundleID(for: scope) {
+            adapters = enabledAdapters.filter {
+                $0.bundleId.caseInsensitiveCompare(scopedBundleID) == .orderedSame
+            }
+        }
         let cacheKey =
             allowlistFingerprint + "##"
             + adapters.map(\.bundleId).sorted().joined(separator: ",")
+            // Scoped blocks and the General catalogue are different documents. Sharing one
+            // cache entry between them would hand a Code thread's narrowed list to General
+            // Chat, or General Chat's full inventory to a Code thread — the second being the
+            // leak this scoping exists to close.
+            + "##" + (scopedBundleID(for: scope) ?? "general")
         // Retrieved evidence for THIS question, not just an inventory of what exists.
         // The inventory says which apps are installed; this says which cached menu command,
         // history entry, recent document or indexed file actually matches what was asked —
@@ -128,7 +142,10 @@ final class GeneralChatCapabilityHub {
             await GeneralChatLocalEvidence.promptLines(query: query)
         }
         Self.log.notice("hub: inventory")
-        let inventoryLines = appInventoryLines()
+        // The cross-app inventory is General Chat's whole point and a scoped thread's
+        // opposite: a Code conversation does not need a list of every app on the Mac, and
+        // being handed one is an invitation to reach for another.
+        let inventoryLines = (scopedBundleID(for: scope) == nil ? appInventoryLines() : [])
             + discoveryLines
             + targetedSkillLines(query: query, scope: scope)
             + evidenceLines
@@ -194,7 +211,14 @@ final class GeneralChatCapabilityHub {
 
         Self.log.notice("hub: saved chats")
         Self.log.notice("hub: mcp loop done")
-        let historyApps = savedChatApps()
+        // Saved conversations with OTHER apps are other conversations. Offering a Code
+        // thread the list of what the user has discussed with Mail is both a leak and an
+        // invitation to go and read it.
+        let scopedBundleIDForHistory = scopedBundleID(for: scope)
+        let historyApps = savedChatApps().filter { app in
+            guard let scopedBundleIDForHistory else { return true }
+            return app.bundleId.caseInsensitiveCompare(scopedBundleIDForHistory) == .orderedSame
+        }
         let historyLines = historyApps.map { "- \($0.appName) (\($0.bundleId))" }
 
         guard !mcpLines.isEmpty || !historyLines.isEmpty || !builtinLines.isEmpty
@@ -302,7 +326,20 @@ final class GeneralChatCapabilityHub {
     /// GitHub) — callable with server "builtin" through the same mcp_call JSON. Also
     /// names the DISABLED families so the model suggests enabling them instead of
     /// claiming it has no access.
-    private func builtInCapabilityLines() -> [String] {
+    /// The scoped app for a conversation, when it has one.
+    ///
+    /// A capability belonging to another app must not appear in a scoped chat's catalogue.
+    /// The dock narrows everything else this way — routes, access levels, the identity block
+    /// — and this list was the exception, so a Code thread was told it could read the user's
+    /// mail, messages and photos, and spent its tool rounds trying to.
+    private func scopedBundleID(for scope: AIConversationScope) -> String? {
+        if case .contextDock(let bundleID, _) = scope {
+            return bundleID.isEmpty ? nil : bundleID
+        }
+        return nil
+    }
+
+    private func builtInCapabilityLines(scope: AIConversationScope) -> [String] {
         let families: [(prefix: String, name: String, flag: String)] = [
             ("notes.", "Apple Notes", "noteMCPEnabled"),
             ("calendar.", "Calendar", "calendarMCPEnabled"),
@@ -327,7 +364,10 @@ final class GeneralChatCapabilityHub {
         //
         // The app-bundle check stays: a capability belonging to an app with no installed
         // adapter cannot run, and advertising it would invite a call that must fail.
-        let caps = CapabilityRegistry.shared.all.filter { cap in
+        let scopedBundleID = scopedBundleID(for: scope)
+        let caps = AgentToolRegistry.capabilitiesInScope(
+            CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID
+        ).filter { cap in
             guard let bundleID = cap.appBundleID else { return true }
             // Self-executing capabilities name an app to be scoped by it, not to be
             // dispatched through it — an adapter they never use must not gate them.
@@ -352,7 +392,7 @@ final class GeneralChatCapabilityHub {
                 lines.append("- tool \"\(cap.id)\": \(cap.title) | input: [\(fields)]")
             }
         }
-        if !disabledNames.isEmpty {
+        if !disabledNames.isEmpty, scopedBundleID == nil {
             lines.append("")
             lines.append(
                 "Built-in integrations currently DISABLED: \(disabledNames.joined(separator: ", ")). "

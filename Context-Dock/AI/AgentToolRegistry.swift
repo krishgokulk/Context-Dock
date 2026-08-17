@@ -396,6 +396,61 @@ final class AgentToolRegistry {
         }
     }
 
+    // MARK: - Scope
+
+    /// Which app a thread is about, for filtering the capability catalogue. Nil means the
+    /// conversation is not scoped to one app and the whole catalogue is legitimately in play.
+    static func scopedBundleID(for scope: GeneralChatScope?) -> String? {
+        switch scope {
+        case .app(let bundleId): return bundleId.isEmpty ? nil : bundleId
+        // A folder thread is Finder's work aimed at one directory — the file capabilities
+        // are registered against Finder, and nothing else belongs there either.
+        case .folder: return ChatAppDirectory.finderBundleID
+        case .cli, .thread, .general, .none: return nil
+        }
+    }
+
+    /// Capabilities a scoped chat may see.
+    ///
+    /// A Code chat was offered mail.recent, messages.recent and photos.recent, because the
+    /// tool the model is told to search with read the whole registry while every other layer
+    /// — the prompt, the routes, the access policy — was carefully scoped to one app. So the
+    /// model spent its rounds calling other apps' capabilities, and the surface that promises
+    /// "this conversation is about Code" quietly offered the user's mail.
+    ///
+    /// Kept: the app's own capabilities, and the ones that belong to no app — git, files,
+    /// finder, clipboard, the DoraX surface itself. Those are the machine, not another app,
+    /// and a question about a repository in a Code thread is answered with git.log.
+    ///
+    /// Dropped: everything owned by a different app. Not ranked lower — absent. A model shown
+    /// a capability treats it as available, and "available but please do not use it" is an
+    /// instruction, not a boundary.
+    static func capabilitiesInScope(
+        _ capabilities: [AICapability], scopedBundleID: String?
+    ) -> [AICapability] {
+        guard let scopedBundleID, !scopedBundleID.isEmpty else { return capabilities }
+        return capabilities.filter { capability in
+            guard let owner = capability.appBundleID, !owner.isEmpty else { return true }
+            return owner.caseInsensitiveCompare(scopedBundleID) == .orderedSame
+        }
+    }
+
+    /// What to say when the model asks for a capability belonging to another app. Naming the
+    /// app and the way out is the difference between a refusal the user can act on and one
+    /// that reads as a malfunction.
+    static func outOfScopeMessage(
+        capabilityID: String, owner: String, scopedBundleID: String
+    ) -> String {
+        let ownerName = InstalledApplicationsCatalog.cachedInstalledApps()
+            .first { $0.bundleId.caseInsensitiveCompare(owner) == .orderedSame }?.name ?? owner
+        let scopeName = InstalledApplicationsCatalog.cachedInstalledApps()
+            .first { $0.bundleId.caseInsensitiveCompare(scopedBundleID) == .orderedSame }?.name
+            ?? scopedBundleID
+        return "\(capabilityID) belongs to \(ownerName), and this conversation is scoped to "
+            + "\(scopeName). Answer from \(scopeName) instead, or tell the user to ask in a "
+            + "\(ownerName) chat — do not look for another way to reach \(ownerName)."
+    }
+
     // MARK: - Search aliases
 
     /// Extra words that should match a capability whose id and title do not contain them.
@@ -980,7 +1035,7 @@ final class AgentToolRegistry {
                 ],
             ],
             required: ["query"]
-        ) { arguments, _ in
+        ) { arguments, context in
             let query = (arguments["query"] as? String ?? "").lowercased()
             // Three characters minimum. Two-letter words are almost never the subject and
             // they substring-match inside real words — "in" hits "Window" and
@@ -995,8 +1050,14 @@ final class AgentToolRegistry {
             let namesAFile = query.range(
                 of: "[\\w-]+\\.(md|txt|pdf|docx?|rtf|csv|json|ya?ml|html?|pages|key|numbers|xlsx?|pptx?)\\b",
                 options: [.regularExpression, .caseInsensitive]) != nil
+            // The thread's app. Everything below is filtered to it: this tool was the one
+            // door in the scoped chat that still opened onto the whole machine.
+            let scopedBundleID = await MainActor.run {
+                Self.scopedBundleID(for: context.chatScope)
+            }
             let matches = await MainActor.run { () -> [AICapability] in
-                let all = CapabilityRegistry.shared.all
+                let all = Self.capabilitiesInScope(
+                    CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID)
                 guard !terms.isEmpty else { return [] }
                 return all
                     .map { capability -> (score: Int, capability: AICapability) in
@@ -1020,7 +1081,15 @@ final class AgentToolRegistry {
             let adapterMatches = await MainActor.run { () -> [(String, String, String)] in
                 guard !terms.isEmpty else { return [] }
                 var out: [(score: Int, line: (String, String, String))] = []
-                for adapter in AppAdapterManager.shared.adapters where adapter.isEnabled {
+                let adapters = AppAdapterManager.shared.adapters.filter { adapter in
+                    guard adapter.isEnabled else { return false }
+                    // Another app's actions are another app's business, whatever they are
+                    // called: "ai.draft-commit-summary-email" is a Code action and belongs
+                    // here, Mail's compose action does not.
+                    guard let scopedBundleID else { return true }
+                    return adapter.bundleId.caseInsensitiveCompare(scopedBundleID) == .orderedSame
+                }
+                for adapter in adapters {
                     for action in adapter.actions where action.type != .aiPrompt {
                         let haystack = "\(action.id) \(action.name) \(adapter.appName)".lowercased()
                         let score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
@@ -1041,7 +1110,10 @@ final class AgentToolRegistry {
             // the deterministic path has already failed.
             var fallbackMatches: [AICapability] = []
             if matches.isEmpty, adapterLines.isEmpty {
-                let all = await MainActor.run { CapabilityRegistry.shared.all }
+                let all = await MainActor.run {
+                    Self.capabilitiesInScope(
+                        CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID)
+                }
                 let picked = await CapabilityFallbackClassifier.pick(
                     query: query, from: all.map { (id: $0.id, title: $0.title) })
                 let byID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
@@ -1053,9 +1125,14 @@ final class AgentToolRegistry {
                     success: true,
                     output: "No capability matched \"\(query)\". Registered capability families: "
                         + (await MainActor.run {
-                            Set(CapabilityRegistry.shared.all.compactMap {
-                                $0.id.split(separator: ".").first.map(String.init)
-                            }).sorted().joined(separator: ", ")
+                            Set(
+                                Self.capabilitiesInScope(
+                                    CapabilityRegistry.shared.all,
+                                    scopedBundleID: scopedBundleID
+                                ).compactMap {
+                                    $0.id.split(separator: ".").first.map(String.init)
+                                }
+                            ).sorted().joined(separator: ", ")
                         })
                         + ". Try one of those words, or use run_command for anything shell-based.",
                     displayCommand: "find_capability(\(query))")
@@ -1307,6 +1384,25 @@ final class AgentToolRegistry {
                 }
             }
             let explanation = arguments["explanation"] as? String ?? "Requested from AI chat"
+
+            // The thread's boundary, enforced where it is crossed rather than only where it
+            // is listed. find_capability no longer offers another app's capabilities, but a
+            // model that saw one in an earlier turn — or guessed the id — must not be able
+            // to reach it by asking directly.
+            let scopedBundleID = Self.scopedBundleID(for: context.chatScope)
+            if let scopedBundleID,
+                let owner = CapabilityRegistry.shared.capability(id: capabilityID)?.appBundleID,
+                !owner.isEmpty,
+                owner.caseInsensitiveCompare(scopedBundleID) != .orderedSame
+            {
+                return AgentToolResult(
+                    success: false,
+                    output: Self.outOfScopeMessage(
+                        capabilityID: capabilityID, owner: owner,
+                        scopedBundleID: scopedBundleID),
+                    displayCommand: "run_capability(\(capabilityID)) — out of scope")
+            }
+
             // An id that is not a registered capability is usually an app adapter's action
             // id: the scope prompt lists those for `adapter_call`, and a model asked to
             // "run this" reaches for the tool named run_capability. Both are DoraX routes
@@ -1314,7 +1410,11 @@ final class AgentToolRegistry {
             // do nothing about.
             if CapabilityRegistry.shared.capability(id: capabilityID) == nil,
                 let adapter = AppAdapterManager.shared.adapters.first(where: { candidate in
-                    candidate.actions.contains { $0.id == capabilityID }
+                    guard candidate.actions.contains(where: { $0.id == capabilityID })
+                    else { return false }
+                    guard let scopedBundleID else { return true }
+                    return candidate.bundleId.caseInsensitiveCompare(scopedBundleID)
+                        == .orderedSame
                 }),
                 let action = adapter.actions.first(where: { $0.id == capabilityID })
             {

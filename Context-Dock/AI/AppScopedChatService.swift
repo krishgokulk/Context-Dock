@@ -782,6 +782,29 @@ enum AppScopedChatService {
             let block = resolved.promptBlock()
             if !block.isEmpty { sections.append(block) }
             log.notice("context \(resolved.summary, privacy: .public)")
+            // What the app is doing right now — its project, branch, changes, running
+            // agents — and what its vendor documents about it. Both were the dock's alone,
+            // so the window could describe an app's tool inventory and nothing about the
+            // work in progress inside it.
+            log.notice("stage: workspace + reference")
+            let workspace = await withTimeout(seconds: 6, fallback: "", label: "workspace") {
+                await ScopedGroundingBlocks.workspace(
+                    bundleId: bundleId, appName: appName,
+                    forceRefresh: sourceDecision.requiresFreshRead)
+            }
+            if !workspace.isEmpty { sections.append(workspace) }
+            let reference = await withTimeout(seconds: 8, fallback: "", label: "reference") {
+                await ScopedGroundingBlocks.reference(
+                    bundleId: bundleId, appName: appName, query: query)
+            }
+            if !reference.isEmpty { sections.append(reference) }
+            // The page a browser scope is actually on. Without it a browser thread had the
+            // app's capability list and no idea what was open in it, so it offered to reload
+            // a page it could not name.
+            let page = ScopedGroundingBlocks.browserPage(bundleId: bundleId, query: query)
+            if !page.isEmpty {
+                sections.append(UntrustedContent.fenced(page, from: "the current web page"))
+            }
             if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
                 sections.append(UntrustedContent.fenced(history, from: "browser history"))
             }
@@ -911,12 +934,24 @@ enum AppScopedChatService {
             return true
         }()
 
+        // The catalogue is built for the conversation that asked for it. Passing `.general`
+        // from every thread handed a Code chat the cross-app inventory — Mail, Messages,
+        // Photos — which is the whole catalogue this surface exists to narrow.
+        let hubScope: AIConversationScope = {
+            if case .app(let bundleId) = scope {
+                return .contextDock(bundleID: bundleId, appName: appName)
+            }
+            if scope.folderURL != nil {
+                return .contextDock(bundleID: ChatAppDirectory.finderBundleID, appName: "Finder")
+            }
+            return .general
+        }()
         log.notice("stage: capability hub (\(needsCrossAppCatalogue ? "yes" : "skipped", privacy: .public))")
         let hubBlock = !needsCrossAppCatalogue ? "" : await withTimeout(seconds: 8, fallback: "") {
             await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
                 compact: provider == .onDevice,
                 query: query,
-                scope: .general,
+                scope: hubScope,
                 characterBudget: AIContextBudget.characterBudget(for: provider))
         }
         if !hubBlock.isEmpty { sections.append(hubBlock) }
