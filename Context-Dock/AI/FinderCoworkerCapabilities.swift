@@ -425,7 +425,8 @@ enum FinderCoworkerCapabilities {
                     .init(name: "by", description: "kind or month (default kind)", required: false),
                     .init(name: "path", description: "Folder to organise (defaults to the selection or current folder)", required: false),
                 ]),
-                riskLevel: .medium
+                riskLevel: .medium,
+                supersedesShellVerbs: ["mv"]
             ) { request in
                 let by = (request.input["by"] ?? "kind").lowercased()
                 let scope = scopeURLs(from: request, explicitPath: request.input["path"])
@@ -934,7 +935,8 @@ enum FinderCoworkerCapabilities {
                             + "rather than one approval per file. Defaults to the selection.",
                         required: false)
                 ]),
-                riskLevel: .high
+                riskLevel: .high,
+                supersedesShellVerbs: ["rm", "rmdir", "unlink"]
             ) { request in
                 // Cleaning up twelve duplicates used to mean twelve calls and twelve
                 // approvals, which exhausted the tool loop's iterations before it got

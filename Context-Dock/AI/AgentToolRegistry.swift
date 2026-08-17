@@ -212,6 +212,7 @@ final class AgentToolRegistry {
     /// Deliberately limited to the Finder-managed folders. Inside a repository the shell is
     /// the right tool and the capability has nothing to add — redirecting `rm` in a build
     /// directory would just be in the way.
+    @MainActor
     static func capabilityInsteadOfShell(_ command: String) -> String? {
         let trimmed = command.trimmingCharacters(in: .whitespaces)
         let home = NSHomeDirectory()
@@ -227,35 +228,26 @@ final class AgentToolRegistry {
         let verb = trimmed
             .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
             .first.map(String.init) ?? ""
+        guard !verb.isEmpty,
+            let capability = CapabilityRegistry.shared.capabilitySuperseding(shellVerb: verb)
+        else { return nil }
 
-        switch verb {
-        case "mkdir":
-            return "Use run_capability with finder.newFolder for folders in the user's own "
-                + "folders — it previews the destination for approval and confirms the "
-                + "folder afterwards. Fields: destination (absolute parent path), name."
-        case "rm", "rmdir", "unlink":
-            return "Use run_capability with finder.trash instead of rm for the user's own "
-                + "files — it is recoverable from the Trash and confirms the file is gone. "
-                + "Field: path."
-        case "mv":
-            // The case that failed in the wild: mkdir was refused, the model did not read
-            // the refusal, and two chained mv commands ran at folders that did not exist.
-            return "Use run_capability with finder.moveFiles to move the user's files — it "
-                + "acts on the selection or a named path, asks first, and reads the result "
-                + "back. Field: destination (absolute folder path). To tidy a whole folder "
-                + "into subfolders by kind or by month, use finder.organize instead: it "
-                + "creates the folders and moves everything in one approved step, so there "
-                + "is no half-done state when one command fails."
-        case "cp", "ditto":
-            return "Use run_capability with finder.copyFiles to copy the user's files — it "
-                + "asks first and confirms afterwards. Field: destination (absolute folder "
-                + "path)."
-        case "touch":
-            return "Creating empty files in the user's folders is not something the shell "
-                + "is allowed to do here. If the intent is a folder, use finder.newFolder."
-        default:
-            return nil
+        // Built from the capability itself, so its real field names are quoted and a new
+        // capability is preferred the moment it declares the verb — no second list to
+        // update, and no advice that names a field the capability does not have.
+        let fields: [AICapabilityInputField] = capability.inputSchema.fields
+        let required = fields.filter { $0.required }.map { $0.name }
+        let optional = fields.filter { !$0.required }.map { $0.name }
+        var advice = "Use run_capability with \(capability.id) instead of `\(verb)` for the "
+            + "user's own files — \(capability.title.lowercased()), through an approval the "
+            + "user sees, with the result read back afterwards."
+        if !required.isEmpty {
+            advice += " Required fields: \(required.joined(separator: ", "))."
         }
+        if !optional.isEmpty {
+            advice += " Optional: \(optional.joined(separator: ", "))."
+        }
+        return advice
     }
 
     func tool(named name: String) -> AgentTool? {

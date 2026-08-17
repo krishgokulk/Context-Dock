@@ -119,6 +119,14 @@ struct AICapability {
     /// chats, but they execute through FileManager. Treating "names an app" as "needs an
     /// adapter" hid all sixteen of them from every chat, because Finder ships no adapter.
     var runsWithoutAdapter: Bool = false
+    /// Shell verbs this capability does better, for the user's own files.
+    ///
+    /// `rm` and finder.trash delete the same file; only one of them is recoverable, shows
+    /// the user what is about to go, and reads back whether it went. The shell gate used
+    /// to carry that knowledge as a hardcoded switch of verbs and advice strings, so a new
+    /// capability was not actually preferred until someone remembered to edit the gate.
+    /// The capability declares it here instead, and the gate reads the registry.
+    var supersedesShellVerbs: [String] = []
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 
@@ -162,6 +170,12 @@ final class CapabilityRegistry {
 
     func capability(id: String) -> AICapability? {
         capabilitiesByID[id]
+    }
+
+    /// The capability that should be used instead of a shell verb, if one says so.
+    func capabilitySuperseding(shellVerb verb: String) -> AICapability? {
+        let needle = verb.lowercased()
+        return all.first { $0.supersedesShellVerbs.contains(needle) }
     }
 
     func capabilities(for bundleID: String?) -> [AICapability] {
