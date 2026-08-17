@@ -18,10 +18,19 @@ extension LauncherView {
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue
         else { return }
         finderBrowsePath = path
+        // Everything in the folder, not what the search that found it happened to match.
+        // The query that led here describes the folder, not its contents: "documents" has
+        // no business hiding the rest of a folder the user has just stepped into. The
+        // ghost goes with it, or the field still offers to complete the old search.
         searchState.query = ""
+        l2.appCompletion = nil
         l2.focusedPillIndex = nil
         listViewHoveredIndex = nil
+        // Land on the first row, so the folder can be walked with the arrow keys straight
+        // away instead of needing a Down press to pick anything up.
+        l2.pillNavViaKeyboard = false
         commitFinderDesktopModeSnapshot(query: "", preserveFocus: false)
+        isSearchFieldFocused = true
     }
 
     /// Right-arrow: if the focused Finder-desktop row is a folder, drill into it.
