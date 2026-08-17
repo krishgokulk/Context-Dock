@@ -791,7 +791,9 @@ final class AgentToolRegistry {
             description: "Inject keystrokes into the active TUI app running in the live terminal "
                 + "panel. Use after spawn_worker has launched a TUI app, to navigate its menus or "
                 + "send input. Supports plain text, \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), "
-                + "and \\u{1B}[A/B/C/D for arrow keys.",
+                + "and \\u{1B}[A/B/C/D for arrow keys. This types into a terminal and nothing "
+                + "else: it cannot drive a Mac app, press ⌘-anything, copy from Safari or paste "
+                + "into an editor. For an app's commands use run_menu_command.",
             properties: [
                 "keys": ["type": "string", "description": "The keystroke sequence to inject"],
                 "purpose": ["type": "string", "description": "What action this keystroke performs"],
@@ -804,11 +806,29 @@ final class AgentToolRegistry {
                     output: "send_keys requires 'keys'.",
                     displayCommand: "send_keys(invalid)")
             }
+            // ⌘ means nothing to a program reading a pseudo-terminal — there are no
+            // modifier keys down there, only bytes. Asked to copy a link out of Safari and
+            // paste it into VS Code, the model sent ⌘L, ⌘C and ⌘V here, got three successes
+            // back, and told the user it had done it. The literal characters went into a
+            // terminal, no app was touched, and the receipt said Action ✓ three times.
+            if keys.contains(where: { "⌘⌥⌃⇧".contains($0) }) {
+                return AgentToolResult(
+                    success: false,
+                    output: "send_keys types into the terminal panel, where ⌘ and the other "
+                        + "modifiers do not exist — nothing was sent. This tool cannot drive "
+                        + "a Mac app. Use run_menu_command for an app's own commands, and say "
+                        + "plainly if what was asked needs an app you cannot reach.",
+                    displayCommand: "send_keys(\(keys)) — not a terminal key")
+            }
             let output = await TerminalCommandExecutor.shared.sendKeys(keys)
             // A TUI needs a moment to react before the next call lands.
             try? await Task.sleep(nanoseconds: 300_000_000)
+            // Reported as it happened. Success was unconditional, so "No active terminal —
+            // launch the TUI first" arrived as a green tick, and a turn built on three of
+            // those reads as three completed actions.
+            let reached = !output.hasPrefix("No active terminal")
             return AgentToolResult(
-                success: true, output: output, displayCommand: "send_keys(\(keys))")
+                success: reached, output: output, displayCommand: "send_keys(\(keys))")
         })
 
         // MARK: Capability access
