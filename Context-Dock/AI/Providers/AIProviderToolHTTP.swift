@@ -30,6 +30,14 @@ struct AIProviderAnyCodable: Codable {
 
 struct OpenAIToolResponse: Codable {
     let choices: [Choice]
+    /// Token counts, when the endpoint reports them. Optional because a streamed round and
+    /// several proxies omit the block entirely — a missing count is not an error, it is
+    /// simply nothing to file.
+    var usage: Usage?
+    struct Usage: Codable {
+        let prompt_tokens: Int?
+        let completion_tokens: Int?
+    }
     struct Choice: Codable { let message: Message; let finish_reason: String? }
     struct Message: Codable { let role: String; let content: String?; let tool_calls: [ToolCall]? }
     struct ToolCall: Codable { let id: String; let type: String; let function: FunctionCall }
@@ -59,6 +67,12 @@ struct AnthropicToolResponse: Codable {
 
 struct GeminiToolResponse: Codable {
     let candidates: [Candidate]
+    var usageMetadata: UsageMetadata?
+    struct UsageMetadata: Codable {
+        let promptTokenCount: Int?
+        let candidatesTokenCount: Int?
+        let cachedContentTokenCount: Int?
+    }
     struct Candidate: Codable { let content: Content; let finishReason: String? }
     struct Content: Codable { let parts: [Part]; let role: String? }
     struct Part: Codable { let text: String?; let functionCall: FunctionCall? }
@@ -102,10 +116,11 @@ enum AIProviderToolHTTP {
 
     static func gemini(
         apiKey: String,
-        body: [String: Any]
+        body: [String: Any],
+        model: String = GeminiModelCatalog.defaultModelID
     ) async throws -> GeminiToolResponse {
         try await request(
-            endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            endpoint: GeminiModelCatalog.generateContentEndpoint(model: model),
             headers: ["x-goog-api-key": apiKey],
             body: body,
             timeout: 60,

@@ -1,6 +1,10 @@
 import Foundation
 
 protocol OpenAIToolTransport {
+    /// Which provider a round through this transport should be filed under in the token
+    /// ledger. The loop is shared by five providers, so the response alone cannot say.
+    var ledgerProvider: AIProvider { get }
+
     func send(
         endpoint: String,
         apiKey: String?,
@@ -11,6 +15,8 @@ protocol OpenAIToolTransport {
 }
 
 struct OpenAIToolProviderAdapter: OpenAIToolTransport {
+    var ledgerProvider: AIProvider { .openAI }
+
     func send(
         endpoint: String,
         apiKey: String?,

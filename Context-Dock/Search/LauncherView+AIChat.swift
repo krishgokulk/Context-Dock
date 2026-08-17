@@ -289,68 +289,13 @@ extension LauncherView {
     /// extension is not enabled. Returns "" when not a browser or no data.
     @MainActor
     func browserScopeContextBlock(scopedBundleId: String, query: String? = nil) -> String {
-        let bundle = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
-        guard isContextDockBrowserBundle(bundle) else { return "" }
-
-        var pageTitle = ""
-        var pageURL = ""
-        var pageText = ""
-        var selected = ""
-        var links: [SafariPageLink] = []
-
-        // 1) Safari Web Extension payload — preferred when fresh.
-        if SafariBrowserBridge.shared.isFresh,
-            let ext = SafariBrowserBridge.shared.currentContext() {
-            pageTitle = ext.title
-            pageURL = ext.url
-            pageText = ext.pageTextForAI
-            selected = ext.selectedText
-            links = ext.links
-        }
-
-        // 2) AX snapshot fallback (extension disabled, or other browser).
-        if pageText.isEmpty, let browser = AppDelegate.shared?.previousFrontmostApp {
-            let pid = browser.processIdentifier
-            let liveURL = currentBrowserPageURL()?.absoluteString ?? ""
-            var snap = AXWebReader.shared.cachedSnapshot(for: pid)
-            if (snap?.text.isEmpty != false || snap?.isStale == true), !liveURL.isEmpty {
-                AXWebReader.shared.refresh(pid: pid, currentURL: liveURL)
-                snap = AXWebReader.shared.cachedSnapshot(for: pid)
-            }
-            pageText = snap?.text ?? ""
-            if pageURL.isEmpty { pageURL = (snap?.url.isEmpty == false) ? (snap?.url ?? liveURL) : liveURL }
-            if pageTitle.isEmpty { pageTitle = snap?.title ?? "" }
-        }
-
-        guard !pageText.isEmpty || !pageURL.isEmpty else { return "" }
-        // The extension already removes browser chrome and sends readable page text. Run the
-        // same query-aware Markdown compactor used for documents before this enters a model
-        // context. Re-fetching the URL through MarkItDown would be slower, could see a
-        // different signed-out page, and would discard the user's live selection/state.
-        if !pageText.isEmpty {
-            pageText = MarkItDownService.compact(pageText, for: query, limit: 5_000)
-        }
-        let selectedSection = selected.isEmpty
-            ? "" : "\nSELECTED TEXT:\n\(String(selected.prefix(1500)))"
-        // Where the page can take the user. Page text drops every href, so a download or
-        // docs button reads as an ordinary word — the model then says it cannot find one.
-        let linkSection: String = {
-            guard !links.isEmpty else { return "" }
-            let rows = links.prefix(30).map { "- \($0.text) → \($0.url)" }
-            return """
-
-                PAGE LINKS (action links first, as they appear on the page):
-                \(rows.joined(separator: "\n"))
-                Use these exact URLs when the answer is a page to open — never invent one,                 and never tell the user to hunt for a button that is listed here.
-                """
-        }()
-        return """
-            CURRENT PAGE TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
-            CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedSection)
-            \(pageText.isEmpty
-                ? "PAGE TEXT: (unavailable — could not read the page)"
-                : "PAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))")\(linkSection)
-            """
+        // The block itself is shared with the chat window; only the live URL comes from
+        // here, because the dock reads it from its own context while the browser is behind
+        // the launcher.
+        ScopedGroundingBlocks.browserPage(
+            bundleId: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId,
+            query: query,
+            liveURL: currentBrowserPageURL()?.absoluteString)
     }
 
     /// Identity + integration inventory for the scoped app. ALWAYS injected into
@@ -3116,34 +3061,8 @@ extension LauncherView {
     func appReferenceContextPrompt(
         bundleId: String, appName: String, query: String
     ) async -> String {
-        guard !bundleId.isEmpty else { return "" }
-        let references = await AppReferenceIndex.shared.references(
-            bundleId: bundleId, appName: appName)
-        guard !references.isEmpty else { return "" }
-
-        var lines = ["## \(appName) references"]
-        lines.append(contentsOf: references.map { "- \($0.kind.label): \($0.title) — \($0.url)" })
-
-        // Reading a page costs a network round trip, so only a question that is actually
-        // about the product pays for it — and only for the one page it names.
-        if AppReferenceIndex.looksLikeReferenceQuestion(query),
-            let best = AppReferenceIndex.bestReference(for: query, in: references)
-                ?? references.first(where: { $0.kind == .documentation }),
-            let snapshot = await AppReferenceIndex.shared.pageSnapshot(
-                for: best, bundleId: bundleId, query: query, limit: 4_000)
-        {
-            lines.append("")
-            lines.append("### Current content of \(best.title) (\(best.url))")
-            lines.append(snapshot.text)
-            lines.append("")
-            let age = RelativeDateTimeFormatter().localizedString(
-                for: snapshot.syncedAt, relativeTo: Date())
-            lines.append("Reference freshness: synced \(age) via \(snapshot.converter).")
-            lines.append(
-                "Prefer this cached official text over recalled knowledge, and cite "
-                + "the link when the answer comes from it.")
-        }
-        return lines.joined(separator: "\n")
+        await ScopedGroundingBlocks.reference(
+            bundleId: bundleId, appName: appName, query: query)
     }
 
     /// Live state of the workspace this scope is working in — the project, its branch and
@@ -3152,25 +3071,8 @@ extension LauncherView {
     func appWorkspaceContextPrompt(
         bundleId: String, appName: String, forceRefresh: Bool = false
     ) async -> String {
-        guard !bundleId.isEmpty else { return "" }
-        // The window title of the app being asked about. Reading the shared snapshot only
-        // when it already belongs to that app meant a workspace could never be resolved for
-        // any app that was not frontmost — which is exactly the case in General Chat, where
-        // the launcher is in front.
-        let windowTitle = await MainActor.run {
-            ContextResolver.axContext(for: bundleId, appName: appName).windowTitle
-        }
-        let finderFolder = bundleId == "com.apple.finder"
-            ? AppleAppsAPI.shared.getCurrentFolder() : nil
-        let identity = AppWorkspaceService.identity(
-            bundleId: bundleId,
-            appName: appName,
-            windowTitle: windowTitle,
-            finderFolder: finderFolder
-        )
-        let linkedCLIs = await MainActor.run { self.scopeRunnableCommandBinaries() }
-        return await AppWorkspaceService.shared.contextBlock(
-            for: identity, linkedCLIs: linkedCLIs, forceRefresh: forceRefresh)
+        await ScopedGroundingBlocks.workspace(
+            bundleId: bundleId, appName: appName, forceRefresh: forceRefresh)
     }
 
     /// Decodes typed `terminal_call` JSON lines, strips them from the displayed message,

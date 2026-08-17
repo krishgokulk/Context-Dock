@@ -1079,6 +1079,10 @@ class AppSettings: ObservableObject {
         }
     }
     @AppStorage("selectedOpenAIModel") var selectedOpenAIModel: String = "gpt-4o-mini"
+    /// Gemini's chat model. It used to be baked into the request URL in two places, so the
+    /// one provider in the list with no way to change model was the one whose model was
+    /// hardest to find.
+    @AppStorage("selectedGeminiModel") var selectedGeminiModel: String = "gemini-2.0-flash"
     @AppStorage("selectedAnthropicModel") var selectedAnthropicModel: String =
         AnthropicModelCatalog.defaultModelID
     @AppStorage("ollamaEndpoint") var ollamaEndpoint: String = "http://localhost:11434"

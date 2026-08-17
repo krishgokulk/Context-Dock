@@ -1266,13 +1266,40 @@ extension LauncherView {
                 refreshCompactScopeResults(resetSelection: false)
             }
         }
+        .onReceive(AITokenLedger.shared.$entries) { _ in
+            if searchState.activeSmartQueryKey == "notifications" {
+                refreshCompactScopeResults(resetSelection: false)
+            }
+        }
     }
 
     /// Live per-provider rate-limit rows (from API response headers). Shows a hint
     /// row until the first API-key request populates real numbers.
     func aiUsageScopeRows() -> [SharedResultRowModel] {
         let usage = usageStore.usage
-        guard !usage.isEmpty else {
+        // What today actually cost, in the unit every provider agrees on. These counts were
+        // in each response all along and were thrown away, so the one number that tells a
+        // user a scoped turn re-sends its context per tool round was the one they could not
+        // see. Shown first: it is the answer to "why is this expensive".
+        let ledger = AITokenLedger.shared
+        let tokenRows: [SharedResultRowModel] = ledger.today.prefix(6).map { entry in
+            var parts = [
+                "in \(entry.inputTokens.compactTokenCount)",
+                "out \(entry.outputTokens.compactTokenCount)",
+            ]
+            if entry.cachedInputTokens > 0 {
+                parts.append("cached \(entry.cachedInputTokens.compactTokenCount)")
+            }
+            parts.append("\(entry.requests) request\(entry.requests == 1 ? "" : "s")")
+            return SharedResultRowModel(
+                id: "tokens-\(entry.id)",
+                title: "\(entry.model) — \(entry.totalTokens.compactTokenCount) tokens today",
+                subtitle: parts.joined(separator: " • "),
+                systemIcon: "number.circle"
+            )
+        }
+
+        guard !usage.isEmpty || !tokenRows.isEmpty else {
             return [
                 SharedResultRowModel(
                     id: "usage-empty",
@@ -1283,7 +1310,7 @@ extension LauncherView {
                 )
             ]
         }
-        return usage.map { u in
+        return tokenRows + usage.map { u in
             var parts: [String] = []
             if let remaining = u.remainingRequests {
                 let limit = u.limitRequests.map { "/\($0)" } ?? ""

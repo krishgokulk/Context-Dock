@@ -63,7 +63,9 @@ extension AIProviderService {
         var messages: [[String: Any]] = [
             ["role": "system", "content": contextPrompt + OpenAICompatibleProviderAdapter.hostRuntimeNote]
         ]
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
+        // Budgeted by size, not by a fixed count of turns, and told when something was
+        // left out — see ChatHistoryBudget.
+        for msg in ChatHistoryBudget.fit(history, provider: .openAI) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
         // Vision: when the user attached/captured images, send the first user turn as a
@@ -134,6 +136,14 @@ extension AIProviderService {
                     timeout: timeout,
                     extraHeaders: extraHeaders
                 )
+            }
+            // What the round cost, from the provider's own counters. Streamed rounds report
+            // nothing, and that is filed as nothing rather than as zero.
+            if let usage = decoded.usage {
+                AITokenLedger.shared.record(
+                    provider: transport.ledgerProvider, model: model,
+                    inputTokens: usage.prompt_tokens ?? 0,
+                    outputTokens: usage.completion_tokens ?? 0)
             }
             guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
 
@@ -229,7 +239,7 @@ extension AIProviderService {
         var streamingUnavailable = false
 
         var messages: [[String: Any]] = []
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
+        for msg in ChatHistoryBudget.fit(history, provider: .anthropic) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
         // Vision: attach captured/uploaded images as image blocks before the text so the
@@ -302,6 +312,14 @@ extension AIProviderService {
                     apiKey: apiKey, body: body)
             }
             AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
+            if let usage = decoded.usage {
+                AITokenLedger.shared.record(
+                    provider: .anthropic, model: model,
+                    inputTokens: usage.input_tokens ?? 0,
+                    cachedInputTokens: (usage.cache_read_input_tokens ?? 0)
+                        + (usage.cache_creation_input_tokens ?? 0),
+                    outputTokens: usage.output_tokens ?? 0)
+            }
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
 
@@ -427,7 +445,7 @@ extension AIProviderService {
             ["role": "user",  "parts": [["text": contextPrompt]]],
             ["role": "model", "parts": [["text": "Understood. I'll help with the context provided."]]]
         ]
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
+        for msg in ChatHistoryBudget.fit(history, provider: .googleGemini) {
             let role = msg.role == .assistant ? "model" : "user"
             contents.append(["role": role, "parts": [["text": msg.content]]])
         }
@@ -457,7 +475,17 @@ extension AIProviderService {
                     "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens,
                 ],
             ]
-            let decoded = try await GeminiToolProviderAdapter().send(apiKey: apiKey, body: body)
+            let decoded = try await GeminiToolProviderAdapter().send(
+                apiKey: apiKey, body: body,
+                model: AppSettings.shared.selectedGeminiModel)
+            if let usage = decoded.usageMetadata {
+                AITokenLedger.shared.record(
+                    provider: .googleGemini,
+                    model: AppSettings.shared.selectedGeminiModel,
+                    inputTokens: usage.promptTokenCount ?? 0,
+                    cachedInputTokens: usage.cachedContentTokenCount ?? 0,
+                    outputTokens: usage.candidatesTokenCount ?? 0)
+            }
             guard let candidate = decoded.candidates.first else { throw AIServiceError.emptyResponse("No response") }
 
             let textParts     = candidate.content.parts.filter { $0.text != nil }

@@ -1104,12 +1104,18 @@ struct AIProviderSettingsView: View {
                     apiKey: settings.openAIAPIKey)
             }
         case .googleGemini:
-            apiKeyConfigView(
-                title: "Google Gemini API Key",
-                key: $settings.googleGeminiAPIKey,
-                placeholder: "AIza...",
-                helpURL: "https://makersuite.google.com/app/apikey"
-            )
+            VStack(alignment: .leading, spacing: 12) {
+                apiKeyConfigView(
+                    title: "Google Gemini API Key",
+                    key: $settings.googleGeminiAPIKey,
+                    placeholder: "AIza...",
+                    helpURL: "https://makersuite.google.com/app/apikey"
+                )
+                firstPartyModelPicker(
+                    selection: $settings.selectedGeminiModel,
+                    provider: .googleGemini,
+                    apiKey: settings.googleGeminiAPIKey)
+            }
         case .anthropic:
             VStack(alignment: .leading, spacing: 12) {
                 apiKeyConfigView(
@@ -1364,6 +1370,8 @@ struct AIProviderSettingsView: View {
                     models = try await FirstPartyModelDiscovery.openAI(apiKey: apiKey)
                 case .anthropic:
                     models = try await FirstPartyModelDiscovery.anthropic(apiKey: apiKey)
+                case .googleGemini:
+                    models = try await FirstPartyModelDiscovery.gemini(apiKey: apiKey)
                 default:
                     models = []
                 }

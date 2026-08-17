@@ -145,8 +145,7 @@ private enum AIProviderHTTP {
         history: [ChatMessage]
     ) -> [[String: String]] {
         var messages = [["role": "system", "content": contextPrompt]]
-        messages += history.suffix(10)
-            .filter { $0.role != .system }
+        messages += ChatHistoryBudget.fit(history, provider: .openAI)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         messages.append(["role": "user", "content": message])
         return messages
@@ -230,8 +229,7 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
         var messages: [[String: Any]] = [
             ["role": "system", "content": contextPrompt + Self.hostRuntimeNote]
         ]
-        messages += request.history.suffix(10)
-            .filter { $0.role != .system }
+        messages += ChatHistoryBudget.fit(request.history, provider: .openAICompatible)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         let images = AIProviderHTTP.imageData(for: request.attachments)
         if images.isEmpty {
@@ -294,8 +292,8 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
         contextPrompt: String,
         configuration: AIProviderAdapterConfiguration
     ) async throws -> String {
-        var messages: [[String: Any]] = request.history.suffix(10)
-            .filter { $0.role != .system }
+        var messages: [[String: Any]] = ChatHistoryBudget
+            .fit(request.history, provider: .anthropic)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         let images = AIProviderHTTP.imageData(for: request.attachments)
         if images.isEmpty {
@@ -365,7 +363,7 @@ struct GeminiProviderAdapter: AIProviderAdapter {
             ["role": "user", "parts": [["text": contextPrompt]]],
             ["role": "model", "parts": [["text": "Understood."]]],
         ]
-        for item in request.history.suffix(10).filter({ $0.role != .system }) {
+        for item in ChatHistoryBudget.fit(request.history, provider: .googleGemini) {
             contents.append([
                 "role": item.role == .assistant ? "model" : "user",
                 "parts": [["text": item.content]],
@@ -419,8 +417,7 @@ struct OllamaProviderAdapter: AIProviderAdapter {
             throw AIServiceError.networkError("Invalid Ollama endpoint")
         }
         var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
-        messages += request.history.suffix(10)
-            .filter { $0.role != .system }
+        messages += ChatHistoryBudget.fit(request.history, provider: .ollama)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         var userMessage: [String: Any] = ["role": "user", "content": request.text]
         let images = AIProviderHTTP.imageData(for: request.attachments).map(\.data)
@@ -706,7 +703,14 @@ final class AIProviderRouter {
                 modelID: settings.selectedAnthropicModel.isEmpty
                     ? AnthropicModelCatalog.defaultModelID : settings.selectedAnthropicModel)
         case .googleGemini:
-            return .init(apiKey: key, endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", modelID: "gemini-2.0-flash")
+            // Gemini names the model in the path rather than the body, which is why it was
+            // the one provider whose model could not be chosen.
+            let model = settings.selectedGeminiModel.isEmpty
+                ? GeminiModelCatalog.defaultModelID : settings.selectedGeminiModel
+            return .init(
+                apiKey: key,
+                endpoint: GeminiModelCatalog.generateContentEndpoint(model: model),
+                modelID: model)
         case .ollama:
             return .init(
                 apiKey: "",
