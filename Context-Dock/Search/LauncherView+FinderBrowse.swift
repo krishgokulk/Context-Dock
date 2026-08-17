@@ -31,24 +31,32 @@ extension LauncherView {
     /// state, not in renderedOrderDockPills. Looking only at the latter meant Right
     /// arrow on a folder in a search result found nothing to drill into and fell
     /// through to app-scoping, which is why it appeared to do nothing at all.
+    /// `requireExplicitFocus` is what keeps this from stealing Right arrow: asked early,
+    /// before every other Right-arrow branch, it only acts on a row the user has actually
+    /// arrowed to. The fallback to "the first folder in the list" is offered later, once
+    /// the other branches have declined the key.
     @discardableResult
-    func drillIntoFocusedFinderFolderIfPossible() -> Bool {
+    func drillIntoFocusedFinderFolderIfPossible(requireExplicitFocus: Bool = false) -> Bool {
         guard isFinderDesktopOnlyMode else { return false }
-        guard let url = focusedFinderFolderURL() else { return false }
+        guard let url = focusedFinderFolderURL(requireExplicitFocus: requireExplicitFocus) else {
+            return false
+        }
         browseFinderFolder(path: url.path)
         return true
     }
 
     /// The folder under the focus right now, wherever the focus lives.
-    private func focusedFinderFolderURL() -> URL? {
-        let candidates: [URL?] = [
+    private func focusedFinderFolderURL(requireExplicitFocus: Bool) -> URL? {
+        var candidates: [URL?] = [
             currentFocusedDockPillForQuickLook()?.resolvedURL,
             focusedGlobalGroupedListPill()?.resolvedURL,
             focusedGlobalAppResultForInputPreview()?.filePath.map {
                 URL(fileURLWithPath: $0)
             },
-            firstFinderFolderPill()?.resolvedURL,
         ]
+        if !requireExplicitFocus {
+            candidates.append(firstFinderFolderPill()?.resolvedURL)
+        }
         for case let url? in candidates where isDirectory(url) { return url }
         return nil
     }

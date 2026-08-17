@@ -174,6 +174,19 @@ extension LauncherView {
             // swallowed it and Space did nothing in a file scope.
             if handleSpaceKeyForPreview(event) { return nil }
 
+            // Right arrow on a folder the user has arrowed to enters that folder. Decided
+            // here for the same reason Space is: further down, focusTopGlobalAppResult…
+            // claimed the key and moved the highlight instead, so Right did what Down
+            // does. Only an explicitly focused row counts, so ghost completion and app
+            // scoping keep the key everywhere else.
+            if event.keyCode == 124,
+                self.isFinderDesktopOnlyMode,
+                self.searchInputCursorIsAtEnd(),
+                self.drillIntoFocusedFinderFolderIfPossible(requireExplicitFocus: true)
+            {
+                return nil
+            }
+
             // Backspace on an empty compact scope (Clipboard / Notifications) exits it.
             // Handled here because the field editor swallows Backspace before SwiftUI's
             // .onKeyPress ever sees it.
@@ -867,14 +880,6 @@ extension LauncherView {
                     return nil
                 case 124:  // Right — vertical list: scope the focused app into a pill.
                     //          Horizontal pill row: move focus right / wrap to input.
-                    // A focused folder in Finder desktop mode wins: this monitor runs
-                    // before SwiftUI's own Right-arrow handler, so the drill has to be
-                    // offered here or app-scoping consumes the key first.
-                    if self.isFinderDesktopOnlyMode, self.searchInputCursorIsAtEnd(),
-                        self.drillIntoFocusedFinderFolderIfPossible()
-                    {
-                        return nil
-                    }
                     if self.usesVerticalListDockLayout {
                         guard self.currentGlobalScopedBundleID == nil else { return event }
                         if self.searchInputHasHighlightedText() { return event }
