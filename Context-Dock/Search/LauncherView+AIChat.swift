@@ -3420,6 +3420,42 @@ extension LauncherView {
         l2.loadingStatus = status
     }
 
+    /// Draws a cloud answer as it is written, into a bubble the finished answer replaces.
+    ///
+    /// The dock has streamed Apple Intelligence since it shipped and showed a static
+    /// "Thinking…" for every cloud model — the faster providers looked like the slower ones,
+    /// and a turn running three tools was indistinguishable from a hung one.
+    @MainActor
+    func applyDockStreamEvent(
+        _ event: AIProviderStreamEvent, messageID: UUID, requestID: UUID
+    ) {
+        // A turn the user cancelled, or one that has already been answered, must not have
+        // text appearing under it.
+        guard l2.activeRequestID == requestID, l2.isLoading else { return }
+        switch event {
+        case .text(let fragment):
+            guard !fragment.isEmpty else { return }
+            if let index = l2.chatMessages.firstIndex(where: { $0.id == messageID }) {
+                l2.chatMessages[index] = AIChatMessage(
+                    id: messageID, role: .assistant,
+                    content: l2.chatMessages[index].content + fragment)
+            } else {
+                l2.chatMessages.append(
+                    AIChatMessage(id: messageID, role: .assistant, content: fragment))
+            }
+        case .toolCallStarted:
+            // Narration on the way to a tool call. The answer is written in the round after
+            // the tool returns, so this text is not a draft of it — leaving it on screen
+            // puts a stray half-sentence above the real reply.
+            clearDockStreamMessage(messageID)
+        }
+    }
+
+    @MainActor
+    func clearDockStreamMessage(_ messageID: UUID) {
+        l2.chatMessages.removeAll { $0.id == messageID }
+    }
+
     /// The CLI tool a `cli://` scope is bound to, or nil outside such a scope.
     /// The bundle ID whose scope a linked CLI belongs to right now — the chat's own app,
     /// else the active app scope. Empty in Global Chat, where links are not scoped.
@@ -3500,46 +3536,6 @@ extension LauncherView {
 
     func cliScopeToolCommand(for bundleID: String) -> String? {
         ScopedAppPromptBuilder.cliCommand(forScopeBundleID: bundleID)
-    }
-
-    /// Narrates each step of a CLI tool scope from the command about to run, so the
-    /// session reads like an agent working ("Reading mole --help…", "Running mole scan…")
-    /// instead of one generic "Running linked CLI…" for every step. Derived from the real
-    /// command string, so it can never claim work that isn't happening.
-    func cliAgentStatus(for command: String, tool: String?) -> String {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shortened = trimmed.count > 60 ? String(trimmed.prefix(60)) + "…" : trimmed
-        guard let tool, !tool.isEmpty else { return "Running \(shortened)…" }
-        let lower = trimmed.lowercased()
-        if lower.contains("--help") || lower.hasSuffix(" -h") || lower.hasSuffix(" help") {
-            return "Reading \(tool) --help…"
-        }
-        if lower.contains("--version") || lower.hasSuffix(" -v") {
-            return "Checking the \(tool) version…"
-        }
-        if lower.hasPrefix("which ") || lower.hasPrefix("command -v ") {
-            return "Locating \(tool)…"
-        }
-        guard lower.hasPrefix(tool.lowercased()) else { return "Running \(shortened)…" }
-        let rest = trimmed.dropFirst(tool.count).trimmingCharacters(in: .whitespaces)
-        let subcommand = rest.split(separator: " ").first.map(String.init) ?? ""
-        if subcommand.isEmpty || subcommand.hasPrefix("-") {
-            return "Running \(tool)…"
-        }
-        return "Running \(tool) \(subcommand)…"
-    }
-
-    /// CLI scopes are an executable boundary, not a general shell.  The cloud and
-    /// on-device agents both ultimately arrive at this executor, so enforce the boundary
-    /// here as well as in the prompt.  This makes a stale package association unable to run
-    /// a different command from inside `cli://mole`.
-    func command(_ command: String, targetsScopedCLITool tool: String) -> Bool {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let first = trimmed.split(whereSeparator: \.isWhitespace).first else { return false }
-        let executable = String(first).trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-        guard !executable.isEmpty else { return false }
-        return executable.caseInsensitiveCompare(tool) == .orderedSame
-            || URL(fileURLWithPath: executable).lastPathComponent.caseInsensitiveCompare(tool) == .orderedSame
     }
 
     func isCancellationError(_ error: Error) -> Bool {
@@ -5306,251 +5302,57 @@ extension LauncherView {
                     await MainActor.run {
                         self.dockTraceStep("Complexity: \(complexityRoute.rawValue)")
                     }
-                    // Collects MCP tools the model invokes via the tool loop, for the chip.
-                    let mcpRan = MCPRunCollector()
                     // In a CLI tool scope every status names the tool and the step, so the
                     // user can follow the agent: help probe → chosen subcommand → result.
                     let cliTool = self.cliScopeToolCommand(for: scopedBundleId)
-                    let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
-                        command, purpose, modelRequiresApproval in
-                        // Run an installed adapter action (New Board, Zoom, Delete, deep link,
-                        // shortcut, script) directly — this is the native route the model is told
-                        // to prefer over terminal. AppAdapterManager.execute shows its own approval
-                        // panel for actions flagged requiresApproval/isDestructive.
-                        // Click a verified app menu item (Minimize, New Tab, Export…) — the
-                        // universal control surface. Works for any app even with zero linked
-                        // adapters, so the chat DOES the task instead of narrating a shortcut.
-                        if let invocation = AITypedInvocationResolver.invocation(from: command),
-                           invocation.kind == .menuAction {
-                            let path = (invocation.arguments["path"] ?? "")
-                                .components(separatedBy: "\u{1F}")
-                                .filter { !$0.isEmpty }
-                            let bundle = (invocation.arguments["bundleId"].flatMap {
-                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
-                            guard !path.isEmpty else {
-                                return (false, "No menu path given.", -1)
-                            }
-                            await self.setL2LoadingStatus(
-                                "Running \(path.joined(separator: " ▸ "))…", requestID: l2RequestID)
-                            let (ok, out) = await AppAdapterManager.shared.runMenuPath(
-                                path, targetBundleId: bundle,
-                                appName: scopedAppName.isEmpty
-                                    ? (frontmostName ?? frontmost.name) : scopedAppName)
-                            return (ok, out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out, ok ? 0 : -1)
-                        }
-                        if let invocation = AITypedInvocationResolver.invocation(from: command),
-                           invocation.kind == .adapterAction {
-                            let actionId = invocation.arguments["actionId"] ?? ""
-                            let bundle = (invocation.arguments["bundleId"].flatMap {
-                                $0.isEmpty ? nil : $0 }) ?? scopedBundleId
-                            guard let adapter = AppAdapterManager.shared.adapter(for: bundle),
-                                let action = adapter.actions.first(where: { $0.id == actionId })
-                            else {
-                                return (false, "No adapter action '\(actionId)' is installed for this app.", -1)
-                            }
-                            await self.setL2LoadingStatus(
-                                "Running \(action.name)…", requestID: l2RequestID)
-                            let ctx = self.sanitizedAXContextForScope(
-                                self.axContext, scopedBundleId: bundle)
-                            let (ok, out) = await AppAdapterManager.shared.execute(
-                                action, context: ctx, targetBundleId: bundle,
-                                query: invocation.arguments["query"] ?? purpose)
-                            return (ok, out.isEmpty ? "Ran \(action.name)" : out, ok ? 0 : -1)
-                        }
-                        // The model often wraps an mcp_call inside a TERMINAL_COMMAND tag — route
-                        // it to the MCP server instead of running it as a shell command (which
-                        // would open Safari / do the wrong thing).
-                        if let invocation = AITypedInvocationResolver.invocation(from: command),
-                           invocation.kind == .mcp {
-                            var scopedArguments = invocation.arguments
-                            if (scopedArguments["bundleId"] ?? "").isEmpty {
-                                scopedArguments["bundleId"] = scopedBundleId
-                            }
-                            let scopedInvocation = AITypedInvocation(
-                                kind: invocation.kind,
-                                capabilityID: invocation.capabilityID,
-                                arguments: scopedArguments,
-                                requiresApproval: invocation.requiresApproval
-                            )
-                            do {
-                                try CapabilityAuthorizationGate.validateInvocation(
-                                    scopedInvocation,
-                                    scope: .contextDock(
-                                        bundleID: scopedBundleId,
-                                        appName: scopedAppName.isEmpty
-                                            ? (frontmostName ?? frontmost.name) : scopedAppName)
-                                )
-                            } catch {
-                                return (false, error.localizedDescription, -1)
-                            }
-                            guard MCPToolSafety.isClearlyReadOnly(name: invocation.capabilityID) else {
-                                return (
-                                    false,
-                                    "MCP tool \(invocation.capabilityID) is write/unknown risk and requires an approved app capability route.",
-                                    -1
-                                )
-                            }
-                            let call = self.parseMCPCall(from: command) ?? (
-                                server: scopedArguments["server"] ?? "",
-                                tool: invocation.capabilityID,
-                                arguments: self.decodeMCPArguments(from: scopedInvocation)
-                            )
-                            await self.setL2LoadingStatus(
-                                "Using MCP tool \(call.tool)…", requestID: l2RequestID)
-                            let result = (try? await MCPRuntime.shared.callProviderReadOnlyTool(
-                                bundleId: scopedBundleId, server: call.server, tool: call.tool,
-                                arguments: call.arguments)) ?? "MCP tool failed"
-                            await mcpRan.add(
-                                "\(call.tool) via \(call.server.isEmpty ? "MCP" : call.server)")
-                            return (true, result, 0)
-                        }
-                        await self.setL2LoadingStatus(
-                            cliTool == nil
-                                ? "Running linked CLI…"
-                                : self.cliAgentStatus(for: command, tool: cliTool),
-                            requestID: l2RequestID)
-                        if let cliTool, !self.command(command, targetsScopedCLITool: cliTool) {
-                            return (
-                                false,
-                                "This chat is scoped to \(cliTool). Commands for other executables are not allowed in this scope.",
-                                -1
-                            )
-                        }
-                        // NOTE: a blanket veto used to live here. It refused run_command
-                        // whenever the scoped app had ANY non-shell adapter action, and
-                        // returned "use that route instead" without naming one — because it
-                        // did not know one. It only knew that *something* existed.
-                        //
-                        // With VS Code scoped that meant ~40 auto-scraped menu items vetoed
-                        // every terminal command, so "what is the recent commit I did?" was
-                        // refused even though no menu item can show a git log and
-                        // run_command was the only tool that could answer.
-                        //
-                        // Preferring native routes is good guidance and it stays in the
-                        // system prompt, where the model can weigh it against the actual
-                        // question. It is not a rule the executor can enforce, because the
-                        // executor sees a command string and cannot know whether some other
-                        // capability would have answered. Offering a tool and then refusing
-                        // the model's use of it is not a safety boundary — it is a guess,
-                        // and this one was wrong more often than it was right.
-                        //
-                        // Real boundaries remain: the CLI-scope check above, the argv gate,
-                        // the classifier, and the approval sheet.
-                        return await TerminalCommandExecutor.shared.run(
-                            command, purpose: purpose,
-                            modelRequiresApproval: modelRequiresApproval,
-                            // Same thread the general chat window shows for this scope, so
-                            // its console holds what the dock ran, not only what the window
-                            // ran. One record of the work, two views of it.
-                            consoleScope: GeneralChatScope(dockBundleId: scopedBundleId))
-                    }
-                    let toolQuery = activeContextPrompt.isEmpty
-                        ? query
-                        : "\(activeContextPrompt)\n\nUser request: \(query)"
-                    await self.setL2LoadingStatus(
-                        cliTool.map { "Working out the right \($0) command…" }
-                            ?? "Choosing the best available capability…",
-                        requestID: l2RequestID)
-                    // `executed` was discarded here. That is the record of what actually ran,
-                    // and without it the app had no way to notice the model reporting work it
-                    // never did — "minimize" answered "The window has been minimized" with no
-                    // tool call and no audit entry.
-                    var (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(
-                        toolQuery,
-                        context: scopedConversationContext,
+                    // The bubble the answer is written into while it is being written. The
+                    // finished message replaces it, so nothing is shown twice.
+                    let streamMessageID = UUID()
+                    // The execution stage is shared with the chat window: the same executor
+                    // (menu commands, adapter actions, MCP, the CLI boundary, then the shell),
+                    // the same round budget, and the same checks on what the answer claims to
+                    // have done. This was ~200 lines of the dock's own copy, and the copy is
+                    // why the two surfaces behaved differently for the same question.
+                    let outcome = try await ScopedTurnRunner.run(
+                        query: query,
+                        systemPrompt: activeContextPrompt,
+                        scope: .init(
+                            chatScope: GeneralChatScope(dockBundleId: scopedBundleId),
+                            bundleId: scopedBundleId,
+                            appName: scopedAppName.isEmpty
+                                ? (frontmostName ?? frontmost.name) : scopedAppName,
+                            cliTool: cliTool,
+                            userContext: scopedConversationContext),
                         provider: provider,
                         apiKey: apiKey,
-                        conversationHistory: chatHistory,
-                        commandExecutor: commandExecutor,
-                        maxIterations: complexityRoute.maxToolIterations,
-                        additionalSystemPrompt: [activeContextPrompt, complexityRoute.instruction]
-                            .filter { !$0.isEmpty }.joined(separator: "\n\n"),
-                        imageAttachments: scopedImageAttachments
-                    )
+                        history: chatHistory,
+                        imageAttachments: scopedImageAttachments,
+                        onStream: { event in
+                            Task { @MainActor in
+                                self.applyDockStreamEvent(
+                                    event, messageID: streamMessageID, requestID: l2RequestID)
+                            }
+                        },
+                        onStatus: { status in
+                            Task { @MainActor in
+                                self.setL2LoadingStatus(status, requestID: l2RequestID)
+                            }
+                        })
+                    // Whatever was streamed has served its purpose: everything below can
+                    // still change the answer — a recovered tool call, an independent review
+                    // — and the message that lands is the one that counts.
+                    await MainActor.run { self.clearDockStreamMessage(streamMessageID) }
+                    var finalResponse = outcome.text
+                    var executed = outcome.executed
                     if Task.isCancelled {
                         await MainActor.run { finishL2AIRequest(l2RequestID) }
                         return
                     }
 
-                    if AgentAnswerVerifier.claimsUnperformedWork(
-                        answer: finalResponse, executed: executed) {
-                        await self.setL2LoadingStatus(
-                            "Checking that actually happened…", requestID: l2RequestID)
-                        let correction = AgentAnswerVerifier.correctionPrompt(
-                            originalQuery: query, answer: finalResponse, executed: executed)
-                        if let (corrected, correctionExecuted) = try? await AIProviderService.shared
-                            .sendWithTools(
-                                correction,
-                                context: scopedConversationContext,
-                                provider: provider,
-                                apiKey: apiKey,
-                                conversationHistory: chatHistory,
-                                commandExecutor: commandExecutor,
-                                additionalSystemPrompt: activeContextPrompt.isEmpty
-                                    ? nil : activeContextPrompt
-                            ) {
-                            finalResponse = corrected
-                            executed += correctionExecuted
-                        }
-                    }
-                    if AgentAnswerVerifier.claimsUnverifiedWork(
-                        answer: finalResponse, executed: executed)
-                    {
-                        await self.setL2LoadingStatus(
-                            "Verifying the result…", requestID: l2RequestID)
-                        let verification = AgentAnswerVerifier.verificationPrompt(
-                            originalQuery: query, answer: finalResponse)
-                        if let (verified, verificationExecuted) = try? await AIProviderService.shared
-                            .sendWithTools(
-                                verification,
-                                context: scopedConversationContext,
-                                provider: provider,
-                                apiKey: apiKey,
-                                conversationHistory: chatHistory,
-                                commandExecutor: commandExecutor,
-                                additionalSystemPrompt: activeContextPrompt.isEmpty
-                                    ? nil : activeContextPrompt
-                            ) {
-                            finalResponse = verified
-                            executed += verificationExecuted
-                        }
-                    }
-                    if AgentAnswerVerifier.explicitVerificationIsMissingOrMismatched(
-                        query: query, executed: executed)
-                    {
-                        await self.setL2LoadingStatus(
-                            "Checking the requested criterion…", requestID: l2RequestID)
-                        if let verification = await AgentAnswerVerifier.executeRequiredVerification(
-                            query: query, commandExecutor: commandExecutor
-                        ) {
-                            finalResponse = verification.answer
-                            executed.append(verification.receipt)
-                        }
-                    }
-                    if AgentAnswerVerifier.explicitExecutionIsMissing(
-                        query: query, executed: executed)
-                    {
-                        await self.setL2LoadingStatus(
-                            "Running the requested command…", requestID: l2RequestID)
-                        if let repair = await AgentAnswerVerifier.executeMissingExplicitContract(
-                            query: query, executed: executed, commandExecutor: commandExecutor
-                        ) {
-                            finalResponse = repair.answer
-                            executed += repair.additions
-                        }
-                    }
+                    // Run inside the shared turn, alongside the checks it belongs with.
+                    let subjectiveEvaluation = outcome.subjectiveEvaluation
 
-                    await self.setL2LoadingStatus(
-                        "Reviewing result independently…", requestID: l2RequestID)
-                    let subjectiveEvaluation = await FreshResultEvaluator.evaluate(
-                        request: query,
-                        result: finalResponse,
-                        evidence: executed,
-                        provider: provider,
-                        apiKey: apiKey
-                    )
-
-                    var toolsRan = memoryToolChips + (await mcpRan.tools)
+                    var toolsRan = memoryToolChips + outcome.mcpToolsRan
                         + executed.map(\.command)
                     await self.setL2LoadingStatus(
                         cliTool.map { "Reading the \($0) output…" } ?? "Checking the result…",
@@ -6022,10 +5824,6 @@ extension LauncherView {
     }
 
     /// Thread-safe accumulator for MCP tool labels invoked inside the cloud tool loop.
-    actor MCPRunCollector {
-        private(set) var tools: [String] = []
-        func add(_ label: String) { tools.append(label) }
-    }
 
     /// If the model's reply is an MCP tool-call directive, run the tool — then let the model
     /// chain further tool calls (keeping the MCP block in context) until it answers in plain

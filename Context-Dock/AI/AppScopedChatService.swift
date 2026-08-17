@@ -42,6 +42,10 @@ enum AppScopedChatService {
         /// Typed proof of what ran and what was freshly read back. The Console keeps the
         /// complete log; these receipts make the important outcome visible in the message.
         var evidenceReceipts: [EvidenceReceipt] = []
+        /// A second model's read of whether the answer satisfies the request, on the
+        /// subjective work where that is a real question. The dock has shown this since it
+        /// was written; the window had no way to receive it.
+        var subjectiveEvaluation: SubjectiveEvaluation? = nil
     }
 
     /// Paths an answer mentions, kept only when they are real.
@@ -73,15 +77,25 @@ enum AppScopedChatService {
 
     /// Routes offered for the last question, by choice id, so a pick can be executed
     /// without re-resolving (and without the resolution having drifted in between).
-    private(set) static var pendingRoutes: [String: ChatRoute] = [:]
+    ///
+    /// Kept per thread. As one flat dictionary it was shared by every open conversation:
+    /// asking a question in one thread overwrote the choices another thread was still
+    /// showing, so tapping a button in the older thread ran the newer thread's route —
+    /// against a different app, with the older thread's question as its purpose.
+    private static var pendingRoutesByScope: [String: [String: ChatRoute]] = [:]
+
+    private static func rememberPendingRoutes(_ routes: [ChatRoute], scope: GeneralChatScope) {
+        pendingRoutesByScope[scope.storageKey] = Dictionary(
+            uniqueKeysWithValues: routes.map { ($0.id, $0) })
+    }
 
     /// Runs a route the user picked, then has the model phrase the result. The output is
     /// returned verbatim as well, because a receipt the user can read beats a summary they
     /// have to trust.
     static func runChosenRoute(
-        _ choiceID: String, query: String, history: [ChatMessage]
+        _ choiceID: String, query: String, history: [ChatMessage], scope: GeneralChatScope
     ) async -> Answer {
-        guard let route = pendingRoutes[choiceID] else {
+        guard let route = pendingRoutesByScope[scope.storageKey]?[choiceID] else {
             return Answer(text: "That route is no longer available.", toolChips: [])
         }
         ChatRoutePreferenceStore.remember(
@@ -518,7 +532,19 @@ enum AppScopedChatService {
         finderSelection: [URL] = [],
         /// A skill the user chose for this request. Present means the route decision is
         /// already made, so the picker is skipped rather than asked again.
-        skillOverride: String? = nil
+        skillOverride: String? = nil,
+        /// Called while the provider writes, when it supports streaming.
+        ///
+        /// Text arriving before a `toolCallStarted` is narration the model wrote on its way
+        /// to using a tool; the answer that replaces it comes from the round *after* the
+        /// tools ran. A surface showing these should clear what it has drawn when a tool
+        /// call starts, or the finished answer will appear underneath a sentence that was
+        /// only ever the model thinking out loud.
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        /// What the turn is doing right now, in words a person can read: "Running mole
+        /// scan…", "Verifying the result…". A surface with a status line shows these; one
+        /// without passes nil and loses nothing.
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> Answer {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -665,8 +691,7 @@ enum AppScopedChatService {
             let routes = await ChatRouteResolver.routes(
                 for: query, bundleId: bundleId, appName: routingAppName)
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
-                pendingRoutes = Dictionary(
-                    uniqueKeysWithValues: routes.map { ($0.id, $0) })
+                rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")
                 return Answer(
                     text:
@@ -701,7 +726,7 @@ enum AppScopedChatService {
             if ChatRouteResolver.shouldAsk(
                 routes: routes, bundleId: "cli://\(command)", query: query)
             {
-                pendingRoutes = Dictionary(uniqueKeysWithValues: routes.map { ($0.id, $0) })
+                rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which invocation (\(routes.count, privacy: .public))")
                 return Answer(
                     text: "There's more than one \(command) command for that. Which should I run?",
@@ -717,7 +742,15 @@ enum AppScopedChatService {
             }
         }
 
-        var sections: [String] = [dateTimeBlock(), UntrustedContent.rule]
+        // Which source this question should be answered from — live state, the app's own
+        // documentation, what DoraX has durably learned, or the conversation itself. The
+        // dock has decided this per question since it was written; the window asked every
+        // question the same way and let the model pick, which is how a "what changed just
+        // now" question got answered from a note written last week.
+        let sourceDecision = AgentSourceAuthority.decide(query: query)
+        var sections: [String] = [
+            sourceDecision.promptRule, dateTimeBlock(), UntrustedContent.rule,
+        ]
         var context: UserContext = .none
         /// The machine as it was before this turn ran anything, kept so a tool's claim can
         /// be checked against what actually changed.
@@ -888,6 +921,23 @@ enum AppScopedChatService {
         }
         if !hubBlock.isEmpty { sections.append(hubBlock) }
 
+        // What DoraX has durably learned — saved notes, prior findings, the user's own
+        // written knowledge for this app. Withheld when the question is about live state,
+        // because remembered facts are exactly what must not stand in for a fresh reading.
+        var memoryChips: [String] = []
+        if sourceDecision.allowsMemoryEvidence {
+            let memoryBundleID: String? = {
+                if case .app(let bundleId) = scope { return bundleId }
+                if scope.folderURL != nil { return ChatAppDirectory.finderBundleID }
+                return nil
+            }()
+            let memory = MarkdownMemoryStore.shared.contextBlock(
+                query: query, appBundleID: memoryBundleID)
+            if !memory.isEmpty { sections.append(memory) }
+            memoryChips = MarkdownMemoryStore.shared.relevantSourceChips(
+                query: query, appBundleID: memoryBundleID)
+        }
+
         let systemPrompt = sections.joined(separator: "\n\n")
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
@@ -912,51 +962,34 @@ enum AppScopedChatService {
                 toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
         }
 
-        let executor: (String, String, Bool) async -> (Bool, String, Int32) = {
-            command, purpose, needsApproval in
-            // A tool that draws its own screen cannot be run with its output captured:
-            // with no tty it hangs or emits escape codes, which is how a working
-            // terminal-browser became a two-and-a-half minute timeout. Those go to the
-            // thread's own terminal, where they have somewhere to draw.
-            let binary = command.split(separator: " ").first.map(String.init) ?? ""
-            if await MainActor.run(body: { ChatThreadTerminalManager.needsTerminal(command: binary) }) {
-                await MainActor.run {
-                    ChatThreadTerminalManager.shared.run(command, scope: scope)
-                    ChatConsoleLog.shared.append(
-                        .command, title: command,
-                        output: "Sent to this thread's terminal — the tool draws its own screen.",
-                        success: true, scope: scope)
-                    GeneralChatWindowChromeState.shared.showSidePanel()
-                }
-                // Handed off to the visible terminal, which draws its own screen. Nothing
-                // was captured here, so report exit 0: the hand-off itself succeeded.
-                return (true, "Sent to the terminal panel; it renders there.", 0)
-            }
-            // The row is opened before the command runs and closed when it returns — that is
-            // what tells the user a slow tool is working rather than dead. Done inside the
-            // executor rather than here, so the dock's commands land on the same record.
-            return await TerminalCommandExecutor.shared.run(
-                command, purpose: purpose, modelRequiresApproval: needsApproval,
-                consoleScope: scope)
-        }
-
         // Selected images are shown, not just named. "Explain these files" on two JPGs is a
         // question about what they depict, and neither OCR nor a file listing can answer it
         // — the provider has to actually see them. Non-image selections are left alone;
         // they are read on demand by the file tools.
         let visionAttachments = attachments + selectedImages(in: finderSelection)
-        log.notice("stage: provider sendWithTools")
-        var (text, executed) = try await AIProviderService.shared.sendWithTools(
-            query,
-            context: context,
+        log.notice("stage: provider turn")
+        // The execution stage is shared with the dock: same executor, same round budget,
+        // same checks on what the answer claims. Only the prompt above is this surface's own.
+        let outcome = try await ScopedTurnRunner.run(
+            query: query,
+            systemPrompt: systemPrompt,
+            scope: .init(
+                chatScope: scope,
+                bundleId: routingBundleId ?? "",
+                appName: appName,
+                cliTool: {
+                    if case .cli(let command) = scope { return command }
+                    return nil
+                }(),
+                userContext: context),
             provider: provider,
             apiKey: apiKey,
-            conversationHistory: history,
-            commandExecutor: executor,
-            additionalSystemPrompt: systemPrompt,
+            history: history,
             imageAttachments: visionAttachments,
-            chatScope: scope
-        )
+            onStream: onStream,
+            onStatus: onStatus)
+        var text = outcome.text
+        var executed = outcome.executed
         log.notice("stage: answer received (\(text.count, privacy: .public) chars, \(executed.count, privacy: .public) commands)")
 
         // Verification for the tool loop. Anything that was not clearly read-only gets the
@@ -1133,9 +1166,11 @@ enum AppScopedChatService {
                 scope: scope)
         }
 
-        var chips = executed.map(\.command)
+        var chips = memoryChips + outcome.mcpToolsRan + executed.map(\.command)
         if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }
-        return Answer(text: text, toolChips: chips)
+        return Answer(
+            text: text, toolChips: chips,
+            subjectiveEvaluation: outcome.subjectiveEvaluation)
     }
 }
 

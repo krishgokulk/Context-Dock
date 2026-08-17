@@ -241,6 +241,58 @@ final class GeneralChatWindowModel: ObservableObject {
         }
     }
 
+    // MARK: - Streaming
+
+    /// The bubble the provider is writing into, when one is on screen.
+    ///
+    /// A turn used to show "Thinking…" for its whole length — twenty seconds of nothing on a
+    /// scoped question that runs two tools, with no way to tell a working turn from a stuck
+    /// one. The text now lands as it is written, in a real message that the finished answer
+    /// replaces.
+    private var streamingMessageID: UUID?
+    private var streamingScopeKey: String?
+
+    /// Applies one streaming event to the visible thread.
+    ///
+    /// Only the visible thread: a partial answer written into a thread nobody is looking at
+    /// would be replaced by the final one anyway, and would have to be unpicked if the user
+    /// switched to it mid-turn.
+    func receiveStream(_ event: AIProviderStreamEvent, scope: GeneralChatScope) {
+        guard scope == activeScope, sendingScopeKeys.contains(scope.storageKey) else { return }
+        switch event {
+        case .text(let fragment):
+            guard !fragment.isEmpty else { return }
+            if let id = streamingMessageID,
+                streamingScopeKey == scope.storageKey,
+                let index = messages.firstIndex(where: { $0.id == id })
+            {
+                messages[index] = AIChatMessage(
+                    id: id, role: .assistant, content: messages[index].content + fragment)
+            } else {
+                let message = AIChatMessage(role: .assistant, content: fragment)
+                streamingMessageID = message.id
+                streamingScopeKey = scope.storageKey
+                messages.append(message)
+            }
+
+        case .toolCallStarted:
+            // Everything written so far was the model narrating its way towards a tool. The
+            // answer comes from the round after the tool returns, so this text is not a
+            // draft of it — leaving it on screen would put a stray half-sentence above the
+            // real reply.
+            clearStreamingMessage()
+        }
+    }
+
+    /// Drops the in-flight bubble. Called when a tool interrupts the writing and again
+    /// before the finished answer is filed, so the two never appear at once.
+    private func clearStreamingMessage() {
+        guard let id = streamingMessageID else { return }
+        messages.removeAll { $0.id == id }
+        streamingMessageID = nil
+        streamingScopeKey = nil
+    }
+
     /// Files an answer, carrying whatever it came with: the enable button, the route
     /// choices, the console receipt.
     private func apply(
@@ -264,6 +316,7 @@ final class GeneralChatWindowModel: ObservableObject {
                 recentFiles: named.map { RecentFileAction(url: $0) },
                 mcpToolsRan: answer.toolChips,
                 evidenceReceipts: answer.evidenceReceipts,
+                subjectiveEvaluation: answer.subjectiveEvaluation,
                 enableAppRequest: answer.enableApp,
                 actionChoices: answer.routeChoices),
             to: scope, title: title)
@@ -288,7 +341,7 @@ final class GeneralChatWindowModel: ObservableObject {
         sendingScopeKeys.insert(key)
         sendTasks[key] = Task { [weak self] in
             let answer = await AppScopedChatService.runChosenRoute(
-                choice.id, query: question, history: history)
+                choice.id, query: question, history: history, scope: scope)
             await MainActor.run { self?.apply(answer, to: scope, title: title) }
         }
     }
@@ -729,7 +782,12 @@ final class GeneralChatWindowModel: ObservableObject {
                     history: history,
                     attachments: sentAttachments,
                     extraAppNames: extraApps,
-                    finderSelection: selection)
+                    finderSelection: selection,
+                    onStream: { event in
+                        Task { @MainActor [weak self] in
+                            self?.receiveStream(event, scope: sendScope)
+                        }
+                    })
                 guard !Task.isCancelled else {
                     await MainActor.run { self?.finishSending(sendKey) }
                     return
@@ -781,6 +839,9 @@ final class GeneralChatWindowModel: ObservableObject {
         // The watchdog and the real answer can both arrive; whichever is first ends the
         // turn, and the loser is dropped rather than appended twice.
         guard sendingScopeKeys.contains(scope.storageKey) else { return }
+        // The finished answer supersedes whatever was streamed into the bubble, including a
+        // partial one left behind by a turn that failed or timed out.
+        clearStreamingMessage()
         sendingScopeKeys.remove(scope.storageKey)
         settleConsole(scope)
         // Anything the answer built becomes a file, which the panel already knows how to
