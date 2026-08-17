@@ -2719,6 +2719,7 @@ extension LauncherView {
                                             frontmost.bundleID == "com.apple.finder"
                                             || l2.targetApp?.bundleId == "com.apple.finder"
                                         if finderContext {
+                                            pinBrowsedFinderFolderButton
                                             openFinderFolderInChatWindowButton
                                         } else if l2.targetApp == nil, !frontmost.bundleID.isEmpty,
                                             frontmost.bundleID != Bundle.main.bundleIdentifier

@@ -174,6 +174,18 @@ extension LauncherView {
             // swallowed it and Space did nothing in a file scope.
             if handleSpaceKeyForPreview(event) { return nil }
 
+            // Backspace on an empty field leaves the folder — the mirror of Right arrow,
+            // and settled here for the same reason: further down, the compact-scope and
+            // selection-scope branches read the same key.
+            if event.keyCode == 51,
+                self.isBrowsingFinderFolder,
+                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+            {
+                self.popFinderBrowseLevel()
+                return nil
+            }
+
             // Right arrow on a folder the user has arrowed to enters that folder. Decided
             // here for the same reason Space is: further down, focusTopGlobalAppResult…
             // claimed the key and moved the highlight instead, so Right did what Down

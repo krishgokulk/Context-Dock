@@ -3591,7 +3591,12 @@ extension LauncherView {
 
         let hints: String
         if bundleId == "com.apple.finder" || lowerName == "finder" {
-            if !attachedFinderFolderSearchPath.isEmpty {
+            if let browsing = finderBrowsePath {
+                // Inside a folder the field filters that folder, so it should say which
+                // one rather than advertising the whole-machine search it no longer does.
+                let name = (browsing as NSString).lastPathComponent
+                hints = "search in \(name.isEmpty ? "this folder" : name)"
+            } else if !attachedFinderFolderSearchPath.isEmpty {
                 hints = "search this folder, open files, menu cmds"
             } else if isFinderDesktopOnlyMode {
                 // No Finder window — desktop file search over the user's folders.

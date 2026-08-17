@@ -947,6 +947,28 @@ extension LauncherView {
                 : "Add \(folderName) as AI context — all queries will be scoped to this folder")
     }
 
+    /// Pins the folder being browsed into its own window — the same preview surface
+    /// Space opens, kept open. The dock is a place you pass through; a folder you are
+    /// working out of should be able to stay on screen after it closes.
+    @ViewBuilder
+    var pinBrowsedFinderFolderButton: some View {
+        if let path = finderBrowsePath {
+            let name = (path as NSString).lastPathComponent
+            Button {
+                guard let item = PreviewItem.file(path: path) else { return }
+                PreviewController.shared.presentDetached(items: [item], focus: 0)
+            } label: {
+                Image(systemName: "pin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.70))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.07), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Pin \(name.isEmpty ? "this folder" : name) in its own window")
+        }
+    }
+
     /// Opens a persistent AI thread for the folder Finder is showing. In Finder's
     /// desktop-only mode, Desktop itself is the scope. The general chat window owns this
     /// conversation so folder history, file tools, and the right-side preview stay together.
