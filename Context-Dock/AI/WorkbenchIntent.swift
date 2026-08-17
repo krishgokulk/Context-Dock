@@ -18,6 +18,7 @@
 // exists; there is no Workflow mode, because the work is a runtime layer under the
 // surfaces rather than another place to be.
 
+import AppKit
 import Foundation
 import OSLog
 
@@ -36,6 +37,10 @@ enum WorkbenchIntent {
         /// DoraX is holding evidence of it. Goes to the coding agent with that evidence
         /// attached rather than to the chat's own model, which cannot see any of it.
         case report(observation: String)
+        /// "teach yourself to convert this to markdown" — write an action for something
+        /// nothing here can do, and keep it. Asked for explicitly, because authoring a
+        /// script on the user's machine is not something to infer from a failed request.
+        case teach(request: String)
     }
 
     /// The last plan that ran to completion, so "save that" has a referent. Only successful
@@ -65,6 +70,15 @@ enum WorkbenchIntent {
             // Gated on the name existing: without that, "run the build" would be claimed
             // here and never reach the routing that can actually resolve it.
             return .run(name: name)
+        }
+
+        // Checked before the test phrases so "teach yourself to build and test" is heard as
+        // teaching rather than as a build.
+        if let request = firstCapture(
+            in: lower,
+            pattern: #"^(?:teach yourself to|teach me to|learn to|make an action (?:for|that)|automate)\s+(.+?)[.!]?$"#)
+        {
+            return .teach(request: request)
         }
 
         let testPhrases = [
@@ -137,7 +151,47 @@ enum WorkbenchIntent {
             return await test(scope: scope)
         case .report(let observation):
             return await report(observation, scope: scope)
+        case .teach(let request):
+            return await teach(request, scope: scope)
         }
+    }
+
+    /// Writes an action for something nothing here can do, and offers it for approval.
+    ///
+    /// The proposal is returned as the answer rather than run: the user reads the script
+    /// and approves it through the ordinary adapter approval, which is also what saves it.
+    /// Authoring and executing are deliberately two decisions.
+    private static func teach(_ request: String, scope: GeneralChatScope) async -> Outcome {
+        var bundleID = ""
+        if case .app(let id) = scope { bundleID = id }
+        if bundleID.isEmpty {
+            bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        }
+        guard !bundleID.isEmpty else {
+            return Outcome(
+                text: "I couldn't tell which app to teach. Open it, or ask in that app's chat.",
+                chips: [])
+        }
+        let appName = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleID).first?.localizedName
+            ?? InstalledApplicationsCatalog.cachedInstalledApps()
+                .first { $0.bundleId == bundleID }?.name
+            ?? bundleID
+
+        guard let proposal = await WorkflowAuthor.propose(
+            request: request, bundleID: bundleID, appName: appName)
+        else {
+            return Outcome(
+                text: "I couldn't write a reliable action for that. Say it more concretely — "
+                    + "what should happen, to what — and I'll try again.",
+                chips: [])
+        }
+        let saved = await WorkflowAuthor.save(proposal)
+        return Outcome(
+            text: WorkflowAuthor.approvalText(proposal)
+                + "\n\nSaved as **\(saved.name)**. Ask for it by name, or say "
+                + "“\(proposal.triggers.first ?? saved.name)”.",
+            chips: ["authored · \(saved.name)"])
     }
 
     /// Hands the observation to Claude Code with whatever DoraX is holding.
