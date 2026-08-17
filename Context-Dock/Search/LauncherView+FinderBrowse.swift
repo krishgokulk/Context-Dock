@@ -22,15 +22,23 @@ extension LauncherView {
         // The query that led here describes the folder, not its contents: "documents" has
         // no business hiding the rest of a folder the user has just stepped into. The
         // ghost goes with it, or the field still offers to complete the old search.
-        searchState.query = ""
-        l2.appCompletion = nil
-        l2.focusedPillIndex = nil
-        listViewHoveredIndex = nil
-        // Land on the first row, so the folder can be walked with the arrow keys straight
-        // away instead of needing a Down press to pick anything up.
-        l2.pillNavViaKeyboard = false
-        commitFinderDesktopModeSnapshot(query: "", preserveFocus: false)
+        // One animated step, so the folder replaces the search results in the sheet that
+        // is already open rather than the sheet closing on the cleared field and a new one
+        // opening behind it.
+        withAnimation(.dockSoft) {
+            searchState.query = ""
+            l2.appCompletion = nil
+            l2.focusedPillIndex = nil
+            listViewHoveredIndex = nil
+            // Land on the first row, so the folder can be walked with the arrow keys
+            // straight away instead of needing a Down press to pick anything up.
+            l2.pillNavViaKeyboard = false
+            commitFinderDesktopModeSnapshot(query: "", preserveFocus: false)
+        }
         isSearchFieldFocused = true
+        // The listing is nearly always taller than the results it replaced; resizing in
+        // the same beat keeps the sheet from snapping to its new height afterwards.
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true)
     }
 
     /// Right-arrow: if the focused Finder-desktop row is a folder, drill into it.
@@ -109,10 +117,15 @@ extension LauncherView {
 
     func exitFinderBrowse() {
         guard finderBrowsePath != nil else { return }
-        finderBrowsePath = nil
-        l2.focusedPillIndex = nil
-        listViewHoveredIndex = nil
-        commitFinderDesktopModeSnapshot(query: "", preserveFocus: false)
+        withAnimation(.dockSoft) {
+            finderBrowsePath = nil
+            searchState.query = ""
+            l2.appCompletion = nil
+            l2.focusedPillIndex = nil
+            listViewHoveredIndex = nil
+            commitFinderDesktopModeSnapshot(query: "", preserveFocus: false)
+        }
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true)
     }
 
     /// The contents of `finderBrowsePath` as desktop pills — folders first, then
