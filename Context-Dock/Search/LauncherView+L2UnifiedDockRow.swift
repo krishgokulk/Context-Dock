@@ -81,6 +81,13 @@ extension LauncherView {
             if globalFinderFileScope {
                 return visibleDockPills
             }
+            // Browsing a folder: its contents are the rows, and the field is empty by
+            // design. Without this the empty-query branch below returned no pills at all,
+            // so the sheet had nothing to draw however many visibility gates said it
+            // should be on screen.
+            if isBrowsingFinderFolder {
+                return visibleDockPills
+            }
             if (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil {
                 return []
             }
