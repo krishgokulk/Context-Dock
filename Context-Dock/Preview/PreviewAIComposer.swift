@@ -24,14 +24,9 @@ struct PreviewAIComposer: View {
     @ObservedObject private var settings = AppSettings.shared
     /// Approvals raised by this panel's own tools. Answered here, over the file the
     /// question is about, instead of in a window thrown on top of it.
-    @ObservedObject private var capabilityApprovals = AICapabilityApprovalCenter.shared
-    @ObservedObject private var terminalBridge = TerminalAIBridge.shared
-    /// Three approval systems, not one. A capability raises AICapabilityApprovalCenter,
-    /// an adapter action raises AppAdapterManager, a provider read raises
-    /// AIPrivacyApprovalCenter — and a preview that renders only the first leaves the
-    /// other two waiting behind a window it also suppressed. "Convert this to JPEG" hung
-    /// on exactly that.
-    @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @ObservedObject private var approvals = ApprovalCenter.shared
+    /// The privacy prompt is its own question — which provider may see this — and stays
+    /// separate from the action inbox.
     @ObservedObject private var privacyApprovals = AIPrivacyApprovalCenter.shared
     /// Rows the capabilities produced this turn, drawn as cards under the answer.
     @ObservedObject private var results = CapabilityResultStore.shared
@@ -72,63 +67,17 @@ struct PreviewAIComposer: View {
         }
     }
 
+    /// One inbox, one card. The preview used to watch three publishers and draw three
+    /// different cards, which is how two of them went missing.
     @ViewBuilder
     private var approvalCard: some View {
-        if let pending = capabilityApprovals.pending {
-            InlineCapabilityApprovalCard(pending: pending)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 6)
-        }
-        if let request = adapterManager.pendingApproval {
-            InlineAdapterApprovalCard(request: request)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 6)
+        if let request = approvals.pending {
+            ApprovalCard(request: request)
         }
         if let pending = privacyApprovals.pending {
             InlinePrivacyApprovalCard(pending: pending)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
-        }
-        if let pending = terminalBridge.pendingApproval, pending.origin == .preview {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.green)
-                    Text("Run command?")
-                        .font(.system(size: 12, weight: .semibold))
-                    Spacer()
-                    Text(pending.classification.riskLevel.displayName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.orange)
-                }
-                if !pending.purpose.isEmpty {
-                    Text(pending.purpose)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Text(pending.command)
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(
-                        Color.primary.opacity(0.06),
-                        in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                HStack(spacing: 8) {
-                    Button("Deny") { terminalBridge.denyCommand() }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    Button("Approve & Run") { terminalBridge.approveCommand(pending.command) }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(Color.orange.opacity(0.08))
-            .overlay(alignment: .top) { Divider().opacity(0.4) }
         }
     }
 
