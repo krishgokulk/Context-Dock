@@ -1432,6 +1432,11 @@ struct LauncherView: View {
                             pendingAdapterApproval = pending
                         }
                         requestWindowSizeUpdate(reason: .chatChanged)
+                    } else if PreviewController.shared.hasVisibleComposer {
+                        // Rendered inline by the preview's assistant, over the file the
+                        // action is about.
+                        pendingAdapterApproval = nil
+                        AdapterApprovalWindowHost.close()
                     } else {
                         pendingAdapterApproval = nil
                         openAdapterApprovalWindow(request: pending)
@@ -1491,6 +1496,11 @@ struct LauncherView: View {
                         pendingPrivacyApproval = pending
                     }
                     requestWindowSizeUpdate(reason: .chatChanged)
+                } else if PreviewController.shared.hasVisibleComposer {
+                    // The preview's assistant shows this one inline, like the capability
+                    // card beside it.
+                    pendingPrivacyApproval = nil
+                    AIPrivacyApprovalWindowHost.close()
                 } else {
                     pendingPrivacyApproval = nil
                     openAIPrivacyApprovalWindow(pending: pending)

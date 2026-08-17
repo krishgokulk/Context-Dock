@@ -26,6 +26,13 @@ struct PreviewAIComposer: View {
     /// question is about, instead of in a window thrown on top of it.
     @ObservedObject private var capabilityApprovals = AICapabilityApprovalCenter.shared
     @ObservedObject private var terminalBridge = TerminalAIBridge.shared
+    /// Three approval systems, not one. A capability raises AICapabilityApprovalCenter,
+    /// an adapter action raises AppAdapterManager, a provider read raises
+    /// AIPrivacyApprovalCenter — and a preview that renders only the first leaves the
+    /// other two waiting behind a window it also suppressed. "Convert this to JPEG" hung
+    /// on exactly that.
+    @ObservedObject private var adapterManager = AppAdapterManager.shared
+    @ObservedObject private var privacyApprovals = AIPrivacyApprovalCenter.shared
     @State private var history: [ChatMessage] = []
     @State private var draft = ""
     @State private var isSending = false
@@ -64,6 +71,16 @@ struct PreviewAIComposer: View {
     private var approvalCard: some View {
         if let pending = capabilityApprovals.pending {
             InlineCapabilityApprovalCard(pending: pending)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+        }
+        if let request = adapterManager.pendingApproval {
+            InlineAdapterApprovalCard(request: request)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+        }
+        if let pending = privacyApprovals.pending {
+            InlinePrivacyApprovalCard(pending: pending)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
         }
