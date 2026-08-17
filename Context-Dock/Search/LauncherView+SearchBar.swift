@@ -410,6 +410,23 @@ extension LauncherView {
         unifiedSearchPanelSurface(inDockMode: false)
     }
 
+    /// Exactly one owner for the current mode's content.
+    ///
+    /// The list surface and the mode content below the input both switch on the dock's
+    /// mode, and both render l2ChatSection for a scoped chat. When the list layout was
+    /// active they ran at once, so the conversation appeared twice, one above the input
+    /// and one below, each with its own Clear button and its own scroll position.
+    var listDockSurfaceShowsCurrentMode: Bool {
+        switch currentDockSurfaceMode {
+        case .generalChat, .contextDockChat:
+            // Chat belongs below the input, where it sizes itself. The list surface only
+            // takes it back if the mode content declines to render it at all.
+            return !shouldShowUnifiedDockModeContent
+        case .globalContext, .contextDock, .mediaDock:
+            return true
+        }
+    }
+
     var shouldShowUnifiedDockModeContent: Bool {
         switch currentDockSurfaceMode {
         case .generalChat:
@@ -644,7 +661,7 @@ extension LauncherView {
             Color.clear
                 .frame(width: resultsPanelLeadingInset)
             VStack(spacing: 0) {
-                if usesVerticalListDockLayout && inDockMode {
+                if usesVerticalListDockLayout && inDockMode && listDockSurfaceShowsCurrentMode {
                     // The list stays mounted while the capsule is compact (clipped to zero),
                     // so its chrome must follow the same state — an unconditional separator
                     // drew a hairline under the pill with nothing beneath it.
@@ -681,7 +698,7 @@ extension LauncherView {
                         }
                     }
 
-                if usesVerticalListDockLayout && !inDockMode {
+                if usesVerticalListDockLayout && !inDockMode && listDockSurfaceShowsCurrentMode {
                     let revealed = isDockResultSheetRevealed
                     if revealed {
                         Rectangle()
