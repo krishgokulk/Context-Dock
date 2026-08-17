@@ -478,10 +478,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // against an empty list.
         InstalledApplicationsCatalog.warmUp()
         // Enforce single instance — if another copy is already running, tell it to show and quit
+        //
+        // Except under XCTest. The test bundle is loaded into a second copy of this app, and
+        // the developer's own copy is nearly always running while they work — so the runner
+        // launched, saw a duplicate, terminated itself, and every test failed with "exited
+        // before establishing connection". That is why this project believed it could not
+        // have automated tests: it could, the host was quitting before they started.
         let bundleID = Bundle.main.bundleIdentifier ?? ""
+        let underTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty {
+        if !others.isEmpty, !underTest {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)

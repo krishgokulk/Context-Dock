@@ -42,7 +42,21 @@ Codex follows the same rule via AGENTS.md.
 xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
 ```
 
-In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first. There are no automated tests — all verification is manual via the running app.
+In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first.
+
+```bash
+./scripts/test.sh        # runs the whole suite (offline: no API key, no network)
+```
+
+The suite lives in `Context-DockTests/` and uses **swift-testing** (`import Testing`, `@Test`),
+not XCTest. It was long believed this project could not have automated tests — the runner
+always died with "exited with code 0 before establishing connection". The cause was the app's
+own single-instance guard: the test bundle loads into a second copy of Context-Dock, the
+developer's copy is nearly always running, and the guard terminated the host before XCTest
+could attach. The guard stands down under XCTest now (`ILauncherApp.swift`), and the tests run.
+
+Anything needing a live model is NOT in this suite. Provider behaviour is still verified by
+hand against the running app.
 
 - **Deployment target**: macOS 26.1  
 - **Swift version**: 5.0  
