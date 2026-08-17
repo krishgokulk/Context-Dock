@@ -209,12 +209,17 @@ enum FinderCoworkerCapabilities {
                         summary: "Keep one of each to reclaim "
                             + formatter.string(fromByteCount: reclaimable)))
 
+                // The user is looking at the rows already. Repeating every path back at
+                // them is the wall of text the card exists to replace — so the model is
+                // given the data it needs to reason and told plainly not to recite it.
                 return .init(
                     success: true,
                     output:
                         "\(duplicates.count) set(s) of likely duplicates in \(scope.describedAs) — "
                         + "matched on name and size, not contents.\n"
                         + "Reclaimable if you keep one of each: \(formatter.string(fromByteCount: reclaimable))\n\n"
+                        + "The full list is already displayed to the user as a card. Do not repeat "
+                        + "it — answer in a line or two, and say what you would do next.\n\n"
                         + lines.joined(separator: "\n") + trailer + fallbackNudge(scope))
             }
         )
@@ -273,10 +278,29 @@ enum FinderCoworkerCapabilities {
                             + "in the Artifacts panel."
                     }
                 }
+                CapabilityResultStore.shared.publish(
+                    CapabilityResultTable(
+                        capabilityID: "finder.staleFiles",
+                        title: "Untouched for \(months)+ months",
+                        rows: stale.prefix(20).map { url in
+                            CapabilityResultRow(
+                                id: url.path,
+                                title: url.lastPathComponent,
+                                subtitle: url.deletingLastPathComponent().path,
+                                detail: formatter.string(fromByteCount: size(of: url)) + " · "
+                                    + dateFormatter.string(from: modified(url)),
+                                paths: [url],
+                                fraction: total > 0 ? Double(size(of: url)) / Double(total) : nil)
+                        },
+                        summary: "\(stale.count) file(s) · "
+                            + formatter.string(fromByteCount: total)))
+
                 return .init(
                     success: true,
                     output:
-                        "\(stale.count) file(s) in \(scope.describedAs) untouched for \(months)+ months, "
+                        "The list is already displayed to the user as a card; summarise, do not "
+                        + "repeat it.\n"
+                        + "\(stale.count) file(s) in \(scope.describedAs) untouched for \(months)+ months, "
                         + "holding \(formatter.string(fromByteCount: total)).\n\n"
                         + lines.joined(separator: "\n") + trailer + fallbackNudge(scope))
             }
@@ -600,6 +624,10 @@ enum FinderCoworkerCapabilities {
                     out.append("Largest items:")
                     out += largest
                 }
+                out.append("")
+                out.append(
+                    "The breakdown is already displayed to the user as a card. Do not repeat "
+                    + "the list — give the total and anything worth noticing.")
                 return .init(success: true, output: out.joined(separator: "\n"))
             }
         )
@@ -715,8 +743,25 @@ enum FinderCoworkerCapabilities {
                 guard !hits.isEmpty else {
                     return .init(success: true, output: "No files matched \"\(query)\".")
                 }
+                CapabilityResultStore.shared.publish(
+                    CapabilityResultTable(
+                        capabilityID: "finder.searchFiles",
+                        title: "Matches for \"\(query)\"",
+                        rows: hits.prefix(30).map { url in
+                            CapabilityResultRow(
+                                id: url.path,
+                                title: url.lastPathComponent,
+                                subtitle: url.deletingLastPathComponent().path,
+                                paths: [url])
+                        },
+                        summary: "\(hits.count) file(s)"))
+
                 let list = hits.prefix(60).map { "- \($0.path)" }.joined(separator: "\n")
-                return .init(success: true, output: "Found \(hits.count) file(s):\n\(list)")
+                return .init(
+                    success: true,
+                    output: "Found \(hits.count) file(s). The list is displayed to the user as a "
+                        + "card — do not repeat it; say which one looks right, or what to do "
+                        + "next.\n\(list)")
             }
         )
     }
@@ -751,9 +796,25 @@ enum FinderCoworkerCapabilities {
                     let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                     return "\(isDir ? "📁" : "📄") \(url.lastPathComponent)"
                 }
+                CapabilityResultStore.shared.publish(
+                    CapabilityResultTable(
+                        capabilityID: "finder.listFolder",
+                        title: root.lastPathComponent,
+                        rows: items.prefix(40).map { url in
+                            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?
+                                .isDirectory ?? false
+                            return CapabilityResultRow(
+                                id: url.path,
+                                title: url.lastPathComponent,
+                                detail: isDir ? "Folder" : nil,
+                                paths: [url])
+                        },
+                        summary: "\(items.count) item(s)"))
+
                 return .init(
                     success: true,
-                    output: "\(root.path) — \(items.count) item(s):\n" + lines.joined(separator: "\n"))
+                    output: "\(root.path) — \(items.count) item(s). Shown to the user as a card; "
+                        + "do not list them again.\n" + lines.joined(separator: "\n"))
             }
         )
     }
@@ -866,21 +927,54 @@ enum FinderCoworkerCapabilities {
                 title: "Move files to the Trash (recoverable)",
                 appBundleID: finderBundleID,
                 inputSchema: .init(fields: [
-                    .init(name: "path", description: "File/folder to trash; defaults to the selection", required: false)
+                    .init(
+                        name: "path",
+                        description: "File/folder to trash. Several at once: separate absolute "
+                            + "paths with a newline or a comma — one call, one approval, "
+                            + "rather than one approval per file. Defaults to the selection.",
+                        required: false)
                 ]),
                 riskLevel: .high
             ) { request in
-                let urls =
-                    resolveRoot(request.input["path"]).map { [$0] } ?? selectedURLs(from: request)
-                guard !urls.isEmpty else { return .init(success: false, output: "Nothing to trash.") }
-                var trashed: [String] = []
-                for url in urls {
-                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                    trashed.append(url.lastPathComponent)
+                // Cleaning up twelve duplicates used to mean twelve calls and twelve
+                // approvals, which exhausted the tool loop's iterations before it got
+                // through them — the model gave up and told the user the system had
+                // refused. A set is one decision, so it is one call.
+                let requested = (request.input["path"] ?? "")
+                    .components(separatedBy: CharacterSet(charactersIn: ",\n"))
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { !$0.isEmpty }
+                let urls = requested.isEmpty
+                    ? selectedURLs(from: request)
+                    : requested.compactMap { resolveRoot($0) }
+
+                guard !urls.isEmpty else {
+                    return .init(
+                        success: false,
+                        output: requested.isEmpty
+                            ? "Nothing to trash."
+                            : "None of those paths are inside your home folder, so none were "
+                                + "touched: \(requested.joined(separator: ", "))")
                 }
-                return .init(
-                    success: true,
-                    output: "Moved to Trash: \(trashed.joined(separator: ", "))")
+                var trashed: [String] = []
+                var failed: [String] = []
+                for url in urls {
+                    do {
+                        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                        trashed.append(url.lastPathComponent)
+                    } catch {
+                        // One unreadable file must not abandon the other eleven.
+                        failed.append("\(url.lastPathComponent) (\(error.localizedDescription))")
+                    }
+                }
+                var output = trashed.isEmpty
+                    ? "Nothing was moved to the Trash."
+                    : "Moved \(trashed.count) item(s) to the Trash: "
+                        + trashed.joined(separator: ", ")
+                if !failed.isEmpty {
+                    output += "\n\nCould not trash: " + failed.joined(separator: "; ")
+                }
+                return .init(success: !trashed.isEmpty, output: output)
             }
         )
     }

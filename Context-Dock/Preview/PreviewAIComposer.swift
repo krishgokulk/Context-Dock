@@ -35,6 +35,9 @@ struct PreviewAIComposer: View {
     @ObservedObject private var privacyApprovals = AIPrivacyApprovalCenter.shared
     /// Rows the capabilities produced this turn, drawn as cards under the answer.
     @ObservedObject private var results = CapabilityResultStore.shared
+    /// Cards belong to the answer that produced them. Held per message, or asking a
+    /// second question wiped the duplicates you were still reading.
+    @State private var tablesByMessage: [UUID: [CapabilityResultTable]] = [:]
     @State private var history: [ChatMessage] = []
     @State private var draft = ""
     @State private var isSending = false
@@ -142,22 +145,29 @@ struct PreviewAIComposer: View {
                     }
 
                     ForEach(history) { message in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(message.role == .user ? "You" : "AI")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.tertiary)
-                            Text(message.content)
-                                .font(.system(size: 12))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(message.role == .user ? "You" : "AI")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.tertiary)
+                                Text(message.content)
+                                    .font(.system(size: 12))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            // Under the answer that found them, and still there after the
+                            // next question.
+                            ForEach(tablesByMessage[message.id] ?? []) { table in
+                                CapabilityResultCard(table: table)
+                            }
                         }
                         .id(message.id)
                     }
 
-                    // Before the command strip: what was found matters more than how it
-                    // was found.
-                    ForEach(results.tables) { table in
-                        CapabilityResultCard(table: table)
+                    if isSending {
+                        ForEach(results.tables) { table in
+                            CapabilityResultCard(table: table)
+                        }
                     }
 
                     if !lastCommands.isEmpty {
@@ -302,7 +312,13 @@ struct PreviewAIComposer: View {
                     imageAttachments: images,
                     chatScope: scope
                 )
-                history.append(ChatMessage(role: .assistant, content: reply))
+                let answer = ChatMessage(role: .assistant, content: reply)
+                history.append(answer)
+                // Hand this turn's tables to the message they belong to before the next
+                // question clears the store.
+                if !results.tables.isEmpty {
+                    tablesByMessage[answer.id] = results.tables
+                }
                 lastCommands = executed.map {
                     RanCommand(command: "$ " + $0.command, output: $0.output, success: $0.success)
                 }
