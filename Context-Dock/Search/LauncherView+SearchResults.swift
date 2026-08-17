@@ -1422,7 +1422,10 @@ extension LauncherView {
             let hasExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
                 || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
-            if q.isEmpty, !hasExtensionScope {
+            // A browsed folder is a scope of its own, and its field starts empty on
+            // purpose. Hiding the row on an empty query took the folder's contents down
+            // with it the moment the user stepped inside.
+            if q.isEmpty, !hasExtensionScope, !isBrowsingFinderFolder {
                 return false
             }
             if shouldUsePureGlobalAppSearch {
@@ -1443,6 +1446,7 @@ extension LauncherView {
         if hasSelectionScopeSurface {
             return true
         }
+        if isBrowsingFinderFolder { return true }
         guard !q.isEmpty else { return false }
         // Finder desktop search must keep its shared sheet alive while its cache and
         // Spotlight passes exchange snapshots. The rendered list supplies either files,
