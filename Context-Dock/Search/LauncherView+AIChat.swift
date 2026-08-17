@@ -1457,9 +1457,11 @@ extension LauncherView {
                                     }
                                 }
 
-                                if let pendingAdapterApproval {
-                                    InlineAdapterApprovalCard(request: pendingAdapterApproval)
-                                        .id("adapter-approval")
+                                if pendingAdapterApproval != nil,
+                                    let request = ApprovalCenter.shared.pending(for: .dock)
+                                {
+                                    ApprovalCard(request: request)
+                                        .id("approval-\(request.id)")
                                 }
 
                                 if let gap = pendingCapabilityGap {
@@ -1761,13 +1763,15 @@ extension LauncherView {
                             InlinePrivacyApprovalCard(pending: pendingPrivacyApproval)
                                 .id("privacy-approval")
                         }
-                        if let pendingCapabilityApproval {
-                            InlineCapabilityApprovalCard(pending: pendingCapabilityApproval)
-                                .id("capability-approval")
-                        }
-                        if let pendingAdapterApproval {
-                            InlineAdapterApprovalCard(request: pendingAdapterApproval)
-                                .id("adapter-approval")
+                        // One card for capability and adapter alike — the same one the
+                        // chat window and the preview draw. The dock's own state still
+                        // decides whether it holds the card; ApprovalCenter says what the
+                        // card is.
+                        if pendingCapabilityApproval != nil || pendingAdapterApproval != nil,
+                            let request = ApprovalCenter.shared.pending(for: .dock)
+                        {
+                            ApprovalCard(request: request)
+                                .id("approval-\(request.id)")
                         }
                         if !aiMode.isLoading, !aiMode.messages.isEmpty,
                             let followUp = ChatFollowUp.suggestion(for: dockChatScope)

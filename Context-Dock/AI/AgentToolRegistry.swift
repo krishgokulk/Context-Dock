@@ -353,10 +353,35 @@ final class AgentToolRegistry {
         case gemini
     }
 
+    /// What this turn is about, so the list can be cut to it.
+    ///
+    /// Set by the surface starting a turn. Without it every tool is offered, which is the
+    /// old behaviour and the right default: a caller that has not said what the question
+    /// is has given no grounds for leaving anything out.
+    private var turnQuery: String = ""
+    private var turnProvider: AIProvider?
+
+    /// Told before the turn starts, separately from beginTurn, which the provider loops
+    /// own and call themselves. Two calls rather than one parameter, so the budget can be
+    /// adopted a surface at a time without every loop changing at once.
+    func prepareTurnBudget(query: String, provider: AIProvider) {
+        turnQuery = query
+        turnProvider = provider
+    }
+
     /// The tool list as a provider expects to receive it. One source, three renderings —
     /// the differences between providers are pure formatting, and keeping them here stops
     /// the tool sets drifting apart per provider.
+    ///
+    /// Trimmed to the turn's budget when the surface said what the turn is about. The cut
+    /// happens here rather than at each call site so no provider path can forget it.
     func schemas(format: SchemaFormat) -> [[String: Any]] {
+        let rendered = renderedSchemas(format: format)
+        guard let provider = turnProvider else { return rendered }
+        return AIToolBudget.trim(rendered, query: turnQuery, provider: provider)
+    }
+
+    private func renderedSchemas(format: SchemaFormat) -> [[String: Any]] {
         allTools.map { tool in
             switch format {
             case .openAI:
@@ -1210,6 +1235,144 @@ final class AgentToolRegistry {
                 success: outcome.success,
                 output: outcome.message,
                 displayCommand: "window_control(\(target.name): \(raw))")
+        })
+
+        // The two routes a scoped chat was told to ask for in prose, because they had no
+        // tool of their own.
+        //
+        // The prompt taught {"adapter_call":…} and {"mcp_call":…} as JSON lines to write into
+        // an answer, which meant the model was running two protocols at once: real tool calls
+        // for run_command and run_menu_command, and hand-written JSON for these. It mixed
+        // them — writing a tool call as prose, or a prose call into a tool argument — and a
+        // recovery layer grew to catch what fell between. These make every route in the scope
+        // prompt reachable the same way, so there is one protocol to confuse with nothing.
+        register(AgentTool(
+            name: "run_adapter_action",
+            description: "Run one of the scoped app's installed adapter actions — the ids "
+                + "listed under Actions in this conversation's app inventory. Prefer this "
+                + "over a menu command or a shell script when an action matches: it is the "
+                + "app's own route, and destructive ones show their own approval card.",
+            properties: [
+                "action_id": [
+                    "type": "string",
+                    "description": "The action id exactly as listed in the app inventory.",
+                ],
+                "reason": [
+                    "type": "string",
+                    "description": "One line on why, shown to the user with the action.",
+                ],
+            ],
+            required: ["action_id"]
+        ) { arguments, context in
+            let actionID = (arguments["action_id"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !actionID.isEmpty else {
+                return AgentToolResult(
+                    success: false,
+                    output: "run_adapter_action needs 'action_id'.",
+                    displayCommand: "run_adapter_action")
+            }
+            let scopedBundleID = Self.scopedBundleID(for: context.chatScope)
+            let adapter = AppAdapterManager.shared.adapters.first { candidate in
+                guard candidate.actions.contains(where: { $0.id == actionID }) else {
+                    return false
+                }
+                guard let scopedBundleID else { return true }
+                return candidate.bundleId.caseInsensitiveCompare(scopedBundleID) == .orderedSame
+            }
+            guard let adapter, let action = adapter.actions.first(where: { $0.id == actionID })
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "No adapter action '\(actionID)' is available in this conversation. "
+                        + "Use one of the ids listed in the app inventory, or say the app does "
+                        + "not offer it.",
+                    displayCommand: "run_adapter_action(\(actionID))")
+            }
+            guard AppAccessPolicy.allows(
+                .adapter, at: AppAccessPolicy.level(for: adapter.bundleId))
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "\(adapter.appName) has not granted action control.",
+                    displayCommand: "run_adapter_action(\(actionID))")
+            }
+            let (ok, output) = await AppAdapterManager.shared.execute(
+                action,
+                context: AXContextReader.shared.current,
+                targetBundleId: adapter.bundleId,
+                query: arguments["reason"] as? String ?? "Requested in chat")
+            return AgentToolResult(
+                success: ok,
+                output: output.isEmpty
+                    ? (ok ? "Done — \(action.name)." : "Couldn't run \(action.name).")
+                    : output,
+                displayCommand: "run_adapter_action(\(action.name))")
+        })
+
+        register(AgentTool(
+            name: "run_mcp_tool",
+            description: "Call one of the scoped app's linked MCP tools to READ its data — "
+                + "notes, events, reminders, issues. Reads only: a tool that writes is "
+                + "refused here and must go through a capability with its own approval.",
+            properties: [
+                "server": [
+                    "type": "string",
+                    "description": "Server name as listed in this conversation's MCP section.",
+                ],
+                "tool": ["type": "string", "description": "The tool name on that server."],
+                "arguments": [
+                    "type": "object",
+                    "description": "Arguments for the tool. Pass {} when it takes none.",
+                ],
+            ],
+            required: ["server", "tool"]
+        ) { arguments, context in
+            let server = (arguments["server"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let tool = (arguments["tool"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !tool.isEmpty else {
+                return AgentToolResult(
+                    success: false,
+                    output: "run_mcp_tool needs 'server' and 'tool'.",
+                    displayCommand: "run_mcp_tool")
+            }
+            guard let bundleID = Self.scopedBundleID(for: context.chatScope) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "This conversation is not scoped to an app, so it has no linked "
+                        + "MCP servers. Use find_capability instead.",
+                    displayCommand: "run_mcp_tool(\(tool))")
+            }
+            guard AppAccessPolicy.allows(.mcp, at: AppAccessPolicy.level(for: bundleID)) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "This app has no App Adapter, so its data tools are not available.",
+                    displayCommand: "run_mcp_tool(\(tool))")
+            }
+            // A provider-authored write is not something the user agreed to by linking a
+            // server. Mutations go through a deterministic capability with an approval card.
+            guard MCPToolSafety.isClearlyReadOnly(name: tool) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "MCP tool \(tool) is write or unknown risk. Use find_capability to "
+                        + "find a capability that does this with the user's approval.",
+                    displayCommand: "run_mcp_tool(\(tool))")
+            }
+            let toolArguments = (arguments["arguments"] as? [String: Any]) ?? [:]
+            do {
+                let output = try await MCPRuntime.shared.callProviderReadOnlyTool(
+                    bundleId: bundleID, server: server, tool: tool, arguments: toolArguments)
+                return AgentToolResult(
+                    success: true, output: output,
+                    displayCommand: "\(tool) via \(server.isEmpty ? "MCP" : server)")
+            } catch {
+                return AgentToolResult(
+                    success: false,
+                    output: "MCP tool \(tool) failed: \(error.localizedDescription)",
+                    displayCommand: "\(tool) via \(server.isEmpty ? "MCP" : server)")
+            }
         })
 
         register(AgentTool(
