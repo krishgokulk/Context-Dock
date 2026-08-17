@@ -1,5 +1,19 @@
 import Foundation
 
+/// How much room a tool loop leaves the model to answer in.
+///
+/// This was 1000 for every OpenAI-shaped provider — which is Kimi, Ollama, any custom
+/// endpoint, and both subscription bridges. Those bridges serve a coding agent that narrates
+/// before it acts, so a thousand tokens ran out mid-sentence; and a `tool_use` block cut in
+/// half is not a malformed call the loop can report, it is a turn that ends having done
+/// nothing while claiming to be finished. Anthropic's own loop was raised to 16000 for
+/// exactly this reason and the others were left behind.
+private enum ToolLoopBudget {
+    /// Providers whose models think before they write spend part of this budget before the
+    /// first visible token, so it has to cover both.
+    static let maxTokens = 8192
+}
+
 extension AIProviderService {
     // MARK: - Tool Definitions
 
@@ -27,14 +41,22 @@ extension AIProviderService {
         imageAttachments: [URL] = [],
         userContext: UserContext = .none,
         chatScope: GeneralChatScope? = nil,
-        simulateAllTools: Bool
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
         // the next message is the user asking again, and deserves a fresh reading.
-        await AgentToolRegistry.shared.beginTurn()
+        let turn = await AgentToolRegistry.shared.beginTurn()
+        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
+        // record goes with it rather than sitting in the registry until age evicts it.
+        defer { AgentToolRegistry.shared.endTurn(turn) }
 
         var executedCommands: [ExecutedCommand] = []
+        /// Set when a streaming attempt fails on an endpoint that turned out not to speak
+        /// SSE. Custom endpoints and subscription bridges vary; one buffered round is the
+        /// right answer to that, and asking again every round is not.
+        var streamingUnavailable = false
 
         // Subscription bridges serve a coding agent with its own sandboxed tools; without this
         // it "checks" the wrong filesystem instead of using the tools we hand it below.
@@ -63,6 +85,13 @@ extension AIProviderService {
         let allTools = await AgentToolRegistry.shared.schemas(format: .openAI) + customTools
 
         for _ in 0..<maxIterations {
+            // Stop is a decision the user already made. Without this check the loop kept
+            // going after Stop was pressed — running more tools, spending more tokens, and
+            // in a scoped chat still driving the app — because cancellation was only read
+            // once the whole loop had returned.
+            if Task.isCancelled {
+                return ("Stopped.", executedCommands)
+            }
             var body: [String: Any] = [
                 "model": model,
                 "messages": messages,
@@ -70,16 +99,42 @@ extension AIProviderService {
                 "tool_choice": "auto",
                 // No temperature: newer Claude models served through OpenAI-compatible
                 // proxies reject sampling parameters with HTTP 400.
-                "max_tokens": 1000
+                "max_tokens": ToolLoopBudget.maxTokens
             ]
             if apiKey == nil { body["stream"] = false; body.removeValue(forKey: "max_tokens") }
-            let decoded = try await transport.send(
-                endpoint: endpoint,
-                apiKey: apiKey,
-                body: body,
-                timeout: timeout,
-                extraHeaders: extraHeaders
-            )
+            // Ollama is reached through this loop with no key, on the buffered path it has
+            // always used; leave it alone. Everything else streams when the caller wants the
+            // answer as it is written.
+            let mayStream = onStream != nil && !streamingUnavailable && apiKey != nil
+            var streamed: OpenAIToolResponse?
+            if mayStream, let onStream {
+                do {
+                    streamed = try await AIProviderStreaming.openAI(
+                        endpoint: endpoint,
+                        apiKey: apiKey,
+                        body: body,
+                        timeout: timeout,
+                        extraHeaders: extraHeaders,
+                        onEvent: onStream)
+                } catch let error as AIServiceError {
+                    // An authentication failure is the endpoint's real answer and is not
+                    // improved by asking again without streaming.
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                }
+            }
+            let decoded: OpenAIToolResponse
+            if let streamed {
+                decoded = streamed
+            } else {
+                decoded = try await transport.send(
+                    endpoint: endpoint,
+                    apiKey: apiKey,
+                    body: body,
+                    timeout: timeout,
+                    extraHeaders: extraHeaders
+                )
+            }
             guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
 
             if let toolCalls = choice.message.tool_calls, !toolCalls.isEmpty {
@@ -106,7 +161,7 @@ extension AIProviderService {
                         arguments: args,
                         context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
-                            attachments: imageAttachments, chatScope: chatScope)
+                            attachments: imageAttachments, chatScope: chatScope, turn: turn)
                     ) {
                         success = result.success
                         output = result.output
@@ -131,7 +186,18 @@ extension AIProviderService {
                 return (choice.message.content ?? "(no response)", executedCommands)
             }
         }
-        return ("Commands completed.", executedCommands)
+        // The loop ran out of steps with the model still calling tools. "Commands completed"
+        // read as success and hid that: the user was told the work was done when the turn had
+        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
+        // actually ran.
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
     }
 
     // MARK: - Anthropic Tool Loop
@@ -148,14 +214,19 @@ extension AIProviderService {
         imageAttachments: [URL] = [],
         userContext: UserContext = .none,
         chatScope: GeneralChatScope? = nil,
-        simulateAllTools: Bool
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
         // the next message is the user asking again, and deserves a fresh reading.
-        await AgentToolRegistry.shared.beginTurn()
+        let turn = await AgentToolRegistry.shared.beginTurn()
+        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
+        // record goes with it rather than sitting in the registry until age evicts it.
+        defer { AgentToolRegistry.shared.endTurn(turn) }
 
         var executedCommands: [ExecutedCommand] = []
+        var streamingUnavailable = false
 
         var messages: [[String: Any]] = []
         for msg in history.suffix(10).filter({ $0.role != .system }) {
@@ -184,6 +255,13 @@ extension AIProviderService {
         let registryTools = await AgentToolRegistry.shared.schemas(format: .anthropic)
 
         for _ in 0..<maxIterations {
+            // Stop is a decision the user already made. Without this check the loop kept
+            // going after Stop was pressed — running more tools, spending more tokens, and
+            // in a scoped chat still driving the app — because cancellation was only read
+            // once the whole loop had returned.
+            if Task.isCancelled {
+                return ("Stopped.", executedCommands)
+            }
             // Prompt caching. Every iteration re-sends the same system prompt and tool set
             // plus the whole conversation so far; the breakpoint on the last system block
             // covers tools + system (they render first), and the one on the newest message
@@ -206,7 +284,23 @@ extension AIProviderService {
                 body["thinking"] = ["type": "adaptive"]
                 body["output_config"] = ["effort": "high"]
             }
-            let decoded = try await AnthropicToolProviderAdapter().send(apiKey: apiKey, body: body)
+            var streamed: AnthropicToolResponse?
+            if onStream != nil, !streamingUnavailable, let onStream {
+                do {
+                    streamed = try await AIProviderStreaming.anthropic(
+                        apiKey: apiKey, body: body, onEvent: onStream)
+                } catch let error as AIServiceError {
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                }
+            }
+            let decoded: AnthropicToolResponse
+            if let streamed {
+                decoded = streamed
+            } else {
+                decoded = try await AnthropicToolProviderAdapter().send(
+                    apiKey: apiKey, body: body)
+            }
             AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
@@ -264,7 +358,7 @@ extension AIProviderService {
                     arguments: args,
                     context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
-                            attachments: imageAttachments, chatScope: chatScope)
+                            attachments: imageAttachments, chatScope: chatScope, turn: turn)
                 ) {
                     success = result.success
                     output = result.output
@@ -290,7 +384,18 @@ extension AIProviderService {
             }
             messages.append(["role": "user", "content": resultBlocks])
         }
-        return ("Commands completed.", executedCommands)
+        // The loop ran out of steps with the model still calling tools. "Commands completed"
+        // read as success and hid that: the user was told the work was done when the turn had
+        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
+        // actually ran.
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
     }
 
     // MARK: - Gemini Tool Loop
@@ -311,7 +416,10 @@ extension AIProviderService {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
         // the next message is the user asking again, and deserves a fresh reading.
-        await AgentToolRegistry.shared.beginTurn()
+        let turn = await AgentToolRegistry.shared.beginTurn()
+        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
+        // record goes with it rather than sitting in the registry until age evicts it.
+        defer { AgentToolRegistry.shared.endTurn(turn) }
 
         var executedCommands: [ExecutedCommand] = []
 
@@ -334,11 +442,20 @@ extension AIProviderService {
         let registryTools = await AgentToolRegistry.shared.schemas(format: .gemini)
 
         for _ in 0..<maxIterations {
+            // Stop is a decision the user already made. Without this check the loop kept
+            // going after Stop was pressed — running more tools, spending more tokens, and
+            // in a scoped chat still driving the app — because cancellation was only read
+            // once the whole loop had returned.
+            if Task.isCancelled {
+                return ("Stopped.", executedCommands)
+            }
             let body: [String: Any] = [
                 "contents": contents,
                 "tools": [["function_declarations": registryTools]]
                     + customTools.map { ["function_declarations": [$0]] },
-                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 1000]
+                "generationConfig": [
+                    "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens,
+                ],
             ]
             let decoded = try await GeminiToolProviderAdapter().send(apiKey: apiKey, body: body)
             guard let candidate = decoded.candidates.first else { throw AIServiceError.emptyResponse("No response") }
@@ -376,7 +493,7 @@ extension AIProviderService {
                     arguments: args,
                     context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
-                            attachments: imageAttachments, chatScope: chatScope)
+                            attachments: imageAttachments, chatScope: chatScope, turn: turn)
                 ) {
                     success = result.success
                     output = result.output
@@ -404,6 +521,17 @@ extension AIProviderService {
             }
             contents.append(["role": "function", "parts": functionResultParts])
         }
-        return ("Commands completed.", executedCommands)
+        // The loop ran out of steps with the model still calling tools. "Commands completed"
+        // read as success and hid that: the user was told the work was done when the turn had
+        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
+        // actually ran.
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
     }
 }

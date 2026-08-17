@@ -100,22 +100,43 @@ private enum AIProviderHTTP {
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid provider response")
-        }
-        // Record live rate-limit usage from the response headers (keyed by host).
-        if let host = url.host {
-            AIProviderUsageStore.shared.record(host: host, headers: http.allHeaderFields)
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
-            if http.statusCode == 401 || http.statusCode == 403 {
-                throw AIServiceError.authenticationFailed("Provider authentication failed")
+        // A busy provider is asked again rather than reported as a failure. Only the send
+        // repeats — this path executes nothing on the user's Mac.
+        for attempt in 1...AIProviderRetry.maxAttempts {
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await AIProviderService.directSession.data(for: request)
+            } catch {
+                guard let delay = AIProviderRetry.delay(forTransport: error, attempt: attempt),
+                    await AIProviderRetry.wait(delay)
+                else { throw error }
+                continue
             }
-            throw AIServiceError.networkError("Provider HTTP \(http.statusCode): \(detail)")
+            guard let http = response as? HTTPURLResponse else {
+                throw AIServiceError.networkError("Invalid provider response")
+            }
+            // Record live rate-limit usage from the response headers (keyed by host).
+            if let host = url.host {
+                AIProviderUsageStore.shared.record(host: host, headers: http.allHeaderFields)
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    throw AIServiceError.authenticationFailed("Provider authentication failed")
+                }
+                if let delay = AIProviderRetry.delay(
+                    forStatus: http.statusCode, headers: http.allHeaderFields, attempt: attempt),
+                    await AIProviderRetry.wait(delay)
+                {
+                    continue
+                }
+                throw AIServiceError.networkError("Provider HTTP \(http.statusCode): \(detail)")
+            }
+            return data
         }
-        return data
+        throw AIServiceError.networkError(
+            "The provider was busy and did not answer after \(AIProviderRetry.maxAttempts) tries.")
     }
 
     static func chatMessages(
@@ -363,7 +384,8 @@ struct GeminiProviderAdapter: AIProviderAdapter {
             headers: ["x-goog-api-key": configuration.apiKey],
             body: [
                 "contents": contents,
-                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 1000],
+                // 1000 cut long answers mid-sentence, the same way it did in the tool loop.
+                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 8192],
             ]
         )
         let response = try JSONDecoder().decode(Response.self, from: data)
@@ -410,7 +432,9 @@ struct OllamaProviderAdapter: AIProviderAdapter {
                 "model": configuration.modelID,
                 "messages": messages,
                 "stream": false,
-                "options": ["temperature": 0.7, "num_predict": 1000],
+                // num_predict is Ollama's output cap; 1000 truncated local answers that the
+                // same model completed fine when run from the terminal.
+                "options": ["temperature": 0.7, "num_predict": 8192],
             ],
             timeout: 120
         )

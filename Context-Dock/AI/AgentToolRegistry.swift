@@ -72,10 +72,26 @@ enum RecentCapabilityWrites {
     }
 }
 
+/// One agent turn, as far as repeat-suppression is concerned.
+///
+/// The registry is a singleton and more than one chat runs against it at a time — the dock's
+/// scoped chat and the chat window's threads are separate conversations sharing one process.
+/// A turn identifies whose calls are whose, so one conversation starting a turn cannot erase
+/// another's record, and a call repeated in a *different* turn is not mistaken for a repeat.
+struct AgentTurnToken: Hashable, Sendable {
+    let id: UUID
+    init() { id = UUID() }
+}
+
 struct AgentToolContext {
     /// Runs a shell command through the classifier / argv gate / approval path.
     /// The Bool is the model's own `requires_approval` answer.
     let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32)
+
+    /// The turn these calls belong to. Nil means no repeat-suppression: a one-shot repair
+    /// pass (the answer verifier) is deliberately allowed to re-run a call the turn it is
+    /// checking already made — that re-run is the whole point of it.
+    var turn: AgentTurnToken? = nil
 
     /// What the user had selected or focused when they asked. Capabilities read it to
     /// resolve implicit targets ("this file", "the current folder").
@@ -100,12 +116,14 @@ struct AgentToolContext {
         commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         userContext: UserContext = .none,
         attachments: [URL] = [],
-        chatScope: GeneralChatScope? = nil
+        chatScope: GeneralChatScope? = nil,
+        turn: AgentTurnToken? = nil
     ) {
         self.commandExecutor = commandExecutor
         self.userContext = userContext
         self.attachments = attachments
         self.chatScope = chatScope
+        self.turn = turn
     }
 }
 
@@ -265,15 +283,40 @@ final class AgentToolRegistry {
     /// Runs a tool by name. Returns nil when no tool is registered under that name, so the
     /// caller can fall back — today that means an L2 extension tool, which is resolved
     /// dynamically and therefore cannot be pre-registered here.
-    /// Calls seen in the current turn, so an identical one is not run again.
+    /// Calls seen in each live turn, so an identical one is not run again.
     ///
     /// Watched adapterpack.recommend run ten times in a row with the same arguments and the
     /// same reply, then the turn announce "commands completed" having done nothing. Repeating
     /// a call whose answer has not changed cannot make progress — it burns the user's tokens
     /// and their time, and produces a receipt that looks like work.
-    private var callsThisTurn: [String: String] = [:]
+    ///
+    /// Keyed by turn, because this registry is shared and the surfaces are not. As one flat
+    /// dictionary it was a conversation-crossing bug in both directions: the dock starting a
+    /// turn wiped the window's record mid-loop, and two threads asking the same question in
+    /// parallel had the second one's first call refused as a repeat of the first one's.
+    private var callsByTurn: [AgentTurnToken: [String: String]] = [:]
+    /// Turns in the order they started, so finished ones are evicted without needing every
+    /// loop exit path to remember to close its turn.
+    private var turnOrder: [AgentTurnToken] = []
+    private let maxLiveTurns = 8
 
-    func beginTurn() { callsThisTurn.removeAll() }
+    /// Opens a turn. Hand the token to every `AgentToolContext` built for it.
+    func beginTurn() -> AgentTurnToken {
+        let token = AgentTurnToken()
+        callsByTurn[token] = [:]
+        turnOrder.append(token)
+        while turnOrder.count > maxLiveTurns {
+            callsByTurn.removeValue(forKey: turnOrder.removeFirst())
+        }
+        return token
+    }
+
+    /// Closes a turn. Optional — an abandoned turn is evicted by age — but calling it keeps
+    /// the live set to the turns that are actually running.
+    func endTurn(_ token: AgentTurnToken) {
+        callsByTurn.removeValue(forKey: token)
+        turnOrder.removeAll { $0 == token }
+    }
 
     func dispatch(
         name: String,
@@ -286,7 +329,7 @@ final class AgentToolRegistry {
             + arguments.keys.sorted()
                 .map { "\($0)=\(String(describing: arguments[$0] ?? ""))" }
                 .joined(separator: ",")
-        if let previous = callsThisTurn[signature] {
+        if let turn = context.turn, let previous = callsByTurn[turn]?[signature] {
             return AgentToolResult(
                 success: false,
                 output: "Already called \(name) with these exact arguments this turn, and the "
@@ -296,7 +339,9 @@ final class AgentToolRegistry {
         }
 
         let result = await tool.handler(arguments, context)
-        callsThisTurn[signature] = String(result.output.prefix(400))
+        if let turn = context.turn, callsByTurn[turn] != nil {
+            callsByTurn[turn]?[signature] = String(result.output.prefix(400))
+        }
         return result
     }
 

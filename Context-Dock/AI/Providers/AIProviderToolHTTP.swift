@@ -130,17 +130,45 @@ enum AIProviderToolHTTP {
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid provider response")
+        // Retried rather than surfaced: a 429 mid-loop used to end a turn that had already
+        // run tools, and the user saw "Provider HTTP 429" where an answer belonged. Nothing
+        // has been executed at this point in the round — only the send is repeated.
+        for attempt in 1...AIProviderRetry.maxAttempts {
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await AIProviderService.directSession.data(for: request)
+            } catch {
+                guard let delay = AIProviderRetry.delay(forTransport: error, attempt: attempt),
+                    await AIProviderRetry.wait(delay)
+                else { throw error }
+                continue
+            }
+            guard let http = response as? HTTPURLResponse else {
+                throw AIServiceError.networkError("Invalid provider response")
+            }
+            if let host = url.host {
+                await AIProviderUsageStore.shared.record(
+                    host: host, headers: http.allHeaderFields)
+            }
+            if http.statusCode == 401 || http.statusCode == 403 {
+                throw AIServiceError.authenticationFailed(authenticationError)
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let detail = String(data: data, encoding: .utf8)
+                    .map { String($0.prefix(300)) } ?? ""
+                if let delay = AIProviderRetry.delay(
+                    forStatus: http.statusCode, headers: http.allHeaderFields, attempt: attempt),
+                    await AIProviderRetry.wait(delay)
+                {
+                    continue
+                }
+                throw AIServiceError.networkError(
+                    "Provider HTTP \(http.statusCode): \(detail)")
+            }
+            return try JSONDecoder().decode(Response.self, from: data)
         }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw AIServiceError.authenticationFailed(authenticationError)
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
-            throw AIServiceError.networkError("Provider HTTP \(http.statusCode): \(detail)")
-        }
-        return try JSONDecoder().decode(Response.self, from: data)
+        throw AIServiceError.networkError(
+            "The provider was busy and did not answer after \(AIProviderRetry.maxAttempts) tries.")
     }
 }

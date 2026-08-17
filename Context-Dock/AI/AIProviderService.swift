@@ -1194,7 +1194,11 @@ class AIProviderService: ObservableObject {
         imageAttachments: [URL] = [],
         /// The thread asking, so tools inherit its folder boundary and its artifact home.
         chatScope: GeneralChatScope? = nil,
-        simulateAllTools: Bool = false
+        simulateAllTools: Bool = false,
+        /// Called as the answer is written, when the provider supports it. Nil keeps the
+        /// buffered behaviour — a caller that has nowhere to put a partial answer should not
+        /// be handed one.
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         let resume = TaskRunStore.shared.resolve(message)
@@ -1243,7 +1247,8 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         case .anthropic:
@@ -1262,7 +1267,8 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         case .googleGemini:
@@ -1277,6 +1283,9 @@ class AIProviderService: ObservableObject {
                 maxIterations: maxIterations,
                 imageAttachments: imageAttachments,
                 userContext: context,
+                // Gemini's streaming endpoint is a different URL with a different envelope,
+                // so this loop stays buffered. A caller passing `onStream` still gets a
+                // correct answer here, just not an incremental one.
                 chatScope: chatScope,
                 simulateAllTools: simulateAllTools
             )
@@ -1297,7 +1306,8 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OllamaToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         case .openAICompatible:
@@ -1320,7 +1330,8 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         case .kimi:
@@ -1344,7 +1355,8 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
-                simulateAllTools: simulateAllTools)
+                simulateAllTools: simulateAllTools,
+                onStream: onStream)
 
         case .claudeBridge:
             let settings = AppSettings.shared
@@ -1368,7 +1380,8 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         case .chatGPTBridge:
@@ -1393,7 +1406,8 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream
             )
 
         default:
