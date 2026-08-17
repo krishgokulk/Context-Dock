@@ -824,6 +824,13 @@ final class GeneralAIActionResolver {
         "settings": "com.apple.systempreferences",
     ]
 
+    /// The installed app a bare name refers to, for callers that already know they are
+    /// holding an app name rather than a sentence.
+    func installedAppMatch(named name: String) -> (name: String, bundleId: String)? {
+        guard let target = resolveTargetApp(in: name.lowercased()) else { return nil }
+        return (target.name, target.bundleId)
+    }
+
     private func resolveTargetApp(in lowered: String) -> TargetApp? {
         // Every name that appears in the sentence competes, whether it came from the alias
         // table or from the installed-apps catalog.

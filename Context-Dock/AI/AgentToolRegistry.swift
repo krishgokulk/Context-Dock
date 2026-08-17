@@ -1050,6 +1050,54 @@ final class AgentToolRegistry {
         // way to ask for it. For an app whose only integration *is* its menu bar that left
         // nothing legal to call — so the model recommended building an adapter pack, ten
         // times in a row, and then reported "commands completed" having done nothing.
+        // Window controls are properties of a window, not commands in a menu. Asked to
+        // minimise VS Code, the loop had only run_menu_command — whose cache holds no Window
+        // menu for that app — and a shell, where the usual AppleScript fails on Electron.
+        register(AgentTool(
+            name: "window_control",
+            description: "Minimise, restore, zoom or close an app's front window. Works on "
+                + "every app, including ones with no cached Window menu. Prefer this over a "
+                + "menu command or a shell script for these four operations.",
+            properties: [
+                "app": ["type": "string", "description": "The app's name."],
+                "command": [
+                    "type": "string",
+                    "description": "minimize, restore, zoom or close.",
+                ],
+            ],
+            required: ["app", "command"]
+        ) { arguments, _ in
+            let appName = (arguments["app"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let raw = (arguments["command"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard let command = WindowControlTool.Command(rawValue: raw) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "window_control takes one of: "
+                        + WindowControlTool.Command.allCases.map(\.rawValue)
+                            .joined(separator: ", ") + ".",
+                    displayCommand: "window_control(\(raw))")
+            }
+            let target = await MainActor.run {
+                GeneralAIActionResolver.shared.installedAppMatch(named: appName)
+            }
+            guard let target else {
+                return AgentToolResult(
+                    success: false,
+                    output: "No installed app called \"\(appName)\".",
+                    displayCommand: "window_control(\(appName): \(raw))")
+            }
+            let outcome = await MainActor.run {
+                WindowControlTool.run(
+                    command, bundleId: target.bundleId, appName: target.name)
+            }
+            return AgentToolResult(
+                success: outcome.success,
+                output: outcome.message,
+                displayCommand: "window_control(\(target.name): \(raw))")
+        })
+
         register(AgentTool(
             name: "run_menu_command",
             description: "Click a menu command in a Mac app — app: \"Disk Utility\", path: "
