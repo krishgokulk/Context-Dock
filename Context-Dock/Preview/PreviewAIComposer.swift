@@ -236,6 +236,27 @@ struct PreviewAIComposer: View {
         Task { @MainActor in
             defer { isSending = false }
             do {
+                // The same capability block the chat surfaces get: ranked candidates for
+                // this question, the enabled adapters, MCP tools and local evidence, all
+                // gated by AppAccessPolicy. Without it the preview could shell out but
+                // could not call OCR Image or Convert Image — capabilities that exist,
+                // are permission-checked, and are exactly what a previewed file wants.
+                //
+                // Budgeted per provider: Apple's on-device window is small enough that an
+                // unbudgeted capability block overflows it on its own.
+                let toolsBlock = await AsyncTimeout.run(
+                    seconds: 8, fallback: "", label: "preview capability block"
+                ) {
+                    await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
+                        compact: provider == .onDevice,
+                        query: question,
+                        scope: .general,
+                        characterBudget: AIContextBudget.characterBudget(for: provider))
+                }
+                let systemPrompt = toolsBlock.isEmpty
+                    ? contextPrompt
+                    : contextPrompt + "\n\n" + toolsBlock
+
                 let (reply, executed) = try await AIProviderService.shared.sendWithTools(
                     question,
                     context: .filesSelected(session.items.map(\.url) + attachedFiles),
@@ -250,7 +271,7 @@ struct PreviewAIComposer: View {
                             consoleScope: scope
                         )
                     },
-                    additionalSystemPrompt: contextPrompt,
+                    additionalSystemPrompt: systemPrompt,
                     imageAttachments: images,
                     chatScope: scope
                 )
