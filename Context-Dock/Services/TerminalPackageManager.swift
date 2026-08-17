@@ -659,6 +659,7 @@ class TerminalPackageManager: ObservableObject {
         var subcommands: [String] = []
         var inSection = false
         var rows: [[String]] = []
+        let invocations = Self.invocationNames(in: text, binary: binary)
 
         for line in text.components(separatedBy: .newlines) {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
@@ -677,12 +678,23 @@ class TerminalPackageManager: ObservableObject {
                 inSection = false
             }
 
-            guard inSection || line.hasPrefix("  ") || line.hasPrefix("\t") else { continue }
+            // Only inside a commands section, or on a line written as an invocation of the
+            // tool. Harvesting every indented line was the rule before, and a tool whose
+            // help is nothing but indented flag descriptions — HandBrakeCLI, and most
+            // C-era tools — had the first word of each wrapped description line recorded as
+            // one of its subcommands. That produced "write", "console", "marks" and
+            // "default" for a binary that takes no subcommands at all, and the assistant
+            // then worked through the list running `--help` on each invention in turn.
             let tokens = trimmedLine.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-            if !tokens.isEmpty { rows.append(tokens) }
+            guard !tokens.isEmpty else { continue }
+            let startsWithInvocation = tokens.first.map {
+                invocations.contains($0.lowercased())
+            } ?? false
+            guard inSection || startsWithInvocation else { continue }
+            rows.append(tokens)
         }
 
-        var invocationNames = Self.invocationNames(in: text, binary: binary)
+        var invocationNames = invocations
         // Help written as invocations ("mo clean  Free up disk space") repeats one leading
         // token on nearly every row. Whatever that token is — the binary or an installed
         // alias the help is written against — it is not a subcommand.
@@ -1082,7 +1094,17 @@ class TerminalPackageManager: ObservableObject {
     func loadPackages() {
         if let data = UserDefaults.standard.data(forKey: packagesKey),
            let decoded = try? JSONDecoder().decode([TerminalPackage].self, from: data) {
-            packages = decoded
+            // Subcommands are derived from the stored help, so they are re-derived rather
+            // than trusted. A list parsed by an older, looser parser would otherwise outlive
+            // the fix to that parser forever: a tool only rescans when its subcommand list
+            // is empty, and a wrong list is not an empty one. HandBrakeCLI's invented
+            // "write", "console" and "marks" would have stayed on disk permanently.
+            packages = decoded.map { package in
+                guard let help = package.helpText, !help.isEmpty else { return package }
+                var repaired = package
+                repaired.subcommands = parseSubcommands(from: help, binary: package.command)
+                return repaired
+            }
             Task { @MainActor in
                 DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "cli-packages-loaded")
             }
