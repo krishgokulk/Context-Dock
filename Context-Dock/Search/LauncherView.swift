@@ -670,7 +670,13 @@ struct LauncherView: View {
         // Finder desktop-only mode is a dedicated file-search scope. Once the user types,
         // it owns the result sheet even while its fast index or Spotlight enrichment is
         // publishing rows; never collapse back to the input capsule between snapshots.
-        if isFinderDesktopOnlyMode && !q.isEmpty { return true }
+        // Finder desktop file search owns the sheet whenever it has something to show:
+        // once the user types, and — this is the browse case — whenever a folder has been
+        // drilled into, where the field is empty on purpose and the folder's contents are
+        // the list. Without the browse clause the rows existed and were rendered into a
+        // layout that has no room for them, which showed as a sliver of one row under the
+        // input.
+        if isFinderDesktopOnlyMode && (!q.isEmpty || isBrowsingFinderFolder) { return true }
         if shouldUsePureGlobalAppSearch {
             let hasExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
