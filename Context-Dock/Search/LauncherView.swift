@@ -630,6 +630,10 @@ struct LauncherView: View {
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return isGlobalContextActive
             && !hasSelectionScopeSurface
+            // Browsing a folder is file search by definition — the folder's contents are
+            // the surface. Falling back to app search there collapsed the sheet the moment
+            // the field was cleared on entry.
+            && !isBrowsingFinderFolder
             && !clipboardClaimsSurface
             && l2.targetApp == nil
             && !explicitFinderScope
@@ -3100,8 +3104,11 @@ struct LauncherView: View {
     }
 
     var hasResultsToShow: Bool {
-        guard !shouldSuppressIdleBottomResultsPanel else { return false }
         guard !showMediaLayer else { return false }
+        // A browsed folder always has something to show — even an empty one, which has to
+        // say so rather than silently collapsing back to the search field.
+        if isBrowsingFinderFolder { return true }
+        guard !shouldSuppressIdleBottomResultsPanel else { return false }
         if hasExpandedGlobalContextResults { return true }
         if showContextInDock && currentDockSurfaceMode == .contextDock {
             return shouldShowSeparateActionList

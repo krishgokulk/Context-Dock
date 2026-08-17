@@ -591,6 +591,10 @@ extension LauncherView {
     /// - Other modes: idle = empty query with nothing to show. (The global app list / pills live in
     ///   currentListDockSurface, not searchState.results, so hasResultsToShow alone misses them.)
     var isIdleDockBar: Bool {
+        // Inside a folder the listing IS the surface, and an empty field means "everything
+        // in here" rather than "nothing to show". Without this the sheet collapsed to the
+        // idle pill the instant entering a folder cleared the query.
+        if isBrowsingFinderFolder { return false }
         switch currentDockSurfaceMode {
         case .generalChat:
             return aiMode.messages.isEmpty && !aiMode.isLoading && aiMode.streamingId == nil
