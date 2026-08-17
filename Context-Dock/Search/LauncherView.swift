@@ -645,6 +645,16 @@ struct LauncherView: View {
             && !isContextDockChatRoutingLocked
     }
 
+    /// True when the dock has a conversation on screen to put a card in.
+    ///
+    /// ApprovalCenter decides which surface owns a request; this is the dock's half of
+    /// the answer — with no chat open there is nowhere inline to draw one, and the
+    /// floating panel is the honest fallback rather than a card nobody can see.
+    var dockOwnsInlineApproval: Bool {
+        guard ApprovalCenter.shared.frontmostSurface == .dock else { return false }
+        return aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
+    }
+
     var shouldShowSeparateActionList: Bool {
         guard showContextInDock,
             !showMediaLayer,
@@ -1416,30 +1426,25 @@ struct LauncherView: View {
 
         }
         .onReceive(adapterManager.$pendingApproval) { pending in
+            // Where this belongs is ApprovalCenter's decision now — the same one the chat
+            // window and the preview ask. This block only carries it out: show the card
+            // here, or open the floating panel when no surface will draw it.
             DispatchQueue.main.async {
-                // A chat surface on screen owns the approval: a separate floating panel
-                // covered the dock and split the conversation the request came from.
-                // The chat window is a chat surface too. Leaving it out meant a request
-                // made there got the floating panel — a second window thrown over the
-                // conversation that asked for it, with the answer waiting behind it.
-                let chatSurfaceVisible =
-                    aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
-                    || GeneralChatWindowController.shared.isVisible
+                let mine = ApprovalCenter.shared.pending(for: .dock) != nil
                 if let pending {
-                    if chatSurfaceVisible {
+                    if mine, dockOwnsInlineApproval {
                         AdapterApprovalWindowHost.close()
                         withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                             pendingAdapterApproval = pending
                         }
                         requestWindowSizeUpdate(reason: .chatChanged)
-                    } else if PreviewController.shared.hasVisibleComposer {
-                        // Rendered inline by the preview's assistant, over the file the
-                        // action is about.
-                        pendingAdapterApproval = nil
-                        AdapterApprovalWindowHost.close()
-                    } else {
+                    } else if ApprovalCenter.shared.needsFloatingWindow, !dockOwnsInlineApproval {
                         pendingAdapterApproval = nil
                         openAdapterApprovalWindow(request: pending)
+                    } else {
+                        // Another surface draws it.
+                        pendingAdapterApproval = nil
+                        AdapterApprovalWindowHost.close()
                     }
                 } else {
                     if pendingAdapterApproval != nil {
@@ -1453,26 +1458,19 @@ struct LauncherView: View {
             }
         }
         .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
-            // Same rule the privacy approval below already follows: while a chat surface is
-            // on screen the card belongs in it. A separate window lands over the dock and
-            // covers the request being approved.
-            let chatSurfaceVisible =
-                aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
             if let pending {
-                if chatSurfaceVisible {
+                if dockOwnsInlineApproval {
                     AICapabilityApprovalWindowHost.close()
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                         pendingCapabilityApproval = pending
                     }
                     requestWindowSizeUpdate(reason: .chatChanged)
-                } else if PreviewController.shared.hasVisibleComposer {
-                    // The preview's own assistant renders this card, over the file the
-                    // question is about. A window on top of it would hide the answer.
-                    pendingCapabilityApproval = nil
-                    AICapabilityApprovalWindowHost.close()
-                } else {
+                } else if ApprovalCenter.shared.needsFloatingWindow {
                     pendingCapabilityApproval = nil
                     openAICapabilityApprovalWindow(pending: pending)
+                } else {
+                    pendingCapabilityApproval = nil
+                    AICapabilityApprovalWindowHost.close()
                 }
             } else {
                 if pendingCapabilityApproval != nil {
@@ -1487,23 +1485,19 @@ struct LauncherView: View {
         .onReceive(AIPrivacyApprovalCenter.shared.$pending) { pending in
             // Prefer the inline card whenever a chat surface is on screen — a separate floating
             // window covered the dock and hid the context the question is about.
-            let chatSurfaceVisible =
-                aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
             if let pending {
-                if chatSurfaceVisible {
+                if dockOwnsInlineApproval {
                     AIPrivacyApprovalWindowHost.close()
                     withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                         pendingPrivacyApproval = pending
                     }
                     requestWindowSizeUpdate(reason: .chatChanged)
-                } else if PreviewController.shared.hasVisibleComposer {
-                    // The preview's assistant shows this one inline, like the capability
-                    // card beside it.
-                    pendingPrivacyApproval = nil
-                    AIPrivacyApprovalWindowHost.close()
-                } else {
+                } else if ApprovalCenter.shared.frontmostSurface == .dock {
                     pendingPrivacyApproval = nil
                     openAIPrivacyApprovalWindow(pending: pending)
+                } else {
+                    pendingPrivacyApproval = nil
+                    AIPrivacyApprovalWindowHost.close()
                 }
             } else {
                 if pendingPrivacyApproval != nil {
