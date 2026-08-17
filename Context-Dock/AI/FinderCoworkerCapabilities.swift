@@ -185,6 +185,30 @@ enum FinderCoworkerCapabilities {
                             + "in the Artifacts panel."
                     }
                 }
+                // The rows the surface draws. The model still gets the prose below — it has
+                // to reason about the result — but the user gets something they can act on
+                // instead of a list of paths to copy out by hand.
+                CapabilityResultStore.shared.publish(
+                    CapabilityResultTable(
+                        capabilityID: "finder.duplicates",
+                        title: "Duplicate sets in \(scope.describedAs)",
+                        rows: duplicates.prefix(15).map { group in
+                            let each = size(of: group[0])
+                            let waste = each * Int64(group.count - 1)
+                            return CapabilityResultRow(
+                                id: group[0].path,
+                                title: group[0].lastPathComponent,
+                                subtitle: group.map { $0.deletingLastPathComponent().path }
+                                    .joined(separator: " · "),
+                                detail: "\(group.count) copies · "
+                                    + "\(formatter.string(fromByteCount: waste)) wasted",
+                                paths: group,
+                                fraction: reclaimable > 0
+                                    ? Double(waste) / Double(reclaimable) : nil)
+                        },
+                        summary: "Keep one of each to reclaim "
+                            + formatter.string(fromByteCount: reclaimable)))
+
                 return .init(
                     success: true,
                     output:
@@ -544,8 +568,27 @@ enum FinderCoworkerCapabilities {
 
                 let formatter = ByteCountFormatter()
                 formatter.countStyle = .file
-                let largest = perChild.sorted { $0.bytes > $1.bytes }.prefix(8)
+                let ranked = perChild.sorted { $0.bytes > $1.bytes }.prefix(8)
+                let largest = ranked
                     .map { "- \($0.name): \(formatter.string(fromByteCount: $0.bytes))" }
+
+                // Sizes are proportions, and a proportion is a bar. Rows carry the
+                // fraction so the surface can show what is eating the folder at a glance
+                // rather than making the user compare eight numbers.
+                CapabilityResultStore.shared.publish(
+                    CapabilityResultTable(
+                        capabilityID: "finder.folderSize",
+                        title: root.lastPathComponent,
+                        rows: ranked.map { child in
+                            CapabilityResultRow(
+                                id: child.name,
+                                title: child.name,
+                                detail: formatter.string(fromByteCount: child.bytes),
+                                paths: [root.appendingPathComponent(child.name)],
+                                fraction: total > 0 ? Double(child.bytes) / Double(total) : nil)
+                        },
+                        summary: "\(formatter.string(fromByteCount: total)) · \(fileCount) files, "
+                            + "\(folderCount) folders"))
 
                 var out = [
                     "\(root.path)",

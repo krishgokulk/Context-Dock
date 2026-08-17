@@ -33,6 +33,8 @@ struct PreviewAIComposer: View {
     /// on exactly that.
     @ObservedObject private var adapterManager = AppAdapterManager.shared
     @ObservedObject private var privacyApprovals = AIPrivacyApprovalCenter.shared
+    /// Rows the capabilities produced this turn, drawn as cards under the answer.
+    @ObservedObject private var results = CapabilityResultStore.shared
     @State private var history: [ChatMessage] = []
     @State private var draft = ""
     @State private var isSending = false
@@ -152,6 +154,12 @@ struct PreviewAIComposer: View {
                         .id(message.id)
                     }
 
+                    // Before the command strip: what was found matters more than how it
+                    // was found.
+                    ForEach(results.tables) { table in
+                        CapabilityResultCard(table: table)
+                    }
+
                     if !lastCommands.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(lastCommands) { ran in
@@ -232,6 +240,8 @@ struct PreviewAIComposer: View {
         draft = ""
         errorText = nil
         lastCommands = []
+        // A table from the previous question must not sit under the next answer.
+        results.beginTurn()
         isSending = true
         history.append(ChatMessage(role: .user, content: question))
 

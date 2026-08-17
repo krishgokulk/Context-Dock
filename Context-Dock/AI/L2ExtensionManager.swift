@@ -221,14 +221,34 @@ class L2ExtensionManager: ObservableObject {
         if let title = axCtx.windowTitle  { env["WINDOW_TITLE"]     = title }
         if let sel   = axCtx.selectedText { env["AX_SELECTED_TEXT"] = sel }
 
+        // An argument called "path" used to become $PATH. file_stats(path: ~/Downloads)
+        // replaced the shell's search path with a directory, and every command the script
+        // called afterwards was not found — the failure surfaced as "cut: command not
+        // found", which reads like a broken script rather than a clobbered environment.
+        //
+        // Worse than broken: DYLD_INSERT_LIBRARIES or LD_PRELOAD arriving the same way
+        // would be a model-supplied argument choosing what code the interpreter loads.
+        // Reserved names are passed as ARG_<NAME> and never overwrite the real variable.
+        let reservedEnvNames: Set<String> = [
+            "PATH", "HOME", "SHELL", "PWD", "OLDPWD", "IFS", "ENV", "BASH_ENV", "TMPDIR",
+            "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+            "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH", "NODE_OPTIONS", "PERL5LIB",
+            "RUBYOPT", "GEM_HOME",
+        ]
         for (key, value) in arguments {
-            env[key.uppercased()] = "\(value)"
+            let name = key.uppercased()
+            if reservedEnvNames.contains(name) {
+                env["ARG_" + name] = "\(value)"
+            } else {
+                env[name] = "\(value)"
+            }
         }
 
         // Fill in defaults for parameters not provided
         for (paramName, paramDef) in ext.parameters {
             if arguments[paramName] == nil, let def = paramDef.defaultValue {
-                env[paramName.uppercased()] = def
+                let name = paramName.uppercased()
+                env[reservedEnvNames.contains(name) ? "ARG_" + name : name] = def
             }
         }
 
