@@ -4763,7 +4763,17 @@ extension LauncherView {
         // Attachments belong to this submitted turn. Move them out of the composer immediately
         // so a later turn cannot accidentally resend the same capture.
         let submittedContextDockFiles = contextDockChatFiles
-        let submittedContextDockText = contextDockChatCapturedText
+        // Captured text is what the user explicitly grabbed with Capture Text. When they
+        // grabbed nothing, the selection they are looking at is still the subject of the
+        // question — "summarize selected text and add it to reminder" with text highlighted
+        // in Code was answered "First, I need the selected text you want to summarize",
+        // because the only thing that ever filled this was the OCR menu item and the app's
+        // live selection was never read.
+        //
+        // Reaching the provider is still gated: AIProviderRouter checks
+        // allowSelectedTextCloudSharing and asks before selected text leaves the Mac, so
+        // including it here inherits that consent rather than going around it.
+        let submittedContextDockText = contextDockChatCapturedText ?? liveSelectionForChat()
         contextDockChatFiles = []
         contextDockChatCapturedText = nil
         // Every path from here either reaches the prompt, where the attachment is read, or
@@ -7883,5 +7893,24 @@ extension LauncherView {
         guard words.count <= 4 else { return false }
         // A question mark is a question at any length: "safari?" is not a launch.
         return !query.hasSuffix("?")
+    }
+}
+
+
+// MARK: - Live selection
+
+extension LauncherView {
+
+    /// The frontmost app's selected text, when there is enough of it to be the subject of a
+    /// question.
+    ///
+    /// Trimmed and length-gated on purpose. A stray click leaves a word or two selected, and
+    /// silently attaching that to every message would put noise in the prompt and, worse,
+    /// send fragments of whatever the user happened to be looking at to a cloud provider.
+    func liveSelectionForChat() -> String? {
+        guard let raw = AXContextReader.shared.current.selectedText else { return nil }
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 12 else { return nil }
+        return text
     }
 }
