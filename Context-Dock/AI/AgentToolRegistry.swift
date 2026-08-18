@@ -1227,10 +1227,8 @@ final class AgentToolRegistry {
                     output: "No installed app called \"\(appName)\".",
                     displayCommand: "window_control(\(appName): \(raw))")
             }
-            let outcome = await MainActor.run {
-                WindowControlTool.run(
-                    command, bundleId: target.bundleId, appName: target.name)
-            }
+            let outcome = await WindowControlTool.run(
+                command, bundleId: target.bundleId, appName: target.name)
             return AgentToolResult(
                 success: outcome.success,
                 output: outcome.message,

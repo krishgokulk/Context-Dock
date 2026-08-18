@@ -37,7 +37,7 @@ enum WindowControlTool {
     /// The read-back is the point. A window operation either happened or did not, and the
     /// attribute that performed it is the same attribute that reports it — so unlike a menu
     /// click there is nothing to infer.
-    static func run(_ command: Command, bundleId: String, appName: String)
+    static func run(_ command: Command, bundleId: String, appName: String) async
         -> (success: Bool, message: String)
     {
         guard let app = NSRunningApplication
@@ -59,8 +59,14 @@ enum WindowControlTool {
             else {
                 return (false, "\(appName)'s window refused to \(command.rawValue).")
             }
-            let now = boolAttribute(window, kAXMinimizedAttribute)
-            return now == wanted
+            // Read back only once the window has had time to get there. Minimising is
+            // animated and the attribute follows the animation, so an immediate read is
+            // taken mid-flight and comes back false — which is how a window that visibly
+            // minimised was reported as "did not minimize". The honest report needs the
+            // read to happen after the operation, not during it.
+            let settled = await settles(
+                window, attribute: kAXMinimizedAttribute, to: wanted)
+            return settled
                 ? (true, "Verified: \(appName)'s window is \(wanted ? "minimised" : "restored").")
                 : (false, "\(appName)'s window did not \(command.rawValue).")
 
@@ -104,4 +110,22 @@ enum WindowControlTool {
         else { return nil }
         return value as? Bool
     }
+
+    /// Waits for `attribute` to reach `wanted`, up to roughly a second.
+    ///
+    /// Polling rather than a fixed sleep: the common case settles in a frame or two and
+    /// returns immediately, while a slow app still gets long enough to finish. A fixed wait
+    /// would either be a delay on every call or too short for the app that needed it.
+    private static func settles(
+        _ window: AXUIElement, attribute: String, to wanted: Bool,
+        timeout: TimeInterval = 1.2
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if boolAttribute(window, attribute) == wanted { return true }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        } while Date() < deadline
+        return boolAttribute(window, attribute) == wanted
+    }
+
 }
