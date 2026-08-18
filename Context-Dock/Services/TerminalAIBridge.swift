@@ -811,6 +811,7 @@ class TerminalAIBridge: ObservableObject {
         onLine: (@Sendable (String) -> Void)? = nil,
         workingDirectory: URL? = nil
     ) async -> (output: String, exitCode: Int32) {
+        await CancellableProcessRunner.run { box in
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = executable
@@ -855,12 +856,19 @@ class TerminalAIBridge: ObservableObject {
                         proc.terminationStatus))
             }
 
+            // Stop may already have been pressed while the gate was deciding. A process
+            // started after that is one nothing is left watching.
+            guard box.adopt(process) else {
+                finish(("Stopped before it started.", 15))
+                return
+            }
             do {
                 try process.run()
             } catch {
                 finish(("Failed to run \(executable.lastPathComponent): "
                         + error.localizedDescription, 127))
             }
+        }
         }
     }
 
@@ -871,6 +879,7 @@ class TerminalAIBridge: ObservableObject {
         workingDirectory: URL? = nil
     ) async -> (output: String, exitCode: Int32) {
         let toolDirectories = TerminalPackageManager.shared.pinnedToolDirectories()
+        return await CancellableProcessRunner.run { box in
         return await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -990,6 +999,11 @@ class TerminalAIBridge: ObservableObject {
             }
 
             do {
+                // Stop reaches the process, not just the loop that was waiting on it.
+                guard box.adopt(process) else {
+                    continuation.resume(returning: ("Stopped before it started.", 15))
+                    return
+                }
                 try process.run()
                 if let probeDeadline {
                     DispatchQueue.global().asyncAfter(deadline: .now() + probeDeadline) {
@@ -1010,6 +1024,7 @@ class TerminalAIBridge: ObservableObject {
             } catch {
                 continuation.resume(returning: ("Error: \(error.localizedDescription)", 1))
             }
+        }
         }
     }
 

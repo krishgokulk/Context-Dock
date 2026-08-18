@@ -26,9 +26,19 @@ final class TerminalCommandExecutor {
         // Derived from the thread rather than passed in: every surface already routes
         // shell work through here with its scope, so this is the one place that has to
         // know where that thread's work belongs.
-        let result = await bridge.processAICommand(
+        var result = await bridge.processAICommand(
             command, purpose: purpose, modelRequiresApproval: modelRequiresApproval,
             workingDirectory: ChatWorkingDirectory.resolve(for: consoleScope))
+        // A command the user stopped mid-flight reports what it managed and says it was
+        // stopped. Silently returning partial output as though the command had finished is
+        // how a half-completed move gets summarised as a completed one.
+        if Task.isCancelled {
+            result = (
+                success: false,
+                output: result.output + CancellableProcessRunner.stoppedNote,
+                exitCode: result.exitCode
+            )
+        }
         if let rowID, let consoleScope {
             ChatConsoleLog.shared.finish(
                 rowID, output: consoleOutput(result.output, success: result.success),
