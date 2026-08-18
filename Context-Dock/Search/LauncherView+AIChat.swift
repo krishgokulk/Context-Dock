@@ -7855,3 +7855,33 @@ extension LauncherView {
     }
 
 }
+
+// MARK: - Launcher query vs sentence
+
+extension LauncherView {
+
+    /// Whether a Context Dock query is short enough to be a launcher query rather than a
+    /// request to the conversation.
+    ///
+    /// Return in the dock runs the first matching app, folder or pill before it considers
+    /// the chat. That is right for how the dock is used most of the time — "xco" runs Xcode
+    /// Switch, "downloads" opens Downloads — and wrong the moment someone types a sentence.
+    /// "teach yourself to convert the selected text to markdown" matched a folder called
+    /// ConvertedPhotos on the word "convert" and opened it in Finder, with the user's
+    /// selection and their actual request dropped on the floor.
+    ///
+    /// Length is the discriminator because it is the one that does not need to understand
+    /// the request. Nobody launches an app by typing eight words, and nobody asks a question
+    /// in two — so the boundary separates the two intentions without trying to parse either,
+    /// and a launcher query keeps working exactly as it did.
+    func looksLikeLauncherQuery(_ query: String) -> Bool {
+        let words = query
+            .split { $0 == " " || $0 == "\n" || $0 == "\t" }
+            .filter { !$0.isEmpty }
+        // Four words covers the longest real launcher phrases — "new private window",
+        // "open downloads folder", "find report in mail" — while a request begins at five.
+        guard words.count <= 4 else { return false }
+        // A question mark is a question at any length: "safari?" is not a launch.
+        return !query.hasSuffix("?")
+    }
+}

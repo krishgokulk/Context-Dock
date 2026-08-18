@@ -2354,6 +2354,20 @@ extension LauncherView {
                                                     findToken, userMessage: "find \(trimmed)")
                                                 return
                                             }
+                                            // A sentence is a question, not a launcher query.
+                                            //
+                                            // The branches below run the first matching result —
+                                            // right for "xco" → Xcode Switch, wrong for "teach
+                                            // yourself to convert the selected text to markdown",
+                                            // which matched a folder called ConvertedPhotos on the
+                                            // word "convert" and opened it in Finder instead of
+                                            // answering. Context Dock Chat is not a launcher; a
+                                            // request long enough to be a sentence belongs to the
+                                            // conversation.
+                                            if !looksLikeLauncherQuery(trimmed) {
+                                                handleL2Query(trimmed)
+                                                return
+                                            }
                                             // No focusedPillIndex precondition: the first row is
                                             // shown pre-selected (render default) while typing —
                                             // Enter must run it (e.g. "xco" → Xcode Switch), not
