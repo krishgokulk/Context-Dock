@@ -891,6 +891,11 @@ struct AIProviderSettingsView: View {
     @State private var discoveredFirstPartyProvider: AIProvider?
     @State private var firstPartyModelDiscoveryError: String?
     @State private var isDiscoveringFirstPartyModels = false
+    /// Typed rather than numeric: an empty field means "not priced", which a Double cannot
+    /// express, and a half-typed "3." must not be read as a rate mid-keystroke.
+    @State private var rateInput = ""
+    @State private var rateOutput = ""
+    @State private var rateCached = ""
     @State private var modelDiscoveryTask: Task<Void, Never>?
     @State private var isTestingAppleScriptModel = false
     @State private var appleScriptModelTestMessage: String?
@@ -1020,6 +1025,10 @@ struct AIProviderSettingsView: View {
                     
                     providerConfigurationView
                 }
+
+                Divider()
+
+                modelRateCardView
 
                 Divider()
 
@@ -1291,6 +1300,107 @@ struct AIProviderSettingsView: View {
                     .foregroundStyle(.tertiary)
             }
         }
+    }
+
+    /// What this model costs, entered by the user.
+    ///
+    /// DoraX counts tokens exactly — the providers report them — but it does not ship a price
+    /// table: one is wrong the day a provider changes its pricing page, and someone would
+    /// pick a cheaper model on a number the app made up two releases ago. Enter the figures
+    /// from the provider's own page and the usage rows show money; leave them empty and they
+    /// show tokens and nothing else.
+    @ViewBuilder
+    private var modelRateCardView: some View {
+        let model = currentRateModelID
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Cost per million tokens")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            if model.isEmpty {
+                Text("Choose a model above to record what it costs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    rateField("Input $", value: $rateInput)
+                    rateField("Output $", value: $rateOutput)
+                    rateField("Cached $", value: $rateCached)
+                }
+                Text(
+                    "From \(settings.selectedAIProvider.displayName)'s pricing page, for "
+                    + "\(model). Leave blank to show tokens only. Cached input is billed at "
+                    + "the input rate when left empty."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                let spend = AIModelRateCard.shared.todaySpend()
+                if spend.amount > 0 {
+                    Text(
+                        "Today: \(spend.amount.compactUSD)"
+                        + (spend.hasUnpriced ? " (plus models with no rate entered)" : ""))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .onAppear { loadRate(for: model) }
+        .onChange(of: currentRateModelID) { _, newModel in loadRate(for: newModel) }
+    }
+
+    private func rateField(_ label: String, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            TextField("—", text: value)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 90)
+                .onSubmit { saveRate() }
+        }
+    }
+
+    /// The model the rate applies to: whichever one this provider is set to use.
+    private var currentRateModelID: String {
+        switch settings.selectedAIProvider {
+        case .openAI: return settings.selectedOpenAIModel
+        case .anthropic: return settings.selectedAnthropicModel
+        case .googleGemini: return settings.selectedGeminiModel
+        case .ollama: return settings.selectedOllamaModel
+        case .openAICompatible: return settings.openAICompatibleModelID
+        case .kimi: return settings.selectedKimiModel
+        case .claudeBridge: return settings.claudeBridgeModelID
+        case .chatGPTBridge: return settings.chatGPTBridgeModelID
+        case .onDevice, .shortcuts: return ""
+        }
+    }
+
+    private func loadRate(for model: String) {
+        guard !model.isEmpty, let rate = AIModelRateCard.shared.rate(forModel: model) else {
+            rateInput = ""
+            rateOutput = ""
+            rateCached = ""
+            return
+        }
+        rateInput = String(rate.inputPerMillion)
+        rateOutput = String(rate.outputPerMillion)
+        rateCached = rate.cachedInputPerMillion.map { String($0) } ?? ""
+    }
+
+    private func saveRate() {
+        let model = currentRateModelID
+        guard !model.isEmpty else { return }
+        let input = Double(rateInput.trimmingCharacters(in: .whitespaces))
+        let output = Double(rateOutput.trimmingCharacters(in: .whitespaces))
+        // Both halves or neither: a rate with only one side priced would report a cost that
+        // is wrong in a direction the user cannot see.
+        guard let input, let output else {
+            AIModelRateCard.shared.set(nil, forModel: model)
+            return
+        }
+        AIModelRateCard.shared.set(
+            AIModelRate(
+                inputPerMillion: input,
+                outputPerMillion: output,
+                cachedInputPerMillion: Double(rateCached.trimmingCharacters(in: .whitespaces))),
+            forModel: model)
     }
 
     private func firstPartyModelPicker(

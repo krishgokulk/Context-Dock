@@ -1282,6 +1282,7 @@ extension LauncherView {
         // user a scoped turn re-sends its context per tool round was the one they could not
         // see. Shown first: it is the answer to "why is this expensive".
         let ledger = AITokenLedger.shared
+        let rateCard = AIModelRateCard.shared
         let tokenRows: [SharedResultRowModel] = ledger.today.prefix(6).map { entry in
             var parts = [
                 "in \(entry.inputTokens.compactTokenCount)",
@@ -1291,9 +1292,13 @@ extension LauncherView {
                 parts.append("cached \(entry.cachedInputTokens.compactTokenCount)")
             }
             parts.append("\(entry.requests) request\(entry.requests == 1 ? "" : "s")")
+            // Money only where the user has said what the model costs. A row with no rate
+            // shows tokens and stops, rather than a number DoraX invented.
+            let spend = rateCard.cost(for: entry).map { " · \($0.compactUSD)" } ?? ""
             return SharedResultRowModel(
                 id: "tokens-\(entry.id)",
-                title: "\(entry.model) — \(entry.totalTokens.compactTokenCount) tokens today",
+                title: "\(entry.model) — \(entry.totalTokens.compactTokenCount) tokens today"
+                    + spend,
                 subtitle: parts.joined(separator: " • "),
                 systemIcon: "number.circle"
             )
