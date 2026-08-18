@@ -748,9 +748,14 @@ enum AppScopedChatService {
         // question the same way and let the model pick, which is how a "what changed just
         // now" question got answered from a note written last week.
         let sourceDecision = AgentSourceAuthority.decide(query: query)
-        var sections: [String] = [
+        // Assembled into named slots rather than a flat list, so reading order and the
+        // budget for a small-context model are one rule shared with the dock instead of two
+        // that drifted. This surface had no budget at all: on Apple's on-device model the
+        // full inventory overran the window and the reply never arrived.
+        var prompt = ScopedPromptAssembler()
+        prompt.set(.sourceRule, [
             sourceDecision.promptRule, dateTimeBlock(), UntrustedContent.rule,
-        ]
+        ].joined(separator: "\n\n"))
         var context: UserContext = .none
         /// The machine as it was before this turn ran anything, kept so a tool's claim can
         /// be checked against what actually changed.
@@ -766,9 +771,10 @@ enum AppScopedChatService {
                 ? .appFocused(name: appName, bundleID: bundleId)
                 : .filesSelected(finderSelection)
             if let selectionBlock = selectionBlock(finderSelection) {
-                sections.append(selectionBlock)
+                prompt.set(.selection, selectionBlock)
             }
-            sections.append(
+            prompt.set(
+                .identity,
                 """
                 This conversation is scoped to \(appName) (\(bundleId)). Answer about that app, \
                 using the verified context and capabilities below. If a detail is not in the \
@@ -780,7 +786,7 @@ enum AppScopedChatService {
             let resolved = ContextResolver.resolve(scope: scope, appName: appName)
             contextBefore = resolved
             let block = resolved.promptBlock()
-            if !block.isEmpty { sections.append(block) }
+            prompt.set(.resolvedContext, block)
             log.notice("context \(resolved.summary, privacy: .public)")
             // What the app is doing right now — its project, branch, changes, running
             // agents — and what its vendor documents about it. Both were the dock's alone,
@@ -792,41 +798,42 @@ enum AppScopedChatService {
                     bundleId: bundleId, appName: appName,
                     forceRefresh: sourceDecision.requiresFreshRead)
             }
-            if !workspace.isEmpty { sections.append(workspace) }
+            prompt.set(.workspace, workspace)
             let reference = await withTimeout(seconds: 8, fallback: "", label: "reference") {
                 await ScopedGroundingBlocks.reference(
                     bundleId: bundleId, appName: appName, query: query)
             }
-            if !reference.isEmpty { sections.append(reference) }
+            prompt.set(.reference, reference)
             // The page a browser scope is actually on. Without it a browser thread had the
             // app's capability list and no idea what was open in it, so it offered to reload
             // a page it could not name.
             let page = ScopedGroundingBlocks.browserPage(bundleId: bundleId, query: query)
             if !page.isEmpty {
-                sections.append(UntrustedContent.fenced(page, from: "the current web page"))
+                prompt.set(.browserPage, UntrustedContent.fenced(page, from: "the current web page"))
             }
             if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
-                sections.append(UntrustedContent.fenced(history, from: "browser history"))
+                prompt.append(
+                    .browserPage, UntrustedContent.fenced(history, from: "browser history"))
             }
             // The same block the dock builds for its scoped chat — adapter actions, menu
             // commands, MCP, API, Shortcuts, skills, CLI, and the tool-choice order.
             let capabilities = ScopedAppPromptBuilder.appIdentityBlock(
                 bundleId: bundleId, appName: appName, query: query)
-            if !capabilities.isEmpty { sections.append(capabilities) }
+            prompt.append(.identity, capabilities)
             // The app's enabled skills, in full. The identity block only counts them, and
             // a Calendar chat that is told "2 skills active" without their instructions
             // behaves differently from the dock's, which reads them.
             // A chosen skill replaces the full set: the user said which workflow applies,
             // and stacking the others behind it would dilute the instruction they picked.
             let skills = skillOverride ?? SkillStore.shared.instructionsBlock(for: bundleId)
-            if !skills.isEmpty { sections.append(skills) }
+            prompt.set(.skills, skills)
             // The app's live MCP tools, in the prose protocol the loop understands, so a
             // Reminders thread can read reminders instead of describing how to.
             log.notice("stage: mcp block")
             let mcpBlock = await withTimeout(seconds: 6, fallback: "") {
                 await MCPRuntime.shared.toolPromptBlock(forBundleId: bundleId)
             }
-            if !mcpBlock.isEmpty { sections.append(mcpBlock) }
+            prompt.set(.mcp, mcpBlock)
 
         case .folder(let path):
             let url = URL(fileURLWithPath: path)
@@ -839,14 +846,15 @@ enum AppScopedChatService {
             // with six files selected is a question about those six, and answering it
             // about the whole folder answers something nobody asked.
             context = .filesSelected(finderSelection.isEmpty ? [url] : finderSelection)
-            sections.append(
+            prompt.set(
+                .identity,
                 """
                 This conversation is scoped to the folder \(url.lastPathComponent) \
                 (\(path)). Answer about the files in it, using the listing and the file \
                 tools below. If something is not in the listing, use a tool to look rather \
                 than guessing — and if a tool cannot read it, say so.
                 """)
-            sections.append(FolderScopeDigest.promptBlock(for: url))
+            prompt.set(.folder, FolderScopeDigest.promptBlock(for: url))
             // File work goes through the file tools, never the shell.
             //
             // Asked to tidy a folder, the model wrote `mkdir a b c` and then two `mv`s
@@ -856,7 +864,8 @@ enum AppScopedChatService {
             // while the answer said the folders had been made. finder.organize does that
             // whole request in one call, inside this folder, with the file list on the
             // approval card and a read-back afterwards.
-            sections.append(
+            prompt.append(
+                .identity,
                 """
                 FILE WORK IN THIS FOLDER
                 Use the finder.* capabilities for anything that creates, moves, renames, \
@@ -871,29 +880,30 @@ enum AppScopedChatService {
                 If a step fails, say so and stop rather than continuing as though it worked.
                 """)
             if let selectionBlock = selectionBlock(finderSelection) {
-                sections.append(selectionBlock)
+                prompt.set(.selection, selectionBlock)
             }
             // Finder's identity block, because the file tools are registered against
             // Finder's bundle id: a folder thread is the same toolset aimed at one place.
             let fileTools = ScopedAppPromptBuilder.appIdentityBlock(
                 bundleId: ChatAppDirectory.finderBundleID, appName: "Finder", query: query)
-            if !fileTools.isEmpty { sections.append(fileTools) }
+            prompt.append(.identity, fileTools)
 
         case .cli(let command):
             let resolved = ContextResolver.resolve(scope: scope, appName: command)
             let resolvedBlock = resolved.promptBlock()
-            if !resolvedBlock.isEmpty { sections.append(resolvedBlock) }
+            prompt.set(.resolvedContext, resolvedBlock)
             log.notice("context \(resolved.summary, privacy: .public)")
             let tool = ScopedAppPromptBuilder.appIdentityBlock(
                 bundleId: "cli://\(command)", appName: command, query: query)
-            if !tool.isEmpty { sections.append(tool) }
+            prompt.set(.cli, tool)
 
         case .general, .thread:
             // Unscoped chat is not ungrounded chat: it still answers about the user's
             // machine, so it gets the same capability catalogue the dock's General Chat
             // builds. Without it the model was handed a CLI protocol by the provider's
             // package matcher and nothing that could run it.
-            sections.append(
+            prompt.set(
+                .identity,
                 """
                 You are DoraX's assistant on the user's Mac. Use the capabilities listed \
                 below to answer from real data rather than from memory. Never print a tool \
@@ -911,8 +921,8 @@ enum AppScopedChatService {
             guard let bundleId else { continue }
             let block = ScopedAppPromptBuilder.appIdentityBlock(
                 bundleId: bundleId, appName: name, query: query, compact: true)
-            if !block.isEmpty { sections.append(block) }
-            if let facts = liveWindowFacts(bundleID: bundleId) { sections.append(facts) }
+            prompt.append(.identity, block)
+            prompt.append(.resolvedContext, liveWindowFacts(bundleID: bundleId))
         }
 
         // Real Calendar / Reminders / Notes / Contacts data when the question is about
@@ -923,7 +933,7 @@ enum AppScopedChatService {
         let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
             await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
         }
-        if !liveAppleData.isEmpty { sections.append(liveAppleData) }
+        prompt.set(.liveAppData, liveAppleData)
 
         // Registered capabilities, MCP tools and skills — the same block General Chat uses.
         // A CLI thread is one executable. The cross-app catalogue is noise there — and
@@ -954,11 +964,18 @@ enum AppScopedChatService {
                 scope: hubScope,
                 characterBudget: AIContextBudget.characterBudget(for: provider))
         }
-        if !hubBlock.isEmpty { sections.append(hubBlock) }
+        prompt.set(.capabilities, hubBlock)
 
         // What DoraX has durably learned — saved notes, prior findings, the user's own
         // written knowledge for this app. Withheld when the question is about live state,
         // because remembered facts are exactly what must not stand in for a fresh reading.
+        // Identity goes in whether or not the question sounds personal, and whether or not
+        // this turn is allowed to lean on remembered facts: knowing who is asking is not
+        // evidence about the world, so the rule that withholds memory from live-state
+        // questions does not apply to it.
+        let profileBlock = MarkdownMemoryStore.shared.profileBlock()
+        prompt.append(.memory, profileBlock)
+
         var memoryChips: [String] = []
         if sourceDecision.allowsMemoryEvidence {
             let memoryBundleID: String? = {
@@ -968,12 +985,12 @@ enum AppScopedChatService {
             }()
             let memory = MarkdownMemoryStore.shared.contextBlock(
                 query: query, appBundleID: memoryBundleID)
-            if !memory.isEmpty { sections.append(memory) }
+            prompt.set(.memory, memory)
             memoryChips = MarkdownMemoryStore.shared.relevantSourceChips(
                 query: query, appBundleID: memoryBundleID)
         }
 
-        let systemPrompt = sections.joined(separator: "\n\n")
+        let systemPrompt = prompt.assemble(for: provider)
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, so it takes the plain path.

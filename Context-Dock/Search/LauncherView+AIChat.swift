@@ -303,23 +303,6 @@ extension LauncherView {
     /// every tool it may pick (actions, CLI, MCP, API, shortcuts) — or what to
     /// suggest adding when nothing fits.
     @MainActor
-    /// Joins prompt sections in priority order while staying inside a character budget the
-    /// on-device model can actually hold. Sections that no longer fit are dropped whole —
-    /// a truncated JSON block or half a menu list is worse than its absence.
-    static func budgetedContextPrompt(_ sections: [String], limit: Int = 3_200) -> String {
-        var used = 0
-        var kept: [String] = []
-        for section in sections {
-            let trimmed = section.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            let cost = trimmed.count + 2
-            guard used + cost <= limit else { continue }
-            kept.append(trimmed)
-            used += cost
-        }
-        return kept.joined(separator: "\n\n")
-    }
-
     /// - Parameter compact: trims the block for Apple's on-device model, whose context
     ///   window the full inventory (50 menu paths + every rule paragraph) overruns — the
     ///   model then stalls with no token and the chat times out.
@@ -5172,29 +5155,26 @@ extension LauncherView {
                 let scopedImageAttachments = submittedContextDockFiles.filter {
                     scopedImageExts.contains($0.pathExtension.lowercased())
                 }
+                // Same assembler as the chat window: one reading order, one budget, one
+                // place to reason about what a small-context model is given up. The dock
+                // had this ordering and the window had its own; keeping two was how they
+                // answered the same question differently.
                 let activeContextPrompt: String = {
-                    let parts = [
-                        sourceDecision.promptRule, resolvedContextBlock, identityBlock,
-                        workspaceBlock, referenceBlock,
-                        finalContextPrompt,
-                        runtimeCLIContextPrompt, appleData, mcpBlock, browserPageBlock,
-                        skillsBlock, attachmentBlock, memoryBlock,
-                    ]
-                    guard usesOnDeviceModel else {
-                        return parts
-                            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                            .joined(separator: "\n\n")
-                    }
-                    // Ordered by what the answer actually needs: who the scope is, then the
-                    // live data, then reference material. Reference is cut first.
-                    let prioritised = [
-                        sourceDecision.promptRule, resolvedContextBlock, identityBlock,
-                        workspaceBlock, referenceBlock,
-                        browserPageBlock,
-                        attachmentBlock, finalContextPrompt, appleData, mcpBlock, skillsBlock,
-                        memoryBlock, runtimeCLIContextPrompt,
-                    ]
-                    return Self.budgetedContextPrompt(prioritised)
+                    var prompt = ScopedPromptAssembler()
+                    prompt.set(.sourceRule, sourceDecision.promptRule)
+                    prompt.set(.resolvedContext, resolvedContextBlock)
+                    prompt.set(.identity, identityBlock)
+                    prompt.append(.identity, finalContextPrompt)
+                    prompt.set(.workspace, workspaceBlock)
+                    prompt.set(.reference, referenceBlock)
+                    prompt.set(.browserPage, browserPageBlock)
+                    prompt.set(.attachments, attachmentBlock)
+                    prompt.set(.liveAppData, appleData)
+                    prompt.set(.mcp, mcpBlock)
+                    prompt.set(.skills, skillsBlock)
+                    prompt.set(.memory, memoryBlock)
+                    prompt.set(.cli, runtimeCLIContextPrompt)
+                    return prompt.assemble(for: provider)
                 }()
 
                 if let guardedAnswer = await MainActor.run(body: {
