@@ -286,11 +286,23 @@ remains an answer; `{"trash_bin_action":{…}}` does not. Keys are split on case
 well as separators, because models write both `run_tool` and `runTool` — a gap the tests
 caught, not the review.
 
-### 9c. A create request answered by a read
+### 9c. A create request answered by a read · **fixed**
 
 `create a reminder "to call sujith" today at 5pm` → **"You have no open reminders."**
 A write intent selected a reader. `reminders.create` exists and is one of the seven
 capabilities with a real read-back verifier (§3), so this is route selection, not coverage.
+
+**Cause.** `readOnlyDataDomain` classified it `.reminders`: `"today"` is on its read-signal
+list and `"reminder"` maps to the domain. Nothing asked whether the sentence also commands.
+The read router runs deliberately *before* executable routing — its comment says "so
+personal-data reads don't get misclassified as actions" — so a reminders **write** was
+answered by a reminders **read** before the resolver ever saw it.
+
+**Fixed** with the vocabulary fix 2 introduced rather than a third list, which is the §9a
+mistake in different words. `GeneralAIActionResolver.requestsChange` is now the one test for
+"this sentence asks for a change", used by both the tool-loop write guard and this router.
+Matched as whole words: a contains-check on `save` reads `"show me my saved notes"` as an
+instruction.
 
 ### 9d. Dead field
 

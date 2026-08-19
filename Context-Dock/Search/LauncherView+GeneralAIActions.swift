@@ -1203,6 +1203,11 @@ extension LauncherView {
             "tomorrow", "latest",
         ]
         guard readSignals.contains(where: q.contains) else { return nil }
+        // A read signal is not proof of a read. `create a reminder "call sujith" today at
+        // 5pm` carries "today", names the reminders domain, and was answered "You have no
+        // open reminders" — the write never ran, and the reply was about the wrong thing
+        // entirely. Anything that also asks for a change belongs to executable routing.
+        guard !GeneralAIActionResolver.shared.requestsChange(q) else { return nil }
         if looksLikeContactInfoLookup(q) {
             return .contacts
         }

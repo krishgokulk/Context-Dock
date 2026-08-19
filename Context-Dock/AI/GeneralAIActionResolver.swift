@@ -743,16 +743,34 @@ final class GeneralAIActionResolver {
     /// The verbs are actions, never nouns. "trash" and "bin" are absent deliberately: they
     /// are what the user is asking *about* in the sentence this exists to catch.
     func asksOnly(_ query: String) -> Bool {
-        guard isLikelyReadOnly(query) else { return false }
-        let lowered = query.lowercased()
-        let mutatingVerbs = [
+        isLikelyReadOnly(query) && !requestsChange(query)
+    }
+
+    /// True when the sentence asks for something to change, anywhere in it.
+    ///
+    /// One list, used by everything that needs to tell a question from an instruction.
+    /// There were two matchers over the Global Commands list with different thresholds once,
+    /// and the gap between them is where "trash bin" fell; a second vocabulary for this
+    /// would be the same mistake with different words.
+    ///
+    /// Matched as whole words, not substrings. "show me my saved notes" is a read, and a
+    /// contains-check on "save" turns it into a write.
+    func requestsChange(_ query: String) -> Bool {
+        let verbs: Set<String> = [
             "delete", "remove", "erase", "empty", "clear", "wipe", "uninstall",
-            "create", "add ", "make ", "send", "share", "move", "rename", "install",
-            "quit", "close", "kill", "stop", "restart", "shut down", "shutdown",
-            "enable", "disable", "turn on", "turn off", "toggle", "set ", "reset",
-            "save", "export", "download", "run ", "execute",
+            "create", "add", "make", "send", "share", "move", "rename", "install",
+            "quit", "close", "kill", "stop", "restart", "shutdown", "reboot",
+            "enable", "disable", "toggle", "turn", "set", "reset",
+            "save", "export", "download", "run", "execute", "schedule", "remind",
         ]
-        return !mutatingVerbs.contains(where: lowered.contains)
+        let words = query.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        if words.contains(where: verbs.contains) { return true }
+        // Two-word forms whose first half is harmless on its own.
+        return zip(words, words.dropFirst()).contains { first, second in
+            first == "shut" && second == "down"
+        }
     }
 
     /// Discover local read capabilities for General Chat. This is the read half of the

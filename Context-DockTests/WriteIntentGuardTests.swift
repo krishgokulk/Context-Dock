@@ -67,3 +67,50 @@ struct WriteIntentGuardTests {
         #expect(!resolver.asksOnly(mixed))
     }
 }
+
+// MARK: - Telling a question from an instruction
+//
+// One vocabulary, shared by the write guard on the tool loop and the read-only data router.
+// `create a reminder "call sujith" today at 5pm` carried the read signal "today", named the
+// reminders domain, and came back "You have no open reminders" — the reminder was never
+// created and the answer was about something else.
+
+@MainActor
+struct ChangeRequestVocabularyTests {
+
+    private var resolver: GeneralAIActionResolver { .shared }
+
+    @Test func theReminderThatWasAnsweredAsARead() {
+        #expect(resolver.requestsChange(#"create a reminder "to call sujith " today at 5pm"#))
+    }
+
+    @Test func instructionsAreRecognisedWhereverTheySit() {
+        #expect(resolver.requestsChange("empty the trash"))
+        #expect(resolver.requestsChange("show me my reminders then delete the completed ones"))
+        #expect(resolver.requestsChange("what's on my calendar today — add a 6pm slot"))
+        #expect(resolver.requestsChange("shut down my mac"))
+        #expect(resolver.requestsChange("turn on dark mode"))
+    }
+
+    @Test func questionsCarryNoInstruction() {
+        #expect(!resolver.requestsChange("what's in my trash bin"))
+        #expect(!resolver.requestsChange("show me my reminders"))
+        #expect(!resolver.requestsChange("what's on my calendar today"))
+        #expect(!resolver.requestsChange("do i have any unread messages"))
+    }
+
+    /// Whole words, not substrings. A contains-check on "save" reads "saved" as an
+    /// instruction and turns a perfectly ordinary read into a refused write.
+    @Test func aVerbInsideAnotherWordIsNotAnInstruction() {
+        #expect(!resolver.requestsChange("show me my saved notes"))
+        #expect(!resolver.requestsChange("list the reminders i created yesterday"))
+        #expect(!resolver.requestsChange("which processes are running"))
+        #expect(!resolver.requestsChange("what's my screen resolution"))
+    }
+
+    /// "shut" alone is not an instruction; "shut down" is.
+    @Test func twoWordFormsAreMatchedAsPairs() {
+        #expect(resolver.requestsChange("shut down"))
+        #expect(!resolver.requestsChange("the shutter speed"))
+    }
+}
