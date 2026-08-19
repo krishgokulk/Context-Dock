@@ -220,3 +220,50 @@ Confirmed by this audit and unchanged:
 - No LangGraph / CrewAI / graph framework.
 - No new floating surface.
 - Product layers stay separate. §5 unifies *semantics*, not surfaces.
+
+---
+
+## 9. Deferred — General AI routing bugs found alongside this work
+
+Not control-plane defects; recorded here so they are not lost. Reproduced 2026-08-19 in
+dock General Chat with ChatGPT selected.
+
+### 9a. A keyword-shaped query never reaches its Global Command
+
+`"trash bin"` answered conversationally. Two enabled runnable commands match it —
+built-in **Empty Trash** and a user-added one — and neither ran.
+
+Two matchers read the same command list at different thresholds:
+
+| | Gate | `"trash bin"` |
+|---|---|---|
+| `GlobalCommandCapabilities.hasSemanticMatch` | keyword score ≥ 4, no verb needed | **matches** |
+| `GlobalCommandCapabilities.explicitRunMatch` | verb prefix (`run `/`execute `/`open `/`start `/`launch `) **and** the literal command name in the query | no match |
+
+`AIRequestClassifier` uses the first and classifies the turn `.scopedTask` under a comment
+saying such phrases "must enter discovery instead of falling through to provider chat".
+The dock's only deterministic execution path uses the second, so it falls through anyway.
+`explicitRunMatch` also ignores keywords entirely: `"run trash"` fails because the command
+is named *Empty Trash*.
+
+### 9b. An invented tool envelope is printed at the user
+
+The model replied `{"trash_bin_action":{"action":"empty"}}` and that string became the
+answer. `GeneralChatCapabilityHub` already documents this failure for the form
+`{"globalcmd.empty-trash":{}}`, and its safety net keys on
+`CapabilityRegistry.shared.capability(id:) != nil` — so it catches invented envelopes whose
+key is a real capability id. `trash_bin_action` is not one, so nothing handled it.
+
+A parsed JSON object that resolves to no capability should never be shown as prose.
+
+### 9c. A create request answered by a read
+
+`create a reminder "to call sujith" today at 5pm` → **"You have no open reminders."**
+A write intent selected a reader. `reminders.create` exists and is one of the seven
+capabilities with a real read-back verifier (§3), so this is route selection, not coverage.
+
+### 9d. Dead field
+
+`AIIntentResolution.requiredCapabilityKinds` is written at six sites and read at none.
+System commands are additionally tagged `.appData` — a read kind for something that
+executes — which is inert only because nothing consumes the field.
