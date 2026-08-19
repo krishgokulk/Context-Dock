@@ -1320,7 +1320,11 @@ struct AIChatMessageView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "cpu")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("ran \(label)")
+                    // No verb bolted on here. These chips carry different kinds of thing —
+                    // a capability that ran, memory that was read, a route that was looked
+                    // up — and "ran Used memory: …" was the view asserting the same verb
+                    // over all of them. The label says what it is.
+                    Text(label)
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(.purple)

@@ -391,14 +391,89 @@ final class MarkdownMemoryStore {
     }
 
     func relevantSourceChips(query: String, appBundleID: String? = nil) -> [String] {
-        contextBlock(query: query, appBundleID: appBundleID)
+        let sources = contextBlock(query: query, appBundleID: appBundleID)
             .split(separator: "\n")
             .compactMap { line -> String? in
                 guard line.hasPrefix("### ") else { return nil }
                 let source = line.dropFirst(4).trimmingCharacters(in: .whitespacesAndNewlines)
-                return source.isEmpty ? nil : "Used memory: \(source)"
+                return source.isEmpty ? nil : source
             }
+        guard !sources.isEmpty else { return [] }
+
+        // One chip, not one per file. Three stacked capsules reading
+        // "Used memory: 18e64caa-mapped-it-here-s-what-s-actually-there-measured-.md" sat
+        // above every answer — more lines of filename than the answer had of sentence.
+        let names = sources.map(Self.memoryLabel(for:))
+        guard names.count > 1 else { return ["Read memory · \(names[0])"] }
+        var joined = ""
+        var shown = 0
+        for name in names {
+            let next = joined.isEmpty ? name : joined + ", " + name
+            if next.count > 48 { break }
+            joined = next
+            shown += 1
+        }
+        let suffix = shown < names.count ? "\(joined) +\(names.count - shown)" : joined
+        return ["Read \(names.count) memories · \(suffix)"]
     }
+
+    /// A memory file's name as something a person would recognise.
+    ///
+    /// These are filenames, and they were being shown raw. Four shapes exist on disk and
+    /// each needs different handling: a named file (`preferences.md`), a day
+    /// (`2026-08-18.md`), an app (`com.microsoft.VSCode.md`), and a captured note, which is
+    /// eight hex characters and the first line slugged down to punctuationless kebab-case.
+    static func memoryLabel(for filename: String) -> String {
+        var stem = filename
+        if stem.lowercased().hasSuffix(".md") { stem = String(stem.dropLast(3)) }
+        guard !stem.isEmpty else { return filename }
+
+        // A day.
+        if stem.count == 10, stem.filter({ $0 == "-" }).count == 2,
+            let date = Self.dayFormatter.date(from: stem)
+        {
+            let calendar = Calendar.current
+            if calendar.isDateInToday(date) { return "Today" }
+            if calendar.isDateInYesterday(date) { return "Yesterday" }
+            return Self.shortDayFormatter.string(from: date)
+        }
+
+        // An app's own memory, named by bundle id.
+        if stem.contains("."), stem.split(separator: ".").count >= 3 {
+            return stem.split(separator: ".").last.map(String.init) ?? stem
+        }
+
+        // A captured note: strip the hex prefix that keeps names unique, then read the slug
+        // back as a sentence. The slug has already lost its apostrophes — "what-s" — so the
+        // stranded "s" is put back where it plainly belongs.
+        var body = stem
+        let parts = stem.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        if parts.count == 2, parts[0].count == 8,
+            parts[0].allSatisfy({ $0.isHexDigit && !$0.isUppercase })
+        {
+            body = String(parts[1])
+        }
+        var words = body.replacingOccurrences(of: "-", with: " ")
+        words = words.replacingOccurrences(of: " s ", with: "'s ")
+        words = words.replacingOccurrences(of: " t ", with: "'t ")
+        words = words.trimmingCharacters(in: .whitespaces)
+        guard !words.isEmpty else { return stem }
+        let titled = words.prefix(1).uppercased() + words.dropFirst()
+        return titled.count > 34 ? titled.prefix(33).trimmingCharacters(in: .whitespaces) + "…" : titled
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+
+    private static let shortDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("d MMM")
+        return formatter
+    }()
 
     /// Answers an explicit memory-recall question without involving an AI provider or tool
     /// router. This prevents app-scoped agents from interpreting `projects.md` as a file they
