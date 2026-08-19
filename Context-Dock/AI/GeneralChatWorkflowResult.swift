@@ -39,43 +39,12 @@ struct GeneralChatWorkflowResult {
         case failed
     }
 
-    struct Receipt: Identifiable, Equatable {
-        let id: UUID
-        let command: String
-        let observation: String
-        let passed: Bool
-        let isVerification: Bool
-
-        init(
-            id: UUID = UUID(),
-            command: String,
-            observation: String,
-            passed: Bool,
-            isVerification: Bool = false
-        ) {
-            self.id = id
-            self.command = command
-            self.observation = observation
-            self.passed = passed
-            self.isVerification = isVerification
-        }
-
-        init(_ executed: AIProviderService.ExecutedCommand) {
-            self.init(
-                command: executed.command,
-                observation: executed.output.isEmpty ? "No output" : executed.output,
-                passed: executed.success,
-                isVerification: executed.isVerification
-            )
-        }
-    }
-
     let answer: String
     let route: Route
     let status: Status
     let complexity: TaskComplexityRoute
     let taskRunID: UUID?
-    let receipts: [Receipt]
+    let receipts: [DoraXActionReceipt]
     let verification: Verification
     let trace: [String]
     let files: [URL]
@@ -86,7 +55,7 @@ struct GeneralChatWorkflowResult {
         status: Status = .completed,
         complexity: TaskComplexityRoute = .direct,
         taskRunID: UUID? = nil,
-        receipts: [Receipt] = [],
+        receipts: [DoraXActionReceipt] = [],
         verification: Verification = .unavailable,
         trace: [String] = [],
         files: [URL] = []

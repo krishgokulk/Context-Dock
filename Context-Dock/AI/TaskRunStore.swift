@@ -10,13 +10,9 @@ final class TaskRunStore {
         case running, completed, failed, interrupted
     }
 
-    struct Receipt: Codable, Equatable {
-        let command: String
-        let output: String
-        let success: Bool
-        let isVerification: Bool
-        let recordedAt: Date
-    }
+    /// The one receipt shape, shared with the surfaces that draw it. Persisted files
+    /// already carry these keys, so the type moved out without a migration.
+    typealias Receipt = DoraXActionReceipt
 
     struct Run: Codable, Identifiable {
         let id: UUID

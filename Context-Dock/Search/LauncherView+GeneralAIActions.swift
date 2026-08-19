@@ -810,7 +810,7 @@ extension LauncherView {
             let verification = await GeneralAIActionExecutor.shared.verify(candidate)
             await MainActor.run {
                 aiMode.loadingStatus = nil
-                var receipts = [EvidenceReceipt(AIProviderService.ExecutedCommand(
+                var receipts = [DoraXActionReceipt(AIProviderService.ExecutedCommand(
                     command: "adapter_action(\(candidate.adapterActionID ?? candidate.capabilityID ?? candidate.id))",
                     output: result.message,
                     success: true,
@@ -820,7 +820,7 @@ extension LauncherView {
                 case .verified(let refined):
                     aiMode.actionProgress?.finish()
                     aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Verified"]
-                    receipts.append(EvidenceReceipt(AIProviderService.ExecutedCommand(
+                    receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
                         command: "verify_adapter_outcome(\(candidate.title))",
                         output: refined ?? "The requested outcome was observed.",
                         success: true,
@@ -836,7 +836,7 @@ extension LauncherView {
                     aiMode.pendingToolChips = [
                         "\(candidate.title) · \(candidate.routeLabel)", "Verification failed",
                     ]
-                    receipts.append(EvidenceReceipt(AIProviderService.ExecutedCommand(
+                    receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
                         command: "verify_adapter_outcome(\(candidate.title))",
                         output: reason,
                         success: false,

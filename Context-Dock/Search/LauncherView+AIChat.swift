@@ -5282,7 +5282,7 @@ extension LauncherView {
                     await MainActor.run {
                         var msg = AIChatMessage(
                             role: .assistant, content: finalResponse, mcpToolsRan: toolsRan,
-                            evidenceReceipts: executed.map(EvidenceReceipt.init),
+                            evidenceReceipts: executed.map(DoraXActionReceipt.init),
                             subjectiveEvaluation: subjectiveEvaluation,
                             trace: self.l2.routerTrace)
                         msg = self.tagMessageWithProposal(msg)
@@ -6536,7 +6536,7 @@ extension LauncherView {
             await MainActor.run {
                 aiMode.loadingStatus = nil
                 aiMode.pendingToolChips = executed.map(\.command)
-                aiMode.pendingEvidenceReceipts = executed.map(EvidenceReceipt.init)
+                aiMode.pendingEvidenceReceipts = executed.map(DoraXActionReceipt.init)
             }
             return answer
         }
@@ -7020,7 +7020,7 @@ extension LauncherView {
                         // when it should read as "nothing happened".
                         aiMode.pendingToolChips = memoryToolChips + executed.map(\.command)
                             + (AgentAnswerVerifier.noActionChip(executed: executed).map { [$0] } ?? [])
-                        aiMode.pendingEvidenceReceipts = executed.map(EvidenceReceipt.init)
+                        aiMode.pendingEvidenceReceipts = executed.map(DoraXActionReceipt.init)
                         aiMode.pendingSubjectiveEvaluation = subjectiveEvaluation
                     }
                     return await recoveredFromProtocolOnly(finalResponse, query: query)

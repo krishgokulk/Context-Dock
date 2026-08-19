@@ -41,7 +41,7 @@ enum AppScopedChatService {
         var files: [URL] = []
         /// Typed proof of what ran and what was freshly read back. The Console keeps the
         /// complete log; these receipts make the important outcome visible in the message.
-        var evidenceReceipts: [EvidenceReceipt] = []
+        var evidenceReceipts: [DoraXActionReceipt] = []
         /// A second model's read of whether the answer satisfies the request, on the
         /// subjective work where that is a real question. The dock has shown this since it
         /// was written; the window had no way to receive it.
@@ -238,7 +238,7 @@ enum AppScopedChatService {
                 .map(ChatAnswerSanitizer.clean)
                 ?? result.output
         }
-        var receipts = [EvidenceReceipt(AIProviderService.ExecutedCommand(
+        var receipts = [DoraXActionReceipt(AIProviderService.ExecutedCommand(
             command: "route(\(route.kind.rawValue), \(route.title))",
             output: result.output.isEmpty
                 ? (result.success ? "Executor confirmed success." : "Executor returned no output.")
@@ -247,7 +247,7 @@ enum AppScopedChatService {
             isVerification: false
         ))]
         if let verification {
-            receipts.append(EvidenceReceipt(AIProviderService.ExecutedCommand(
+            receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
                 command: "verify_app_state(\(route.appName))",
                 output: verification,
                 success: true,

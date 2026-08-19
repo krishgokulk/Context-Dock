@@ -535,21 +535,6 @@ struct PageLinkAction: Equatable, Identifiable {
     }
 }
 
-struct EvidenceReceipt: Equatable, Identifiable {
-    let id = UUID()
-    let command: String
-    let observation: String
-    let passed: Bool
-    let isVerification: Bool
-
-    init(_ executed: AIProviderService.ExecutedCommand) {
-        command = executed.command
-        observation = executed.output.isEmpty ? "No output" : executed.output
-        passed = executed.success
-        isVerification = executed.isVerification
-    }
-}
-
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -567,7 +552,7 @@ struct AIChatMessage: Identifiable, Equatable {
     var browserTabs: [BrowserTabAction]  // Live browser tabs with direct activation
     var pageLinks: [PageLinkAction]  // Grounded links from the active Safari page
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
-    var evidenceReceipts: [EvidenceReceipt]  // Typed action/verification outcomes
+    var evidenceReceipts: [DoraXActionReceipt]  // Typed action/verification outcomes
     var subjectiveEvaluation: SubjectiveEvaluation?  // Independent read-only review
     var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
@@ -614,7 +599,7 @@ struct AIChatMessage: Identifiable, Equatable {
         browserTabs: [BrowserTabAction] = [],
         pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
-        evidenceReceipts: [EvidenceReceipt] = [],
+        evidenceReceipts: [DoraXActionReceipt] = [],
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -654,7 +639,7 @@ struct AIChatMessage: Identifiable, Equatable {
         browserTabs: [BrowserTabAction] = [],
         pageLinks: [PageLinkAction] = [],
         mcpToolsRan: [String] = [],
-        evidenceReceipts: [EvidenceReceipt] = [],
+        evidenceReceipts: [DoraXActionReceipt] = [],
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
         runOutput: String? = nil, actionChoices: [ActionChoice] = []
@@ -1366,8 +1351,8 @@ struct AIChatMessageView: View {
             if isEvidenceExpanded {
                 ForEach(message.evidenceReceipts) { receipt in
                     HStack(alignment: .top, spacing: 7) {
-                        Image(systemName: receipt.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            .foregroundStyle(receipt.passed ? .green : .red)
+                        Image(systemName: receipt.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(receipt.success ? .green : .red)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(receipt.isVerification ? "Verification" : "Action")
                                 .font(.system(size: 9, weight: .bold))

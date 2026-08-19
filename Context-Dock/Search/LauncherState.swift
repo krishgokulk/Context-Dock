@@ -82,7 +82,7 @@ struct AIModeState {
     var loadingStatus: String? = nil
     /// Tool chips collected during the current request, attached to the final answer.
     var pendingToolChips: [String] = []
-    var pendingEvidenceReceipts: [EvidenceReceipt] = []
+    var pendingEvidenceReceipts: [DoraXActionReceipt] = []
     var pendingSubjectiveEvaluation: SubjectiveEvaluation? = nil
     /// Ordered routing steps for the current request ("Matching 31 actions…", "Best path: …").
     /// Attached to the answer so the trace survives the loading indicator disappearing.
