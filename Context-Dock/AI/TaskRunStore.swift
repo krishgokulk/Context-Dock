@@ -164,18 +164,33 @@ final class TaskRunStore {
         else { return }
         for url in urls where url.pathExtension == "json" {
             guard let data = try? Data(contentsOf: url),
-                  let run = try? JSONDecoder().decode(Run.self, from: data)
+                  let run = try? JSONDecoder.taskRun.decode(Run.self, from: data)
             else { continue }
             runs[run.id] = run
         }
     }
 }
 
-private extension JSONEncoder {
+extension JSONEncoder {
     static var taskRun: JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         return encoder
+    }
+}
+
+extension JSONDecoder {
+    /// The other half of `JSONEncoder.taskRun`, and it has to exist.
+    ///
+    /// Runs are written with `.iso8601` dates and were read back with a plain decoder,
+    /// whose default strategy expects a number. Every decode therefore threw, and every
+    /// caller swallowed it with `try?` — so the store loaded zero runs at launch however
+    /// many were on disk. Nothing crashed; "resume last task" simply never found anything
+    /// after a restart, and the dashboard reported no runs beside a folder of hundreds.
+    static var taskRun: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
