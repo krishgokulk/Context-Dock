@@ -42,6 +42,13 @@ final class AIContextBuilder {
         var sections = [
             "You are Context-Dock's AI assistant. Use the supplied user context accurately and do not invent unavailable state."
         ]
+        // Who is asking, on every surface and every turn. Ungated on purpose: the memory
+        // block below is withheld when a question needs a fresh reading of live state, and
+        // that rule is about evidence. Identity is not evidence, and withholding it is how
+        // "do you know anything about me" got answered with "no" by an app holding a
+        // profile the user had just written.
+        let profile = MarkdownMemoryStore.shared.profileBlock()
+        if !profile.isEmpty { sections.append(profile) }
 
         switch context {
         case .filesSelected(let files):

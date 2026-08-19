@@ -75,7 +75,7 @@ struct DataStorageSettingsPage: View {
                     }
                 }
 
-                BrainProfileCard()
+                BrainProfileCard(onSaved: { memoryFiles = MarkdownMemoryStore.shared.fileSummaries() })
 
                 CardSection(title: "Markdown Memory", systemImage: "brain.head.profile.fill") {
                     VStack(alignment: .leading, spacing: 12) {
@@ -310,6 +310,9 @@ private struct MemoryFileRow: View {
         if let freshness = file.freshness { return freshness }
         if file.relativePath == "MEMORY.md" {
             return "Index · \(file.factCount) mapped location\(file.factCount == 1 ? "" : "s")"
+        }
+        if let words = file.wordCount {
+            return "\(words) word\(words == 1 ? "" : "s")"
         }
         return "\(file.factCount) saved fact\(file.factCount == 1 ? "" : "s")"
     }

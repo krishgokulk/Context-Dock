@@ -5,6 +5,8 @@ struct MarkdownMemoryFileSummary: Identifiable {
     let relativePath: String
     let factCount: Int
     let freshness: String?
+    /// Set for prose files, where a bullet count says nothing about how much is in them.
+    var wordCount: Int?
 
     var id: String { url.path }
 }
@@ -93,6 +95,13 @@ final class MarkdownMemoryStore {
             let factCount = markdown.split(separator: "\n").filter {
                 $0.trimmingCharacters(in: .whitespaces).hasPrefix("- ")
             }.count
+            // Notes and profiles are prose, not bullet lists. Counting bullets in them
+            // reports 0 for a file that is entirely full of writing, so measure the thing
+            // they are actually made of.
+            let isProse = relative.hasPrefix("notes/") || relative == "profile.md"
+            let wordCount = isProse
+                ? markdown.split(whereSeparator: { $0 == " " || $0.isNewline }).count
+                : 0
             let freshness: String? = relative.hasPrefix("cache/")
                 ? cacheStatus(for: markdown)
                 : nil
@@ -101,7 +110,8 @@ final class MarkdownMemoryStore {
                     url: url,
                     relativePath: relative,
                     factCount: factCount,
-                    freshness: freshness
+                    freshness: freshness,
+                    wordCount: isProse ? wordCount : nil
                 )
             )
         }

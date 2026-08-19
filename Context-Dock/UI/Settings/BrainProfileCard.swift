@@ -15,6 +15,10 @@ import AppKit
 import SwiftUI
 
 struct BrainProfileCard: View {
+    /// Lets the page rebuild its file list: profile.md is new the first time it is saved,
+    /// and the list around it is read once on appear.
+    var onSaved: () -> Void = {}
+
     @State private var profile = BrainProfile.empty
     @State private var loaded = false
     @State private var savedAt: Date?
@@ -94,6 +98,7 @@ struct BrainProfileCard: View {
     private func save() {
         if MarkdownMemoryStore.shared.saveProfile(profile) {
             savedAt = Date()
+            onSaved()
         }
     }
 

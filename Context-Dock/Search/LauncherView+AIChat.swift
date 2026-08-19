@@ -5117,6 +5117,9 @@ extension LauncherView {
                     files: submittedContextDockFiles,
                     capturedText: submittedContextDockText
                 )
+                // Identity is not memory evidence, so it is not subject to the rule that
+                // withholds memory when the question needs a fresh reading.
+                let profileBlock = MarkdownMemoryStore.shared.profileBlock()
                 let memoryBlock = sourceDecision.allowsMemoryEvidence
                     ? MarkdownMemoryStore.shared.contextBlock(
                         query: query,
@@ -5177,6 +5180,7 @@ extension LauncherView {
                     prompt.set(.liveAppData, appleData)
                     prompt.set(.mcp, mcpBlock)
                     prompt.set(.skills, skillsBlock)
+                    prompt.set(.userProfile, profileBlock)
                     prompt.set(.memory, memoryBlock)
                     prompt.set(.cli, runtimeCLIContextPrompt)
                     return prompt.assemble(for: provider)
@@ -6686,6 +6690,9 @@ extension LauncherView {
             \(currentDateTimeContextBlock())
             """
         sysContent += "\n\n" + sourceDecision.promptRule
+        // Ungated: see the note on the other prompt path — identity is not evidence.
+        let profileBlock = MarkdownMemoryStore.shared.profileBlock()
+        if !profileBlock.isEmpty { sysContent += "\n\n" + profileBlock }
         let memoryBlock = sourceDecision.allowsMemoryEvidence
             ? MarkdownMemoryStore.shared.contextBlock(query: query) : ""
         let memoryToolChips = sourceDecision.allowsMemoryEvidence
