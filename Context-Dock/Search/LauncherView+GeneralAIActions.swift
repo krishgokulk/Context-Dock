@@ -808,6 +808,22 @@ extension LauncherView {
                 aiMode.loadingStatus = "Verifying…"
             }
             let verification = await GeneralAIActionExecutor.shared.verify(candidate)
+            // How an outcome reads is decided once, here, next to the receipts it has to
+            // agree with. It used to be decided twice — the same three-way switch ran again
+            // below to pick the sentence — which is one edit away from a message that says
+            // verified over a receipt that says it wasn't.
+            let outcomeText: String
+            switch verification {
+            case .verified(let refined):
+                outcomeText = refined ?? result.message
+            case .skipped:
+                outcomeText = result.message
+                    + "\n\nExecution receipt: executor confirmed success; this route has no independent read-back verification."
+            case .unverified(let reason):
+                let openHint = candidate.appName.map { " You can open \($0) to check." } ?? ""
+                outcomeText = "I completed the request, but I couldn't verify the final result. "
+                    + "\(reason)\(openHint)"
+            }
             await MainActor.run {
                 aiMode.loadingStatus = nil
                 var receipts = [DoraXActionReceipt(AIProviderService.ExecutedCommand(
@@ -816,8 +832,10 @@ extension LauncherView {
                     success: true,
                     isVerification: false
                 ))]
+                let outcome: GeneralChatWorkflowResult.Verification
                 switch verification {
                 case .verified(let refined):
+                    outcome = .verified
                     aiMode.actionProgress?.finish()
                     aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Verified"]
                     receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
@@ -827,11 +845,13 @@ extension LauncherView {
                         isVerification: true
                     )))
                 case .skipped:
+                    outcome = .executorConfirmed
                     aiMode.actionProgress?.finish()
                     aiMode.pendingToolChips = [
                         "\(candidate.title) · \(candidate.routeLabel)", "Executor confirmed",
                     ]
                 case .unverified(let reason):
+                    outcome = .failed
                     aiMode.actionProgress?.failed = true
                     aiMode.pendingToolChips = [
                         "\(candidate.title) · \(candidate.routeLabel)", "Verification failed",
@@ -843,7 +863,16 @@ extension LauncherView {
                         isVerification: true
                     )))
                 }
-                aiMode.pendingEvidenceReceipts = receipts
+                // The typed record of the turn, built where the facts are. The wording is
+                // decided several branches below — one of them re-resolves and runs a second
+                // action — so the answer is attached by whichever surface ends up showing it.
+                aiMode.pendingWorkflowResult = GeneralChatWorkflowResult(
+                    answer: outcomeText,
+                    route: .classifying(candidate.route),
+                    executionRoute: candidate.route,
+                    taskRunID: TaskRunStore.activeRunID,
+                    receipts: receipts,
+                    verification: outcome)
                 aiMode.actionProgress = nil
             }
             switch verification {
@@ -880,7 +909,15 @@ extension LauncherView {
                             menuCandidate,
                             alternatives: refreshedCandidates.filter { $0.id != menuCandidate.id },
                             query: query)
-                        return "Opened \(appLabel) and confirmed it is active.\n\n" + followUp
+                        // The follow-up ran a second action and left its own record; the
+                        // launch that preceded it is context, not a separate turn. Only the
+                        // wording needs widening to cover both.
+                        let combined = "Opened \(appLabel) and confirmed it is active.\n\n" + followUp
+                        await MainActor.run {
+                            aiMode.pendingWorkflowResult =
+                                aiMode.pendingWorkflowResult?.withAnswer(combined)
+                        }
+                        return combined
                     }
                     await MainActor.run { aiMode.loadingStatus = nil }
                     // Ranked against what was actually asked. With an empty query the cache
@@ -896,21 +933,28 @@ extension LauncherView {
                     let suggestion = closest.isEmpty
                         ? "No cached or live menu commands are available yet. Open the relevant view in \(appLabel), then refresh its App Adapter menu cache."
                         : "Closest available menus:\n" + closest.map { "• \($0)" }.joined(separator: "\n")
-                    return "Opened \(appLabel) and confirmed it is active, but I couldn't find an exact menu or shortcut for this request. Nothing else was executed.\n\n\(suggestion)"
+                    // The launch is still what ran and is still verified. What changed is
+                    // that the request it was standing in for cannot be completed, and the
+                    // record says so rather than keeping the launch's own success sentence.
+                    let unmet =
+                        "Opened \(appLabel) and confirmed it is active, but I couldn't find an exact menu or shortcut for this request. Nothing else was executed.\n\n\(suggestion)"
+                    await MainActor.run {
+                        aiMode.pendingWorkflowResult =
+                            aiMode.pendingWorkflowResult?.withAnswer(unmet)
+                    }
+                    return unmet
                 }
-                return refined ?? result.message
+                return outcomeText
             case .skipped:
-                // Executor succeeded; clearly disclose that no read-back verifier exists.
+                // Executor succeeded; the sentence already discloses that no read-back
+                // verifier exists for this route.
                 learn(success: true)
                 mark(available: true)
-                return result.message
-                    + "\n\nExecution receipt: executor confirmed success; this route has no independent read-back verification."
+                return outcomeText
             case .unverified(let reason):
                 learn(success: false)
                 mark(available: false, reason: reason)
-                let openHint = candidate.appName.map { " You can open \($0) to check." } ?? ""
-                return "I completed the request, but I couldn't verify the final result. "
-                    + "\(reason)\(openHint)"
+                return outcomeText
             }
         }
         learn(success: false)

@@ -2189,7 +2189,11 @@ extension LauncherView {
                             role: .assistant, content: cleaned, appLaunches: launches,
                             recentFiles: recentFiles,
                             mcpToolsRan: self.aiMode.pendingToolChips,
-                            evidenceReceipts: self.aiMode.pendingEvidenceReceipts,
+                            // A turn that executed something hands over a typed record, and
+                            // its receipts are the ones that ran. The loose field still
+                            // serves the paths that have no record to give.
+                            evidenceReceipts: self.aiMode.pendingWorkflowResult?.receipts
+                                ?? self.aiMode.pendingEvidenceReceipts,
                             subjectiveEvaluation: self.aiMode.pendingSubjectiveEvaluation,
                             enableAppRequest: enableReq,
                             trace: self.aiMode.routerTrace,
@@ -2197,6 +2201,7 @@ extension LauncherView {
                         self.aiMode.messages.append(self.tagMessageWithProposal(baseMsg))
                         self.aiMode.pendingToolChips = []
                         self.aiMode.pendingEvidenceReceipts = []
+                        self.aiMode.pendingWorkflowResult = nil
                         self.aiMode.pendingSubjectiveEvaluation = nil
                         self.aiMode.routerTrace = []
                         self.aiMode.loadingStatus = nil

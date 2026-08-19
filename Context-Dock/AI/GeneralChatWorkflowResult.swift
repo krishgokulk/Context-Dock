@@ -23,6 +23,22 @@ struct GeneralChatWorkflowResult {
         case cli
         case providerTools
         case providerAnswer
+
+        /// The coarse classification for a turn that executed a candidate.
+        ///
+        /// Declared once, here, so the two axes stay related by something readable rather
+        /// than by whatever each call site guessed. An API route is an adapter's API, and a
+        /// launch is the adapter layer deciding an app is the answer, which is why both sit
+        /// under `appAdapter` — the mechanism they used is not lost, it is in
+        /// `executionRoute`.
+        static func classifying(_ execution: DoraXActionCandidate.ExecutionRoute) -> Route {
+            switch execution {
+            case .verifiedMenu, .keyboardShortcut, .axFallback: return .appMenu
+            case .mcp: return .mcp
+            case .cli: return .cli
+            case .adapter, .api, .shortcutRunner, .automation, .appLaunch: return .appAdapter
+            }
+        }
     }
 
     enum Status: String {
@@ -40,7 +56,17 @@ struct GeneralChatWorkflowResult {
     }
 
     let answer: String
+    /// What kind of turn this was. Coarse on purpose — it answers "did anything run, and
+    /// against what", not "by which mechanism".
     let route: Route
+    /// The mechanism, when something executed. Non-nil exactly when a candidate ran.
+    ///
+    /// Two axes rather than one because `Route` cannot express the executed routes: it has
+    /// no case for an app launch, an API call, a Shortcut, a keyboard shortcut or an
+    /// accessibility fallback, and folding those into `appAdapter` would throw away the
+    /// distinction the authority layer is built on. `DoraXActionCandidate.ExecutionRoute`
+    /// already names them, so it is carried rather than re-encoded.
+    let executionRoute: DoraXActionCandidate.ExecutionRoute?
     let status: Status
     let complexity: TaskComplexityRoute
     let taskRunID: UUID?
@@ -52,6 +78,7 @@ struct GeneralChatWorkflowResult {
     init(
         answer: String,
         route: Route,
+        executionRoute: DoraXActionCandidate.ExecutionRoute? = nil,
         status: Status = .completed,
         complexity: TaskComplexityRoute = .direct,
         taskRunID: UUID? = nil,
@@ -62,6 +89,7 @@ struct GeneralChatWorkflowResult {
     ) {
         self.answer = answer
         self.route = route
+        self.executionRoute = executionRoute
         self.status = status
         self.complexity = complexity
         self.taskRunID = taskRunID
@@ -69,5 +97,26 @@ struct GeneralChatWorkflowResult {
         self.verification = verification
         self.trace = trace
         self.files = files
+    }
+
+    /// The same record, phrased.
+    ///
+    /// Orchestration knows what ran before it knows how the turn will read: the verification
+    /// outcome decides both the receipts and the wording, and the wording is settled several
+    /// branches later — one of which re-resolves the request and runs a second action whose
+    /// text replaces the first. So the record is built where the facts are and carries the
+    /// answer only once the surface has one.
+    func withAnswer(_ answer: String) -> Self {
+        GeneralChatWorkflowResult(
+            answer: answer,
+            route: route,
+            executionRoute: executionRoute,
+            status: status,
+            complexity: complexity,
+            taskRunID: taskRunID,
+            receipts: receipts,
+            verification: verification,
+            trace: trace,
+            files: files)
     }
 }

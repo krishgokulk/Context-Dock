@@ -83,6 +83,10 @@ struct AIModeState {
     /// Tool chips collected during the current request, attached to the final answer.
     var pendingToolChips: [String] = []
     var pendingEvidenceReceipts: [DoraXActionReceipt] = []
+    /// The typed record of a turn that executed something, set by the path that ran it.
+    /// Where this is present it is the source of the message's receipts; the loose fields
+    /// above still carry the paths that have no execution record to hand over.
+    var pendingWorkflowResult: GeneralChatWorkflowResult? = nil
     var pendingSubjectiveEvaluation: SubjectiveEvaluation? = nil
     /// Ordered routing steps for the current request ("Matching 31 actions…", "Best path: …").
     /// Attached to the answer so the trace survives the loading indicator disappearing.
