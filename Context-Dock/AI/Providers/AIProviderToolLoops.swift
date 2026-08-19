@@ -172,6 +172,7 @@ extension AIProviderService {
                         arguments: args,
                         context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
                             attachments: imageAttachments, chatScope: chatScope, turn: turn)
                     ) {
                         success = result.success
@@ -377,6 +378,7 @@ extension AIProviderService {
                     arguments: args,
                     context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
                             attachments: imageAttachments, chatScope: chatScope, turn: turn)
                 ) {
                     success = result.success
@@ -539,6 +541,7 @@ extension AIProviderService {
                     arguments: args,
                     context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
                             attachments: imageAttachments, chatScope: chatScope, turn: turn)
                 ) {
                     success = result.success

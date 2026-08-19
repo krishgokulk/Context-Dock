@@ -97,6 +97,14 @@ struct AgentToolContext {
     /// resolve implicit targets ("this file", "the current folder").
     var userContext: UserContext = .none
 
+    /// What the user actually asked, verbatim.
+    ///
+    /// The tool loop could see authority and risk and never intent, so "what's in my trash
+    /// bin" was answered by calling the Empty Trash capability — permitted, high risk,
+    /// approved on a card, and the wrong thing entirely. A question is not a licence to
+    /// write, and deciding that needs the sentence the user typed.
+    var userRequest: String = ""
+
     /// Files attached to this turn.
     ///
     /// They reached the provider as vision blocks, and stopped there — the tool loop had no
@@ -115,12 +123,14 @@ struct AgentToolContext {
     init(
         commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         userContext: UserContext = .none,
+        userRequest: String = "",
         attachments: [URL] = [],
         chatScope: GeneralChatScope? = nil,
         turn: AgentTurnToken? = nil
     ) {
         self.commandExecutor = commandExecutor
         self.userContext = userContext
+        self.userRequest = userRequest
         self.attachments = attachments
         self.chatScope = chatScope
         self.turn = turn
@@ -1602,6 +1612,22 @@ final class AgentToolRegistry {
             // would stop the model re-checking state it is right to re-check.
             let capability = CapabilityRegistry.shared.capability(id: capabilityID)
             let isWrite = capability.map { $0.riskLevel != .low } ?? false
+
+            // A question is not a licence to write. Authority and risk were both checked
+            // here and intent never was, so "what's in my trash bin" reached the Empty Trash
+            // capability: allowed, high risk, approved on a card, and the wrong action.
+            // Emptying the trash does answer "is it empty" — afterwards, and permanently.
+            if isWrite, !context.userRequest.isEmpty,
+                GeneralAIActionResolver.shared.asksOnly(context.userRequest)
+            {
+                return AgentToolResult(
+                    success: false,
+                    output: "Refused: the user asked a question and \(capabilityID) changes "
+                        + "state. Answer from what you can read, or say you have no way to "
+                        + "read it. Do not run this to find out.",
+                    displayCommand: "run_capability(\(capabilityID)) refused")
+            }
+
             if isWrite, RecentCapabilityWrites.alreadyRan(capabilityID, input: input) {
                 return AgentToolResult(
                     success: true,

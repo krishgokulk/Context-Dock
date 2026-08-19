@@ -732,6 +732,29 @@ final class GeneralAIActionResolver {
     /// no provider, no app launch.
     func looksReadOnly(_ query: String) -> Bool { isLikelyReadOnly(query) }
 
+    /// True when the request asks for information and never asks for a change.
+    ///
+    /// Stricter than `looksReadOnly` on purpose, because this one is used to *refuse*.
+    /// "show me my reminders then delete the completed ones" is read-shaped by its opening
+    /// and is plainly also an instruction to delete; blocking the delete there would be the
+    /// guard misreading the user rather than protecting them. So a mutating verb anywhere
+    /// in the sentence disqualifies it.
+    ///
+    /// The verbs are actions, never nouns. "trash" and "bin" are absent deliberately: they
+    /// are what the user is asking *about* in the sentence this exists to catch.
+    func asksOnly(_ query: String) -> Bool {
+        guard isLikelyReadOnly(query) else { return false }
+        let lowered = query.lowercased()
+        let mutatingVerbs = [
+            "delete", "remove", "erase", "empty", "clear", "wipe", "uninstall",
+            "create", "add ", "make ", "send", "share", "move", "rename", "install",
+            "quit", "close", "kill", "stop", "restart", "shut down", "shutdown",
+            "enable", "disable", "turn on", "turn off", "toggle", "set ", "reset",
+            "save", "export", "download", "run ", "execute",
+        ]
+        return !mutatingVerbs.contains(where: lowered.contains)
+    }
+
     /// Discover local read capabilities for General Chat. This is the read half of the
     /// same capability model used for execution: app adapter readers, cached menu
     /// knowledge, MCP/API/CLI metadata already discovered elsewhere. It never scans live
