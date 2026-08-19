@@ -56,6 +56,8 @@ final class QuickNotesStore: ObservableObject {
     @Published private(set) var notes: [QuickNote] = []
 
     private let fileURL: URL
+    /// The pending mirror write, cancelled and rescheduled on each edit.
+    private var mirrorTask: Task<Void, Never>?
     /// Folder holding the real dropped files (copies), so notes survive the originals
     /// being moved or deleted.
     let attachmentsDir: URL
@@ -120,6 +122,9 @@ final class QuickNotesStore: ObservableObject {
             let decoded = try? JSONDecoder().decode([QuickNote].self, from: data)
         else { return }
         notes = decoded.sorted { $0.createdAt > $1.createdAt }
+        // Notes written before the mirror existed have no markdown yet, and a note the
+        // user deleted while the app was closed still would. One pass at load settles both.
+        scheduleMemoryMirror()
     }
 
     @discardableResult
@@ -177,5 +182,23 @@ final class QuickNotesStore: ObservableObject {
     private func save() {
         guard let data = try? JSONEncoder().encode(notes) else { return }
         try? data.write(to: fileURL, options: .atomic)
+        scheduleMemoryMirror()
+    }
+
+    /// Mirrors into markdown memory a beat after the typing stops.
+    ///
+    /// `save()` runs on every keystroke of the split editor, and the mirror walks every
+    /// note and rewrites the folder — doing that per character would turn a sentence into
+    /// a few hundred directory scans. The delay is short enough that a note is searchable
+    /// by the time the user has finished the thought.
+    private func scheduleMemoryMirror() {
+        mirrorTask?.cancel()
+        let snapshot = notes
+        mirrorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            QuickNoteMemoryMirror.sync(snapshot)
+            self?.mirrorTask = nil
+        }
     }
 }

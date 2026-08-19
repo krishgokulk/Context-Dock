@@ -22,6 +22,13 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     case sourceRule
     /// The resolved context — window, document, selection, page — with its gaps named.
     case resolvedContext
+    /// Who the user is — their own written profile, the same in every conversation.
+    ///
+    /// Its own slot rather than a line of memory. Memory is replaced wholesale by the
+    /// query-ranked block, so a profile appended into it was overwritten on every turn
+    /// that was allowed to use memory at all; and memory is droppable under budget, which
+    /// identity must not be.
+    case userProfile
     /// Which app this conversation is, and what may be driven in it.
     case identity
     /// What the user is pointing at right now.
@@ -57,7 +64,7 @@ enum ScopedPromptSection: Int, CaseIterable, Comparable {
     /// answering about, and an answer about the wrong app is worse than a short one.
     var isEssential: Bool {
         switch self {
-        case .sourceRule, .resolvedContext, .identity, .selection: return true
+        case .sourceRule, .resolvedContext, .userProfile, .identity, .selection: return true
         default: return false
         }
     }

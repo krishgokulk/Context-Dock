@@ -286,6 +286,11 @@ final class DashboardMetrics: ObservableObject {
     }
 
     private nonisolated static func build(_ input: BuildInput) -> DashboardSnapshot {
+        // The brief is derived from the same receipts this build reads, so refreshing it
+        // here keeps the two from disagreeing. It writes a file, which is why it happens
+        // on the worker rather than while a view is drawing.
+        DailyBrief.rebuildToday()
+
         var next = DashboardSnapshot()
         buildSessionFacts(input, into: &next)
         buildActivity(input, into: &next)
@@ -413,7 +418,7 @@ final class DashboardMetrics: ObservableObject {
         guard let urls = try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil) else { return }
 
-        let decoder = JSONDecoder()
+        let decoder = JSONDecoder.taskRun
         for url in urls where url.pathExtension == "json" {
             guard let data = try? Data(contentsOf: url),
                   let run = try? decoder.decode(TaskRunStore.Run.self, from: data)

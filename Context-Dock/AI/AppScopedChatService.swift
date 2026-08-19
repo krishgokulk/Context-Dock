@@ -1043,12 +1043,11 @@ enum AppScopedChatService {
         // What DoraX has durably learned — saved notes, prior findings, the user's own
         // written knowledge for this app. Withheld when the question is about live state,
         // because remembered facts are exactly what must not stand in for a fresh reading.
-        // Identity goes in whether or not the question sounds personal, and whether or not
-        // this turn is allowed to lean on remembered facts: knowing who is asking is not
-        // evidence about the world, so the rule that withholds memory from live-state
-        // questions does not apply to it.
-        let profileBlock = MarkdownMemoryStore.shared.profileBlock()
-        prompt.append(.memory, profileBlock)
+        // Who is asking goes in whether or not the question sounds personal, and whether or
+        // not this turn may lean on remembered facts: identity is not evidence about the
+        // world, so the rule that withholds memory from live-state questions does not
+        // apply to it. It has its own slot because `.memory` is set wholesale below.
+        prompt.set(.userProfile, MarkdownMemoryStore.shared.profileBlock())
 
         var memoryChips: [String] = []
         if sourceDecision.allowsMemoryEvidence {

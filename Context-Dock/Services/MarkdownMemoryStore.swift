@@ -27,6 +27,57 @@ final class MarkdownMemoryStore {
 
     var folderURL: URL { root }
 
+    /// Where Quick Notes are mirrored, so a captured note is searchable memory rather
+    /// than an island in its own JSON file.
+    var notesFolderURL: URL { root.appendingPathComponent("notes", isDirectory: true) }
+
+    /// One file per day, built from real task-run receipts.
+    var dailyFolderURL: URL { root.appendingPathComponent("daily", isDirectory: true) }
+
+    private var profileURL: URL { root.appendingPathComponent("profile.md") }
+
+    // MARK: - Profile
+
+    func loadProfile() -> BrainProfile {
+        guard let markdown = try? String(contentsOf: profileURL, encoding: .utf8) else {
+            return .empty
+        }
+        return BrainProfile.parse(markdown)
+    }
+
+    @discardableResult
+    func saveProfile(_ profile: BrainProfile) -> Bool {
+        do {
+            try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+            try profile.markdown.write(to: profileURL, atomically: true, encoding: .utf8)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// The identity block, injected into every turn regardless of what was asked.
+    ///
+    /// This deliberately skips the ranking the rest of memory goes through. Ranking asks
+    /// "does this file match the question", and the profile never does — nobody mentions
+    /// their own job title when asking to rename a file, which is exactly the turn where
+    /// knowing it would have changed the answer.
+    func profileBlock() -> String {
+        let profile = loadProfile()
+        guard !profile.isEmpty else { return "" }
+        let body = profile.markdown
+            .replacingOccurrences(of: "# Profile\n", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return "" }
+        return """
+            ## About this user
+            Written by the user themselves. Treat it as standing context for every answer, \
+            not as something to repeat back to them.
+
+            \(body)
+            """
+    }
+
     func fileSummaries() -> [MarkdownMemoryFileSummary] {
         let enumerator = fileManager.enumerator(
             at: root,
@@ -292,6 +343,13 @@ final class MarkdownMemoryStore {
         )) ?? []
         candidates.append(contentsOf: cacheFiles.filter { $0.pathExtension == "md" }.map { ($0, 0) })
 
+        // A note the user wrote themselves outranks a cached mirror of somebody else's
+        // data, and sits just under an app-specific file.
+        candidates.append(contentsOf: markdownFiles(in: notesFolderURL).map { ($0, 3) })
+        // Yesterday's work is context; it is not what the user asked about, so it ranks
+        // below anything they wrote down on purpose.
+        candidates.append(contentsOf: recentDailyFiles(limit: 3).map { ($0, 1) })
+
         let ranked = candidates.compactMap { candidate -> (score: Int, text: String)? in
             guard let raw = try? String(contentsOf: candidate.url, encoding: .utf8),
                   !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -417,6 +475,8 @@ final class MarkdownMemoryStore {
             at: root.appendingPathComponent("cache", isDirectory: true),
             withIntermediateDirectories: true
         )
+        try? fileManager.createDirectory(at: notesFolderURL, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: dailyFolderURL, withIntermediateDirectories: true)
 
         writeStarter(
             named: "MEMORY.md",
@@ -427,14 +487,42 @@ final class MarkdownMemoryStore {
                 - people.md — contacts, relationships, and communication preferences
                 - projects.md — active projects, folders, repositories, and goals
                 - tasks.md — commitments and next actions
+                - profile.md — who the user is; standing context for every conversation
+                - notes/ — Quick Notes, mirrored as markdown
+                - daily/ — what actually ran each day, from task-run receipts
                 - apps/ — app-specific memory, keyed by bundle identifier
                 - cache/ — timestamped mirrors of external sources; never source of truth
                 """
         )
+        addMissingIndexEntries()
         writeStarter(named: "preferences.md", content: "# Preferences\n")
         writeStarter(named: "people.md", content: "# People\n")
         writeStarter(named: "projects.md", content: "# Projects\n")
         writeStarter(named: "tasks.md", content: "# Tasks\n")
+    }
+
+    /// Teaches an existing index about folders added after it was written.
+    ///
+    /// `writeStarter` only writes a file that is absent, which is right for content the
+    /// user may have edited — but it means every install that predates a new folder keeps
+    /// an index that never mentions it. The index is what the model reads to know what
+    /// memory contains, so a missing line is a folder that effectively does not exist.
+    private func addMissingIndexEntries() {
+        let url = root.appendingPathComponent("MEMORY.md")
+        guard var content = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let entries = [
+            ("profile.md", "- profile.md — who the user is; standing context for every conversation"),
+            ("notes/", "- notes/ — Quick Notes, mirrored as markdown"),
+            ("daily/", "- daily/ — what actually ran each day, from task-run receipts"),
+        ]
+        var added = false
+        for (marker, line) in entries where !content.contains(marker) {
+            if !content.hasSuffix("\n") { content += "\n" }
+            content += line + "\n"
+            added = true
+        }
+        guard added else { return }
+        try? content.write(to: url, atomically: true, encoding: .utf8)
     }
 
     private func writeStarter(named name: String, content: String) {
@@ -465,6 +553,8 @@ final class MarkdownMemoryStore {
             at: cacheDirectory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
         ))?.filter { $0.pathExtension.lowercased() == "md" } ?? []
         files.append(contentsOf: cacheFiles)
+        files.append(contentsOf: markdownFiles(in: notesFolderURL))
+        files.append(contentsOf: recentDailyFiles(limit: 3))
         return files
     }
 
@@ -555,6 +645,22 @@ final class MarkdownMemoryStore {
             }
         }
         return nil
+    }
+
+    private func markdownFiles(in directory: URL) -> [URL] {
+        let contents = (try? fileManager.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        )) ?? []
+        return contents.filter { $0.pathExtension.lowercased() == "md" }
+    }
+
+    /// Only the last few days. The whole archive would crowd out the answer, and a brief
+    /// from three weeks ago is history rather than context.
+    private func recentDailyFiles(limit: Int) -> [URL] {
+        markdownFiles(in: dailyFolderURL)
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .prefix(limit)
+            .map { $0 }
     }
 
     private func safeFilename(_ value: String) -> String {

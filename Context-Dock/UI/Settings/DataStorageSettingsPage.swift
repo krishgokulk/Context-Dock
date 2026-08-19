@@ -75,6 +75,8 @@ struct DataStorageSettingsPage: View {
                     }
                 }
 
+                BrainProfileCard()
+
                 CardSection(title: "Markdown Memory", systemImage: "brain.head.profile.fill") {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
