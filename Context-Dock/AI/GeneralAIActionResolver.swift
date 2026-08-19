@@ -246,7 +246,13 @@ final class GeneralAIActionResolver {
         let verbShaped = isLikelyExecutable(trimmed)
         let nounShapedTarget = verbShaped
             ? nil : nounShapedAppTarget(lowered, scopedApp: scopedApp)
-        guard verbShaped || nounShapedTarget != nil else { return .none }
+        guard verbShaped || nounShapedTarget != nil else {
+            // Last chance before giving up. A Global Command is named by keyword, not by
+            // verb — "trash bin", "dark mode", whatever the user called their own — so it
+            // reaches this line with nothing the tests above recognise, and the resolver
+            // returned .none while two matching installed commands sat in the registry.
+            return resolveGlobalCommandIntent(trimmed) ?? .none
+        }
 
         // Domain intents (media transport, reminders, screenshots…) read as commands only
         // with a verb — "play", "remind me", "capture". A noun phrase never means those, so
@@ -497,6 +503,41 @@ final class GeneralAIActionResolver {
         let words = remainder.split(whereSeparator: { $0.isWhitespace })
         guard words.count <= 3 else { return nil }
         return target
+    }
+
+    /// The user's own installed Global Commands, as offered candidates.
+    ///
+    /// Never auto-run. A phrase with no verb proves what the user meant, not that they want
+    /// it carried out, and this list contains Empty Trash — so the answer is buttons, not an
+    /// execution. Picking one still passes through the approval card, because a Global
+    /// Command that runs a script is classified high risk.
+    ///
+    /// Read-shaped phrasing is excluded outright: "what's in my trash bin" is a question,
+    /// and the keyword scorer cannot tell the difference on its own because its own noise
+    /// list strips "what" before scoring.
+    @MainActor
+    private func resolveGlobalCommandIntent(_ trimmed: String) -> GeneralAIActionResolution? {
+        guard !isLikelyReadOnly(trimmed) else { return nil }
+        let matches = GlobalCommandCapabilities.matchingCommands(for: trimmed)
+        guard !matches.isEmpty else { return nil }
+
+        let candidates = matches.prefix(4).enumerated().map { index, match in
+            DoraXActionCandidate(
+                id: "globalcmd.candidate.\(match.command.id.uuidString)",
+                title: match.command.name,
+                appName: nil,
+                bundleID: nil,
+                source: .system,
+                route: .adapter,
+                capabilityID: match.id,
+                requiredInputs: [],
+                riskLevel: GlobalCommandCapabilities.riskLevel(for: match.command),
+                confidence: index == 0 ? 0.68 : 0.62,
+                permissionKey: "generalAI.execute.\(match.id)",
+                debugReason:
+                    "installed Global Command matching “\(trimmed)” (score \(match.score))")
+        }
+        return offeringOnly(.candidates(Array(candidates)))
     }
 
     /// Caps confidence below the chat path's auto-run threshold (0.7), so candidates are

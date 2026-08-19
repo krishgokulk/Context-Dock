@@ -231,7 +231,7 @@ Confirmed by this audit and unchanged:
 Not control-plane defects; recorded here so they are not lost. Reproduced 2026-08-19 in
 dock General Chat with ChatGPT selected.
 
-### 9a. A keyword-shaped query never reaches its Global Command
+### 9a. A keyword-shaped query never reaches its Global Command · **fixed**
 
 `"trash bin"` answered conversationally. Two enabled runnable commands match it —
 built-in **Empty Trash** and a user-added one — and neither ran.
@@ -248,6 +248,21 @@ saying such phrases "must enter discovery instead of falling through to provider
 The dock's only deterministic execution path uses the second, so it falls through anyway.
 `explicitRunMatch` also ignores keywords entirely: `"run trash"` fails because the command
 is named *Empty Trash*.
+
+**Deeper cause, found while fixing.** `GeneralAIActionResolver` had no reference to
+`GlobalCommandCapabilities` or `SystemCommandsRegistry` anywhere — the deterministic route
+finder knew adapters, cached menus, Shortcuts, CLI and MCP, and nothing about the user's own
+installed commands. `explicitRunMatch` was a bolt-on that existed because of that blindness.
+`resolve()` bailed at its first guard (`verbShaped || nounShapedTarget != nil`) before any
+lookup ran.
+
+**Fixed.** The bail now consults the user's commands before returning `.none`, and offers
+them as candidates rather than running one — a phrase with no verb proves what the user
+meant, not that they want it carried out, and a tie between a built-in and a user command
+should not be settled alphabetically on a list containing Empty Trash. Picking one still
+passes the approval card, since script commands are classified high risk. Read-shaped
+phrasing is excluded outright, because the keyword scorer strips "what" before scoring and
+so cannot tell `"what's in my trash bin"` from `"trash bin"` on its own.
 
 ### 9b. An invented tool envelope is printed at the user
 

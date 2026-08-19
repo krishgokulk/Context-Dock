@@ -115,10 +115,33 @@ enum GlobalCommandCapabilities {
         return ("Global Command · \(command.name) · live state", answer)
     }
 
+    /// Every installed command this query could mean, best first.
+    ///
+    /// Exposed because the deterministic resolver could not see Global Commands at all —
+    /// it knows adapters, menus, Shortcuts, CLI and MCP, and nothing about the user's own
+    /// installed actions. The only door that did know was `explicitRunMatch`, which
+    /// requires a verb prefix *and* the command's literal name, so "trash bin" opened
+    /// neither and a matching command sat one call away while the model improvised.
+    ///
+    /// Plural on purpose. Two commands can match a phrase equally well — a built-in and
+    /// one the user wrote — and picking between them by alphabetical tie-break, on a list
+    /// that contains Empty Trash, is not a decision code should make quietly.
+    @MainActor
+    static func matchingCommands(for query: String)
+        -> [(command: SystemCommand, id: String, score: Int)]
+    {
+        rankedMatches(for: query).map { (command: $0.command, id: capabilityID(for: $0.command), score: $0.score) }
+    }
+
     @MainActor
     private static func bestMatchingCommand(for query: String) -> SystemCommand? {
+        rankedMatches(for: query).first?.command
+    }
+
+    @MainActor
+    private static func rankedMatches(for query: String) -> [(command: SystemCommand, score: Int)] {
         let terms = significantTerms(query)
-        guard !terms.isEmpty else { return nil }
+        guard !terms.isEmpty else { return [] }
         return SystemCommandsRegistry.shared.commands
             .filter { $0.isEnabled && isRunnable($0) }
             .map { command -> (command: SystemCommand, score: Int) in
@@ -137,7 +160,6 @@ enum GlobalCommandCapabilities {
                 if $0.score != $1.score { return $0.score > $1.score }
                 return $0.command.name < $1.command.name
             }
-            .first?.command
     }
 
     private static func significantTerms(_ query: String) -> [String] {
@@ -172,7 +194,7 @@ enum GlobalCommandCapabilities {
         return !script.isEmpty && script.lowercased() != "return"
     }
 
-    private static func riskLevel(for command: SystemCommand) -> AICapabilityRiskLevel {
+    static func riskLevel(for command: SystemCommand) -> AICapabilityRiskLevel {
         let text = (command.name + " " + command.keywords.joined(separator: " ")).lowercased()
         let destructive = ["shut down", "shutdown", "restart", "reboot", "log out", "logout", "sleep"]
         if destructive.contains(where: text.contains) { return .high }
@@ -184,7 +206,7 @@ enum GlobalCommandCapabilities {
         }
     }
 
-    private static func capabilityID(for command: SystemCommand) -> String {
+    static func capabilityID(for command: SystemCommand) -> String {
         let slug = command.name
             .lowercased()
             .replacingOccurrences(of: " ", with: "-")
