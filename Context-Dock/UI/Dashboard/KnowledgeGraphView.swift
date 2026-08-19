@@ -118,7 +118,7 @@ struct KnowledgeGraphView: View {
     /// relief the contrast check requires. Everything else is labelled while the graph is
     /// small enough for the text to fit, plus whatever the pointer is on.
     private func shouldLabel(_ node: KnowledgeNode) -> Bool {
-        if node.kind == .tool { return true }
+        if node.kind == .tool || node.kind == .note { return true }
         if hovered == node.id { return true }
         return nodes.count <= 22
     }
@@ -193,6 +193,10 @@ private struct AnyShapeAtPoint {
         switch kind {
         case .thread:
             return Path(ellipseIn: rect)
+        case .note:
+            // A page: taller than wide, so it reads as a written thing next to the round
+            // conversations it shares an ink with.
+            return Path(roundedRect: rect.insetBy(dx: radius * 0.28, dy: 0), cornerRadius: radius * 0.25)
         case .app:
             return Path(roundedRect: rect, cornerRadius: radius * 0.42)
         case .folder:

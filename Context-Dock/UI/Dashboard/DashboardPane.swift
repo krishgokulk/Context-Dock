@@ -100,7 +100,7 @@ struct DashboardPane: View {
         // Single headline numbers, so they are tiles rather than a bar chart of unrelated
         // quantities — different units on one axis is not a chart.
         LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4),
+            columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 5),
             spacing: 10
         ) {
             StatTile(title: "Conversations", value: "\(snapshot.threads)",
@@ -109,6 +109,13 @@ struct DashboardPane: View {
                      detail: snapshot.combinedChats == 1
                         ? "1 combined chat" : "\(snapshot.combinedChats) combined chats",
                      symbol: "square.grid.2x2")
+            StatTile(
+                title: "Written down",
+                value: "\(snapshot.notes)",
+                detail: snapshot.memoryFacts == 0
+                    ? "notes in memory"
+                    : "notes · \(snapshot.memoryFacts) saved facts",
+                symbol: "note.text")
             StatTile(
                 title: "Capabilities",
                 value: "\(snapshot.reachableActions)",
@@ -338,7 +345,7 @@ struct DashboardPane: View {
     private var graphCard: some View {
         DashboardCard(
             title: "Knowledge graph",
-            subtitle: "Conversations against the apps, folders and tools they reached"
+            subtitle: "What you said and what you wrote, against the apps, folders and tools they reached"
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 if snapshot.knowledge.isEmpty {

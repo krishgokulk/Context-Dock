@@ -364,10 +364,7 @@ final class MarkdownMemoryStore {
             guard let raw = try? String(contentsOf: candidate.url, encoding: .utf8),
                   !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { return nil }
-            let lower = raw.lowercased()
-            let termScore = queryTerms.reduce(0) { score, term in
-                score + (lower.contains(term) ? 3 : 0)
-            }
+            let termScore = matchScore(raw, terms: queryTerms)
             let isAppMemory = candidate.priority >= 8
             let isPreference = candidate.url.lastPathComponent == "preferences.md"
             guard termScore > 0 || isAppMemory || (isPreference && !queryTerms.isEmpty) else {
@@ -378,7 +375,7 @@ final class MarkdownMemoryStore {
                 text += cacheFreshnessNotice(for: raw) + "\n"
             }
             text += relevantSections(from: raw, terms: queryTerms, limit: 2_800)
-            return (candidate.priority + termScore, text)
+            return (candidate.priority + termScore + recencyBonus(for: candidate.url), text)
         }.sorted { $0.score > $1.score }
 
         guard !ranked.isEmpty else { return "" }
@@ -606,15 +603,104 @@ final class MarkdownMemoryStore {
             .map(String.init).filter { $0.count >= 3 && !stop.contains($0) })
     }
 
+    /// Whole sections that matched, best first — not the matching lines on their own.
+    ///
+    /// Line filtering kept every heading whether or not it had anything under it that
+    /// matched, and dropped the line after a hit. So a note came through as a list of
+    /// headings with a stray sentence between them, and a fact that ran onto a second line
+    /// arrived cut in half. A section is the smallest piece of a markdown file that still
+    /// means what it said.
     private func relevantSections(from markdown: String, terms: Set<String>, limit: Int) -> String {
-        let lines = markdown.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         if terms.isEmpty { return String(markdown.prefix(limit)) }
-        let matches = lines.filter { line in
-            let lower = line.lowercased()
-            return line.hasPrefix("#") || terms.contains(where: lower.contains)
+
+        let scored = sections(of: markdown)
+            .map { (section: $0, score: matchScore($0, terms: terms)) }
+            .filter { $0.score > 0 }
+            .sorted { $0.score > $1.score }
+
+        // Nothing matched section-by-section, but the file as a whole did — a one-line
+        // file, or a term in the title. Send its opening rather than nothing.
+        guard !scored.isEmpty else { return String(markdown.prefix(limit)) }
+
+        var out: [String] = []
+        var used = 0
+        for entry in scored {
+            let text = entry.section.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            if used + text.count > limit {
+                // Take a partial section only if nothing has been taken yet, so a large
+                // first section cannot shut out the whole file.
+                if out.isEmpty { out.append(String(text.prefix(limit))) }
+                break
+            }
+            out.append(text)
+            used += text.count
         }
-        let result = matches.isEmpty ? markdown : matches.joined(separator: "\n")
-        return String(result.prefix(limit))
+        return out.joined(separator: "\n\n")
+    }
+
+    /// Splits on headings, keeping each heading with the body beneath it. Text before the
+    /// first heading is its own section, which is what a prose Quick Note is made of.
+    private func sections(of markdown: String) -> [String] {
+        var sections: [String] = []
+        var current: [String] = []
+        for line in markdown.components(separatedBy: .newlines) {
+            if line.hasPrefix("#"), !current.isEmpty {
+                sections.append(current.joined(separator: "\n"))
+                current = []
+            }
+            current.append(line)
+        }
+        if !current.isEmpty { sections.append(current.joined(separator: "\n")) }
+        return sections
+    }
+
+    /// How well a piece of text answers the query.
+    ///
+    /// Two things this fixes over a substring test. `contains` matched inside words, so
+    /// "art" hit every "start" and "smart" in the folder and pulled in files about
+    /// nothing. And a hit was worth the same whether the term appeared once or forty
+    /// times, so a passing mention outranked the file the query was actually about.
+    /// Repeats are counted with diminishing returns, because the fortieth mention does not
+    /// make a file four times more relevant than the tenth.
+    private func matchScore(_ text: String, terms: Set<String>) -> Int {
+        guard !terms.isEmpty else { return 0 }
+        let words = tokenSet(text)
+        return terms.reduce(0) { total, term in
+            let exact = words[term] ?? 0
+            // A stem match ("project" in "projects") counts, but for less than the real
+            // word, and only for terms long enough that the prefix means something.
+            let stemmed = term.count >= 5
+                ? words.reduce(0) { $1.key.hasPrefix(term) && $1.key != term ? $0 + $1.value : $0 }
+                : 0
+            let hits = min(exact, 4) * 3 + min(stemmed, 2)
+            return total + hits
+        }
+    }
+
+    private func tokenSet(_ text: String) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for token in text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+            let word = String(token)
+            guard word.count >= 3 else { continue }
+            counts[word, default: 0] += 1
+        }
+        return counts
+    }
+
+    /// A small thumb on the scale for what was written recently. Deliberately small: it
+    /// breaks ties between comparably relevant files, and never promotes a fresh file that
+    /// has nothing to do with the question over an old one that answers it.
+    private func recencyBonus(for url: URL) -> Int {
+        guard let modified = (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        else { return 0 }
+        let days = Date().timeIntervalSince(modified) / 86_400
+        switch days {
+        case ..<2: return 3
+        case ..<8: return 2
+        case ..<31: return 1
+        default: return 0
+        }
     }
 
     private func cacheFreshnessNotice(for markdown: String) -> String {

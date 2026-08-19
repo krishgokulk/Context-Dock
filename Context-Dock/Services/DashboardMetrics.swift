@@ -34,6 +34,8 @@ struct DashboardSnapshot {
     var providers: [AIProviderUsage] = []
     var adapters: [AdapterRow] = []
     var connectors: [ConnectorRow] = []
+    var notes: Int = 0
+    var memoryFacts: Int = 0
     var generatedAt = Date()
 
     /// Actions the assistant could actually call right now: an action on a disabled adapter,
@@ -169,11 +171,12 @@ struct KnowledgeGraph {
 
 struct KnowledgeNode: Identifiable, Hashable {
     enum Kind: String, CaseIterable {
-        case thread, app, folder, tool
+        case thread, note, app, folder, tool
 
         var label: String {
             switch self {
             case .thread: return "Conversations"
+            case .note: return "Notes"
             case .app: return "Apps"
             case .folder: return "Folders"
             case .tool: return "Tools"
@@ -183,6 +186,7 @@ struct KnowledgeNode: Identifiable, Hashable {
         var symbol: String {
             switch self {
             case .thread: return "bubble.left.and.bubble.right"
+            case .note: return "note.text"
             case .app: return "app.dashed"
             case .folder: return "folder"
             case .tool: return "terminal"
@@ -295,6 +299,7 @@ final class DashboardMetrics: ObservableObject {
         buildSessionFacts(input, into: &next)
         buildActivity(input, into: &next)
         buildTaskRuns(into: &next)
+        buildVault(into: &next)
         buildAdapters(input, into: &next)
         buildConnectors(input, into: &next)
         next.routes = topRoutes()
@@ -434,6 +439,83 @@ final class DashboardMetrics: ObservableObject {
                 if receipt.isVerification { out.verifiedReceipts += 1 } else { out.commandReceipts += 1 }
             }
         }
+    }
+
+    // MARK: Vault → graph
+
+    /// Folds written memory into the graph.
+    ///
+    /// Until this ran, the graph drew conversations against apps — real, but it showed
+    /// what the user had *said*, never what they had written down. Notes carry
+    /// `[[apps/<bundle>]]` links, put there by the mirror when a note names an app the
+    /// user has an adapter for, so the edges here are the links themselves rather than a
+    /// similarity guess.
+    private nonisolated static func buildVault(into out: inout DashboardSnapshot) {
+        let store = MarkdownMemoryStore.shared
+        let notes = (try? FileManager.default.contentsOfDirectory(
+            at: store.notesFolderURL, includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]))?.filter { $0.pathExtension.lowercased() == "md" } ?? []
+
+        var nodes = out.knowledge.nodes
+        var edges = Set(out.knowledge.edges)
+        let existing = Set(nodes.map(\.id))
+        var appNodesByBundle: [String: String] = [:]
+        for node in nodes where node.kind == .app {
+            appNodesByBundle[node.label.lowercased()] = node.id
+        }
+
+        for url in notes {
+            guard let markdown = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            let title = markdown
+                .components(separatedBy: .newlines)
+                .first { $0.hasPrefix("# ") }
+                .map { String($0.dropFirst(2)) }
+                ?? url.deletingPathExtension().lastPathComponent
+            let id = "note:" + url.lastPathComponent
+            guard !existing.contains(id) else { continue }
+            // Weight by length, capped. A note with real content in it is a bigger part of
+            // what the user knows than a one-line reminder — but conversations are weighed
+            // in messages and run to single digits, so an uncapped word count made one
+            // 1,300-word note heavier than every conversation combined: the largest mark on
+            // the graph, and enough to push real nodes out of the node budget entirely.
+            let words = markdown.split(whereSeparator: { $0 == " " || $0.isNewline }).count
+            let weight = min(max(1, words / 40), 12)
+            nodes.append(KnowledgeNode(
+                id: id, label: String(title.prefix(48)), kind: .note, weight: weight))
+            out.notes += 1
+
+            for bundleID in wikiLinkedBundleIDs(in: markdown) {
+                let name = appName(bundleId: bundleID)
+                let appID = appNodesByBundle[name.lowercased()] ?? "app:" + name.lowercased()
+                if !nodes.contains(where: { $0.id == appID }) {
+                    nodes.append(KnowledgeNode(id: appID, label: name, kind: .app, weight: 1))
+                    appNodesByBundle[name.lowercased()] = appID
+                }
+                edges.insert(KnowledgeEdge(from: id, to: appID))
+            }
+        }
+
+        out.memoryFacts = store.fileSummaries()
+            .filter { !$0.relativePath.hasPrefix("notes/") && $0.relativePath != "MEMORY.md" }
+            .reduce(0) { $0 + $1.factCount }
+
+        out.knowledge = KnowledgeGraph(
+            nodes: nodes.sorted { $0.weight > $1.weight },
+            edges: Array(edges))
+        out.connectedApps = nodes.filter { $0.kind == .app }.count
+    }
+
+    /// `[[apps/com.example.App]]` → `com.example.App`.
+    private nonisolated static func wikiLinkedBundleIDs(in markdown: String) -> [String] {
+        var found: [String] = []
+        var remainder = Substring(markdown)
+        while let open = remainder.range(of: "[[apps/"),
+              let close = remainder[open.upperBound...].range(of: "]]") {
+            let bundleID = String(remainder[open.upperBound..<close.lowerBound])
+            if !bundleID.isEmpty { found.append(bundleID) }
+            remainder = remainder[close.upperBound...]
+        }
+        return found
     }
 
     // MARK: Adapters

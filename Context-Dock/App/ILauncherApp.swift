@@ -477,10 +477,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // first — and General Chat, asked about an app on an empty desktop, resolved
         // against an empty list.
         InstalledApplicationsCatalog.warmUp()
-        // Yesterday's brief is written from receipts that are already on disk, so it costs
-        // a directory read and no model call. Doing it at launch means the day's record
-        // exists whether or not the user ever opens the dashboard that also rebuilds it.
-        Task.detached(priority: .utility) { DailyBrief.rebuildToday() }
+        // Keeps the derived half of memory current: today's brief, and yesterday's finished
+        // off now that yesterday is over. Reads receipts already on disk and calls no
+        // model, so it is free enough to sit on a timer.
+        BrainMaintenance.shared.start()
         // Enforce single instance — if another copy is already running, tell it to show and quit
         //
         // Except under XCTest. The test bundle is loaded into a second copy of this app, and

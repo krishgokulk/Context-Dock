@@ -38,9 +38,17 @@ enum DashboardPalette {
         dark ? Color(white: 0.78) : Color(white: 0.32)
     }
 
+    /// Notes wear the same ink as conversations, and are told apart by shape and by the
+    /// legend rather than by hue.
+    ///
+    /// Not a style choice. The categorical palette validates at three slots on the
+    /// all-pairs pairlist a scatter needs; a fourth hue puts a pair under the CVD floor,
+    /// and this graph draws every kind against every other. Ink is the honest way to add
+    /// a kind without breaking the thing that makes the other three readable — and both
+    /// ink kinds are the same thing anyway: what the user said, and what they wrote.
     static func color(for kind: KnowledgeNode.Kind, dark: Bool) -> Color {
         switch kind {
-        case .thread: return thread(dark)
+        case .thread, .note: return thread(dark)
         case .app: return app(dark)
         case .folder: return folder(dark)
         case .tool: return tool(dark)
