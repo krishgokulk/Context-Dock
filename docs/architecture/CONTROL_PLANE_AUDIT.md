@@ -304,6 +304,12 @@ mistake in different words. `GeneralAIActionResolver.requestsChange` is now the 
 Matched as whole words: a contains-check on `save` reads `"show me my saved notes"` as an
 instruction.
 
+The classifier moved to `ReadOnlyDataRouter` to be testable at all. It had been a method on
+`LauncherView` — a view with four hundred `@State` properties — so the one decision that
+routes a request between "read this" and "do this" could not be exercised without standing
+up the surface, and the only thing that could catch it deciding wrong was a person typing
+the sentence. Verified by removing the guard: two of the new tests fail without it.
+
 ### 9d. Dead field
 
 `AIIntentResolution.requiredCapabilityKinds` is written at six sites and read at none.
