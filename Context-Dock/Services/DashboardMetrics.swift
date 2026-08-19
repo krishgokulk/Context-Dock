@@ -36,6 +36,8 @@ struct DashboardSnapshot {
     var connectors: [ConnectorRow] = []
     var notes: Int = 0
     var memoryFacts: Int = 0
+    /// Conversations and notes with nothing linking them to anything, left off the graph.
+    var unlinkedNodes: Int = 0
     var generatedAt = Date()
 
     /// Actions the assistant could actually call right now: an action on a disabled adapter,
@@ -300,6 +302,7 @@ final class DashboardMetrics: ObservableObject {
         buildActivity(input, into: &next)
         buildTaskRuns(into: &next)
         buildVault(into: &next)
+        pruneUnlinked(&next)
         buildAdapters(input, into: &next)
         buildConnectors(input, into: &next)
         next.routes = topRoutes()
@@ -503,6 +506,20 @@ final class DashboardMetrics: ObservableObject {
             nodes: nodes.sorted { $0.weight > $1.weight },
             edges: Array(edges))
         out.connectedApps = nodes.filter { $0.kind == .app }.count
+    }
+
+    /// Drops nodes with no edges.
+    ///
+    /// A conversation that was never scoped to anything, and a note that names no app,
+    /// connect to nothing — and most conversations are unscoped, so the graph came out as
+    /// thirty loose dots in rows with a handful of linked nodes lost among them. A graph
+    /// is its edges. What has none is counted and said out loud underneath instead, which
+    /// is more honest than drawing it as though it were part of a structure.
+    private nonisolated static func pruneUnlinked(_ out: inout DashboardSnapshot) {
+        let linked = Set(out.knowledge.edges.flatMap { [$0.from, $0.to] })
+        let kept = out.knowledge.nodes.filter { linked.contains($0.id) }
+        out.unlinkedNodes = out.knowledge.nodes.count - kept.count
+        out.knowledge = KnowledgeGraph(nodes: kept, edges: out.knowledge.edges)
     }
 
     /// `[[apps/com.example.App]]` → `com.example.App`.

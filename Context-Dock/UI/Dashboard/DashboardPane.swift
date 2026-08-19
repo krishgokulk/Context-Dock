@@ -351,18 +351,26 @@ struct DashboardPane: View {
                 if snapshot.knowledge.isEmpty {
                     DashboardEmptyNote(
                         symbol: "point.3.connected.trianglepath.dotted",
-                        text: "No scoped conversations yet — attach an app or a folder to a chat and the links show up here.")
+                        text: snapshot.unlinkedNodes > 0
+                            ? "\(snapshot.unlinkedNodes) conversations and notes, none of them linked to anything yet. Scope a chat to an app or a folder, or name an app in a note, and the graph builds itself."
+                            : "No scoped conversations yet — attach an app or a folder to a chat and the links show up here.")
                 } else {
                     KnowledgeGraphView(graph: snapshot.knowledge) { nodeID in
                         openThread(nodeID)
                     }
-                    .frame(height: 320)
+                    .frame(height: 380)
 
                     HStack(spacing: 16) {
                         ForEach(KnowledgeNode.Kind.allCases, id: \.self) { kind in
                             legendEntry(kind)
                         }
                         Spacer(minLength: 0)
+                        if snapshot.unlinkedNodes > 0 {
+                            Text("\(snapshot.unlinkedNodes) unlinked")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                                .help("Conversations and notes that connect to nothing yet — scope a chat to an app or folder, or name one in a note, and it joins the graph.")
+                        }
                         Text("Click a conversation to open it")
                             .font(.system(size: 10))
                             .foregroundStyle(.tertiary)

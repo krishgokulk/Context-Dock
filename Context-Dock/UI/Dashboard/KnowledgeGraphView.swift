@@ -222,8 +222,17 @@ enum KnowledgeGraphLayout {
     static func solve(nodes: [KnowledgeNode], edges: [KnowledgeEdge], in size: CGSize) -> [String: CGPoint] {
         guard !nodes.isEmpty else { return [:] }
         let inset: CGFloat = 26
-        let area = (size.width - inset * 2) * (size.height - inset * 2)
-        let k = (area / CGFloat(nodes.count)).squareRoot()
+        let usableHeight = size.height - inset * 2
+        // Ideal spacing, then clamped by the short side.
+        //
+        // `sqrt(area / n)` assumes a roughly square canvas. This card is wide and short —
+        // about 1700×320 — where that formula asks for 156pt of space per node against
+        // 268pt of usable height. Two rows fit, so the simulation did the only thing it
+        // could and pressed every node against the top and bottom edges, which is what the
+        // graph looked like: dots in lines. Capping at a quarter of the height guarantees
+        // room for four rows, and the drawing gets its vertical structure back.
+        let area = (size.width - inset * 2) * usableHeight
+        let k = min((area / CGFloat(nodes.count)).squareRoot(), usableHeight / 4)
         let index = Dictionary(uniqueKeysWithValues: nodes.enumerated().map { ($1.id, $0) })
 
         var points: [CGPoint] = nodes.enumerated().map { position, node in
@@ -238,7 +247,8 @@ enum KnowledgeGraphLayout {
         }
 
         let iterations = 260
-        var temperature = min(size.width, size.height) / 8
+        let initialTemperature = min(size.width, size.height) / 6
+        var temperature = initialTemperature
 
         for step in 0..<iterations {
             var forces = [CGPoint](repeating: .zero, count: points.count)
@@ -254,6 +264,11 @@ enum KnowledgeGraphLayout {
                         dy = CGFloat((j % 7) - 3) * 0.1
                         distance = 0.01
                     }
+                    // Repulsion falls off with distance, and past a couple of k it is
+                    // noise. Left unbounded, every node pushed every other node across the
+                    // whole canvas at once, which no amount of attraction could balance —
+                    // so nodes ran to the edges and the clamp lined them up in rows there.
+                    guard distance < k * 2.5 else { continue }
                     let magnitude = k * k / distance
                     let fx = dx / distance * magnitude
                     let fy = dy / distance * magnitude
@@ -274,11 +289,13 @@ enum KnowledgeGraphLayout {
                 forces[b].x += fx; forces[b].y += fy
             }
 
-            // Gentle pull to centre keeps disconnected nodes from drifting to the edges.
+            // Gravity, strong enough to actually hold the drawing together. At 0.012 it
+            // was a rounding error next to repulsion, and "keeps disconnected nodes from
+            // drifting to the edges" is exactly what it failed to do.
             let centre = CGPoint(x: size.width / 2, y: size.height / 2)
             for i in 0..<points.count {
-                forces[i].x += (centre.x - points[i].x) * 0.012
-                forces[i].y += (centre.y - points[i].y) * 0.012
+                forces[i].x += (centre.x - points[i].x) * 0.09
+                forces[i].y += (centre.y - points[i].y) * 0.14
             }
 
             for i in 0..<points.count {
@@ -288,8 +305,12 @@ enum KnowledgeGraphLayout {
                 points[i].y = min(max(points[i].y + forces[i].y / length * limited, inset), size.height - inset - 10)
             }
 
-            temperature *= 1 - (Double(step) / Double(iterations)) * 0.02
-            temperature = max(temperature, 0.4)
+            // Cool to nothing, linearly. The old schedule multiplied by 0.98 of a fraction
+            // that started at 1, so temperature ended within 2% of where it began: every
+            // step could still move a node the width of the card, and the layout never
+            // settled into the arrangement the forces were describing.
+            temperature = initialTemperature * (1 - CGFloat(step) / CGFloat(iterations))
+            temperature = max(temperature, 0.25)
         }
 
         return Dictionary(uniqueKeysWithValues: zip(nodes.map(\.id), points))
