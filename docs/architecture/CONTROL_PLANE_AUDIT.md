@@ -360,3 +360,28 @@ shape the capability model has no equivalent for: it lists, then acts on a chose
 
 Two exclusions from commands are deliberate: `provider:notepad` and `provider:windows`
 carry placeholder scripts with nothing to run.
+
+### 9g. A verified write reported as a failure · **fixed**
+
+`create a reminder "call sujith" today at 5 pm` created the reminder. EventKit confirmed it
+and the receipt read *I've added reminder "call sujith"* — the §3 read-back doing exactly its
+job. The model then verified for itself, chose
+`verify_outcome(file_contains, ~/Library/Reminders/Reminders)`, was told the text was not
+there, and answered: *"The reminder was not successfully created."*
+
+Two failures met.
+
+**The model had no reason to stop.** `run_capability`'s `.verified` branch returned the
+refined message and nothing more. The *menu* path already appends "This is the result — do
+not look for further evidence", under a comment recording this precise failure: told only
+that a click was sent, a model went looking for its own evidence, checked a guessed path,
+and announced the app was not installed while its About window stood open. The lesson was
+learned on one path and never applied to the other.
+
+**The check it chose could not be performed, and said it failed.**
+`~/Library/Reminders/Reminders` is a directory holding a SQLite store.
+`String(contentsOfFile:)` returns nil, so `passed` was false and the observation read "does
+not contain the expected text" — the same collapse as `contradicted` vs `unverified` in §4b,
+one level down inside the tool. `file_contains` and `file_equals` now report a missing path,
+a directory and unreadable bytes as checks that prove nothing.
+

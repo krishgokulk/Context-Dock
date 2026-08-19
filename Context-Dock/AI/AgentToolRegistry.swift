@@ -83,6 +83,33 @@ struct AgentTurnToken: Hashable, Sendable {
     init() { id = UUID() }
 }
 
+/// Why a path cannot be read as text, or nil when it can.
+///
+/// A content check that could not be performed is not a content check that failed, and
+/// saying "does not contain the expected text" about a directory is the second kind wearing
+/// the first kind's words. Asked to confirm a reminder, a model checked
+/// ~/Library/Reminders/Reminders — a directory holding a SQLite store — was told the text
+/// was not there, and reported to the user that the reminder had not been created. It had.
+extension AgentToolRegistry {
+    static func unreadableAsText(_ path: String) -> String? {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return "Nothing exists at \(path), so its contents prove nothing either way. "
+                + "This check could not be performed."
+        }
+        if isDirectory.boolValue {
+            return "\(path) is a directory, not a text file. Its contents cannot be searched "
+                + "this way and this check proves nothing. Use a capability that reads the "
+                + "data, or trust a read-back that already ran."
+        }
+        guard (try? String(contentsOfFile: path, encoding: .utf8)) != nil else {
+            return "\(path) could not be read as text — it is binary or uses another "
+                + "encoding. This check proves nothing."
+        }
+        return nil
+    }
+}
+
 struct AgentToolContext {
     /// Runs a shell command through the classifier / argv gate / approval path.
     /// The Bool is the model's own `requires_approval` answer.
@@ -855,6 +882,11 @@ final class AgentToolRegistry {
                         output: "file_contains requires expected_text.",
                         displayCommand: "verify_outcome(file_contains, \(path))")
                 }
+                if let unreadable = Self.unreadableAsText(path) {
+                    return AgentToolResult(
+                        success: false, output: unreadable,
+                        displayCommand: "verify_outcome(file_contains, \(path))")
+                }
                 let contents = try? String(contentsOfFile: path, encoding: .utf8)
                 passed = contents?.contains(expected) == true
                 observation = passed
@@ -865,6 +897,11 @@ final class AgentToolRegistry {
                     return AgentToolResult(
                         success: false,
                         output: "file_equals requires expected_text.",
+                        displayCommand: "verify_outcome(file_equals, \(path))")
+                }
+                if let unreadable = Self.unreadableAsText(path) {
+                    return AgentToolResult(
+                        success: false, output: unreadable,
                         displayCommand: "verify_outcome(file_equals, \(path))")
                 }
                 let contents = try? String(contentsOfFile: path, encoding: .utf8)
@@ -1656,7 +1693,14 @@ final class AgentToolRegistry {
                         id: capabilityID, inputValues: input)
                     {
                     case .verified(let refined):
-                        output = refined ?? output
+                        // The menu path learned this and this one did not: a model told only
+                        // that something succeeded goes looking for its own proof. Here it
+                        // created the reminder, EventKit confirmed it, and the model then
+                        // grepped ~/Library/Reminders for the title, found nothing, and told
+                        // the user the reminder had not been created.
+                        output = (refined ?? output)
+                            + " Verified by reading it back. This is the result — do not "
+                            + "look for further evidence."
                     case .contradicted(let evidence):
                         // Read back and disproved. Distinct from the case below because the
                         // model can act on it: there is nothing to re-check, only to redo.
