@@ -56,6 +56,24 @@ struct ChatRoute: Identifiable, Equatable {
         /// and "drive my Mac"; that is the cost that matters to them.
         var takesTheScreen: Bool { self == .menuCommand }
 
+        /// The execution mechanism this route uses, in the vocabulary the authority layer
+        /// speaks. `nil` for the two kinds that run nothing.
+        ///
+        /// Context Dock Chat resolved its own routes and ran them without ever asking
+        /// AppAccessPolicy, so an app the user had granted nothing beyond "I know it is
+        /// installed" could still have its MCP tools called from a chat scoped to it. The
+        /// gate exists and was simply not on this path; naming the mechanism is what lets
+        /// this path ask the same question General AI asks.
+        var executionRoute: DoraXActionCandidate.ExecutionRoute? {
+            switch self {
+            case .cli: return .cli
+            case .adapterAction: return .adapter
+            case .menuCommand: return .verifiedMenu
+            case .mcpTool: return .mcp
+            case .skill, .model: return nil
+            }
+        }
+
         var symbol: String {
             switch self {
             case .cli: return "terminal"

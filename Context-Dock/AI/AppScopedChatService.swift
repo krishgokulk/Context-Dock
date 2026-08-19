@@ -156,6 +156,35 @@ enum AppScopedChatService {
         // yet". The app scope is still what state is resolved against — that is about the
         // app — but what ran is reported where it was asked.
         let routeScope = GeneralChatScope.app(bundleId: route.bundleId)
+
+        // The same gate General AI passes through, on the path that never asked it. A CLI
+        // route names a tool rather than an app — its bundleId is a `cli://` placeholder —
+        // so there is no app authority to consult and nothing to gate on here.
+        if let mechanism = route.kind.executionRoute, !route.bundleId.hasPrefix("cli://") {
+            let level = AppAccessPolicy.level(for: route.bundleId)
+            guard AppAccessPolicy.allows(mechanism, at: level) else {
+                let explanation = AppAccessPolicy.explanation(
+                    for: route.appName, level: level, wantedRead: route.isReadOnly)
+                ChatConsoleLog.shared.append(
+                    .note, title: "blocked · \(route.title)", output: explanation,
+                    success: false, scope: scope)
+                return Answer(
+                    text: explanation,
+                    toolChips: ["\(route.kind.rawValue) · blocked"],
+                    evidenceReceipts: [DoraXActionReceipt(
+                        command: "authority(\(route.appName), \(mechanism.rawValue))",
+                        output: explanation,
+                        success: false)])
+            }
+        }
+
+        // Taken before the click, because a menu outcome is a difference and there is no
+        // difference to read once the app has already drawn it.
+        let menuStateBefore: MenuOutcomeVerifier.Snapshot? =
+            route.kind == .menuCommand && !route.isReadOnly
+            ? MenuOutcomeVerifier.snapshot(bundleID: route.bundleId)
+            : nil
+
         let rowID = ChatConsoleLog.shared.begin(.route, title: route.title, scope: scope)
         let result = await ChatRouteResolver.run(route, query: query)
         ChatConsoleLog.shared.finish(
@@ -168,23 +197,57 @@ enum AppScopedChatService {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
-        // Verification, not narration. An action that changed something is checked by
-        // reading the app back, so the answer reports what is true rather than what was
-        // attempted.
+        // What used to happen here: re-read the app into prose, hand it to the model, and
+        // record a receipt with success: true regardless of what the reading said. A Context
+        // Dock action that silently failed showed a green tick, because nothing on this path
+        // could return anything but pass.
+        //
+        // The state block is still read — it is genuinely useful to the model — but it is
+        // context now, not the verdict. The verdict comes from a verifier or admits there
+        // isn't one.
+        var status: VerificationStatus = .notApplicable
+        var verificationEvidence: String?
         var verification: String?
         if result.success, !route.isReadOnly {
             try? await Task.sleep(nanoseconds: 400_000_000)  // let the app settle
+            if let before = menuStateBefore,
+                let outcome = MenuOutcomeVerifier.compare(
+                    before: before,
+                    appName: route.appName,
+                    path: route.payload.split(separator: "\u{1}").map(String.init))
+            {
+                status = outcome.verified ? .verified : .unverified
+                verificationEvidence = outcome.message
+            }
             verification = ContextResolver
                 .resolve(scope: routeScope, appName: route.appName)
                 .promptBlock()
             if let verification {
                 ChatConsoleLog.shared.append(
                     .note,
-                    title: "verified \(route.appName) state",
+                    title: "\(route.appName) state afterwards",
                     output: verification,
                     success: true,
                     scope: scope)
             }
+            if let verificationEvidence {
+                ChatConsoleLog.shared.append(
+                    .note,
+                    title: "verification · \(status.chipLabel)",
+                    output: verificationEvidence,
+                    success: status.claimsSuccess,
+                    scope: scope)
+            }
+        }
+
+        // What the model may assert. It used to be told "It succeeded" on every route that
+        // ran, including the ones nothing had checked.
+        let outcomeSentence: String
+        switch status {
+        case .verified: outcomeSentence = "It succeeded and was verified."
+        case .notApplicable: outcomeSentence = "The executor reported success; nothing independent checked it."
+        case .unverified: outcomeSentence = "It ran, but the check could not confirm it took effect — say so."
+        case .contradicted: outcomeSentence = "The check showed it did not take effect — say so."
         }
 
         let phrased: String
@@ -202,14 +265,17 @@ enum AppScopedChatService {
             // made "open journal about window" — a request the app had just carried out —
             // come back as "the About Journal window is not currently readable, so I cannot
             // provide details about it": an apology for a task nobody set.
-            phrased = "Done — \(route.title)."
+            phrased = status.claimsSuccess || status == .notApplicable
+                ? "Done — \(route.title)."
+                : "Ran \(route.title), but I couldn't confirm it took effect."
+                    + (verificationEvidence.map { " \($0)" } ?? "")
         } else if !route.isReadOnly {
             // An action is reported, not answered. The user asked for something to happen;
             // the answer says whether it did, and the state block stays in the Console
             // where it is evidence rather than subject matter.
             phrased =
                 (try? await AIProviderService.shared.sendMessage(
-                    "Ran `\(route.title)` for \(route.appName). It succeeded. Output:\n\n"
+                    "Ran `\(route.title)` for \(route.appName). \(outcomeSentence) Output:\n\n"
                         + result.output.prefix(2_000)
                         + "\n\nTell the user in one sentence what was done. Do not answer "
                         + "any other question, do not describe the app's state, and do not "
@@ -238,25 +304,33 @@ enum AppScopedChatService {
                 .map(ChatAnswerSanitizer.clean)
                 ?? result.output
         }
-        var receipts = [DoraXActionReceipt(AIProviderService.ExecutedCommand(
+        var receipts = [DoraXActionReceipt(
             command: "route(\(route.kind.rawValue), \(route.title))",
             output: result.output.isEmpty
                 ? (result.success ? "Executor confirmed success." : "Executor returned no output.")
                 : result.output,
-            success: result.success,
-            isVerification: false
-        ))]
+            success: result.success)]
+        // A verification receipt is only written when something was verified. The app-state
+        // block is evidence the model reads, not proof the action landed, and recording it
+        // as a passing verification is how a silent failure drew a green tick.
+        if let verificationEvidence {
+            receipts.append(DoraXActionReceipt(
+                command: "verify_menu_outcome(\(route.appName))",
+                output: verificationEvidence,
+                success: status.claimsSuccess,
+                isVerification: true))
+        }
         if let verification {
-            receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
-                command: "verify_app_state(\(route.appName))",
+            receipts.append(DoraXActionReceipt(
+                command: "read_app_state(\(route.appName))",
                 output: verification,
-                success: true,
-                isVerification: true
-            )))
+                success: true))
         }
         return Answer(
             text: phrased,
-            toolChips: ["\(route.kind.rawValue) · \(route.title)"],
+            toolChips: route.isReadOnly || status == .notApplicable
+                ? ["\(route.kind.rawValue) · \(route.title)"]
+                : ["\(route.kind.rawValue) · \(route.title)", status.chipLabel],
             consoleOutput: result.output.isEmpty ? nil : result.output,
             evidenceReceipts: receipts)
     }

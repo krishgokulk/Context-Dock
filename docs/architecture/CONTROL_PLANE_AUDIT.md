@@ -143,11 +143,11 @@ Three things execute. They do not agree.
 | | General AI (candidate path) | Agent tool loop (`run_capability`) | Context Dock Chat |
 |---|---|---|---|
 | Entry | `GeneralAIActionExecutor.execute` | `AgentToolRegistry.swift:1480` → same executor | `AppScopedChatService.execute` → `ChatRouteResolver.run` |
-| `AppAccessPolicy` | yes | yes (`:1290`, `:1346`, `:1470`) | **no** |
-| `GeneralAIActionExecutor.verify` | yes | yes (`:1491`, `:1624`) | **no** |
-| Verification method | typed read-back | typed read-back | re-resolve `ContextResolver…promptBlock()` → prose |
+| `AppAccessPolicy` | yes | yes (`:1290`, `:1346`, `:1470`) | **yes** (step 3) |
+| Shared verifier | `GeneralAIActionExecutor.verify` | same | `MenuOutcomeVerifier` for menu routes; `notApplicable` elsewhere |
+| Verification method | typed read-back | typed read-back | typed for menus; state block demoted to context |
 | `TaskRunStore` tracking | via provider service | via provider service | **no** |
-| Receipt type | `GeneralChatWorkflowResult.Receipt` | same | `EvidenceReceipt` |
+| Receipt type | `DoraXActionReceipt` | same | same |
 
 The agent tool loop was already unified with General AI — the executor comment at
 `GeneralAIActionExecutor.swift:200` records that `verifyCapability` was split out
@@ -175,12 +175,13 @@ semantics are shared.
 | Requirement | Status |
 |---|---|
 | Owner (capability ID + source) | **met** — `DoraXActionCandidate` carries both |
-| Authority classification | **met for two of three surfaces** — Context Dock Chat bypasses `AppAccessPolicy` |
+| Authority classification | **met** — all three surfaces ask `AppAccessPolicy` |
 | Canonical executor | **met for two of three surfaces** — Context Dock Chat runs `ChatRouteResolver` |
-| Verification state | **partly met** — one vocabulary with `contradicted`; 6 of 10 routes still `notApplicable` |
+| Verification state | **partly met** — one vocabulary with `contradicted`; every surface typed; 6 of 10 routes still have no verifier |
 
-**Gate A is not open.** What remains is steps 3 and 4: Context Dock Chat through the shared
-gate, and read-backs for the routes that can have one.
+**Gate A is not open.** What remains is step 4 — read-backs for the routes that can have
+one — plus the two Context Dock Chat rows above: one executor, and task state that reaches
+it.
 
 ---
 
@@ -194,10 +195,12 @@ registry, Global Context, or the typing path.
 2. ~~**One verification vocabulary.**~~ **Done** — `VerificationStatus`, with
    `contradicted` separated from `unverified` at the four read-backs that are conclusive.
 
-3. **Route Context Dock Chat through the shared gate.** Add `AppAccessPolicy` before
-   `ChatRouteResolver.run`, and call `GeneralAIActionExecutor.verifyCapability` for
-   non-read-only routes instead of the prose state dump. Keep the state dump as
-   *additional* evidence; it stops being the verification.
+3. ~~**Route Context Dock Chat through the shared gate.**~~ **Done** — `AppAccessPolicy`
+   runs before `ChatRouteResolver.run` (CLI routes exempt: a `cli://` bundle id names a
+   tool, not an app), menu routes verify through `MenuOutcomeVerifier`, and the state block
+   is demoted from verification to context. `verifyCapability` was *not* usable here:
+   `ChatRoute` carries an adapter action id, a menu path or an MCP tool name, never a
+   capability id with inputs. Closing that needs the shared executor, not a shared verifier.
 
 4. **Extend verification to the six `skipped` routes** where a cheap read-back exists.
    `shortcutRunner` and `automation` likely stay `notApplicable` — say so explicitly
