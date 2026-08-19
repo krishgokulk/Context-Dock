@@ -1494,9 +1494,14 @@ final class AgentToolRegistry {
                 case .verified(let reading):
                     output += " " + (reading ?? "The outcome was observed.")
                         + " This is the result — do not look for further evidence."
+                case .contradicted(let evidence):
+                    // Proof it did not land. The model must not treat this as "unclear" and
+                    // go hunting for a second opinion — the reading is the second opinion.
+                    output += " It did not take effect: " + evidence
+                        + " This is the result — do not look for further evidence."
                 case .unverified(let reason):
                     output += " " + reason
-                case .skipped:
+                case .notApplicable:
                     output += " Nothing observable changed in \(appName)'s windows, which is "
                         + "normal for a command of this kind. Report what was clicked, not "
                         + "whether it worked."
@@ -1626,13 +1631,18 @@ final class AgentToolRegistry {
                     {
                     case .verified(let refined):
                         output = refined ?? output
+                    case .contradicted(let evidence):
+                        // Read back and disproved. Distinct from the case below because the
+                        // model can act on it: there is nothing to re-check, only to redo.
+                        succeeded = false
+                        output = "\(output)\n\nIt did not take effect: \(evidence)"
                     case .unverified(let fallback):
                         // The command ran and the result could not be found. Saying so is
                         // the whole point; reporting success here is how a chat claims to
                         // have created something that is not there.
                         succeeded = false
                         output = "\(output)\n\nCouldn't confirm it: \(fallback)"
-                    case .skipped:
+                    case .notApplicable:
                         break
                     }
                 }

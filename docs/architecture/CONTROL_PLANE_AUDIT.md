@@ -1,7 +1,8 @@
 # DoraX control-plane audit
 
-Read-only inventory of how an executable request travels from intent to receipt today.
-No code changed. Produced as **Gate A** input: nothing about bounded loops, graph
+Read-only inventory of how an executable request travels from intent to receipt.
+No code changed *by the audit*; steps 1 and 2 of §7 have since been applied and their
+rows are marked **done** below. Produced as **Gate A** input: nothing about bounded loops, graph
 orchestration, or scheduled autonomy should be built until this table has no blanks.
 
 Method: traced `DoraXActionCandidate` → `GeneralAIActionExecutor` → verification →
@@ -74,7 +75,7 @@ Verified: **7 capability IDs + 3 routes.** Every other write is executor-word on
 
 ## 4. Duplicated concepts (the actual finding)
 
-### 4a. Receipt — three types, one shape
+### 4a. Receipt — three types, one shape · **done**
 
 All three wrap `AIProviderService.ExecutedCommand`. Fields are effectively identical.
 
@@ -84,11 +85,15 @@ All three wrap `AIProviderService.ExecutedCommand`. Fields are effectively ident
 | `GeneralChatWorkflowResult.Receipt` | `AI/GeneralChatWorkflowResult.swift:42` | no |
 | `EvidenceReceipt` | **`Search/AIMessageViews.swift:538`** | no |
 
-`GeneralChatWorkflowResult.Receipt` and `EvidenceReceipt` are field-for-field the same
-struct. One lives in the AI layer, one in a **view file**. Receipt shape is currently
-defined by a presentation type.
+`GeneralChatWorkflowResult.Receipt` and `EvidenceReceipt` were field-for-field the same
+struct. One lived in the AI layer, one in a **view file** — receipt shape was defined by a
+presentation type.
 
-### 4b. Verification — three vocabularies
+**Resolved.** `DoraXActionReceipt` owns it. `TaskRunStore.Receipt` is a typealias,
+`EvidenceReceipt` is gone, and the field names follow the persisted form so runs already on
+disk decode unchanged. `id` sits outside `CodingKeys` because older files never wrote one.
+
+### 4b. Verification — three vocabularies · **done for two of three**
 
 | Type | Cases |
 |---|---|
@@ -96,13 +101,22 @@ defined by a presentation type.
 | `GeneralChatWorkflowResult.Verification` | `verified` / `executorConfirmed` / `unavailable` / `failed` |
 | Context Dock Chat | untyped `String?` state dump, always recorded `success: true` |
 
-Mapping between the first two is lossy in both directions. `skipped` (no verifier exists)
-and `unverified` (verifier ran, could not confirm) both have to land somewhere in the
-four-case enum, and neither `unavailable` nor `failed` is an obvious home. There is no
-`contradicted` case anywhere: "the verifier ran and proved the write did **not** land" is
-currently expressed as `unverified` — the same value as "we did not check."
+Mapping between the first two was lossy in both directions, and there was no
+`contradicted` anywhere: "the verifier ran and proved the write did **not** land" was
+expressed as `unverified` — the same value as "we did not check".
 
-### 4c. Route — three enums on three different axes
+**Resolved for the executor and the turn record.** One `VerificationStatus`:
+`verified` / `contradicted` / `unverified` / `notApplicable`, with `claimsSuccess` true for
+exactly one of them. `VerificationOutcome` gained `.contradicted(evidence:)` and renamed
+`.skipped` to `.notApplicable`, and the read-backs that are conclusive now say so —
+`finder.trash` with the file still present, `finder.newFolder` with nothing there,
+`reminders.delete`/`.complete` with the item still open, and `appLaunch` with the app not
+running. The windowed reads (`reminders.create`, `calendar.create`, `notes.create`, the
+menu window diff) stay `unverified`, which is what they honestly are.
+
+**Still open:** Context Dock Chat, which has no typed verification at all — §5, step 3.
+
+### 4c. Route — three enums on three different axes · **partly done**
 
 | Type | Axis | Cases |
 |---|---|---|
@@ -110,8 +124,15 @@ currently expressed as `unverified` — the same value as "we did not check."
 | `GeneralChatWorkflowResult.Route` | turn classification | 12 (`conversation`, `liveState`, `memory`, `selection`, …) |
 | `ChatRouteResolver.Kind` | Context Dock offer | 7 (`cli`, `adapterAction`, `menuCommand`, `mcpTool`, `skill`, `model`, …) |
 
-These are not redundant — they answer different questions — but nothing declares the
-mapping, so `adapterAction` → `.adapter` → `appAdapter` is re-derived per call site.
+These are not redundant — they answer different questions — but nothing declared the
+mapping, so `adapterAction` → `.adapter` → `appAdapter` was re-derived per call site.
+
+**Partly resolved.** `GeneralChatWorkflowResult` now carries both axes: `route` classifies
+the turn, `executionRoute` names the mechanism, and `Route.classifying(_:)` declares the
+relation in one place. This was forced by wiring — `Route` has no case for an app launch,
+an API call, a Shortcut, a keyboard shortcut or an accessibility fallback, and folding them
+into `appAdapter` would have discarded the distinction `AppAccessPolicy` is built on.
+`ChatRouteResolver.Kind` is still unrelated to either.
 
 ---
 
@@ -156,9 +177,10 @@ semantics are shared.
 | Owner (capability ID + source) | **met** — `DoraXActionCandidate` carries both |
 | Authority classification | **met for two of three surfaces** — Context Dock Chat bypasses `AppAccessPolicy` |
 | Canonical executor | **met for two of three surfaces** — Context Dock Chat runs `ChatRouteResolver` |
-| Verification state | **not met** — 6 of 10 routes `skipped`; 3 incompatible vocabularies; no `contradicted` |
+| Verification state | **partly met** — one vocabulary with `contradicted`; 6 of 10 routes still `notApplicable` |
 
-**Gate A is not open.**
+**Gate A is not open.** What remains is steps 3 and 4: Context Dock Chat through the shared
+gate, and read-backs for the routes that can have one.
 
 ---
 
@@ -167,16 +189,10 @@ semantics are shared.
 Ordered. Each is independently shippable. None touches UI, the resolver, the capability
 registry, Global Context, or the typing path.
 
-1. **Collapse the receipt.** One `DoraXActionReceipt` in the AI layer. Delete
-   `EvidenceReceipt` from `AIMessageViews.swift`; make `GeneralChatWorkflowResult` and
-   `TaskRunStore` use the shared type. Mechanical — the three shapes already match.
+1. ~~**Collapse the receipt.**~~ **Done** — `DoraXActionReceipt`, no migration.
 
-2. **One verification vocabulary.** Single `VerificationStatus`:
-   `verified` / `contradicted` / `unverified` / `notApplicable`.
-   - `contradicted` is new and load-bearing: the verifier ran and disproved the write.
-   - `unverified` = verifier ran, inconclusive.
-   - `notApplicable` = no verifier exists for this route (today's `skipped`).
-   Never let an executor success promote itself past `notApplicable`.
+2. ~~**One verification vocabulary.**~~ **Done** — `VerificationStatus`, with
+   `contradicted` separated from `unverified` at the four read-backs that are conclusive.
 
 3. **Route Context Dock Chat through the shared gate.** Add `AppAccessPolicy` before
    `ChatRouteResolver.run`, and call `GeneralAIActionExecutor.verifyCapability` for

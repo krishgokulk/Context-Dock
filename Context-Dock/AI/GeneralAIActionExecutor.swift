@@ -149,13 +149,40 @@ final class GeneralAIActionExecutor {
     private var menuStateBeforeClick: (candidateID: String, snapshot: MenuOutcomeVerifier.Snapshot)?
 
     /// Outcome of a single lightweight read-back after a successful write action.
+    ///
+    /// `contradicted` and `unverified` were one case until now, and collapsing them cost the
+    /// user the only part that was actionable. A file still sitting at the path it was meant
+    /// to leave is proof the trash did not happen; a reminder missing from the first thirty
+    /// open ones is a windowed read that saw nothing. The first has somewhere to look, the
+    /// second does not, and both used to produce "I couldn't verify the final result".
     enum VerificationOutcome {
         /// Confirmed. Optional refined success message ("I've added reminder …").
         case verified(String?)
-        /// Executor succeeded but the result couldn't be confirmed — never report success.
+        /// The read-back observed the opposite of what was written. Proof, not doubt.
+        case contradicted(evidence: String)
+        /// The read-back ran and could not tell. Never report success.
         case unverified(fallback: String)
         /// No verifier for this route — keep the executor's own honest message.
-        case skipped
+        case notApplicable
+
+        var status: VerificationStatus {
+            switch self {
+            case .verified: return .verified
+            case .contradicted: return .contradicted
+            case .unverified: return .unverified
+            case .notApplicable: return .notApplicable
+            }
+        }
+
+        /// What to tell the user about the check, when there is something to tell.
+        var evidence: String? {
+            switch self {
+            case .verified(let refined): return refined
+            case .contradicted(let evidence): return evidence
+            case .unverified(let fallback): return fallback
+            case .notApplicable: return nil
+            }
+        }
     }
 
     /// Read the result back exactly once (no polling, no retries, background reads) to
@@ -165,33 +192,33 @@ final class GeneralAIActionExecutor {
     func verify(_ candidate: DoraXActionCandidate) async -> VerificationOutcome {
         let byCapability = await verifyCapability(
             id: candidate.capabilityID, inputValues: candidate.inputValues)
-        if case .skipped = byCapability {} else { return byCapability }
+        if case .notApplicable = byCapability {} else { return byCapability }
 
         switch candidate.route {
         case .verifiedMenu, .keyboardShortcut:
             guard let (id, before) = menuStateBeforeClick, id == candidate.id,
                 let path = candidate.menuPath
-            else { return .skipped }
+            else { return .notApplicable }
             menuStateBeforeClick = nil
             // The window list settles a beat after the click; reading it in the same run
             // loop turn reports the state before the app drew anything.
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard let outcome = MenuOutcomeVerifier.compare(
                 before: before, appName: candidate.appName ?? "The app", path: path)
-            else { return .skipped }
+            else { return .notApplicable }
             return outcome.verified
                 ? .verified(outcome.message)
                 : .unverified(fallback: outcome.message)
         case .appLaunch:
-            guard let bundleID = candidate.bundleID else { return .skipped }
+            guard let bundleID = candidate.bundleID else { return .notApplicable }
             let running = NSRunningApplication
                 .runningApplications(withBundleIdentifier: bundleID)
                 .contains { !$0.isTerminated }
             return running
                 ? .verified(nil)
-                : .unverified(fallback: "\(candidate.appName ?? "The app") isn't running.")
+                : .contradicted(evidence: "\(candidate.appName ?? "The app") isn't running.")
         default:
-            return .skipped
+            return .notApplicable
         }
     }
 
@@ -209,7 +236,7 @@ final class GeneralAIActionExecutor {
         case "reminders.create":
             let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return .skipped }
+            guard !title.isEmpty else { return .notApplicable }
             let items = await Task.detached(priority: .utility) {
                 AppleAppsAPI.shared.getReminders(limit: 30)
             }.value
@@ -223,7 +250,7 @@ final class GeneralAIActionExecutor {
         case "calendar.create":
             let title = (inputValues["title"] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return .skipped }
+            guard !title.isEmpty else { return .notApplicable }
             let events = await Task.detached(priority: .utility) {
                 AppleAppsAPI.shared.getCalendarEvents(limit: 30)
             }.value
@@ -239,7 +266,7 @@ final class GeneralAIActionExecutor {
         case "notes.create":
             let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return .skipped }
+            guard !title.isEmpty else { return .notApplicable }
             let matches = await Task.detached(priority: .utility) {
                 AppleAppsAPI.shared.searchNotes(query: title)
             }.value
@@ -253,7 +280,7 @@ final class GeneralAIActionExecutor {
         case "finder.newFolder":
             let destination = inputValues["destination"] ?? ""
             let name = inputValues["name"] ?? ""
-            guard !destination.isEmpty, !name.isEmpty else { return .skipped }
+            guard !destination.isEmpty, !name.isEmpty else { return .notApplicable }
             let url = URL(fileURLWithPath: destination, isDirectory: true)
                 .appendingPathComponent(name)
             var isDirectory: ObjCBool = false
@@ -261,21 +288,21 @@ final class GeneralAIActionExecutor {
                 atPath: url.path, isDirectory: &isDirectory)
             return exists && isDirectory.boolValue
                 ? .verified("Created the folder “\(name)”.")
-                : .unverified(fallback: "I couldn't find that folder afterwards.")
+                : .contradicted(evidence: "The folder isn't at \(url.path).")
 
         // Deletion is where an unearned "done" costs the most: the user stops looking for
         // something that is still there, or believes something is gone that is not.
         case "finder.trash":
             let path = inputValues["path"] ?? ""
-            guard !path.isEmpty else { return .skipped }
+            guard !path.isEmpty else { return .notApplicable }
             return FileManager.default.fileExists(atPath: path)
-                ? .unverified(fallback: "It's still at \(path).")
+                ? .contradicted(evidence: "It's still at \(path).")
                 : .verified(nil)
 
         case "reminders.delete", "reminders.complete":
             let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return .skipped }
+            guard !title.isEmpty else { return .notApplicable }
             let items = await Task.detached(priority: .utility) {
                 AppleAppsAPI.shared.getReminders(limit: 50)
             }.value
@@ -285,11 +312,11 @@ final class GeneralAIActionExecutor {
                 ($0["title"] as? String)?.localizedCaseInsensitiveContains(title) ?? false
             }
             return stillOpen
-                ? .unverified(fallback: "“\(title)” is still in Reminders.")
+                ? .contradicted(evidence: "“\(title)” is still in Reminders.")
                 : .verified(nil)
 
         default:
-            return .skipped
+            return .notApplicable
         }
     }
 

@@ -816,9 +816,13 @@ extension LauncherView {
             switch verification {
             case .verified(let refined):
                 outcomeText = refined ?? result.message
-            case .skipped:
+            case .notApplicable:
                 outcomeText = result.message
                     + "\n\nExecution receipt: executor confirmed success; this route has no independent read-back verification."
+            case .contradicted(let evidence):
+                // The read-back disproved it. Saying "I couldn't verify" here would be the
+                // softer, wronger sentence: nothing is uncertain, the action did not land.
+                outcomeText = "That didn't take effect. \(evidence)"
             case .unverified(let reason):
                 let openHint = candidate.appName.map { " You can open \($0) to check." } ?? ""
                 outcomeText = "I completed the request, but I couldn't verify the final result. "
@@ -832,34 +836,27 @@ extension LauncherView {
                     success: true,
                     isVerification: false
                 ))]
-                let outcome: GeneralChatWorkflowResult.Verification
-                switch verification {
-                case .verified(let refined):
-                    outcome = .verified
+                // One value decides the chip, the receipt and whether the progress ring
+                // finishes or fails, so those three can no longer disagree about the turn.
+                let outcome = verification.status
+                switch outcome {
+                case .verified, .notApplicable:
                     aiMode.actionProgress?.finish()
-                    aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Verified"]
-                    receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
-                        command: "verify_adapter_outcome(\(candidate.title))",
-                        output: refined ?? "The requested outcome was observed.",
-                        success: true,
-                        isVerification: true
-                    )))
-                case .skipped:
-                    outcome = .executorConfirmed
-                    aiMode.actionProgress?.finish()
-                    aiMode.pendingToolChips = [
-                        "\(candidate.title) · \(candidate.routeLabel)", "Executor confirmed",
-                    ]
-                case .unverified(let reason):
-                    outcome = .failed
+                case .contradicted, .unverified:
                     aiMode.actionProgress?.failed = true
-                    aiMode.pendingToolChips = [
-                        "\(candidate.title) · \(candidate.routeLabel)", "Verification failed",
-                    ]
+                }
+                aiMode.pendingToolChips = [
+                    "\(candidate.title) · \(candidate.routeLabel)", outcome.chipLabel,
+                ]
+                // A route with no verifier adds no verification receipt — there was nothing
+                // to read back, and a receipt saying so would be evidence of an absence.
+                if let evidence = verification.evidence
+                    ?? (outcome == .verified ? "The requested outcome was observed." : nil)
+                {
                     receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
                         command: "verify_adapter_outcome(\(candidate.title))",
-                        output: reason,
-                        success: false,
+                        output: evidence,
+                        success: outcome.claimsSuccess,
                         isVerification: true
                     )))
                 }
@@ -945,7 +942,11 @@ extension LauncherView {
                     return unmet
                 }
                 return outcomeText
-            case .skipped:
+            case .contradicted(let evidence):
+                learn(success: false)
+                mark(available: false, reason: evidence)
+                return outcomeText
+            case .notApplicable:
                 // Executor succeeded; the sentence already discloses that no read-back
                 // verifier exists for this route.
                 learn(success: true)

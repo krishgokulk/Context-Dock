@@ -48,13 +48,6 @@ struct GeneralChatWorkflowResult {
         case interrupted
     }
 
-    enum Verification: String {
-        case verified
-        case executorConfirmed
-        case unavailable
-        case failed
-    }
-
     let answer: String
     /// What kind of turn this was. Coarse on purpose — it answers "did anything run, and
     /// against what", not "by which mechanism".
@@ -71,7 +64,7 @@ struct GeneralChatWorkflowResult {
     let complexity: TaskComplexityRoute
     let taskRunID: UUID?
     let receipts: [DoraXActionReceipt]
-    let verification: Verification
+    let verification: VerificationStatus
     let trace: [String]
     let files: [URL]
 
@@ -83,7 +76,7 @@ struct GeneralChatWorkflowResult {
         complexity: TaskComplexityRoute = .direct,
         taskRunID: UUID? = nil,
         receipts: [DoraXActionReceipt] = [],
-        verification: Verification = .unavailable,
+        verification: VerificationStatus = .notApplicable,
         trace: [String] = [],
         files: [URL] = []
     ) {
