@@ -76,13 +76,65 @@ struct ApprovalRequest: Identifiable {
     let kind: Kind
     /// "Run command?", "Move files into folders by kind or by month"
     let title: String
-    /// Why it wants to, in the requester's words.
-    let purpose: String?
-    /// The thing itself: the command line, the plan's explanation, the action's target.
+    /// Fact about the request that DoraX itself knows — which app it reaches, and nothing
+    /// a requester wrote.
+    let subtitle: String?
+    /// The requester's own account of why, which on every AI path means a sentence the
+    /// model composed.
+    ///
+    /// Held apart from `subtitle` because it used to share it. Asked "what's in my trash
+    /// bin", the model called the Empty Trash capability with the explanation "List the
+    /// contents of the trash bin", and the card printed that under the real title in the
+    /// same grey the description would use. Two lines, two authors, one voice — and the
+    /// line a user actually reads on a card said the opposite of what approving it did.
+    ///
+    /// It is still shown: a model's reason is worth reading. It is never shown unlabelled.
+    let requesterClaim: String?
+    /// The thing itself: the command line, the capability and its inputs, the action target.
     let body: String?
     let risk: ApprovalRisk
     /// Which surface raised it, for the surfaces that only answer for themselves.
     let origin: TerminalAIBridge.ApprovalOrigin?
+
+    /// Who wrote the sentence in `requesterClaim`.
+    enum Requester {
+        /// A model composed it. Nothing checked it against what the action does.
+        case assistant
+        /// DoraX naming the app an action reaches. Not a claim about intent.
+        case connectedApp
+
+        /// How the sentence is introduced, so it can never be read as DoraX describing its
+        /// own action.
+        var attribution: String {
+            switch self {
+            case .assistant: return "The assistant's reason:"
+            case .connectedApp: return "Requested for:"
+            }
+        }
+    }
+
+    /// The two AI paths ask in a model's words; an adapter action does not.
+    static func requester(of kind: Kind) -> Requester {
+        switch kind {
+        case .capability, .command: return .assistant
+        case .adapter: return .connectedApp
+        }
+    }
+
+    static func claimAttribution(for kind: Kind) -> String {
+        requester(of: kind).attribution
+    }
+
+    /// What a capability card shows as fact.
+    ///
+    /// The id leads deliberately. A title does not always identify the action: a Global
+    /// Command's title is whatever the user named it, so one called "List Trash Contents"
+    /// wrapping an empty-trash script reads as harmless in every line of the card except
+    /// this one.
+    static func capabilityBody(capabilityID: String, inputs: [String: String]) -> String {
+        ([capabilityID] + inputs.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value)" })
+            .joined(separator: "\n")
+    }
 
     var approveTitle: String {
         switch kind {
@@ -140,7 +192,8 @@ final class ApprovalCenter: ObservableObject {
                 id: "command:\(command.command)",
                 kind: .command(command),
                 title: "Run command?",
-                purpose: command.purpose.isEmpty ? nil : command.purpose,
+                subtitle: nil,
+                requesterClaim: command.purpose.isEmpty ? nil : command.purpose,
                 body: command.command,
                 risk: ApprovalRisk(command.classification.riskLevel),
                 origin: command.origin)
@@ -150,11 +203,11 @@ final class ApprovalCenter: ObservableObject {
                 id: "capability:\(capability.id)",
                 kind: .capability(capability),
                 title: capability.capability.title,
-                purpose: capability.plan.explanation.isEmpty ? nil : capability.plan.explanation,
-                body: capability.plan.input
-                    .sorted { $0.key < $1.key }
-                    .map { "\($0.key): \($0.value)" }
-                    .joined(separator: "\n"),
+                subtitle: nil,
+                requesterClaim: capability.plan.explanation.isEmpty
+                    ? nil : capability.plan.explanation,
+                body: ApprovalRequest.capabilityBody(
+                    capabilityID: capability.capability.id, inputs: capability.plan.input),
                 risk: ApprovalRisk(capability.capability.riskLevel),
                 origin: nil)
         }
@@ -163,7 +216,8 @@ final class ApprovalCenter: ObservableObject {
                 id: "adapter:\(adapter.id)",
                 kind: .adapter(adapter),
                 title: adapter.action.name,
-                purpose: adapter.adapter.appName,
+                subtitle: adapter.adapter.appName,
+                requesterClaim: nil,
                 body: nil,
                 // An adapter action reaches into another app. Nothing here is a glance.
                 risk: .medium,

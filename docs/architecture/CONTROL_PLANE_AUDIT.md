@@ -285,3 +285,27 @@ capabilities with a real read-back verifier (§3), so this is route selection, n
 `AIIntentResolution.requiredCapabilityKinds` is written at six sites and read at none.
 System commands are additionally tagged `.appData` — a read kind for something that
 executes — which is inert only because nothing consumes the field.
+
+### 9e. The approval card printed the model's sentence as its own · **fixed**
+
+Asked `what's in my trash bin`, the model called the Empty Trash capability with the
+explanation *"List the contents of the trash bin."* The card rendered:
+
+> **Empty Trash — Empty the Trash** · High
+> *List the contents of the trash bin.*
+
+Two lines, two authors, one voice. `ApprovalRequest.purpose` was documented as "why it
+wants to, **in the requester's words**" and on every AI path the requester is the model, so
+model-authored text sat where a description belongs — inside the last gate before a
+destructive action. Approving it emptied the trash.
+
+**Fixed.** `purpose` split into `subtitle` (facts DoraX knows) and `requesterClaim` (the
+requester's words, always introduced and quoted). A capability card's factual block now
+leads with the capability id, because a title does not always identify the action: a Global
+Command's title is whatever the user named it, so one called "List Trash Contents" wrapping
+an empty-trash script would read as harmless in every other line of the card.
+
+**Still open:** nothing stops a `.high` write being *chosen* to answer a read-shaped
+question. The `looksReadOnly` guard added for §9a covers the resolver; the agent tool loop
+calls `run_capability` directly and checks authority and risk, never intent.
+

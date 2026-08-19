@@ -31,11 +31,33 @@ struct ApprovalCard: View {
                     .foregroundStyle(request.risk.tint)
             }
 
-            if let purpose = request.purpose {
-                Text(purpose)
+            if let subtitle = request.subtitle {
+                Text(subtitle)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Attributed, indented and quoted, because this sentence was written by whatever
+            // asked — on the AI paths, the model. Rendered plainly it reads as DoraX
+            // describing the action, which is how "List the contents of the trash bin"
+            // came to sit under Empty Trash as though it were the description.
+            if let claim = request.requesterClaim {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ApprovalRequest.claimAttribution(for: request.kind))
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                    Text("“\(claim)”")
+                        .font(.system(size: 11).italic())
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, 8)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.15))
+                        .frame(width: 2)
+                }
             }
 
             if let body = request.body, !body.isEmpty {
