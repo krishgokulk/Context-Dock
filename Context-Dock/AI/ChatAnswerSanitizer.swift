@@ -64,10 +64,36 @@ enum ChatAnswerSanitizer {
         // a `*_call` envelope, or a dotted capability id. Both are structural, so a shape
         // nobody has invented yet is still caught, while {"name":"x","port":8080} is left
         // alone.
-        return object.keys.allSatisfy { key in
-            key.hasSuffix("_call")
-                || (key.contains(".") && !key.contains(" "))
+        if object.keys.allSatisfy({ key in
+            key.hasSuffix("_call") || (key.contains(".") && !key.contains(" "))
+        }) {
+            return true
         }
+        // A third shape, learned the hard way. Asked to empty the trash the model replied
+        // with exactly `{"trash_bin_action": {"action": "empty"}}` — one key, no `_call`
+        // suffix, no dot — so the two tests above both passed it through and the user was
+        // shown the JSON as the answer.
+        //
+        // Widening to "any lone JSON object" would catch a real reply to "show me that as
+        // JSON". So the extra test is the naming: one key, an object underneath it, and a
+        // word in the key that describes doing something rather than being something.
+        // {"server": {"port": 8080}} stays an answer; {"trash_bin_action": {…}} does not.
+        guard object.count == 1, let key = object.keys.first,
+            object[key] is [String: Any], !key.contains(" ")
+        else { return false }
+        let doingWords: Set<String> = [
+            "call", "action", "command", "tool", "invoke", "execute", "run",
+            "function", "request", "perform", "operation",
+        ]
+        // Split on case boundaries as well as separators. Models write both `run_tool` and
+        // `runTool`, and a tokeniser that only knows underscores reads the second as one
+        // word and lets it through.
+        return key
+            .replacingOccurrences(
+                of: "([a-z0-9])([A-Z])", with: "$1 $2", options: .regularExpression)
+            .lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .contains { doingWords.contains(String($0)) }
     }
 
     /// What the user should see instead of a call that never ran.

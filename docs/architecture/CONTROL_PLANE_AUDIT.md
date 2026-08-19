@@ -264,7 +264,7 @@ passes the approval card, since script commands are classified high risk. Read-s
 phrasing is excluded outright, because the keyword scorer strips "what" before scoring and
 so cannot tell `"what's in my trash bin"` from `"trash bin"` on its own.
 
-### 9b. An invented tool envelope is printed at the user
+### 9b. An invented tool envelope is printed at the user · **fixed**
 
 The model replied `{"trash_bin_action":{"action":"empty"}}` and that string became the
 answer. `GeneralChatCapabilityHub` already documents this failure for the form
@@ -273,6 +273,18 @@ answer. `GeneralChatCapabilityHub` already documents this failure for the form
 key is a real capability id. `trash_bin_action` is not one, so nothing handled it.
 
 A parsed JSON object that resolves to no capability should never be shown as prose.
+
+**Fixed in the one place that was wrong.** The last line of defence already existed —
+`AIMessageViews.presentable()` replaces protocol-only content on every assistant bubble —
+and it did not fire because `ChatAnswerSanitizer.isProtocolOnly` returned false.
+Its structural test accepted a `*_call` suffix or a dotted capability id, and
+`trash_bin_action` is neither.
+
+A third test now catches it: one top-level key, an object underneath it, and a word in the
+key that describes *doing* something rather than *being* something. `{"server":{"port":…}}`
+remains an answer; `{"trash_bin_action":{…}}` does not. Keys are split on case boundaries as
+well as separators, because models write both `run_tool` and `runTool` — a gap the tests
+caught, not the review.
 
 ### 9c. A create request answered by a read
 
