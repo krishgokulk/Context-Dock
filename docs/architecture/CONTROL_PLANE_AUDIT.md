@@ -305,7 +305,28 @@ leads with the capability id, because a title does not always identify the actio
 Command's title is whatever the user named it, so one called "List Trash Contents" wrapping
 an empty-trash script would read as harmless in every other line of the card.
 
-**Still open:** nothing stops a `.high` write being *chosen* to answer a read-shaped
-question. The `looksReadOnly` guard added for §9a covers the resolver; the agent tool loop
-calls `run_capability` directly and checks authority and risk, never intent.
+**Also fixed.** Nothing stopped a `.high` write being *chosen* to answer a read-shaped
+question. The `looksReadOnly` guard added for §9a covered the resolver only; the agent tool
+loop calls `run_capability` directly and checked authority and risk, never intent.
+`AgentToolContext` now carries `userRequest`, and a write is refused when
+`GeneralAIActionResolver.asksOnly` holds — stricter than `looksReadOnly`, because a mutating
+verb anywhere in the sentence disqualifies it. "show me my reminders then delete the
+completed ones" is read-shaped and plainly also an instruction; refusing there would be the
+guard misreading the user rather than protecting them.
 
+### 9f. Global Extensions are invisible to the AI
+
+Global **Commands** reach the AI: `GlobalCommandCapabilities.register` publishes every
+enabled, runnable one as a `globalcmd.<slug>` capability, so the model can call them through
+`run_capability`, `explicitRunMatch` catches an explicit "run <name>", and since §9a the
+resolver offers keyword matches. Commands the user writes themselves are included — nothing
+distinguishes them from built-ins.
+
+Global **Extensions** — the panel kind, both the built-ins (Process Monitor, Top Memory,
+Listening Ports, Scratch Notes) and anything created through *Add Extension* — are not
+exposed at all. `UserGlobalExtensionStore` has zero references anywhere under
+`Context-Dock/AI/`. An extension owns a rows script and a row-action script, which is a
+shape the capability model has no equivalent for: it lists, then acts on a chosen row.
+
+Two exclusions from commands are deliberate: `provider:notepad` and `provider:windows`
+carry placeholder scripts with nothing to run.
