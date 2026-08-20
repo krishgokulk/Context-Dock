@@ -28,6 +28,22 @@ enum QuickNoteMemoryMirror {
 
         var written = Set<String>()
         let appNames = AppAdapterManager.shared.adapters.map { ($0.appName, $0.bundleId) }
+        // Folders the user has actually scoped a chat to. Matching against these rather
+        // than against any path-looking string keeps the link real: a note that says
+        // "Downloads" only links to a folder the user works in, not to the word.
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let folders: [(name: String, path: String)] = GeneralChatSessionStore.index()
+            .compactMap { session in
+                guard let url = session.scope.folderURL else { return nil }
+                let path = url.path
+                // The home folder and the root are scopes people really do open a chat on,
+                // and they are useless as links: the account name appears in every absolute
+                // path a note ever quotes, so every note would link to home and the graph
+                // would gain one hub that means nothing.
+                guard path != home, path != "/" else { return nil }
+                let name = url.lastPathComponent
+                return name.count >= 4 ? (name, path) : nil
+            }
 
         for note in notes {
             let text = note.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -35,7 +51,8 @@ enum QuickNoteMemoryMirror {
             let filename = self.filename(for: note)
             written.insert(filename)
             let url = folder.appendingPathComponent(filename)
-            let markdown = self.markdown(for: note, text: text, appNames: appNames)
+            let markdown = self.markdown(
+                for: note, text: text, appNames: appNames, folders: folders)
             // Only write when the content actually changed: this runs after every edit,
             // and rewriting an unchanged file churns modification dates that the daily
             // brief and the dashboard both read as activity.
@@ -57,7 +74,10 @@ enum QuickNoteMemoryMirror {
     // MARK: - Rendering
 
     private static func markdown(
-        for note: QuickNote, text: String, appNames: [(String, String)]
+        for note: QuickNote,
+        text: String,
+        appNames: [(String, String)],
+        folders: [(name: String, path: String)]
     ) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withFullDate]
@@ -75,9 +95,14 @@ enum QuickNoteMemoryMirror {
         let mentioned = appNames.filter { name, _ in
             !name.isEmpty && text.range(of: name, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
-        if !mentioned.isEmpty {
+        let mentionedFolders = folders.filter { folder in
+            text.range(of: folder.name, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }
+        let links = mentioned.map { "[[apps/\($0.1)]]" }
+            + mentionedFolders.map { "[[folders/\($0.path)]]" }
+        if !links.isEmpty {
             lines.append("")
-            lines.append("Related: " + mentioned.map { "[[apps/\($0.1)]]" }.joined(separator: " "))
+            lines.append("Related: " + links.joined(separator: " "))
         }
 
         if !note.attachments.isEmpty {

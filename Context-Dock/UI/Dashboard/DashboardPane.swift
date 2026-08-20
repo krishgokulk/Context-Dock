@@ -8,6 +8,7 @@
 //  surface rule — one shell, one job per mode.
 //
 
+import AppKit
 import SwiftUI
 
 struct DashboardPane: View {
@@ -32,6 +33,7 @@ struct DashboardPane: View {
                     emptyState
                 } else {
                     tiles
+                    memoryCard
                     connectorsCard
                     adaptersCard
                     graphCard
@@ -132,6 +134,88 @@ struct DashboardPane: View {
     }
 
     // MARK: Cards
+
+    // MARK: Memory
+
+    /// What DoraX knows, on the surface the user actually opens.
+    ///
+    /// All of this already existed in Settings, three panes deep, which is a fine place to
+    /// edit a file and a bad place to discover that the app has been carrying a profile of
+    /// you all along — or that it has not, and every conversation has been starting cold.
+    private var memoryCard: some View {
+        DashboardCard(
+            title: "What DoraX knows about you",
+            subtitle: "Written memory, kept as plain markdown on this Mac"
+        ) {
+            VStack(alignment: .leading, spacing: 12) {
+                if !snapshot.hasProfile {
+                    // The one piece of memory that cannot fill itself in. Everything else
+                    // accumulates from use; a profile only exists if the user writes it.
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "person.crop.circle.badge.questionmark")
+                            .font(.system(size: 13))
+                            .foregroundStyle(DashboardPalette.warning(dark))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("No profile yet")
+                                .font(.system(size: 12, weight: .medium))
+                            Text("Every conversation starts without knowing who you are. Five fields in Settings fixes it for all of them.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button("Set up") { AppDelegate.shared?.showSettings() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                    }
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DashboardPalette.good(dark))
+                        Text("Profile is set — included in every conversation")
+                            .font(.system(size: 12))
+                        Spacer(minLength: 8)
+                    }
+                }
+
+                Divider().opacity(0.4)
+
+                HStack(spacing: 20) {
+                    memoryStat("\(snapshot.memoryFacts)", "saved facts")
+                    memoryStat("\(snapshot.notes)", "notes")
+                    memoryStat("\(snapshot.memoryFileCount)", "files")
+                    if snapshot.staleCaches > 0 {
+                        // Named rather than hidden: stale cache still goes into prompts,
+                        // labelled as stale, and the user is the only one who can refresh it.
+                        memoryStat("\(snapshot.staleCaches)", "stale caches",
+                                   tint: DashboardPalette.warning(dark))
+                    }
+                    Spacer(minLength: 0)
+                    Button {
+                        NSWorkspace.shared.open(MarkdownMemoryStore.shared.folderURL)
+                    } label: {
+                        Label("Open folder", systemImage: "folder")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private func memoryStat(_ value: String, _ label: String, tint: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.system(size: 16, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(tint ?? .primary)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        }
+    }
 
     // MARK: Connectors
 

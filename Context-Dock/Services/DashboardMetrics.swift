@@ -38,6 +38,11 @@ struct DashboardSnapshot {
     var memoryFacts: Int = 0
     /// Conversations and notes with nothing linking them to anything, left off the graph.
     var unlinkedNodes: Int = 0
+    var hasProfile: Bool = false
+    /// Cache files whose own `expires_after` has passed. They are still offered as
+    /// context, labelled stale — this is the count of how much of memory is in that state.
+    var staleCaches: Int = 0
+    var memoryFileCount: Int = 0
     var generatedAt = Date()
 
     /// Actions the assistant could actually call right now: an action on a disabled adapter,
@@ -487,6 +492,16 @@ final class DashboardMetrics: ObservableObject {
                 id: id, label: String(title.prefix(48)), kind: .note, weight: weight))
             out.notes += 1
 
+            for path in wikiLinked(in: markdown, prefix: "[[folders/") {
+                let folderID = "folder:" + path
+                let name = URL(fileURLWithPath: path).lastPathComponent
+                if !nodes.contains(where: { $0.id == folderID }) {
+                    nodes.append(KnowledgeNode(
+                        id: folderID, label: name.isEmpty ? path : name, kind: .folder, weight: 1))
+                }
+                edges.insert(KnowledgeEdge(from: id, to: folderID))
+            }
+
             for bundleID in wikiLinkedBundleIDs(in: markdown) {
                 let name = appName(bundleId: bundleID)
                 let appID = appNodesByBundle[name.lowercased()] ?? "app:" + name.lowercased()
@@ -498,9 +513,13 @@ final class DashboardMetrics: ObservableObject {
             }
         }
 
-        out.memoryFacts = store.fileSummaries()
+        let summaries = store.fileSummaries()
+        out.memoryFacts = summaries
             .filter { !$0.relativePath.hasPrefix("notes/") && $0.relativePath != "MEMORY.md" }
             .reduce(0) { $0 + $1.factCount }
+        out.memoryFileCount = summaries.count
+        out.staleCaches = summaries.filter { $0.freshness?.hasPrefix("Stale") == true }.count
+        out.hasProfile = !store.loadProfile().isEmpty
 
         out.knowledge = KnowledgeGraph(
             nodes: nodes.sorted { $0.weight > $1.weight },
@@ -524,12 +543,16 @@ final class DashboardMetrics: ObservableObject {
 
     /// `[[apps/com.example.App]]` → `com.example.App`.
     private nonisolated static func wikiLinkedBundleIDs(in markdown: String) -> [String] {
+        wikiLinked(in: markdown, prefix: "[[apps/")
+    }
+
+    private nonisolated static func wikiLinked(in markdown: String, prefix: String) -> [String] {
         var found: [String] = []
         var remainder = Substring(markdown)
-        while let open = remainder.range(of: "[[apps/"),
+        while let open = remainder.range(of: prefix),
               let close = remainder[open.upperBound...].range(of: "]]") {
-            let bundleID = String(remainder[open.upperBound..<close.lowerBound])
-            if !bundleID.isEmpty { found.append(bundleID) }
+            let value = String(remainder[open.upperBound..<close.lowerBound])
+            if !value.isEmpty { found.append(value) }
             remainder = remainder[close.upperBound...]
         }
         return found

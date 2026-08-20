@@ -31,6 +31,7 @@ final class BrainMaintenance {
 
     /// Starts the hourly check, and runs immediately if today's pass has not happened.
     func start() {
+        syncNotes()
         runIfDue()
         // Hourly, not daily: short enough that a Mac woken at noon still gets its pass,
         // long enough to cost nothing.
@@ -42,6 +43,21 @@ final class BrainMaintenance {
         self.timer = timer
     }
 
+    /// Mirrors notes on every launch, not once a day.
+    ///
+    /// The mirror was only ever driven by the Quick Note UI and by the daily pass, and
+    /// `QuickNotesStore` is created on first use — so on a launch where neither happened
+    /// the store was never even initialised and the markdown went stale silently. A note
+    /// edited yesterday, or a change in how links are written, would not reach memory
+    /// until something happened to touch Quick Note. The sync itself compares content
+    /// before writing, so doing it every launch costs a directory read.
+    private func syncNotes() {
+        let notes = QuickNotesStore.shared.notes
+        Task.detached(priority: .utility) {
+            await QuickNoteMemoryMirror.sync(notes)
+        }
+    }
+
     func runIfDue() {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
@@ -51,16 +67,12 @@ final class BrainMaintenance {
         }
         UserDefaults.standard.set(Date(), forKey: lastRunKey)
 
-        let notes = QuickNotesStore.shared.notes
         Task.detached(priority: .utility) {
             DailyBrief.rebuildToday()
             if let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date()) {
                 DailyBrief.rebuild(for: yesterday)
             }
-            // Settles anything the mirror missed while the app was closed — a note deleted
-            // elsewhere, or one whose markdown never got written because the app quit
-            // inside the debounce window.
-            await QuickNoteMemoryMirror.sync(notes)
+
         }
     }
 }
