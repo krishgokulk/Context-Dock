@@ -321,11 +321,12 @@ routes a request between "read this" and "do this" could not be exercised withou
 up the surface, and the only thing that could catch it deciding wrong was a person typing
 the sentence. Verified by removing the guard: two of the new tests fail without it.
 
-### 9d. Dead field
+### 9d. Dead field · **fixed**
 
-`AIIntentResolution.requiredCapabilityKinds` is written at six sites and read at none.
-System commands are additionally tagged `.appData` — a read kind for something that
-executes — which is inert only because nothing consumes the field.
+`AIIntentResolution.requiredCapabilityKinds` was written at six sites and read at none.
+System commands were additionally tagged `.appData` — a read kind for something that
+executes — inert only because nothing consumed the field. Field and its `AICapabilityKind`
+enum deleted, along with the three `kinds` sets built to populate it.
 
 ### 9e. The approval card printed the model's sentence as its own · **fixed**
 
@@ -417,7 +418,7 @@ and the guess is what produced the undated reminder.
 Scoped to the model's path deliberately. Internal Swift callers are typed; the model is the
 one inventing key names.
 
-### 9i. The model treats its own guess as verification
+### 9i. The model treats its own guess as verification · **fixed**
 
 Two behaviours, one cause: `verify_outcome` is a tool the model may point anywhere, and it
 reads the result as authority.
@@ -432,8 +433,22 @@ evidence" on the verified branch, and in the run after that the model still call
 the wrong answer was §9g's second half — an unreadable path now reports that it proves
 nothing — not the instruction.
 
-Worth considering: refusing `verify_outcome` outright for the rest of a turn once a typed
-read-back has already verified the write. There is nothing left for it to establish.
+**Fixed by making the instruction a rule.** `AgentToolResult` gained
+`verifiedByReadBack` — the reading itself, set by the two branches that actually take one
+(`run_capability` and `run_menu_command`, on both `.verified` and `.contradicted`; one saw
+it land, the other saw it not land, and both settle the question). `AgentToolRegistry`
+records those per turn beside the repeat-suppression it already keyed that way, and
+`dispatch` refuses `verify_outcome` for the rest of the turn once any reading exists.
+
+The refusal hands the reading back rather than just saying no. Told only "no", the model
+has lost its tool and its evidence in the same breath, and reports that it could not
+confirm the thing it just confirmed. Every other tool keeps working — a verified write does
+not end a turn, and the user may have asked for two things.
+
+The narration half is addressed where it starts: `verify_outcome`'s own output was always
+phrased as observation ("File exists at …"), so *"The outcome verification is successful"*
+is the model naming the plumbing. Its description now says to report what was observed
+about the file and never that a verification ran.
 
 ### 9j. The Brain stores assistant output as the user's notes
 

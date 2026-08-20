@@ -14,7 +14,6 @@ final class AIRequestClassifier {
             return AIIntentResolution(
                 kind: .conversation,
                 targetApps: [],
-                requiredCapabilityKinds: [],
                 confidence: 1,
                 requiresPlanning: false
             )
@@ -29,26 +28,18 @@ final class AIRequestClassifier {
         let isScoped = hasExplicitContext || !targetApps.isEmpty || looksLikeScopedTask(normalized)
 
         if isWorkflow {
-            var kinds: Set<AICapabilityKind> = [.workflow]
-            if hasExplicitContext { kinds.insert(.fileContent) }
-            if containsSharingIntent(normalized) { kinds.insert(.sharing) }
-            if !targetApps.isEmpty { kinds.insert(.appAction) }
             return AIIntentResolution(
                 kind: .multiStepWorkflow,
                 targetApps: targetApps,
-                requiredCapabilityKinds: kinds,
                 confidence: 0.86,
                 requiresPlanning: true
             )
         }
 
         if isDeterministic {
-            var kinds: Set<AICapabilityKind> = [.appAction]
-            if containsSharingIntent(normalized) { kinds.insert(.sharing) }
             return AIIntentResolution(
                 kind: .deterministicAction,
                 targetApps: targetApps,
-                requiredCapabilityKinds: kinds,
                 confidence: 0.9,
                 requiresPlanning: false
             )
@@ -61,22 +52,15 @@ final class AIRequestClassifier {
             return AIIntentResolution(
                 kind: .scopedTask,
                 targetApps: [],
-                requiredCapabilityKinds: [.appData],
                 confidence: 0.88,
                 requiresPlanning: false
             )
         }
 
         if isScoped {
-            var kinds: Set<AICapabilityKind> = []
-            if hasExplicitContext { kinds.insert(.fileContent) }
-            if !targetApps.isEmpty || looksLikeAppDataRequest(normalized) {
-                kinds.insert(.appData)
-            }
             return AIIntentResolution(
                 kind: .scopedTask,
                 targetApps: targetApps,
-                requiredCapabilityKinds: kinds,
                 confidence: 0.78,
                 requiresPlanning: false
             )
@@ -85,7 +69,6 @@ final class AIRequestClassifier {
         return AIIntentResolution(
             kind: .conversation,
             targetApps: [],
-            requiredCapabilityKinds: [],
             confidence: 0.92,
             requiresPlanning: false
         )

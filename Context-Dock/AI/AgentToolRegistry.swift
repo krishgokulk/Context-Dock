@@ -207,6 +207,10 @@ struct AgentToolResult {
     var exitCode: Int32?
     var stdout: String?
     var stderr: String?
+    /// Set when this call did not merely act but read the result back and saw it — the
+    /// reading itself, in the words the user would be shown. It is the strongest evidence
+    /// the system produces, and it ends the question for the rest of the turn.
+    var verifiedByReadBack: String? = nil
 
     init(
         success: Bool,
@@ -364,15 +368,20 @@ final class AgentToolRegistry {
     /// Turns in the order they started, so finished ones are evicted without needing every
     /// loop exit path to remember to close its turn.
     private var turnOrder: [AgentTurnToken] = []
+    /// Readings taken this turn by a typed verifier, in the order they were taken.
+    private var settledByTurn: [AgentTurnToken: [String]] = [:]
     private let maxLiveTurns = 8
 
     /// Opens a turn. Hand the token to every `AgentToolContext` built for it.
     func beginTurn() -> AgentTurnToken {
         let token = AgentTurnToken()
         callsByTurn[token] = [:]
+        settledByTurn[token] = []
         turnOrder.append(token)
         while turnOrder.count > maxLiveTurns {
-            callsByTurn.removeValue(forKey: turnOrder.removeFirst())
+            let evicted = turnOrder.removeFirst()
+            callsByTurn.removeValue(forKey: evicted)
+            settledByTurn.removeValue(forKey: evicted)
         }
         return token
     }
@@ -381,7 +390,28 @@ final class AgentToolRegistry {
     /// the live set to the turns that are actually running.
     func endTurn(_ token: AgentTurnToken) {
         callsByTurn.removeValue(forKey: token)
+        settledByTurn.removeValue(forKey: token)
         turnOrder.removeAll { $0 == token }
+    }
+
+    /// Whether this call is asking a question a typed read-back has already answered.
+    ///
+    /// Only `verify_outcome` is superseded. A verified write does not end the turn — the
+    /// user may have asked for two things and the second still needs doing — so every
+    /// other tool keeps working.
+    static func isSupersededVerification(toolName: String, settledReadings: [String]) -> Bool {
+        guard !settledReadings.isEmpty else { return false }
+        return toolName == "verify_outcome"
+    }
+
+    /// What to say instead of running it. The refusal has to hand the reading back: told
+    /// only "no", the model has lost its tool and its evidence at once, and reports that it
+    /// could not confirm the thing it just confirmed.
+    static func supersededVerificationMessage(settledReadings: [String]) -> String {
+        "This was already verified by reading the result back:\n"
+            + settledReadings.map { "- \($0)" }.joined(separator: "\n")
+            + "\n\nThat reading is the evidence. A file check cannot add to it and can only "
+            + "disagree with it by looking somewhere else. Report what was observed above."
     }
 
     func dispatch(
@@ -390,6 +420,17 @@ final class AgentToolRegistry {
         context: AgentToolContext
     ) async -> AgentToolResult? {
         guard let tool = tool(named: name) else { return nil }
+
+        if let turn = context.turn,
+            Self.isSupersededVerification(
+                toolName: name, settledReadings: settledByTurn[turn] ?? [])
+        {
+            return AgentToolResult(
+                success: true,
+                output: Self.supersededVerificationMessage(
+                    settledReadings: settledByTurn[turn] ?? []),
+                displayCommand: "\(name) (already settled by a read-back)")
+        }
 
         let signature = name + "|"
             + arguments.keys.sorted()
@@ -407,6 +448,11 @@ final class AgentToolRegistry {
         let result = await tool.handler(arguments, context)
         if let turn = context.turn, callsByTurn[turn] != nil {
             callsByTurn[turn]?[signature] = String(result.output.prefix(400))
+        }
+        if let turn = context.turn, let reading = result.verifiedByReadBack,
+            settledByTurn[turn] != nil
+        {
+            settledByTurn[turn]?.append(reading)
         }
         return result
     }
@@ -836,7 +882,9 @@ final class AgentToolRegistry {
                 + "real absolute file path supplied by the user or returned by a tool. Never "
                 + "invent placeholder paths and never use it to verify URLs, opened apps, Global "
                 + "Commands, menus, or other non-filesystem outcomes. This tool is read-only and "
-                + "cannot run commands.",
+                + "cannot run commands. Report what was observed about the file, never that "
+                + "a verification was run — \"the outcome verification is successful\" tells "
+                + "the user about DoraX's plumbing instead of about their file.",
             properties: [
                 "kind": [
                     "type": "string",
@@ -1575,14 +1623,21 @@ final class AgentToolRegistry {
                 // app was not installed while its About window stood open on screen.
                 let verification = await GeneralAIActionExecutor.shared.verify(candidate)
                 var output = outcome.message
+                // The reading, when there is one. Both verified and contradicted are typed
+                // read-backs — one saw it land, the other saw it not land — and both settle
+                // the question for the rest of the turn. Asking "do not look for further
+                // evidence" did not stop the model looking; recording the reading does.
+                var reading: String?
                 switch verification {
-                case .verified(let reading):
-                    output += " " + (reading ?? "The outcome was observed.")
+                case .verified(let observed):
+                    reading = observed ?? "The outcome was observed."
+                    output += " " + (reading ?? "")
                         + " This is the result — do not look for further evidence."
                 case .contradicted(let evidence):
                     // Proof it did not land. The model must not treat this as "unclear" and
                     // go hunting for a second opinion — the reading is the second opinion.
-                    output += " It did not take effect: " + evidence
+                    reading = "It did not take effect: " + evidence
+                    output += " " + (reading ?? "")
                         + " This is the result — do not look for further evidence."
                 case .unverified(let reason):
                     output += " " + reason
@@ -1591,10 +1646,12 @@ final class AgentToolRegistry {
                         + "normal for a command of this kind. Report what was clicked, not "
                         + "whether it worked."
                 }
-                return AgentToolResult(
+                var menuResult = AgentToolResult(
                     success: true,
                     output: output,
                     displayCommand: "run_menu_command(\(appName): \(rawPath))")
+                menuResult.verifiedByReadBack = reading
+                return menuResult
         })
 
         register(AgentTool(
@@ -1743,6 +1800,7 @@ final class AgentToolRegistry {
                     ? (result.success ? "(completed, no output)" : "(failed, no output)")
                     : result.output
                 var succeeded = result.success
+                var reading: String?
                 if result.success {
                     switch await GeneralAIActionExecutor.shared.verifyCapability(
                         id: capabilityID, inputValues: input)
@@ -1753,6 +1811,7 @@ final class AgentToolRegistry {
                         // created the reminder, EventKit confirmed it, and the model then
                         // grepped ~/Library/Reminders for the title, found nothing, and told
                         // the user the reminder had not been created.
+                        reading = refined ?? output
                         output = (refined ?? output)
                             + " Verified by reading it back. This is the result — do not "
                             + "look for further evidence."
@@ -1760,6 +1819,7 @@ final class AgentToolRegistry {
                         // Read back and disproved. Distinct from the case below because the
                         // model can act on it: there is nothing to re-check, only to redo.
                         succeeded = false
+                        reading = "It did not take effect: \(evidence)"
                         output = "\(output)\n\nIt did not take effect: \(evidence)"
                     case .unverified(let fallback):
                         // The command ran and the result could not be found. Saying so is
@@ -1771,10 +1831,12 @@ final class AgentToolRegistry {
                         break
                     }
                 }
-                return AgentToolResult(
+                var capabilityResult = AgentToolResult(
                     success: succeeded,
                     output: output,
                     displayCommand: "run_capability(\(capabilityID))")
+                capabilityResult.verifiedByReadBack = reading
+                return capabilityResult
             } catch {
                 // Name the failure precisely: "unknown id" and "the capability ran and
                 // failed" need different next moves from the model, and one vague message
