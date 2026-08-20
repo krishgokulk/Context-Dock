@@ -1,3 +1,4 @@
+import OSLog
 import SwiftUI
 import Combine
 import EventKit
@@ -44,9 +45,55 @@ enum PermissionPrompt {
     /// Deep links into the exact Privacy pane, because "open System Settings" and let the
     /// user hunt for it is barely better than doing nothing.
     static func openSettings(_ pane: String) {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
-        else { return }
+        // `com.apple.preference.security?Privacy_X` is the pre-Ventura anchor. It still
+        // opens System Settings and then lands nowhere, which reads to the user as the
+        // button doing nothing. LauncherView already uses the modern pane id; this one was
+        // left behind.
+        let modern = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)"
+        guard let url = URL(string: modern) else { return }
+        log.notice("open privacy pane \(pane, privacy: .public)")
         NSWorkspace.shared.open(url)
+    }
+
+    static let log = Logger(subsystem: "com.krishgokul.ContextDock", category: "Permissions")
+
+    /// What the system actually says, rather than "Authorized" or not.
+    ///
+    /// One label for "never asked" and "asked and refused" hides the only thing the user
+    /// needs to know: whether clicking will bring up a prompt or send them to System
+    /// Settings. Both rendered as "Not Authorized" with an orange dot.
+    static func describe(_ status: EKAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "Not asked yet"
+        case .restricted: return "Restricted by policy"
+        case .denied: return "Denied — turn on in System Settings"
+        case .fullAccess: return "Authorized"
+        case .writeOnly: return "Authorized (write only)"
+        case .authorized: return "Authorized"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    static func describe(_ status: CNAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "Not asked yet"
+        case .restricted: return "Restricted by policy"
+        case .denied: return "Denied — turn on in System Settings"
+        case .authorized: return "Authorized"
+        case .limited: return "Authorized (limited)"
+        @unknown default: return "Unknown"
+        }
+    }
+
+    static func describe(_ status: PHAuthorizationStatus) -> String {
+        switch status {
+        case .notDetermined: return "Not asked yet"
+        case .restricted: return "Restricted by policy"
+        case .denied: return "Denied — turn on in System Settings"
+        case .authorized: return "Authorized"
+        case .limited: return "Authorized (limited)"
+        @unknown default: return "Unknown"
+        }
     }
 
     static let calendars = "Privacy_Calendars"
@@ -162,7 +209,7 @@ struct SystemPermissionsSettingsView: View {
             #if DEBUG
             print("✅ Reminders auth status (macOS 14+): \(remStatus.rawValue)")
             #endif
-            remindersStatus = (remStatus == .fullAccess || remStatus == .writeOnly) ? "Authorized" : "Not Authorized"
+            remindersStatus = PermissionPrompt.describe(remStatus)
         } else {
             let calStatus = EKEventStore.authorizationStatus(for: .event)
             #if DEBUG
@@ -174,7 +221,7 @@ struct SystemPermissionsSettingsView: View {
             #if DEBUG
             print("✅ Reminders auth status (macOS <14): \(remStatus.rawValue)")
             #endif
-            remindersStatus = remStatus == .authorized ? "Authorized" : "Not Authorized"
+            remindersStatus = PermissionPrompt.describe(remStatus)
         }
         // Photos
         let ph = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -251,13 +298,13 @@ struct SystemPermissionsSettingsView: View {
             PermissionPrompt.openSettings(PermissionPrompt.reminders)
             return
         }
-        #if DEBUG
-        print("✅ Requesting reminders permission...")
-        #endif
+        let before = EKEventStore.authorizationStatus(for: .reminder)
+        PermissionPrompt.log.notice(
+            "reminders request begin · status=\(before.rawValue, privacy: .public)")
         let granted = await ILCalendarRemindersSearchManager.shared.requestRemindersPermission()
-        #if DEBUG
-        print("✅ Reminders permission result: \(granted)")
-        #endif
+        let after = EKEventStore.authorizationStatus(for: .reminder)
+        PermissionPrompt.log.notice(
+            "reminders request end · granted=\(granted, privacy: .public) status=\(after.rawValue, privacy: .public)")
         await MainActor.run {
             remindersStatus = granted ? "Authorized" : "Not Authorized"
             refreshStatuses()
@@ -405,7 +452,7 @@ struct SystemPermissionsSection: View {
             #if DEBUG
             print("✅ Reminders auth status (macOS 14+): \(remStatus.rawValue)")
             #endif
-            remindersStatus = (remStatus == .fullAccess || remStatus == .writeOnly) ? "Authorized" : "Not Authorized"
+            remindersStatus = PermissionPrompt.describe(remStatus)
         } else {
             let calStatus = EKEventStore.authorizationStatus(for: .event)
             #if DEBUG
@@ -417,7 +464,7 @@ struct SystemPermissionsSection: View {
             #if DEBUG
             print("✅ Reminders auth status (macOS <14): \(remStatus.rawValue)")
             #endif
-            remindersStatus = remStatus == .authorized ? "Authorized" : "Not Authorized"
+            remindersStatus = PermissionPrompt.describe(remStatus)
         }
         let ph = PHPhotoLibrary.authorizationStatus(for: .readWrite)
         #if DEBUG
