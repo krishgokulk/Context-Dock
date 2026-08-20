@@ -22,6 +22,8 @@ struct BrainProfileCard: View {
     @State private var profile = BrainProfile.empty
     @State private var loaded = false
     @State private var savedAt: Date?
+    @State private var vaultPath = MarkdownMemoryStore.shared.folderURL.path
+    @State private var vaultNote: String?
 
     var body: some View {
         CardSection(title: "Profile", systemImage: "person.text.rectangle") {
@@ -63,6 +65,34 @@ struct BrainProfileCard: View {
                     }
                 }
 
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Vault location")
+                        .font(.system(size: 12, weight: .medium))
+                    Text("Your memory is plain markdown. Keep it somewhere you can open, back up, or point Obsidian at.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Text(vaultPath)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 8)
+                        Button("Move…") { chooseVault() }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    if let vaultNote {
+                        Text(vaultNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 HStack {
                     Button {
                         NSWorkspace.shared.open(MarkdownMemoryStore.shared.folderURL)
@@ -93,6 +123,26 @@ struct BrainProfileCard: View {
         Binding(
             get: { profile[keyPath: key] },
             set: { profile[keyPath: key] = $0 })
+    }
+
+    /// The panel picks a container, and DoraX makes its own folder inside it — choosing
+    /// "Documents" should not scatter memory files across Documents.
+    private func chooseVault() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Move Vault Here"
+        panel.message = "Pick a folder to keep DoraX's memory in. A “DoraX Brain” folder is created inside it."
+        guard panel.runModal() == .OK, let chosen = panel.url else { return }
+
+        let destination = chosen.lastPathComponent == "DoraX Brain"
+            ? chosen
+            : chosen.appendingPathComponent("DoraX Brain", isDirectory: true)
+        vaultNote = MarkdownMemoryStore.shared.relocate(to: destination)
+        vaultPath = MarkdownMemoryStore.shared.folderURL.path
+        profile = MarkdownMemoryStore.shared.loadProfile()
+        onSaved()
     }
 
     private func save() {

@@ -19,12 +19,76 @@ final class MarkdownMemoryStore {
     static let shared = MarkdownMemoryStore()
 
     private let fileManager = FileManager.default
-    private let root: URL
     private let maxContextCharacters = 8_000
 
+    /// Where the vault lives. Defaults to Application Support, and moves wherever the user
+    /// puts it.
+    ///
+    /// Computed rather than stored: the store is a singleton read from background work as
+    /// well as the main actor, and a mutable `root` would be a data race for the sake of
+    /// saving a `UserDefaults` read. `UserDefaults` is already the fast path here.
+    static let vaultPathKey = "dorax.brain.vaultPath.v1"
+
+    static var defaultRoot: URL {
+        ContextDockStore.root.appendingPathComponent("memory", isDirectory: true)
+    }
+
+    var root: URL {
+        guard let path = UserDefaults.standard.string(forKey: Self.vaultPathKey), !path.isEmpty
+        else { return Self.defaultRoot }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
     private init() {
-        root = ContextDockStore.root.appendingPathComponent("memory", isDirectory: true)
         bootstrapIfNeeded()
+    }
+
+    /// Moves the vault to a folder the user picked.
+    ///
+    /// Memory is meant to be theirs — plain markdown they can open, back up, or point
+    /// Obsidian at. Buried in Application Support it is technically plain text and
+    /// practically invisible, which is not the same promise.
+    ///
+    /// Files are moved rather than copied, and anything already at the destination is left
+    /// alone: someone pointing DoraX at an existing vault means "use this", not "overwrite
+    /// it with mine".
+    @discardableResult
+    func relocate(to destination: URL) -> String? {
+        let source = root
+        guard source.standardizedFileURL != destination.standardizedFileURL else { return nil }
+        do {
+            try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+            let contents = (try? fileManager.contentsOfDirectory(
+                at: source, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+            var renamed: [String] = []
+            for item in contents {
+                let name = item.lastPathComponent
+                var target = destination.appendingPathComponent(name)
+                if fileManager.fileExists(atPath: target.path) {
+                    // Both vaults have this file. Leaving ours behind would strand it in a
+                    // folder nothing reads again — the user's facts would appear to have
+                    // been deleted by moving house. Keep both, and say which is which.
+                    let base = item.deletingPathExtension().lastPathComponent
+                    let ext = item.pathExtension
+                    let moved = ext.isEmpty
+                        ? "\(base) (from previous vault)"
+                        : "\(base) (from previous vault).\(ext)"
+                    target = destination.appendingPathComponent(moved)
+                    guard !fileManager.fileExists(atPath: target.path) else { continue }
+                    renamed.append(moved)
+                }
+                try fileManager.moveItem(at: item, to: target)
+            }
+            UserDefaults.standard.set(destination.path, forKey: Self.vaultPathKey)
+            bootstrapIfNeeded()
+            return renamed.isEmpty
+                ? nil
+                : "Moved. That folder already had \(renamed.count) file\(renamed.count == 1 ? "" : "s") "
+                    + "with the same name, so yours were kept alongside them: "
+                    + renamed.joined(separator: ", ")
+        } catch {
+            return "Could not move the vault: \(error.localizedDescription)"
+        }
     }
 
     var folderURL: URL { root }
@@ -547,7 +611,7 @@ final class MarkdownMemoryStore {
             + rows.joined(separator: "\n")
     }
 
-    private func bootstrapIfNeeded() {
+    func bootstrapIfNeeded() {
         try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         try? fileManager.createDirectory(
             at: root.appendingPathComponent("apps", isDirectory: true),
