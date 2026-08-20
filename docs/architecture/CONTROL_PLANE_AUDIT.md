@@ -385,3 +385,24 @@ not contain the expected text" — the same collapse as `contradicted` vs `unver
 one level down inside the tool. `file_contains` and `file_equals` now report a missing path,
 a directory and unreadable bytes as checks that prove nothing.
 
+### 9h. An input key nobody declared, dropped in silence · **fixed**
+
+`remind me to call sujith at 5pm today` created a reminder with **no due date**. The
+approval card showed the arguments plainly — `date: 2026-08-20T17:00:00+01:00` — and
+`reminders.create` declares `dueDate`. The undeclared key was dropped, the reminder was
+created undated, and every check afterwards then told the truth about a different thing:
+
+| Check | Said | Was right about |
+|---|---|---|
+| `verifyCapability` read-back | verified | it exists, matched by title |
+| `reminders.today` | none due today | it has no due date |
+| the model | "was not successfully added" | nothing |
+
+Required fields were validated; misspelled optional ones simply vanished. `run_capability`
+now refuses a call naming inputs the capability does not have, lists the names it does take,
+and says nothing ran — a refusal that does not name the right field only buys another guess,
+and the guess is what produced the undated reminder.
+
+Scoped to the model's path deliberately. Internal Swift callers are typed; the model is the
+one inventing key names.
+

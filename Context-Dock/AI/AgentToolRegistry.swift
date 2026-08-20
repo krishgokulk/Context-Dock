@@ -83,6 +83,35 @@ struct AgentTurnToken: Hashable, Sendable {
     init() { id = UUID() }
 }
 
+/// What to say when a call names inputs the capability does not have, or nil when every
+/// key is declared.
+///
+/// Asked to remind at 5pm the model called reminders.create with `date`, and the field is
+/// `dueDate`. The unknown key was dropped, the reminder was created with no due date, and
+/// every check afterwards told the truth about a different thing: the read-back found it by
+/// title and verified, reminders.today found nothing due today, and the user was told the
+/// reminder had not been created. It had. It simply had no date, because nothing objected.
+///
+/// The message names what was wrong and what the names are, so the next call is right rather
+/// than another guess.
+extension AgentToolRegistry {
+    static func undeclaredInputComplaint(
+        capabilityID: String, capability: AICapability, input: [String: String]
+    ) -> String? {
+        let fields = capability.inputSchema.fields
+        guard !fields.isEmpty else { return nil }
+        let declared = Set(fields.map(\.name))
+        let unknown = input.keys.filter { !declared.contains($0) }.sorted()
+        guard !unknown.isEmpty else { return nil }
+        let takes = fields
+            .map { $0.required ? "\($0.name) (required)" : $0.name }
+            .joined(separator: ", ")
+        return "\(capabilityID) has no input named "
+            + unknown.map { "`\($0)`" }.joined(separator: ", ")
+            + ". It takes: \(takes). Call it again using those names — nothing ran."
+    }
+}
+
 /// Why a path cannot be read as text, or nil when it can.
 ///
 /// A content check that could not be performed is not a content check that failed, and
@@ -1671,6 +1700,23 @@ final class AgentToolRegistry {
                     output: "Already done a moment ago with exactly these inputs — not "
                         + "repeated. Continue; do not call this again.",
                     displayCommand: "run_capability(\(capabilityID))")
+            }
+
+            // Keys the schema does not declare are not passed through in silence.
+            //
+            // Asked to remind at 5pm the model called reminders.create with `date`, and the
+            // field is `dueDate`. The unknown key was dropped, the reminder was created with
+            // no due date, and every check afterwards told the truth about a different
+            // thing: the read-back found it by title and verified, reminders.today found
+            // nothing due today, and the answer to the user was that the reminder had not
+            // been created. It had. It simply had no date, because nothing objected.
+            if let capability,
+                let complaint = Self.undeclaredInputComplaint(
+                    capabilityID: capabilityID, capability: capability, input: input)
+            {
+                return AgentToolResult(
+                    success: false, output: complaint,
+                    displayCommand: "run_capability(\(capabilityID)) rejected")
             }
 
             let plan = AIActionPlan(
