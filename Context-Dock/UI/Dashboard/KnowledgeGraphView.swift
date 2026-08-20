@@ -27,9 +27,31 @@ struct KnowledgeGraphView: View {
     @State private var hovered: String?
 
     /// Past this the picture stops being a graph and starts being a texture.
-    private let nodeLimit = 40
+    ///
+    /// Forty fit on the canvas and none of them could be read: at that count every node
+    /// loses its label, and the card is wide and short enough that the layout has to pack
+    /// them into rows to fit. A readable twenty-six beats an unreadable forty, and the
+    /// nodes that get cut are the least connected ones.
+    private let nodeLimit = 26
 
-    private var nodes: [KnowledgeNode] { Array(graph.nodes.prefix(nodeLimit)) }
+    private var nodes: [KnowledgeNode] {
+        guard graph.nodes.count > nodeLimit else { return graph.nodes }
+        var degree: [String: Int] = [:]
+        for edge in graph.edges {
+            degree[edge.from, default: 0] += 1
+            degree[edge.to, default: 0] += 1
+        }
+        // Degree first, weight as the tiebreak. Trimming by weight alone dropped the app
+        // every conversation pointed at in favour of whichever thread had the most
+        // messages, which is the opposite of what makes a graph worth looking at.
+        return graph.nodes
+            .sorted {
+                let a = degree[$0.id] ?? 0, b = degree[$1.id] ?? 0
+                return a == b ? $0.weight > $1.weight : a > b
+            }
+            .prefix(nodeLimit)
+            .map { $0 }
+    }
 
     private var edges: [KnowledgeEdge] {
         let visible = Set(nodes.map(\.id))
@@ -78,8 +100,8 @@ struct KnowledgeGraphView: View {
             path.addQuadCurve(to: b, control: control(a, b))
             context.stroke(
                 path,
-                with: .color(DashboardPalette.grid(dark).opacity(dimming && !touched ? 0.35 : 1)),
-                lineWidth: touched ? 2 : 1)
+                with: .color(DashboardPalette.edge(dark).opacity(dimming && !touched ? 0.3 : 1)),
+                lineWidth: touched ? 2 : 1.2)
         }
 
         for node in nodes {
@@ -120,7 +142,7 @@ struct KnowledgeGraphView: View {
     private func shouldLabel(_ node: KnowledgeNode) -> Bool {
         if node.kind == .tool || node.kind == .note { return true }
         if hovered == node.id { return true }
-        return nodes.count <= 22
+        return nodes.count <= nodeLimit + 4
     }
 
     private func radius(for node: KnowledgeNode) -> CGFloat {

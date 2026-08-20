@@ -91,6 +91,16 @@ enum DashboardPalette {
         dark ? Color(red: 0.13, green: 0.13, blue: 0.14) : Color(white: 1.0)
     }
 
+    /// Edges in the knowledge graph.
+    ///
+    /// These used to borrow the grid colour, which is white at 7% — right for a gridline
+    /// behind a bar chart, and invisible for the lines that are the entire content of a
+    /// graph. Every edge was being drawn correctly and none of them could be seen, so the
+    /// graph read as a field of loose dots and looked like a layout bug for days.
+    static func edge(_ dark: Bool) -> Color {
+        dark ? Color.white.opacity(0.30) : Color.black.opacity(0.26)
+    }
+
     static func grid(_ dark: Bool) -> Color {
         dark ? Color.white.opacity(0.07) : Color.black.opacity(0.07)
     }
