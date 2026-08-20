@@ -602,12 +602,15 @@ struct AIChatMessage: Identifiable, Equatable {
         evidenceReceipts: [DoraXActionReceipt] = [],
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
-        runOutput: String? = nil, actionChoices: [ActionChoice] = []
+        runOutput: String? = nil, actionChoices: [ActionChoice] = [],
+        // Defaults to now, which is right for a message being said. A message being
+        // *loaded* has a time of its own and must pass it, or history claims to be current.
+        timestamp: Date = Date()
     ) {
         self.id = UUID()
         self.role = role
         self.content = Self.presentable(content, role: role)
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
         self.hasInstallButton = hasInstallButton
@@ -642,14 +645,17 @@ struct AIChatMessage: Identifiable, Equatable {
         evidenceReceipts: [DoraXActionReceipt] = [],
         subjectiveEvaluation: SubjectiveEvaluation? = nil,
         enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
-        runOutput: String? = nil, actionChoices: [ActionChoice] = []
+        runOutput: String? = nil, actionChoices: [ActionChoice] = [],
+        // Defaults to now, which is right for a message being said. A message being
+        // *loaded* has a time of its own and must pass it, or history claims to be current.
+        timestamp: Date = Date()
     ) {
         self.id = id
         self.role = role
         // Streaming too: a partial object is not valid JSON and passes through untouched,
         // so this only bites once the message has actually settled into a complete call.
         self.content = Self.presentable(content, role: role)
-        self.timestamp = Date()
+        self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
         self.hasInstallButton = hasInstallButton

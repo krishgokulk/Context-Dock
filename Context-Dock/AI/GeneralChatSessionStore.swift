@@ -169,9 +169,17 @@ enum GeneralChatSessionStore {
     /// The unscoped session deliberately reads and writes the existing store, so a chat
     /// started in the result sheet is the same conversation the window opens on.
     static func load(scope: GeneralChatScope) -> [AIChatMessage] {
-        guard scope != .general else { return GeneralAIChatConversationStore.load() }
+        // A conversation saved before messages carried a time gets the day this thread was
+        // last touched — a real date the index already holds. The alternative is what used
+        // to happen: undated history was stamped with the moment it was read, so every old
+        // thread reported that all of it had just been said.
+        let lastTouched = index().first { $0.scope == scope }?.updatedAt
+        guard scope != .general else {
+            return GeneralAIChatConversationStore.load(undatedFallback: lastTouched)
+        }
         guard let panelKey = dockPanelKey(scope) else {
-            return GeneralAIChatConversationStore.load(key: conversationKey(scope))
+            return GeneralAIChatConversationStore.load(
+                key: conversationKey(scope), undatedFallback: lastTouched)
         }
         return migratedIfNeeded(scope: scope, panelKey: panelKey)
     }

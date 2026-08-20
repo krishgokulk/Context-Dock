@@ -38,23 +38,37 @@ enum GeneralAIChatConversationStore {
         // Optional preserves conversations saved before file rows existed.
         let recentFiles: [StoredRecentFile]?
         let mcpToolsRan: [String]
+        /// When the message was actually sent.
+        ///
+        /// This was not stored at all. `AIChatMessage.timestamp` therefore defaulted to
+        /// the moment of *loading* on every launch, so a two-week-old conversation came
+        /// back claiming every word in it had just been said. Nothing displayed that
+        /// loudly enough to notice until a chart plotted messages per day and put a
+        /// fortnight of history on today. Optional, because conversations saved before
+        /// this cannot be given a time that was never written down.
+        let timestamp: Date?
     }
 
     /// Keyed variants, so per-scope sessions can reuse this exact serialisation instead of
     /// inventing a second message format that would drift from it.
-    static func load(key storageKey: String) -> [AIChatMessage] {
-        loadMessages(forKey: storageKey)
+    /// `undatedFallback` is what a message saved before timestamps existed gets. Callers
+    /// that know a real date for the conversation — the session index knows when a thread
+    /// was last touched — should pass it rather than let history claim to be current.
+    static func load(key storageKey: String, undatedFallback: Date? = nil) -> [AIChatMessage] {
+        loadMessages(forKey: storageKey, undatedFallback: undatedFallback)
     }
 
     static func save(_ messages: [AIChatMessage], key storageKey: String) {
         saveMessages(messages, forKey: storageKey)
     }
 
-    static func load() -> [AIChatMessage] {
-        loadMessages(forKey: key)
+    static func load(undatedFallback: Date? = nil) -> [AIChatMessage] {
+        loadMessages(forKey: key, undatedFallback: undatedFallback)
     }
 
-    private static func loadMessages(forKey key: String) -> [AIChatMessage] {
+    private static func loadMessages(
+        forKey key: String, undatedFallback: Date? = nil
+    ) -> [AIChatMessage] {
         guard let data = UserDefaults.standard.data(forKey: key),
             let stored = try? JSONDecoder().decode([StoredMessage].self, from: data)
         else { return [] }
@@ -77,7 +91,8 @@ enum GeneralAIChatConversationStore {
                 recentFiles: (item.recentFiles ?? []).map {
                     RecentFileAction(url: URL(fileURLWithPath: $0.path))
                 },
-                mcpToolsRan: item.mcpToolsRan
+                mcpToolsRan: item.mcpToolsRan,
+                timestamp: item.timestamp ?? undatedFallback ?? Date()
             )
         }
     }
@@ -103,7 +118,8 @@ enum GeneralAIChatConversationStore {
                     )
                 },
                 recentFiles: message.recentFiles.map { StoredRecentFile(path: $0.url.path) },
-                mcpToolsRan: message.mcpToolsRan
+                mcpToolsRan: message.mcpToolsRan,
+                timestamp: message.timestamp
             )
         }
         if let data = try? JSONEncoder().encode(stored) {
