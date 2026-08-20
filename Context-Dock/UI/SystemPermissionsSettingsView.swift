@@ -30,6 +30,31 @@ func contextDockAggregateAutomationStatus() -> String {
     return "Authorized \(granted)/\(targets.count)"
 }
 
+/// Whether macOS will still show a prompt for a permission, or has already decided.
+///
+/// TCC asks once. After a denial — including one made by clicking away the sheet — the
+/// request API returns `false` immediately and no prompt appears, ever. The button here
+/// called that API and reported the same "Not Authorized" it started with, so it looked
+/// broken and there was no way to find out that the answer now lives in System Settings.
+enum PermissionPrompt {
+    static func canPrompt(_ status: EKAuthorizationStatus) -> Bool { status == .notDetermined }
+    static func canPrompt(_ status: PHAuthorizationStatus) -> Bool { status == .notDetermined }
+    static func canPrompt(_ status: CNAuthorizationStatus) -> Bool { status == .notDetermined }
+
+    /// Deep links into the exact Privacy pane, because "open System Settings" and let the
+    /// user hunt for it is barely better than doing nothing.
+    static func openSettings(_ pane: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)")
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    static let calendars = "Privacy_Calendars"
+    static let reminders = "Privacy_Reminders"
+    static let photos = "Privacy_Photos"
+    static let contacts = "Privacy_Contacts"
+}
+
 struct SystemPermissionsSettingsView: View {
     @ObservedObject private var permissions = ILAppPermissionCenter.shared
     @State private var calendarStatus: String = "Unknown"
@@ -54,7 +79,10 @@ struct SystemPermissionsSettingsView: View {
                 HStack {
                     statusLabel(calendarStatus)
                     Spacer()
-                    Button("Request Access") { Task { await requestCalendar() } }
+                    Button(PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .event))
+                        ? "Request Access" : "Open System Settings") {
+                        Task { await requestCalendar() }
+                    }
                 }
             }
             Section(header: Text("Reminders")) {
@@ -62,7 +90,10 @@ struct SystemPermissionsSettingsView: View {
                 HStack {
                     statusLabel(remindersStatus)
                     Spacer()
-                    Button("Request Access") { Task { await requestReminders() } }
+                    Button(PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .reminder))
+                        ? "Request Access" : "Open System Settings") {
+                        Task { await requestReminders() }
+                    }
                 }
             }
             Section(header: Text("Photos")) {
@@ -70,7 +101,10 @@ struct SystemPermissionsSettingsView: View {
                 HStack {
                     statusLabel(photosStatus)
                     Spacer()
-                    Button("Request Access") { Task { await requestPhotos() } }
+                    Button(PermissionPrompt.canPrompt(PHPhotoLibrary.authorizationStatus(for: .readWrite))
+                        ? "Request Access" : "Open System Settings") {
+                        Task { await requestPhotos() }
+                    }
                 }
             }
             Section(header: Text("Contacts")) {
@@ -78,7 +112,10 @@ struct SystemPermissionsSettingsView: View {
                 HStack {
                     statusLabel(contactsStatus)
                     Spacer()
-                    Button("Request Access") { requestContacts() }
+                    Button(PermissionPrompt.canPrompt(CNContactStore.authorizationStatus(for: .contacts))
+                        ? "Request Access" : "Open System Settings") {
+                        requestContacts()
+                    }
                 }
             }
             Section(header: Text("Automation (Notes, Mail, Messages)"), footer: Text("Allows the app to control Notes, Mail, and Messages via AppleScript.")) {
@@ -191,6 +228,12 @@ struct SystemPermissionsSettingsView: View {
 
     // MARK: - Requests
     private func requestCalendar() async {
+        // Already decided: no prompt is coming, so send the user where the decision lives
+        // rather than call an API that returns the same answer it gave last time.
+        guard PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .event)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.calendars)
+            return
+        }
         #if DEBUG
         print("📅 Requesting calendar permission...")
         #endif
@@ -204,6 +247,10 @@ struct SystemPermissionsSettingsView: View {
         }
     }
     private func requestReminders() async {
+        guard PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .reminder)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.reminders)
+            return
+        }
         #if DEBUG
         print("✅ Requesting reminders permission...")
         #endif
@@ -217,6 +264,10 @@ struct SystemPermissionsSettingsView: View {
         }
     }
     private func requestPhotos() async {
+        guard PermissionPrompt.canPrompt(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.photos)
+            return
+        }
         #if DEBUG
         print("📸 Requesting photos permission...")
         #endif
@@ -230,6 +281,10 @@ struct SystemPermissionsSettingsView: View {
         }
     }
     private func requestContacts() {
+        guard PermissionPrompt.canPrompt(CNContactStore.authorizationStatus(for: .contacts)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.contacts)
+            return
+        }
         #if DEBUG
         print("👤 Requesting contacts permission...")
         #endif
@@ -269,7 +324,10 @@ struct SystemPermissionsSection: View {
                 HStack {
                     statusLabel(calendarStatus)
                     Spacer()
-                    Button("Request Access") { Task { await requestCalendar() } }
+                    Button(PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .event))
+                        ? "Request Access" : "Open System Settings") {
+                        Task { await requestCalendar() }
+                    }
                 }
             }
             Section(header: Text("Reminders")) {
@@ -277,7 +335,10 @@ struct SystemPermissionsSection: View {
                 HStack {
                     statusLabel(remindersStatus)
                     Spacer()
-                    Button("Request Access") { Task { await requestReminders() } }
+                    Button(PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .reminder))
+                        ? "Request Access" : "Open System Settings") {
+                        Task { await requestReminders() }
+                    }
                 }
             }
             Section(header: Text("Photos")) {
@@ -285,7 +346,10 @@ struct SystemPermissionsSection: View {
                 HStack {
                     statusLabel(photosStatus)
                     Spacer()
-                    Button("Request Access") { Task { await requestPhotos() } }
+                    Button(PermissionPrompt.canPrompt(PHPhotoLibrary.authorizationStatus(for: .readWrite))
+                        ? "Request Access" : "Open System Settings") {
+                        Task { await requestPhotos() }
+                    }
                 }
             }
             Section(header: Text("Contacts")) {
@@ -293,7 +357,10 @@ struct SystemPermissionsSection: View {
                 HStack {
                     statusLabel(contactsStatus)
                     Spacer()
-                    Button("Request Access") { requestContacts() }
+                    Button(PermissionPrompt.canPrompt(CNContactStore.authorizationStatus(for: .contacts))
+                        ? "Request Access" : "Open System Settings") {
+                        requestContacts()
+                    }
                 }
             }
             Section(header: Text("Automation (Notes, Mail, Messages)"), footer: Text("Allows the app to control Notes, Mail, and Messages via AppleScript.")) {
@@ -399,6 +466,12 @@ struct SystemPermissionsSection: View {
     }
 
     private func requestCalendar() async {
+        // Already decided: no prompt is coming, so send the user where the decision lives
+        // rather than call an API that returns the same answer it gave last time.
+        guard PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .event)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.calendars)
+            return
+        }
         #if DEBUG
         print("📅 Requesting calendar permission...")
         #endif
@@ -412,6 +485,10 @@ struct SystemPermissionsSection: View {
         }
     }
     private func requestReminders() async {
+        guard PermissionPrompt.canPrompt(EKEventStore.authorizationStatus(for: .reminder)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.reminders)
+            return
+        }
         #if DEBUG
         print("✅ Requesting reminders permission...")
         #endif
@@ -425,6 +502,10 @@ struct SystemPermissionsSection: View {
         }
     }
     private func requestPhotos() async {
+        guard PermissionPrompt.canPrompt(PHPhotoLibrary.authorizationStatus(for: .readWrite)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.photos)
+            return
+        }
         #if DEBUG
         print("📸 Requesting photos permission...")
         #endif
@@ -438,6 +519,10 @@ struct SystemPermissionsSection: View {
         }
     }
     private func requestContacts() {
+        guard PermissionPrompt.canPrompt(CNContactStore.authorizationStatus(for: .contacts)) else {
+            PermissionPrompt.openSettings(PermissionPrompt.contacts)
+            return
+        }
         #if DEBUG
         print("👤 Requesting contacts permission...")
         #endif
