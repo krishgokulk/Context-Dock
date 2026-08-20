@@ -528,7 +528,7 @@ untested path. The two General AI sites that keep their own card keep it deliber
 they sequence `actionProgress` and `loadingStatus` around the prompt, and a single
 `execute` call cannot change the status line while the card is up.
 
-### 10b. Context Dock Chat through the shared executor — Gate A's last row · **mostly done**
+### 10b. Context Dock Chat through the shared executor — Gate A's last row · **done**
 
 Blocks three recorded items at once: §5 (one executor), §7 step 3 (`verifyCapability`
 unusable there because `ChatRoute` carries an action id or menu path, never a capability id
@@ -597,15 +597,27 @@ became a value the executor could inspect.
 returns nil for the kinds that must not be handed over. The user's query travels in
 `inputValues["query"]` so an adapter script reading `{query}` still gets it.
 
-**Still on its own path, deliberately:**
+**The menu consent moved with the route.** `AppMenuConsentStore` was consulted inside
+`runMenuPath`, which made it consent belonging to *one way of clicking a menu* rather than
+to menu clicks — anything reaching a menu item by another route skipped it. It is now
+`AppAdapterManager.ensureMenuConsent(path:targetBundleId:appName:)`, called by both
+`runMenuPath` and the executor's `.verifiedMenu`, and gated on the same grant source as the
+adapter prompt. `.menuCommand` runs through the shared executor with the rest.
 
-- `.cli` — the TTY branch, as above. Unchanged.
-- `.menuCommand` — `runMenuPath` consults `AppMenuConsentStore` and prompts before a
-  destructive menu command; `.verifiedMenu` does not. Handing it over as-is would delete a
-  consent step the user currently gets. The click is already canonical after the fix above,
-  so what is left to move is the consent, not the action. That is 10b's remainder: give
-  `.verifiedMenu` the destructive-menu consent check, gated on grant source the same way
-  the adapter prompt now is.
+One consequence worth stating: the agent's `run_menu_command` tool passes
+`.granted(.accessPolicy)`, so it now asks before a destructive menu item. It never did
+before — `AppAccessPolicy` was the whole of its authority, and "menu control granted" is
+not the same as "you may click Delete".
+
+**Authority is now checked at execution, not only at resolution.** `ChatRouteResolver`
+filtered routes by `AppAccessPolicy` when it built the list, and `AppScopedChatService`
+asked again before calling. Neither is a check at the moment of execution, and the two are
+separated by everything in between — the model drafting a plan, a recipe re-binding, the
+user revoking access in Settings while an answer streams. `run` asks now, which is what
+makes `.granted(.accessPolicy)` a true statement.
+
+**Still on its own path, deliberately:** `.cli`, for the TTY branch described above.
+Unchanged, and the one route the resolver still executes itself.
 
 ### 10c. Route vocabularies — §4c
 
@@ -626,6 +638,7 @@ stays a separate axis by design.
 
 ### Not doing
 
-Bounded loops, graph orchestration, scheduled autonomy, multi-agent. Gate A first, and with
-10a done Gate A is 10b alone.
+Bounded loops, graph orchestration, scheduled autonomy, multi-agent. **Gate A is closed**:
+every capability has an owner, an authority class, a canonical executor and a verification
+state. What remains in §10d are bugs, not structure.
 

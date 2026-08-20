@@ -442,6 +442,64 @@ final class AppAdapterManager: ObservableObject {
     /// chat uses to actually DO things (Minimize, New Tab, Export…) instead of narrating.
     /// Safe items run immediately; destructive-sounding paths (Close, Quit, Delete…) prompt
     /// once, and approving one remembers it ("allow always") so it runs unattended next time.
+    /// Ask before a destructive menu command, once, and remember the answer.
+    ///
+    /// This lived inside `runMenuPath`, which meant it was consent belonging to one way of
+    /// clicking a menu rather than to menu clicks. Anything that reached a menu item by
+    /// another route — the shared executor's `.verifiedMenu`, for one — skipped it
+    /// entirely. On a surface that draws no approval card of its own it is the only thing
+    /// asking, so it has to be reachable from every path that clicks.
+    ///
+    /// Returns true when the command may proceed: not destructive, already granted, or
+    /// just approved.
+    func ensureMenuConsent(
+        path: [String], targetBundleId: String, appName: String
+    ) async -> Bool {
+        let consent = AppMenuConsentStore.shared
+        guard consent.isDestructive(path: path),
+            !consent.isAllowed(bundleId: targetBundleId, path: path)
+        else { return true }
+
+        let label = path.joined(separator: " ▸ ")
+        let action = AdapterAction(
+            id: "menu:\(targetBundleId):\(path.joined(separator: ">"))",
+            name: label,
+            icon: "filemenu.and.selection",
+            description: "Menu command in \(appName.isEmpty ? "the app" : appName)",
+            type: .menubar,
+            menuPath: path,
+            requiresApproval: true,
+            isDestructive: true)
+        let adp = AppAdapter(
+            id: targetBundleId, appName: appName.isEmpty ? targetBundleId : appName,
+            bundleId: targetBundleId, icon: "app.badge",
+            isBuiltIn: false, actions: [action])
+
+        return await withCheckedContinuation { continuation in
+            let request = AdapterActionRequest(
+                action: action,
+                adapter: adp,
+                onApprove: { [weak self] in
+                    Task { @MainActor in
+                        self?.pendingApproval = nil
+                        // Approving a destructive menu command grants "allow always" so
+                        // DoraX runs it unattended next time.
+                        AppMenuConsentStore.shared.allowAlways(
+                            bundleId: targetBundleId, path: path)
+                        continuation.resume(returning: true)
+                    }
+                },
+                onDeny: { [weak self] in
+                    Task { @MainActor in
+                        self?.pendingApproval = nil
+                        continuation.resume(returning: false)
+                    }
+                }
+            )
+            Task { @MainActor in self.pendingApproval = request }
+        }
+    }
+
     func runMenuPath(
         _ path: [String], targetBundleId: String, appName: String
     ) async -> (Bool, String) {
@@ -450,53 +508,20 @@ final class AppAdapterManager: ObservableObject {
             .filter { !$0.isEmpty }
         guard !cleaned.isEmpty else { return (false, "No menu path given") }
 
-        let label = cleaned.joined(separator: " ▸ ")
-        let consent = AppMenuConsentStore.shared
-        let needsApproval =
-            consent.isDestructive(path: cleaned)
-            && !consent.isAllowed(bundleId: targetBundleId, path: cleaned)
+        guard await ensureMenuConsent(
+            path: cleaned, targetBundleId: targetBundleId, appName: appName)
+        else { return (false, "Cancelled") }
 
         let action = AdapterAction(
             id: "menu:\(targetBundleId):\(cleaned.joined(separator: ">"))",
-            name: label,
+            name: cleaned.joined(separator: " ▸ "),
             icon: "filemenu.and.selection",
             description: "Menu command in \(appName.isEmpty ? "the app" : appName)",
             type: .menubar,
             menuPath: cleaned,
-            requiresApproval: needsApproval,
-            isDestructive: consent.isDestructive(path: cleaned))
-
-        if needsApproval {
-            let adp = AppAdapter(
-                id: targetBundleId, appName: appName.isEmpty ? targetBundleId : appName,
-                bundleId: targetBundleId, icon: "app.badge",
-                isBuiltIn: false, actions: [action])
-            return await withCheckedContinuation { continuation in
-                let request = AdapterActionRequest(
-                    action: action,
-                    adapter: adp,
-                    onApprove: { [weak self] in
-                        Task { [weak self] in
-                            await MainActor.run { self?.pendingApproval = nil }
-                            // Approving a destructive menu command grants "allow always"
-                            // so DoraX runs it unattended next time.
-                            AppMenuConsentStore.shared.allowAlways(
-                                bundleId: targetBundleId, path: cleaned)
-                            let result = await self?.runAction(
-                                action, context: AXContext.empty, targetBundleId: targetBundleId)
-                                ?? (false, "")
-                            await MainActor.run { self?.lastResult = result }
-                            continuation.resume(returning: result)
-                        }
-                    },
-                    onDeny: { [weak self] in
-                        Task { @MainActor in self?.pendingApproval = nil }
-                        continuation.resume(returning: (false, "Cancelled"))
-                    }
-                )
-                Task { @MainActor in self.pendingApproval = request }
-            }
-        }
+            // Consent is settled above; the action's own flag would ask a second time.
+            requiresApproval: false,
+            isDestructive: AppMenuConsentStore.shared.isDestructive(path: cleaned))
 
         let result = await runAction(
             action, context: AXContext.empty, targetBundleId: targetBundleId)

@@ -240,9 +240,9 @@ final class GeneralAIActionExecutor {
         case .adapter:
             result = await executeAdapterRoute(candidate, approval: approval)
         case .keyboardShortcut:
-            result = await executeKeyboardShortcut(candidate)
+            result = await executeKeyboardShortcut(candidate, approval: approval)
         case .verifiedMenu:
-            result = await executeVerifiedMenu(candidate)
+            result = await executeVerifiedMenu(candidate, approval: approval)
         case .axFallback:
             result = await executeAXFallback(candidate)
         case .shortcutRunner:
@@ -575,14 +575,17 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Keyboard shortcut
 
-    private func executeKeyboardShortcut(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    private func executeKeyboardShortcut(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
         guard MenuExecutionCoordinator.ensureAccessibilityTrustOrPrompt() else {
             return .init(success: false, message: "Accessibility permission is required to send shortcuts.")
         }
         // Cached shortcuts belong to a cached menu record. Live-verify that menu first,
         // then let the coordinator send its shortcut or click the menu item as fallback.
         if candidate.menuPath?.isEmpty == false {
-            return await executeVerifiedMenu(candidate)
+            return await executeVerifiedMenu(candidate, approval: approval)
         }
         guard let bundleID = candidate.bundleID,
               let char = candidate.shortcutChar, !char.isEmpty,
@@ -599,7 +602,7 @@ final class GeneralAIActionExecutor {
         guard sent else {
             // Unsupported key code — degrade to the live-verified menu path if we have one.
             if candidate.menuPath?.isEmpty == false {
-                return await executeVerifiedMenu(candidate)
+                return await executeVerifiedMenu(candidate, approval: approval)
             }
             return .init(success: false, message: "The shortcut key couldn't be posted.")
         }
@@ -618,9 +621,22 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Verified menu
 
-    private func executeVerifiedMenu(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    private func executeVerifiedMenu(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
         guard let bundleID = candidate.bundleID, let path = candidate.menuPath, !path.isEmpty else {
             return .init(success: false, message: "Menu route is missing its path.")
+        }
+        // Destructive menu commands ask once and are then remembered. A caller that
+        // already put this exact item in front of the user has asked; one whose
+        // authority came from AppAccessPolicy has not, and for it this is the only
+        // question anybody puts before a Delete.
+        if !Self.suppressesAdapterPrompt(approval) {
+            let consented = await AppAdapterManager.shared.ensureMenuConsent(
+                path: path, targetBundleId: bundleID,
+                appName: candidate.appName ?? bundleID)
+            guard consented else { return .cancelled(routeLabel: candidate.routeLabel) }
         }
         // An app that has to be launched for this click has not finished building its menu
         // bar when it reports itself launched. App Store, cold-started to run Store ▸

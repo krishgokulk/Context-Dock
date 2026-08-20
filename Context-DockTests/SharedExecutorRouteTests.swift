@@ -44,6 +44,9 @@ struct SharedExecutorRouteTests {
 
     /// Menu paths are joined on U+0001 in a ChatRoute and are an array in a candidate.
     /// Splitting on the wrong separator yields a one-element path that matches no menu.
+    /// Menu commands run through the shared executor now that the destructive-menu consent
+    /// moved with them — `AppAdapterManager.ensureMenuConsent` is reachable from both the
+    /// executor's `.verifiedMenu` and `runMenuPath`, so neither path can skip the question.
     @Test func menuPathSplitsBackIntoItsComponents() throws {
         let candidate = try #require(
             route(.menuCommand, payload: "File\u{1}New Tab").asCandidate())

@@ -473,6 +473,23 @@ enum ChatRouteResolver {
     /// Runs a route and returns what it produced, verbatim, for the Console and for the
     /// model to phrase.
     static func run(_ route: ChatRoute, query: String) async -> (success: Bool, output: String) {
+        // Authority is checked when routes are resolved, and again here, when one is run.
+        // Not belt-and-braces: resolution filters a list, execution acts, and the two are
+        // separated by everything in between — a plan being drafted by the model, a recipe
+        // being re-bound, a user revoking access in Settings while the answer streams.
+        // `.granted(.accessPolicy)` below is a claim about the moment of execution, and
+        // this is what makes it true rather than hopeful.
+        //
+        // A CLI route names a tool rather than an app — its bundleId is a `cli://`
+        // placeholder — so there is no app authority to consult.
+        if let mechanism = route.kind.executionRoute, !route.bundleId.hasPrefix("cli://") {
+            let level = AppAccessPolicy.level(for: route.bundleId)
+            guard AppAccessPolicy.allows(mechanism, at: level) else {
+                return (false, AppAccessPolicy.explanation(
+                    for: route.appName, level: level, wantedRead: route.isReadOnly))
+            }
+        }
+
         switch route.kind {
         case .cli:
             // A tool that draws its own screen cannot be run with its output captured:
@@ -498,7 +515,7 @@ enum ChatRouteResolver {
                 route.payload, purpose: query, modelRequiresApproval: !route.isReadOnly)
             return (result.success, result.output)
 
-        case .adapterAction, .mcpTool:
+        case .adapterAction, .mcpTool, .menuCommand:
             // Gate A's last row: these run through the one executor General AI uses, so
             // they get its audit line and its task-run receipt instead of a private
             // implementation that produced neither.
@@ -515,18 +532,6 @@ enum ChatRouteResolver {
             let outcome = await GeneralAIActionExecutor.shared.execute(
                 candidate, approval: .granted(.accessPolicy))
             return (outcome.success, outcome.message)
-
-        case .menuCommand:
-            // Deliberately still here. `runMenuPath` consults AppMenuConsentStore and
-            // prompts before a destructive menu command; the shared executor's
-            // .verifiedMenu route does not, so handing this over as-is would delete a
-            // consent step the user currently gets. The click itself is already canonical
-            // — AppAdapterManager now drives MenuExecutionCoordinator, the same one
-            // .verifiedMenu uses — so what is left to move is the consent, not the action.
-            let path = route.payload.split(separator: "\u{1}").map(String.init)
-            let result = await AppAdapterManager.shared.runMenuPath(
-                path, targetBundleId: route.bundleId, appName: route.appName)
-            return (result.0, result.1)
 
         case .skill, .model:
             // Neither runs anything: the caller answers with the skill's instructions in
