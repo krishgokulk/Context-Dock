@@ -406,3 +406,56 @@ and the guess is what produced the undated reminder.
 Scoped to the model's path deliberately. Internal Swift callers are typed; the model is the
 one inventing key names.
 
+### 9i. The model treats its own guess as verification
+
+Two behaviours, one cause: `verify_outcome` is a tool the model may point anywhere, and it
+reads the result as authority.
+
+It **narrates** the plumbing — an answer ended *"The outcome verification is successful."*,
+which is the model reading its own tool output back to the user as prose. Same family as
+§9b: protocol reaching the user, in English rather than JSON.
+
+It **overrides** a real read-back. §9g put "This is the result — do not look for further
+evidence" on the verified branch, and in the run after that the model still called
+`verify_outcome` on a guessed path. The instruction is requested, not enforced. What stopped
+the wrong answer was §9g's second half — an unreadable path now reports that it proves
+nothing — not the instruction.
+
+Worth considering: refusing `verify_outcome` outright for the rest of a turn once a typed
+read-back has already verified the write. There is nothing left for it to establish.
+
+### 9j. The Brain stores assistant output as the user's notes
+
+`show me my saved notes` returned, among five:
+
+> 3. *"I can't see or access your current Safari page — I only work with your notes here,
+>    not the web or other apps."*
+
+Plus two `(empty)` entries. That is a refusal DoraX produced, filed as something the user
+wrote, and it will be retrieved later as if they had. Two of the memory files on disk are
+the same shape: `5a9cb05b-i-can-t-see-or-access-your-current-safari-page-i.md`,
+`7beb04af-i-cannot-undo-actions-or-run-commands-i-can-help.md`.
+
+Belongs to the memory work landed in `09aad81` / `68ff290`, not the control plane. Recorded
+because a memory layer that saves the assistant's apologies compounds them.
+
+### 9k. Permissions reports Not Authorized for access that works
+
+Settings → Permissions shows Reminders, Photos, Contacts and Automation as **Not
+Authorized**, and Request Access produces no system prompt. Meanwhile `reminders.create`
+writes through EventKit and `AppleAppsAPI.getReminders` reads back successfully in the same
+session — so something is authorised that the screen says is not.
+
+Eliminated with evidence: missing `NS…FullAccessUsageDescription` (both ship, from
+`INFOPLIST_KEY_*` build settings), sandbox entitlements (`addressbook`, `calendars`,
+`photos-library` all present; the app is not sandboxed), TCC signature mismatch across the
+three installed copies (all signed by the same Apple Development certificate), and wrong API
+for macOS 14+ (`requestFullAccessToReminders()` is correct).
+
+The button read "Request Access", so `canPrompt` was true and the status was
+`notDetermined` — the request is made and macOS stays silent. Remaining suspect is the
+concurrency guard in `SystemDataSearchManager.requestRemindersPermission`: if
+`isRequestingRemindersPermission` is ever left set, later calls spin and return false
+without reaching EventKit. Instrumented either side of the call; the log will show a
+`reminders request begin` with no matching `end`.
+
