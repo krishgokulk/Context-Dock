@@ -45,11 +45,12 @@ missing. The problem is not absence — it is that each concept exists more than
 | `adapter` | **denied** | — | only via capability ID (§3) | `skipped` otherwise |
 | `mcp` | **denied** | — | only via capability ID | `skipped` otherwise |
 | `api` | **denied** | — | only via capability ID | `skipped` otherwise |
-| `cli` | **denied** | — | only via capability ID | `skipped` otherwise |
+| `cli` | **denied** | — | `CommandOutcomeVerifier` (appearance, quit) + capability ID | **verified / contradicted**, else `notApplicable` |
 | `shortcutRunner` | **denied** | — | none | `skipped` |
 | `automation` | **denied** | — | none | `skipped` |
 
-`GeneralAIActionExecutor.verify(_:)` `default:` → `.skipped` for the bottom six rows.
+`GeneralAIActionExecutor.verify(_:)` no longer has a `default:`. Every route is named, and
+the ones with no verifier say which they are and why — see §7 step 4.
 
 ---
 
@@ -177,11 +178,11 @@ semantics are shared.
 | Owner (capability ID + source) | **met** — `DoraXActionCandidate` carries both |
 | Authority classification | **met** — all three surfaces ask `AppAccessPolicy` |
 | Canonical executor | **met for two of three surfaces** — Context Dock Chat runs `ChatRouteResolver` |
-| Verification state | **partly met** — one vocabulary with `contradicted`; every surface typed; 6 of 10 routes still have no verifier |
+| Verification state | **met as far as it can be** — one vocabulary, every surface typed, every route named; 5 routes have no read-back and say so |
 
-**Gate A is not open.** What remains is step 4 — read-backs for the routes that can have
-one — plus the two Context Dock Chat rows above: one executor, and task state that reaches
-it.
+**Gate A has one row left.** Context Dock Chat still runs `ChatRouteResolver` rather than
+the shared executor, which is also what blocks `verifyCapability` there (§7 step 3) and what
+keeps `TaskRunStore` off that path (§5).
 
 ---
 
@@ -202,9 +203,19 @@ registry, Global Context, or the typing path.
    `ChatRoute` carries an adapter action id, a menu path or an MCP tool name, never a
    capability id with inputs. Closing that needs the shared executor, not a shared verifier.
 
-4. **Extend verification to the six `skipped` routes** where a cheap read-back exists.
-   `shortcutRunner` and `automation` likely stay `notApplicable` — say so explicitly
-   rather than by falling through a `default:`.
+4. ~~**Extend verification to the six `skipped` routes.**~~ **Done.** `cli` now reads back
+   through `CommandOutcomeVerifier`, which existed and was wired into the agent tool loop
+   only — so the same command verified in one surface and not the other. Its verdict is
+   typed rather than spelled: callers decided pass or fail by matching the prefix
+   "NOT applied", which every reader had to parse and any rewording would break.
+
+   The rest are named instead of falling through a `default:`, each with the reason it has
+   no read-back. `adapter` and `api` reach that line only when the capability-id verifiers
+   found nothing. `mcp` returns what a server chose to return, and there is no second call
+   meaning "did that land". `shortcutRunner` hands off to Shortcuts, which reports its own
+   success and nothing about the world afterwards. `automation` composes in another app —
+   the window it opens is the outcome, and the user is looking at it. `axFallback` is
+   reached only after a live menu verification has already passed.
 
 Only after 1–4: `DoraXTaskContract`, TaskRunStore beyond the provider loop, bounded
 loops, graphs, scheduled autonomy.

@@ -217,7 +217,37 @@ final class GeneralAIActionExecutor {
             return running
                 ? .verified(nil)
                 : .contradicted(evidence: "\(candidate.appName ?? "The app") isn't running.")
-        default:
+        case .cli:
+            // A shell command that exits zero has run, not worked. Where the effect can be
+            // read back — an appearance change, an app that was told to quit —
+            // CommandOutcomeVerifier reads it. It was already wired into the agent tool
+            // loop and never into this path, so the same command verified in one surface
+            // and not the other.
+            guard let command = candidate.inputValues["command"], !command.isEmpty,
+                let reading = CommandOutcomeVerifier.verify(command: command)
+            else { return .notApplicable }
+            switch reading.status {
+            case .verified: return .verified(reading.message)
+            case .contradicted: return .contradicted(evidence: reading.message)
+            case .unverified: return .unverified(fallback: reading.message)
+            case .notApplicable: return .notApplicable
+            }
+
+        // Named rather than left to fall through a `default:`, because "no verifier exists
+        // for this route" is a fact about each one and worth being able to read here.
+        //
+        // .adapter and .api reach this line only when the capability-id read-backs above
+        // found nothing for them; a registered capability with a verifier never gets here.
+        // .mcp returns whatever a server chose to return and there is no second call that
+        // means "did that land". .shortcutRunner hands off to Shortcuts, which reports its
+        // own success and nothing about the world afterwards. .automation composes in
+        // another app — the window it opens is the outcome, and the user is looking at it.
+        case .adapter, .api, .mcp, .shortcutRunner, .automation:
+            return .notApplicable
+
+        case .axFallback:
+            // Reached only after a live menu verification already passed, which is why it
+            // was allowed to click at all. There is nothing further to read.
             return .notApplicable
         }
     }

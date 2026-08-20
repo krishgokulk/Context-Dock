@@ -809,11 +809,20 @@ final class AgentToolRegistry {
             let verification = await MainActor.run {
                 CommandOutcomeVerifier.verify(command: command)
             }
-            let verified = verification.map { "\n\n\($0)" }
-                ?? "\n\n(Not verified: this command's effect cannot be read back. Say what "
-                    + "you ran, not that it worked.)"
+            let verified: String
+            switch verification?.status {
+            case .verified:
+                verified = "\n\nVerified: \(verification?.message ?? "")"
+            case .contradicted:
+                verified = "\n\nIt did not take effect: \(verification?.message ?? "")"
+            case .unverified:
+                verified = "\n\nCouldn't confirm it: \(verification?.message ?? "")"
+            case .notApplicable, nil:
+                verified = "\n\n(Not verified: this command's effect cannot be read back. "
+                    + "Say what you ran, not that it worked.)"
+            }
             return AgentToolResult(
-                success: success && !(verification?.hasPrefix("NOT applied") ?? false),
+                success: success && (verification?.status.claimsSuccess ?? true),
                 output: output + verified,
                 displayCommand: "run_command(\(command))",
                 exitCode: exitCode)

@@ -23,9 +23,16 @@ enum CommandOutcomeVerifier {
 
     /// What the machine says after the command ran, or nil when nothing here can check it.
     ///
-    /// Returned as a sentence for the model rather than a boolean, because "still running"
-    /// and "unchanged" are different failures and the answer should be able to say which.
-    static func verify(command: String) -> String? {
+    /// Carries a status alongside the sentence. The sentence used to be the whole answer,
+    /// and callers decided pass or fail by looking for the prefix "NOT applied" — a verdict
+    /// encoded in prose, which every reader had to parse and any rewording would break.
+    struct Reading {
+        let status: VerificationStatus
+        /// The reading itself, for the model and for the receipt.
+        let message: String
+    }
+
+    static func verify(command: String) -> Reading? {
         let lowered = command.lowercased()
 
         if lowered.contains("appleinterfacestyle") {
@@ -51,7 +58,7 @@ enum CommandOutcomeVerifier {
     /// Read from the same defaults domain the command writes, rather than from a cached
     /// NSApp appearance: the app's own appearance can lag the system's by a run loop, and a
     /// verifier that reads a stale copy reports the change it was checking for.
-    private static func appearanceState(expectingDark: Bool) -> String {
+    private static func appearanceState(expectingDark: Bool) -> Reading {
         let domain = UserDefaults.standard.persistentDomain(
             forName: UserDefaults.globalDomain)
         let value = domain?["AppleInterfaceStyle"] as? String
@@ -59,18 +66,20 @@ enum CommandOutcomeVerifier {
         let now = isDark ? "dark" : "light"
         let wanted = expectingDark ? "dark" : "light"
         return isDark == expectingDark
-            ? "Verified: system appearance is now \(now)."
-            : "NOT applied: system appearance is still \(now), not \(wanted)."
+            ? Reading(status: .verified, message: "System appearance is now \(now).")
+            : Reading(
+                status: .contradicted,
+                message: "System appearance is still \(now), not \(wanted).")
     }
 
-    private static func runningState(of appName: String) -> String {
+    private static func runningState(of appName: String) -> Reading {
         let running = NSWorkspace.shared.runningApplications.contains {
             ($0.localizedName ?? "").caseInsensitiveCompare(appName) == .orderedSame
                 && !$0.isTerminated
         }
         return running
-            ? "NOT applied: \(appName) is still running."
-            : "Verified: \(appName) is no longer running."
+            ? Reading(status: .contradicted, message: "\(appName) is still running.")
+            : Reading(status: .verified, message: "\(appName) is no longer running.")
     }
 
     /// The app a quit-shaped command names — `killall Safari`, `osascript -e 'quit app
