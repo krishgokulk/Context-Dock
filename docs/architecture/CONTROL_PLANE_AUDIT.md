@@ -470,3 +470,77 @@ concurrency guard in `SystemDataSearchManager.requestRemindersPermission`: if
 without reaching EventKit. Instrumented either side of the call; the log will show a
 `reminders request begin` with no matching `end`.
 
+---
+
+## 10. What is left
+
+Ordered. Each line says what it costs and what it unblocks.
+
+### 10a. The shared executor's approval contract — **do this first, it is small**
+
+`GeneralAIActionExecutor` assumes its caller already asked the user. Four places say so:
+
+```
+:137  approved: true
+:412  approved: true
+:426  action.requiresApproval = false   // "General Chat already showed its own approval"
+:745  approved: true
+```
+
+That is true of General AI, which raises its own route-specific card before calling. It is
+not a property of the executor, it is a property of one caller — and nothing in the
+signature says so. Any second surface routed into it inherits "already approved" for free.
+
+Make it explicit: an `approval:` parameter the caller must state (`.alreadyGranted` /
+`.required`), rather than a comment. No behaviour change for General AI. Small, and it is
+the thing that makes 10b safe rather than dangerous.
+
+### 10b. Context Dock Chat through the shared executor — Gate A's last row
+
+Blocks three recorded items at once: §5 (one executor), §7 step 3 (`verifyCapability`
+unusable there because `ChatRoute` carries an action id or menu path, never a capability id
+with inputs), and §5 again (`TaskRunStore` never reaches that path).
+
+The conversion itself is mechanical — every `ChatRoute.Kind` maps onto an `ExecutionRoute`
+and a payload:
+
+| Kind | Route | Payload |
+|---|---|---|
+| `.cli` | `.cli` | `inputValues["command"]` |
+| `.adapterAction` | `.adapter` | `adapterActionID` + `bundleID` |
+| `.menuCommand` | `.verifiedMenu` | `menuPath` split on `\u{1}` |
+| `.mcpTool` | `.mcp` | `inputValues["mcpServer"]`, `["mcpTool"]` |
+
+What is not mechanical, and would each be a regression if missed:
+
+1. **Approval.** See 10a. Context Dock never shows General AI's card, so it must not inherit
+   the assumption that one was shown.
+2. **The CLI terminal branch.** `ChatRouteResolver.run` diverts commands that need a TTY into
+   the thread's own terminal. The shared executor has no such branch, and running one
+   through `terminal.runCommand` is the bug already recorded there: a working
+   terminal-browser became a two-and-a-half minute timeout.
+3. **Adapter query context.** `ChatRouteResolver` passes the user's `query` into
+   `AppAdapterManager.execute`; the shared executor passes the candidate's title.
+
+### 10c. Route vocabularies — §4c
+
+`ChatRouteResolver.Kind` is still unrelated to `ExecutionRoute` and
+`GeneralChatWorkflowResult.Route`. 10b introduces the mapping for the first two; the third
+stays a separate axis by design.
+
+### 10d. Open bugs, in the order they cost a user something
+
+- **9k** — Permissions reports Not Authorized for access that works. Instrumented; waiting on
+  one click to read `reminders request begin` / `end` from the log.
+- **9i** — the model narrates `verify_outcome` and still runs it after a typed read-back has
+  verified. Consider refusing it for the rest of a turn once a write is verified.
+- **9j** — the Brain files assistant output as the user's notes. Belongs to the memory work.
+- **9f** — Global Extensions invisible to the AI. A feature: the capability model has no
+  shape for "list rows, then act on a chosen row".
+- **9d** — `requiredCapabilityKinds` written at six sites, read at none. Inert; delete it.
+
+### Not doing
+
+Bounded loops, graph orchestration, scheduled autonomy, multi-agent. Gate A first, and Gate
+A is 10a plus 10b.
+
