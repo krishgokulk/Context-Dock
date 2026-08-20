@@ -222,8 +222,26 @@ enum ChatRouteResolver {
 
         // CLI first: it answers without taking the screen, which is what the user usually
         // wants from a question they typed into a chat window.
+        // A tool is "for" an app when the user linked it, or when its name is plainly the
+        // app's own.
+        //
+        // Linking is manual, and nobody does it: `pear` sat installed and enabled next to
+        // Pearcleaner with no link, so a Pearcleaner chat had no command-line route at all
+        // and offered to click through the menu bar instead — for a tool whose entire
+        // point is not opening the app. The prefix has to be long enough to mean something
+        // (`ls` must not claim every app starting with those letters) and the app name has
+        // to start with it, so this recognises pear/Pearcleaner without inventing links
+        // between unrelated things.
+        func namedForThisApp(_ package: TerminalPackage) -> Bool {
+            let command = package.command.lowercased()
+            guard command.count >= 4 else { return false }
+            let name = appName.lowercased().replacingOccurrences(of: " ", with: "")
+            return name.hasPrefix(command)
+        }
+
         for package in TerminalPackageManager.shared.packages
-        where package.isEnabled && package.contextAppBundleIds.contains(bundleId) {
+        where package.isEnabled
+            && (package.contextAppBundleIds.contains(bundleId) || namedForThisApp(package)) {
             let subcommand = package.subcommands.first { matches($0) }
             // Offering the bare binary for any question is how "what page am I on" was
             // answered with a choice between `markitdown` and `play`. A linked tool is a
@@ -331,6 +349,18 @@ enum ChatRouteResolver {
         // still reach that app's linked CLI tools, its MCP servers and the user's skills
         // for it. Two engines, one of them guarded, is how every bug in this area has
         // started.
+        // "using cli", "in the terminal" — the user naming the mechanism is an instruction,
+        // not a hint. Offering menu clicks after it is answering a different question than
+        // the one that was asked.
+        let lowerQuery = query.lowercased()
+        let asksForCommandLine = ["using cli", "use cli", "via cli", "with cli",
+                                  "command line", "commandline", "in terminal",
+                                  "using terminal", "via terminal"]
+            .contains { lowerQuery.contains($0) }
+        if asksForCommandLine, routes.contains(where: { $0.kind == .cli }) {
+            routes = routes.filter { $0.kind == .cli }
+        }
+
         let level = await MainActor.run { AppAccessPolicy.level(for: bundleId) }
         routes = routes.filter { route in
             let executionRoute: DoraXActionCandidate.ExecutionRoute
