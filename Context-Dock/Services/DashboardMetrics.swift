@@ -514,8 +514,17 @@ final class DashboardMetrics: ObservableObject {
         }
 
         let summaries = store.fileSummaries()
+        // Daily briefs are bullets too, and there are hundreds of them — every command of
+        // every task run. Counting those as "saved facts" turned 14 things DoraX actually
+        // knows into 119 and made memory look like it was filling up with junk that needed
+        // pruning. A receipt of what ran is not something remembered about the user.
         out.memoryFacts = summaries
-            .filter { !$0.relativePath.hasPrefix("notes/") && $0.relativePath != "MEMORY.md" }
+            .filter {
+                !$0.relativePath.hasPrefix("notes/")
+                    && !$0.relativePath.hasPrefix("daily/")
+                    && !$0.relativePath.hasPrefix("cache/")
+                    && $0.relativePath != "MEMORY.md"
+            }
             .reduce(0) { $0 + $1.factCount }
         out.memoryFileCount = summaries.count
         out.staleCaches = summaries.filter { $0.freshness?.hasPrefix("Stale") == true }.count
