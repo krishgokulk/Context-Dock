@@ -100,6 +100,64 @@ struct ChatRoute: Identifiable, Equatable {
 
     static func == (lhs: ChatRoute, rhs: ChatRoute) -> Bool { lhs.id == rhs.id }
 
+    /// This route as something the shared executor can run, or nil when it must not be
+    /// handed over.
+    ///
+    /// Gate A wants one canonical executor per capability. Context Dock Chat ran its own,
+    /// which cost it an audit line, a task-run receipt and a verified click, and let it
+    /// report outcomes it had not checked. `nil` is returned for the three kinds that must
+    /// stay where they are, each for a stated reason.
+    func asCandidate() -> DoraXActionCandidate? {
+        // .skill steers the model and .model answers from nothing: neither executes, so
+        // neither has anything for an executor to do.
+        //
+        // .cli is the deliberate exception. ChatRouteResolver diverts commands that need a
+        // TTY into the thread's own terminal, and the shared executor has no such branch —
+        // sending one through terminal.runCommand is the recorded bug where a working
+        // terminal-browser became a two-and-a-half minute timeout.
+        guard kind != .skill, kind != .model, kind != .cli,
+            let executionRoute = kind.executionRoute
+        else { return nil }
+
+        var candidate = DoraXActionCandidate(
+            id: id,
+            title: title,
+            appName: appName,
+            bundleID: bundleId,
+            source: kind == .mcpTool ? .mcp : (kind == .menuCommand ? .cachedMenu : .appAdapter),
+            route: executionRoute,
+            capabilityID: nil,
+            requiredInputs: [],
+            // A route that changes something is not low risk because a chat asked for it.
+            // Risk is what the approval card reads from and what the hard .critical block
+            // checks, so a write filed as low is a write nobody is warned about.
+            riskLevel: isReadOnly ? .low : .medium,
+            confidence: 1.0,
+            // Per route and per app, never app-wide: a yes to one menu command is not a
+            // yes to every menu command the app has.
+            permissionKey: "contextDock.execute.\(bundleId).\(kind.rawValue).\(payload)",
+            debugReason: "Context Dock Chat route: \(kind.rawValue)")
+        // A listing must never be executed as a change.
+        candidate.operation = isReadOnly ? .read : .execute
+
+        switch kind {
+        case .adapterAction:
+            candidate.adapterActionID = payload
+        case .menuCommand:
+            candidate.menuPath = payload.split(separator: "\u{1}").map(String.init)
+        case .mcpTool:
+            let parts = payload.split(separator: "\u{1}").map(String.init)
+            // Half a payload would reach the runtime as a tool call with an empty name and
+            // come back reported as that tool being broken.
+            guard parts.count == 2 else { return nil }
+            candidate.inputValues["mcpServer"] = parts[0]
+            candidate.inputValues["mcpTool"] = parts[1]
+        case .cli, .skill, .model:
+            return nil
+        }
+        return candidate
+    }
+
     var asActionChoice: ActionChoice {
         ActionChoice(id: id, title: title, routeLabel: kind.routeLabel, appName: appName)
     }
@@ -440,32 +498,35 @@ enum ChatRouteResolver {
                 route.payload, purpose: query, modelRequiresApproval: !route.isReadOnly)
             return (result.success, result.output)
 
-        case .adapterAction:
-            guard let adapter = AppAdapterManager.shared.adapters.first(where: {
-                    $0.bundleId == route.bundleId
-                }),
-                let action = adapter.actions.first(where: { $0.id == route.payload })
-            else { return (false, "That action is no longer available in \(route.appName).") }
-            return await AppAdapterManager.shared.execute(
-                action, context: AXContextReader.shared.current,
-                targetBundleId: route.bundleId, query: query)
+        case .adapterAction, .mcpTool:
+            // Gate A's last row: these run through the one executor General AI uses, so
+            // they get its audit line and its task-run receipt instead of a private
+            // implementation that produced neither.
+            //
+            // `.accessPolicy` is the truthful grant source — the caller checked
+            // AppAccessPolicy in AppScopedChatService and showed the user no card. The
+            // executor reads that and leaves the adapter's own consent prompt in place,
+            // which is the only thing asking on this surface.
+            guard var candidate = route.asCandidate() else {
+                return (false, "That route can no longer be run.")
+            }
+            // The user's own words, for an adapter script that interpolates {query}.
+            candidate.inputValues["query"] = query
+            let outcome = await GeneralAIActionExecutor.shared.execute(
+                candidate, approval: .granted(.accessPolicy))
+            return (outcome.success, outcome.message)
 
         case .menuCommand:
+            // Deliberately still here. `runMenuPath` consults AppMenuConsentStore and
+            // prompts before a destructive menu command; the shared executor's
+            // .verifiedMenu route does not, so handing this over as-is would delete a
+            // consent step the user currently gets. The click itself is already canonical
+            // — AppAdapterManager now drives MenuExecutionCoordinator, the same one
+            // .verifiedMenu uses — so what is left to move is the consent, not the action.
             let path = route.payload.split(separator: "\u{1}").map(String.init)
             let result = await AppAdapterManager.shared.runMenuPath(
                 path, targetBundleId: route.bundleId, appName: route.appName)
             return (result.0, result.1)
-
-        case .mcpTool:
-            let parts = route.payload.split(separator: "\u{1}").map(String.init)
-            guard parts.count == 2 else { return (false, "") }
-            do {
-                let output = try await MCPRuntime.shared.callTool(
-                    bundleId: route.bundleId, server: parts[0], tool: parts[1], arguments: [:])
-                return (true, output)
-            } catch {
-                return (false, "\(parts[1]) failed: \(error.localizedDescription)")
-            }
 
         case .skill, .model:
             // Neither runs anything: the caller answers with the skill's instructions in

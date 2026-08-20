@@ -193,6 +193,21 @@ final class GeneralAIActionExecutor {
         }
     }
 
+    /// Whether the adapter's own approval prompt may be switched off for this execution.
+    ///
+    /// It may, and only, when the user has already been shown this exact action. General AI
+    /// raises a route-specific card, so re-prompting there is asking twice about one thing.
+    /// A caller whose authority came from `AppAccessPolicy` has shown the user nothing —
+    /// `AdapterActionConsentStore` is then the only thing standing between the model and a
+    /// destructive action, and suppressing it takes away the user's last say without
+    /// replacing it with anything.
+    static func suppressesAdapterPrompt(_ approval: ExecutionApproval) -> Bool {
+        switch approval.grantSource {
+        case .approvalCard, .userPickedButton: return true
+        case .accessPolicy, nil: return false
+        }
+    }
+
     /// Run a resolved candidate. `approval` says where the user's yes came from; see
     /// `ExecutionApproval`. Nothing below this line asks again, so nothing below this
     /// line may run before it holds.
@@ -223,7 +238,7 @@ final class GeneralAIActionExecutor {
         case .appLaunch:
             result = await executeAppLaunch(candidate)
         case .adapter:
-            result = await executeAdapterRoute(candidate)
+            result = await executeAdapterRoute(candidate, approval: approval)
         case .keyboardShortcut:
             result = await executeKeyboardShortcut(candidate)
         case .verifiedMenu:
@@ -495,7 +510,10 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Registered capability / adapter action
 
-    private func executeAdapterRoute(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    private func executeAdapterRoute(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
         // Registered capability (reminders.create, calendar.create, …) — validated and
         // run through the existing engine. `approved: true` is safe here because nothing
         // reaches this method until `execute` has satisfied its `approval:` contract;
@@ -536,12 +554,19 @@ final class GeneralAIActionExecutor {
             else {
                 return .init(success: false, message: "Adapter action is no longer available.")
             }
-            // The adapter's own prompt would be the second one: `execute` has
-            // already settled approval for this candidate.
-            action.requiresApproval = false
+            // The adapter's own prompt is a second prompt only when the caller already
+            // showed the user this exact action. Otherwise it is the only one there is.
+            if Self.suppressesAdapterPrompt(approval) {
+                action.requiresApproval = false
+            }
             let context = AXContextReader.shared.current
+            // An adapter script that interpolates {query} runs against whatever the user
+            // actually asked. The shared executor used to pass nothing, so a route moved
+            // here from ChatRouteResolver — which always passed it — would have run its
+            // script against an empty string.
             let (success, output) = await AppAdapterManager.shared.execute(
-                action, context: context, targetBundleId: bundleID)
+                action, context: context, targetBundleId: bundleID,
+                query: candidate.inputValues["query"] ?? "")
             let fallbackMessage = success ? "Ran \(candidate.title)." : "\(candidate.title) failed."
             return .init(success: success, message: output.isEmpty ? fallbackMessage : output)
         }

@@ -528,7 +528,7 @@ untested path. The two General AI sites that keep their own card keep it deliber
 they sequence `actionProgress` and `loadingStatus` around the prompt, and a single
 `execute` call cannot change the status line while the card is up.
 
-### 10b. Context Dock Chat through the shared executor — Gate A's last row
+### 10b. Context Dock Chat through the shared executor — Gate A's last row · **mostly done**
 
 Blocks three recorded items at once: §5 (one executor), §7 step 3 (`verifyCapability`
 unusable there because `ChatRoute` carries an action id or menu path, never a capability id
@@ -558,6 +558,54 @@ What is not mechanical, and would each be a regression if missed:
    terminal-browser became a two-and-a-half minute timeout.
 3. **Adapter query context.** `ChatRouteResolver` passes the user's `query` into
    `AppAdapterManager.execute`; the shared executor passes the candidate's title.
+
+**What was actually found on doing it**, beyond the three above:
+
+**The menu route was a blind click that could not fail.** `AppAdapterManager.runAction`'s
+`.menubar` branch ended:
+
+```swift
+AXActionResolver.shared.execute(menuPath: path, in: frontApp)
+return (true, "Done")
+```
+
+No check that the item exists, no check that it is enabled, no reading of what happened —
+`"Done"` for a greyed-out command, an absent command, or a click sent to the wrong app.
+Context Dock Chat's menu route ran through this, so the surface reported success it had
+never observed. This is the same class of defect as §3 and §9g, in the one place the audit
+had not looked, because the duplication was not two executors but **two menu-clicking
+implementations that disagreed about honesty**.
+
+Fixed by pointing that branch at `MenuExecutionCoordinator.executeVerifiedMenuAction` — the
+one `.verifiedMenu` already used. It verifies presence and enablement before clicking,
+tries the item's own shortcut first, and reports what happened. Every caller of a menubar
+adapter action gains this, not only chat. Some previously "successful" actions will start
+reporting failure; those were already failing, and only the report is new.
+
+**Adapter consent was about to be deleted.** `executeAdapterRoute` set
+`action.requiresApproval = false` unconditionally, which is right for General AI — it has
+already shown a card — and catastrophic for a surface that has not. Context Dock's adapter
+routes are gated by `AdapterActionConsentStore` and by nothing else; routing them in as-is
+would have removed the only thing asking. `suppressesAdapterPrompt(_:)` now reads 10a's
+grant source: a card or a user pick may suppress the adapter's prompt, `.accessPolicy` and
+`.ask` may not. This is the concrete payoff of 10a — the bug was invisible until approval
+became a value the executor could inspect.
+
+**Done:** `.adapterAction` and `.mcpTool` now run through `GeneralAIActionExecutor` with
+`.granted(.accessPolicy)`, which is the truthful source — `AppScopedChatService` checks
+`AppAccessPolicy` and shows no card. `ChatRoute.asCandidate()` is the conversion, and it
+returns nil for the kinds that must not be handed over. The user's query travels in
+`inputValues["query"]` so an adapter script reading `{query}` still gets it.
+
+**Still on its own path, deliberately:**
+
+- `.cli` — the TTY branch, as above. Unchanged.
+- `.menuCommand` — `runMenuPath` consults `AppMenuConsentStore` and prompts before a
+  destructive menu command; `.verifiedMenu` does not. Handing it over as-is would delete a
+  consent step the user currently gets. The click is already canonical after the fix above,
+  so what is left to move is the consent, not the action. That is 10b's remainder: give
+  `.verifiedMenu` the destructive-menu consent check, gated on grant source the same way
+  the adapter prompt now is.
 
 ### 10c. Route vocabularies — §4c
 

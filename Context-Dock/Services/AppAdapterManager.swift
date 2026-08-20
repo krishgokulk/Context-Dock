@@ -1051,13 +1051,35 @@ final class AppAdapterManager: ObservableObject {
 
         case .menubar:
             guard let path = action.menuPath else { return (false, "No menu path defined") }
+            // Counted before resolveOrLaunchTargetApp, which may launch the app: one that
+            // had to be started has not published its menu bar to accessibility by the
+            // time it reports itself launched, and needs the longer wait.
+            let wasRunning = targetBundleId.map { id in
+                NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == id && !$0.isTerminated
+                }
+            } ?? true
             let explicitTargetApp = await resolveOrLaunchTargetApp(for: targetBundleId)
             let targetApp = explicitTargetApp ?? AppDelegate.shared?.previousFrontmostApp
-            guard let frontApp = targetApp else {
+            guard let frontApp = targetApp, let bundleID = frontApp.bundleIdentifier else {
                 return (false, "No target app")
             }
-            AXActionResolver.shared.execute(menuPath: path, in: frontApp)
-            return (true, "Done")
+            // This was `AXActionResolver.execute(…)` followed by `return (true, "Done")` —
+            // a blind click that could not fail. Context Dock Chat reported "Done" for menu
+            // commands that were greyed out, absent from the app, or sent somewhere else
+            // entirely, and nothing downstream could tell the difference.
+            //
+            // The coordinator checks the item is present and enabled before clicking, tries
+            // the item's own shortcut first, and says what actually happened. It is the same
+            // one General AI's .verifiedMenu route uses, so the app now has one
+            // menu-clicking implementation instead of two that disagreed about honesty.
+            //
+            // Some previously "successful" actions will start reporting failure. Those were
+            // already failing; only the report is new.
+            return await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+                bundleIdentifier: bundleID,
+                path: path,
+                allowSlowMenuBar: !wasRunning)
 
         case .applescript:
             guard let script = action.script else { return (false, "No script defined") }
