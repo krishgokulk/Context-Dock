@@ -450,7 +450,7 @@ phrased as observation ("File exists at …"), so *"The outcome verification is 
 is the model naming the plumbing. Its description now says to report what was observed
 about the file and never that a verification ran.
 
-### 9j. The Brain stores assistant output as the user's notes
+### 9j. The Brain stores assistant output as the user's notes · **fixed**
 
 `show me my saved notes` returned, among five:
 
@@ -462,8 +462,41 @@ wrote, and it will be retrieved later as if they had. Two of the memory files on
 the same shape: `5a9cb05b-i-can-t-see-or-access-your-current-safari-page-i.md`,
 `7beb04af-i-cannot-undo-actions-or-run-commands-i-can-help.md`.
 
-Belongs to the memory work landed in `09aad81` / `68ff290`, not the control plane. Recorded
-because a memory layer that saves the assistant's apologies compounds them.
+**Root cause, and it was not the memory layer.** `submitNotepadAIPrompt` — the Notepad's
+ask-AI action — appends whatever the model returns into the note's `text` and saves it,
+including the error it writes itself on a thrown provider call:
+
+```swift
+reply = "⚠️ AI error: \(error.localizedDescription)"
+…
+store?.updateText(joined, for: targetID)
+```
+
+`QuickNoteMemoryMirror` then mirrors that note into `memory/notes/` faithfully. The mirror
+was doing its job; what it was given was not a note.
+
+`QuickNote` already states the invariant that was broken, in the comment on
+`chatMessages`: the sidecar conversation is kept separate from `text` so "an AI answer
+never overwrites or pollutes the editable note".
+
+**Fixed** with `AssistantNoteReply.isNoteContent(_:)`. Writing the note *is* the point of
+that action, so the rule is not "no AI text in notes" — it is that an error, an apology or
+a refusal is the assistant talking about itself, and goes to the sidecar via
+`appendChatMessage` instead. The discriminator is first person **plus an ability verb**,
+matched on whole words in the opening sentence: "I can't access your calendar" is a
+refusal, "I can't stop thinking about the launch date" is a note somebody asked for, and
+"already" contains "read".
+
+Four files already on disk are assistant output filed as user notes and are still there —
+they are the user's data to delete, not DoraX's:
+
+- `5a9cb05b-i-can-t-see-or-access-your-current-safari-page-i.md`
+- `7beb04af-i-cannot-undo-actions-or-run-commands-i-can-help.md`
+- `0c171fb5-ai-error-configure-a-shortcut-in-ai-settings-fir.md` (an error, with a
+  screenshot attached to it)
+- `c19f7c99-terminal-command-new-localization-command-purpos.md`
+
+Deleting the Quick Note removes the mirrored file with it.
 
 ### 9k. Permissions reports Not Authorized for access that works
 

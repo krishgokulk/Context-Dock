@@ -1848,8 +1848,22 @@ extension LauncherView {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
             }
             await MainActor.run {
-                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
                 let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Writing the note is the point of this action, but an error or a refusal
+                // is the assistant talking about itself — and once it is in `text` it is a
+                // note, mirrored into memory and returned later as something the user
+                // wrote. "I can't see or access your current Safari page" came back in a
+                // listing of their own saved notes that way.
+                //
+                // The sidecar is where that belongs: QuickNote keeps `chatMessages`
+                // separate from `text` precisely so an AI answer cannot pollute the note.
+                guard AssistantNoteReply.isNoteContent(body) else {
+                    store?.appendChatMessage(
+                        ChatMessage(role: .assistant, content: body), for: targetID)
+                    self.notepadAIGenerating = false
+                    return
+                }
+                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
                 let joined = existing.isEmpty ? body : existing + "\n\n" + body
                 store?.updateText(joined, for: targetID)
                 self.notepadAIGenerating = false
