@@ -498,7 +498,7 @@ they are the user's data to delete, not DoraX's:
 
 Deleting the Quick Note removes the mirrored file with it.
 
-### 9k. Permissions reports Not Authorized for access that works
+### 9k. Permissions reports Not Authorized for access that works · **fixed**
 
 Settings → Permissions shows Reminders, Photos, Contacts and Automation as **Not
 Authorized**, and Request Access produces no system prompt. Meanwhile `reminders.create`
@@ -519,6 +519,34 @@ without reaching EventKit. Instrumented either side of the call; the log will sh
 `reminders request begin` with no matching `end`.
 
 ---
+
+
+**Found, and it was never about TCC.** The file held *two* near-identical panes:
+`SystemPermissionsSettingsView` (105–349) and `SystemPermissionsSection` (350–590). The
+live screen is `PermissionsSettingsView` in `LegacySettingsContent.swift`, which embeds the
+**section**; the view was reachable from nothing but its own `#Preview`.
+
+Every fix from the previous pass — the modern pane id, `PermissionPrompt.describe`, the
+`os_log` around the Reminders request — went into the dead copy. The instrumentation was
+waiting for a click that could not reach it, which is why the log stayed empty through a
+session that ended with the user opening the privacy pane. Only `PermissionPrompt.openPane`
+logged, because the enum is shared.
+
+**The actual defect:** `refreshStatuses()` ran on `.onAppear` and nowhere else. Permissions
+are granted in System Settings — every row's button leads there — so the answer was read
+once, before the user left to change it, and never again. Grant Reminders, come back, and
+the row still says Not Authorized while `reminders.create` writes through EventKit in the
+same session. The screen was not wrong about the API; it was wrong about when it last
+asked.
+
+**Fixed:** the live section re-reads on `NSApplication.didBecomeActiveNotification`, so
+returning from System Settings updates it. `requestReminders` now reads the status back
+instead of trusting the returned Bool — a request that returns false because the user
+already answered elsewhere is not a denial — and carries the instrumentation that was
+stranded in the dead copy. The dead pane is deleted, 244 lines of it.
+
+The lesson is §4's, one layer up: duplicated code does not only rot, it absorbs fixes. A
+day was spent proving TCC was fine while the screen under test was never running.
 
 ## 10. What is left
 
