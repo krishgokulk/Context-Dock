@@ -245,6 +245,39 @@ final class MarkdownMemoryStore {
         }
     }
 
+    /// Appends distilled facts, each carrying where it came from.
+    ///
+    /// They go to their own file rather than into `preferences.md`. A fact the user typed
+    /// on purpose after "remember that" and a sentence a pattern matcher lifted out of a
+    /// conversation are not the same kind of claim, and mixing them would leave no way to
+    /// tell which is which — or to throw out the automatic ones without losing the
+    /// deliberate ones.
+    func appendDistilled(_ facts: [(fact: String, source: String)]) {
+        let url = root.appendingPathComponent("observed.md")
+        var content = (try? String(contentsOf: url, encoding: .utf8)) ?? """
+            # Observed
+
+            Sentences you wrote in conversations, kept verbatim. Nothing here is a summary \
+            or an inference — if a line is wrong, it is a line you typed in a context that \
+            did not survive, and deleting it is the fix.
+
+
+            """
+        var added = 0
+        for entry in facts {
+            let line = "- \(entry.fact) _(from “\(entry.source)”)_"
+            // Compare on the fact alone: the same statement made in two threads is one
+            // thing known twice, not two things.
+            guard !content.localizedCaseInsensitiveContains(entry.fact) else { continue }
+            if !content.hasSuffix("\n") { content += "\n" }
+            content += line + "\n"
+            added += 1
+        }
+        guard added > 0 else { return }
+        try? fileManager.createDirectory(at: root, withIntermediateDirectories: true)
+        try? content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
     func cacheFromCommand(_ query: String) -> String? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = trimmed.lowercased()
@@ -295,7 +328,7 @@ final class MarkdownMemoryStore {
         let terms = meaningfulTerms(subject)
         guard !terms.isEmpty else { return "Tell me which saved fact to forget." }
 
-        var files = ["preferences.md", "people.md", "projects.md", "tasks.md"]
+        var files = ["preferences.md", "people.md", "projects.md", "tasks.md", "observed.md"]
             .map { root.appendingPathComponent($0) }
         if let appBundleID, !appBundleID.isEmpty {
             files.insert(root.appendingPathComponent("apps/\(safeFilename(appBundleID)).md"), at: 0)
@@ -400,7 +433,7 @@ final class MarkdownMemoryStore {
         let queryTerms = meaningfulTerms(query)
         var candidates: [(url: URL, priority: Int)] = []
 
-        for filename in ["preferences.md", "people.md", "projects.md", "tasks.md"] {
+        for filename in ["preferences.md", "people.md", "projects.md", "tasks.md", "observed.md"] {
             candidates.append((root.appendingPathComponent(filename), filename == "preferences.md" ? 4 : 1))
         }
         if let bundleID = appBundleID, !bundleID.isEmpty {
@@ -634,6 +667,7 @@ final class MarkdownMemoryStore {
                 - projects.md — active projects, folders, repositories, and goals
                 - tasks.md — commitments and next actions
                 - profile.md — who the user is; standing context for every conversation
+                - observed.md — sentences the user wrote, kept verbatim; never a summary
                 - notes/ — Quick Notes, mirrored as markdown
                 - daily/ — what actually ran each day, from task-run receipts
                 - apps/ — app-specific memory, keyed by bundle identifier

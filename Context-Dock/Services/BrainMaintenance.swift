@@ -67,6 +67,10 @@ final class BrainMaintenance {
         }
         UserDefaults.standard.set(Date(), forKey: lastRunKey)
 
+        // Reads the last two days of the user's own messages. No model call, so this is
+        // free and cannot invent anything.
+        ConversationDistiller.distillRecentConversations()
+
         Task.detached(priority: .utility) {
             DailyBrief.rebuildToday()
             if let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date()) {
