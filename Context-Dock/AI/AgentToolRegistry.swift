@@ -1562,7 +1562,7 @@ final class AgentToolRegistry {
                         output: "\(appName) has not granted menu control.",
                         displayCommand: "run_menu_command(\(appName))")
                 }
-                let outcome = await GeneralAIActionExecutor.shared.execute(candidate)
+                let outcome = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.accessPolicy))
                 guard outcome.success else {
                     return AgentToolResult(
                         success: false,

@@ -476,7 +476,7 @@ without reaching EventKit. Instrumented either side of the call; the log will sh
 
 Ordered. Each line says what it costs and what it unblocks.
 
-### 10a. The shared executor's approval contract — **do this first, it is small**
+### 10a. The shared executor's approval contract · **fixed**
 
 `GeneralAIActionExecutor` assumes its caller already asked the user. Four places say so:
 
@@ -491,9 +491,42 @@ That is true of General AI, which raises its own route-specific card before call
 not a property of the executor, it is a property of one caller — and nothing in the
 signature says so. Any second surface routed into it inherits "already approved" for free.
 
-Make it explicit: an `approval:` parameter the caller must state (`.alreadyGranted` /
-`.required`), rather than a comment. No behaviour change for General AI. Small, and it is
-the thing that makes 10b safe rather than dangerous.
+It was worse than the comment suggested. The gate itself — check the standing grant, raise
+the card, honour a cancel — was **copy-pasted into four callers**, all of them in
+`LauncherView+GeneralAIActions.swift` (`:616`, `:785`, `:1061`, and a read-only variant at
+`:1649`). The executor had no gate at all. And `GeneralAIActionApprovalCard()` is rendered
+at exactly one place, `LauncherView+AIChat.swift:1811`, inside the `aiMode` block — so a
+caller on any other surface would not merely skip the gate, it would have nowhere to draw
+the card even if it tried.
+
+**Fixed.** `execute(_:approval:)` now takes an `ExecutionApproval` with **no default**:
+
+```swift
+enum ExecutionApproval {
+    case granted(GrantSource)   // .approvalCard | .userPickedButton | .accessPolicy
+    case ask                    // executor raises the card itself and waits
+}
+```
+
+- The gate moved into `execute`. `.ask` checks the standing grant, raises the card, and
+  returns `.cancelled(routeLabel:)` on a refusal.
+- `GeneralAIActionResult.wasCancelled` separates "the user declined" from "the route ran
+  and failed". Showing one as the other reads as DoraX breaking when it obeyed.
+- `AIAuditHistory` now records *which* yes each execution ran on
+  (`[approved via approval card]`), so a caller claiming an approval it never collected is
+  visible after the fact instead of indistinguishable from one that did.
+- `GeneralAIActionExecutor.requiresPrompt(_:permissionKey:)` is pure and static, so the
+  gate is testable without a window — `ExecutionApprovalTests`, 9 tests, mutation-checked
+  (deleting the standing-grant branch fails 2 of them).
+- All six call sites now state their source: `.userPickedButton` for a picked route,
+  `.approvalCard` where the caller genuinely raises one, `.accessPolicy` for the agent's
+  menu tool (gated by `AppAccessPolicy`, not re-asked per click), and `.ask` from
+  `runCompoundStep`, which has no progress strip to sequence around a prompt.
+
+`.ask` is exercised in production by that last one, so 10b is not the first user of an
+untested path. The two General AI sites that keep their own card keep it deliberately:
+they sequence `actionProgress` and `loadingStatus` around the prompt, and a single
+`execute` call cannot change the status line while the card is up.
 
 ### 10b. Context Dock Chat through the shared executor — Gate A's last row
 
@@ -513,8 +546,12 @@ and a payload:
 
 What is not mechanical, and would each be a regression if missed:
 
-1. **Approval.** See 10a. Context Dock never shows General AI's card, so it must not inherit
-   the assumption that one was shown.
+1. **Approval.** Handled by 10a, but not automatically: `execute(_:approval:)` has no
+   default, so the Context Dock call has to state a source. `.ask` is the right answer for
+   a surface with no card of its own — and it obliges Context Dock's chat view to render
+   `GeneralAIActionApprovalCard()`, which today only `LauncherView+AIChat.swift:1811` does,
+   inside the `aiMode` block. Without that one line the request sits for 60 seconds and
+   comes back cancelled.
 2. **The CLI terminal branch.** `ChatRouteResolver.run` diverts commands that need a TTY into
    the thread's own terminal. The shared executor has no such branch, and running one
    through `terminal.runCommand` is the bug already recorded there: a working
@@ -541,6 +578,6 @@ stays a separate axis by design.
 
 ### Not doing
 
-Bounded loops, graph orchestration, scheduled autonomy, multi-agent. Gate A first, and Gate
-A is 10a plus 10b.
+Bounded loops, graph orchestration, scheduled autonomy, multi-agent. Gate A first, and with
+10a done Gate A is 10b alone.
 

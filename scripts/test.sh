@@ -21,6 +21,16 @@ DERIVED_DATA_DIR="$ROOT_DIR/.build/XcodeDerivedData"
 find "$ROOT_DIR/Context-Dock" "$ROOT_DIR/Context-DockExtension" "$ROOT_DIR/Base.lproj" \
   -name $'Icon\r' -type f -delete 2>/dev/null || true
 xattr -rc "$ROOT_DIR/Context-Dock" "$ROOT_DIR/Context-DockExtension" "$ROOT_DIR/Base.lproj" 2>/dev/null || true
+# …including the already-built product, which build-debug.sh cleans and this script did
+# not. Cleaning only the source is not enough: the detritus that fails codesign is the
+# copy sitting in Contents/Resources from an earlier build, and an incremental build has
+# no reason to touch it. The suite failed to build with "resource fork, Finder
+# information, or similar detritus not allowed" while ./scripts/build-debug.sh on the very
+# same tree succeeded, purely because of this missing block.
+if [ -d "$DERIVED_DATA_DIR/Build/Products" ]; then
+  find "$DERIVED_DATA_DIR/Build/Products" \( -name 'Icon' -o -name $'Icon\r' \) -type f -delete 2>/dev/null || true
+  xattr -rc "$DERIVED_DATA_DIR/Build/Products" 2>/dev/null || true
+fi
 
 xcodebuild test \
   -project "$ROOT_DIR/Context-Dock.xcodeproj" \

@@ -1,9 +1,12 @@
 // GeneralAIActionExecutor.swift
 // Context-Dock
 //
-// Executes a DoraXActionCandidate produced by GeneralAIActionResolver, after
-// first-run approval. Every route validates before acting and reports honest
-// results — General Chat may only claim "done" when an executor returns success.
+// Executes a DoraXActionCandidate produced by GeneralAIActionResolver. Approval is part
+// of the signature, not an assumption about who is calling: `execute(_:approval:)` takes
+// an `ExecutionApproval` with no default, so either the caller states where the user's
+// yes came from or the executor raises the card itself. Every route validates before
+// acting and reports honest results — a surface may only claim "done" when an executor
+// returns success.
 //
 // Route mapping:
 //   .adapter          → CapabilityRegistry executor (via AIExecutionEngine) or AdapterAction
@@ -94,11 +97,79 @@ final class GeneralAIActionApprovalCenter: ObservableObject {
     }
 }
 
+// MARK: - Approval contract
+
+/// Where the user's yes for this execution came from — stated by the caller, at the call.
+///
+/// This used to be a comment. `execute` passed `approved: true` into the execution engine
+/// at three places and set `action.requiresApproval = false` at a fourth, on the strength
+/// of one line three call sites deep:
+///
+///     // General Chat already showed its own approval.
+///
+/// That was true of General AI Chat, which raises its own route-specific card before
+/// calling. It was never true of the executor. A second surface routed through it would
+/// inherit "already approved" for free — no card, no error, no trace.
+///
+/// The argument has no default on purpose. A new caller has to write down which of these
+/// it is, and the wrong answer is a visible claim in the audit history rather than an
+/// absence nobody can see.
+enum ExecutionApproval: Equatable {
+    /// The user has already said yes to this exact action, and the caller says how.
+    case granted(GrantSource)
+
+    /// Nobody has asked yet. `execute` raises the approval card itself and waits.
+    ///
+    /// The card is `GeneralAIActionApprovalCard`, driven by `GeneralAIActionApprovalCenter`.
+    /// A surface that passes `.ask` **must render that card**, or the request sits until
+    /// its 60-second expiry and comes back cancelled.
+    case ask
+
+    enum GrantSource: String, CaseIterable {
+        /// The caller ran `GeneralAIActionApprovalCenter` and got back something other
+        /// than `.cancel`.
+        case approvalCard
+        /// The user clicked a button that named this action — picking one of several
+        /// offered routes is itself the yes.
+        case userPickedButton
+        /// The route class is permitted outright at this app's access level, and the
+        /// caller checked `AppAccessPolicy` before calling. Menu control granted to an
+        /// app is not re-asked per click.
+        case accessPolicy
+
+        var auditLabel: String {
+            switch self {
+            case .approvalCard: return "approval card"
+            case .userPickedButton: return "user picked this action"
+            case .accessPolicy: return "app access policy"
+            }
+        }
+    }
+
+    var grantSource: GrantSource? {
+        switch self {
+        case .granted(let source): return source
+        case .ask: return nil
+        }
+    }
+}
+
 // MARK: - Executor
 
 struct GeneralAIActionResult {
     let success: Bool
     let message: String
+    /// The user declined, as opposed to the route running and failing. Callers print a
+    /// different sentence for each: "Cancelled — nothing was executed." is not an error
+    /// report, and showing one as the other reads as DoraX breaking when it obeyed.
+    var wasCancelled: Bool = false
+
+    static func cancelled(routeLabel: String) -> GeneralAIActionResult {
+        GeneralAIActionResult(
+            success: false,
+            message: "Cancelled \(routeLabel) — nothing was executed.",
+            wasCancelled: true)
+    }
 }
 
 @MainActor
@@ -107,7 +178,46 @@ final class GeneralAIActionExecutor {
 
     private init() {}
 
-    func execute(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    /// Whether `approval` still owes the user a card before anything runs.
+    ///
+    /// Pure and static so the gate can be tested without a window: it is the only thing
+    /// standing between a caller that forgot to ask and an action that runs anyway.
+    static func requiresPrompt(_ approval: ExecutionApproval, permissionKey: String) -> Bool {
+        switch approval {
+        case .granted:
+            return false
+        case .ask:
+            // A standing "Always Allow" is a real prior yes from this user, scoped to this
+            // exact permission key — never to the app or the route class.
+            return !GeneralAIActionApprovalStore.isAlwaysAllowed(permissionKey)
+        }
+    }
+
+    /// Run a resolved candidate. `approval` says where the user's yes came from; see
+    /// `ExecutionApproval`. Nothing below this line asks again, so nothing below this
+    /// line may run before it holds.
+    func execute(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
+        var grantSource = approval.grantSource
+        if Self.requiresPrompt(approval, permissionKey: candidate.permissionKey) {
+            let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
+            guard decision != .cancel else {
+                AIAuditHistory.shared.record(
+                    capabilityID: candidate.permissionKey,
+                    risk: candidate.riskLevel,
+                    approved: false,
+                    success: false,
+                    summary: "Declined at the approval card — nothing ran.")
+                return .cancelled(routeLabel: candidate.routeLabel)
+            }
+            grantSource = .approvalCard
+        } else if case .ask = approval {
+            // Reached only via a standing grant; record it as the card it stands in for.
+            grantSource = .approvalCard
+        }
+
         let result: GeneralAIActionResult
         switch candidate.route {
         case .appLaunch:
@@ -131,12 +241,15 @@ final class GeneralAIActionExecutor {
         case .api:
             result = executeAPI(candidate)
         }
+        // The audit line now says which yes this ran on, so a caller that claimed one it
+        // never collected is visible after the fact instead of indistinguishable.
+        let provenance = grantSource?.auditLabel ?? "unstated"
         AIAuditHistory.shared.record(
             capabilityID: candidate.permissionKey,
             risk: candidate.riskLevel,
             approved: true,
             success: result.success,
-            summary: result.message
+            summary: "\(result.message) [approved via \(provenance)]"
         )
         return result
     }
@@ -384,8 +497,9 @@ final class GeneralAIActionExecutor {
 
     private func executeAdapterRoute(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
         // Registered capability (reminders.create, calendar.create, …) — validated and
-        // run through the existing engine. Approval already happened in General Chat,
-        // so pass approved: true; .critical is still blocked inside execute().
+        // run through the existing engine. `approved: true` is safe here because nothing
+        // reaches this method until `execute` has satisfied its `approval:` contract;
+        // .critical is still hard-blocked inside AIExecutionEngine regardless.
         if let capabilityID = candidate.capabilityID {
             guard CapabilityRegistry.shared.capability(id: capabilityID) != nil else {
                 return .init(success: false, message: "Capability \(capabilityID) is not registered.")
@@ -422,7 +536,8 @@ final class GeneralAIActionExecutor {
             else {
                 return .init(success: false, message: "Adapter action is no longer available.")
             }
-            // General Chat already showed its own route-specific approval.
+            // The adapter's own prompt would be the second one: `execute` has
+            // already settled approval for this candidate.
             action.requiresApproval = false
             let context = AXContextReader.shared.current
             let (success, output) = await AppAdapterManager.shared.execute(

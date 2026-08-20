@@ -162,7 +162,7 @@ extension LauncherView {
             } else {
                 await MainActor.run { dockTraceStep("Running \(candidate.title)…") }
             }
-            let result = await GeneralAIActionExecutor.shared.execute(candidate)
+            let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.userPickedButton))
             await MainActor.run {
                 dockTraceStep(result.success ? "Ran \(candidate.title)" : "\(candidate.title) failed")
                 let route = candidate.menuPath?.joined(separator: " → ")
@@ -613,11 +613,9 @@ extension LauncherView {
         }
         guard let candidate else { return false }
 
-        if !GeneralAIActionApprovalStore.isAlwaysAllowed(candidate.permissionKey) {
-            let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
-            if decision == .cancel { return false }
-        }
-        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        // No card of its own: a compound step has no progress strip to sequence around
+        // the prompt, so it hands approval to the executor and lets the shared gate ask.
+        let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .ask)
         return result.success
     }
 
@@ -799,7 +797,7 @@ extension LauncherView {
             aiMode.actionProgress?.advance(to: "Executing")
             aiMode.loadingStatus = generalAIExecutionStatus(for: candidate)
         }
-        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.approvalCard))
 
         if result.success {
             // Stage 7 — verify the write actually landed before claiming success.
@@ -1071,7 +1069,7 @@ extension LauncherView {
         }
 
         await MainActor.run { aiMode.loadingStatus = "Running AppleScript…" }
-        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.approvalCard))
         await MainActor.run {
             aiMode.loadingStatus = nil
             aiMode.pendingToolChips = ["AppleScript · automation model"]
@@ -1480,7 +1478,7 @@ extension LauncherView {
                 return .failure("The CLI read route has no command.")
             }
             await MainActor.run { aiMode.loadingStatus = "Running \(appLabel) CLI read…" }
-            let result = await GeneralAIActionExecutor.shared.execute(candidate)
+            let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.approvalCard))
             await MainActor.run { aiMode.loadingStatus = nil }
             guard result.success else { return .failure(result.message) }
             let trimmed = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
