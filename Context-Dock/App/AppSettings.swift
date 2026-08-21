@@ -701,6 +701,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     case googleGemini = "googleGemini"
     case openAI = "openAI"
     case anthropic = "anthropic"
+    case claudeCode = "claudeCode"
     case claudeBridge = "claudeBridge"
     case chatGPTBridge = "chatGPTBridge"
     case ollama = "ollama"
@@ -716,6 +717,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "Google Gemini"
         case .openAI: return "ChatGPT (OpenAI)"
         case .anthropic: return "Claude (Anthropic)"
+        case .claudeCode: return "Claude Subscription"
         case .claudeBridge: return "Claude Pro (via Bridge)"
         case .chatGPTBridge: return "ChatGPT Plus (via Bridge)"
         case .ollama: return "Ollama (Local)"
@@ -740,6 +742,10 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .openAI, .anthropic, .googleGemini, .ollama, .openAICompatible, .kimi,
              .claudeBridge, .chatGPTBridge:
             return true
+        // The CLI is an agent with its own tools, and DoraX deliberately runs it with none.
+        // It answers; the app acts. Tool calls take the plain path.
+        case .claudeCode:
+            return false
         }
     }
 
@@ -749,6 +755,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "Gemini"
         case .openAI: return "ChatGPT"
         case .anthropic: return "Claude"
+        case .claudeCode: return "Claude"
         case .claudeBridge: return "Claude Pro"
         case .chatGPTBridge: return "ChatGPT Plus"
         case .ollama: return "Ollama"
@@ -766,12 +773,15 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "Google's Gemini AI models. Requires API key."
         case .openAI: return "OpenAI's GPT models. Requires API key."
         case .anthropic: return "Anthropic's Claude models. Requires API key."
+        case .claudeCode:
+            return
+                "Sign in once with the Claude app on this Mac. Uses your Pro or Max subscription directly — no proxy, no API key, no extra billing."
         case .claudeBridge:
             return
-                "Use your existing Claude Pro subscription via a local bridge (e.g. VibeProxy). No extra billing."
+                "Route a subscription through a local OpenAI-compatible bridge you run yourself. Advanced."
         case .chatGPTBridge:
             return
-                "Use your existing ChatGPT Plus subscription via a local bridge (e.g. VibeProxy). No extra billing."
+                "Route a ChatGPT subscription through a local OpenAI-compatible bridge you run yourself. Advanced."
         case .ollama: return "Run local AI models with Ollama. Free and private."
         case .openAICompatible:
             return "Use LM Studio, OpenRouter, or another OpenAI-compatible endpoint."
@@ -786,6 +796,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "sparkles"
         case .openAI: return "bubble.left.and.bubble.right"
         case .anthropic: return "brain.head.profile"
+        case .claudeCode: return "sparkle"
         case .claudeBridge: return "arrow.triangle.2.circlepath.circle.fill"
         case .chatGPTBridge: return "arrow.triangle.2.circlepath.circle"
         case .ollama: return "server.rack"
@@ -798,7 +809,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     var requiresAPIKey: Bool {
         switch self {
         case .onDevice, .ollama, .openAICompatible, .shortcuts,
-            .claudeBridge, .chatGPTBridge:
+            .claudeBridge, .chatGPTBridge, .claudeCode:
             return false
         case .googleGemini, .openAI, .anthropic, .kimi: return true
         }
@@ -819,7 +830,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .openAI, .anthropic, .googleGemini, .kimi:
             return .official
-        case .claudeBridge, .chatGPTBridge:
+        case .claudeCode, .claudeBridge, .chatGPTBridge:
             return .bridge
         case .onDevice, .ollama, .shortcuts:
             return .local
@@ -873,6 +884,10 @@ class AppSettings: ObservableObject {
     /// instructions, not questions, and there is nothing for a model to decide.
     @AppStorage("agentModelFirstRouting") var agentModelFirstRouting: Bool = true
 
+    /// Fetch an app's own product page once per app version, to ground answers about
+    /// what the app is. Off by default: it is the only part of app knowledge that
+    /// leaves this machine, and it only ever fetches an address the user configured.
+    @AppStorage("appWebsiteKnowledgeEnabled") var appWebsiteKnowledgeEnabled: Bool = false
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =
@@ -1099,15 +1114,29 @@ class AppSettings: ObservableObject {
         "http://127.0.0.1:1337/v1"
     @AppStorage("appleScriptModelID") var appleScriptModelID: String = ""
     // Subscription bridge endpoints (VibeProxy default: localhost:8317)
+    /// Model alias handed to the Claude CLI: "opus", "sonnet", "haiku", or empty for the
+    /// plan's default. An alias rather than an id, so a retired model cannot strand it.
+    @AppStorage("claudeCodeModel") var claudeCodeModel: String = ""
     @AppStorage("claudeBridgeEndpoint") var claudeBridgeEndpoint: String =
         "http://localhost:8317/v1"
     // claude-3-5-sonnet-20241022 was retired in Oct 2025 and 404s on the real API; bridges
     // that pass the model string through were failing on first use with a stale default.
+    //
+    // The model also has to be one the bridge can actually serve. VibeProxy applies a
+    // `clear_thinking_20251015` context strategy to everything it forwards, and that
+    // strategy is rejected outright unless thinking is enabled — so every Claude model that
+    // does not think adaptively by default comes back
+    // "`clear_thinking_20251015` strategy requires `thinking` to be enabled or adaptive"
+    // on the very first message, with the bridge running and reachable the whole time.
     @AppStorage("claudeBridgeModelID") var claudeBridgeModelID: String =
-        "claude-opus-4-8"
+        AppSettings.defaultClaudeBridgeModelID
     @AppStorage("chatGPTBridgeEndpoint") var chatGPTBridgeEndpoint: String =
         "http://localhost:8317/v1"
-    @AppStorage("chatGPTBridgeModelID") var chatGPTBridgeModelID: String = "gpt-4o"
+    // The bridge serves the models the ChatGPT *subscription* exposes, which are not the
+    // API's catalogue: gpt-4o is not among them and comes back "unknown provider for model
+    // gpt-4o". Anything defaulted to an API model name fails before it sends a word.
+    @AppStorage("chatGPTBridgeModelID") var chatGPTBridgeModelID: String =
+        AppSettings.defaultChatGPTBridgeModelID
     @AppStorage("ollamaModelsData") private var ollamaModelsData: Data = Data()
     @AppStorage("aiChatHistoryData") private var aiChatHistoryData: Data = Data()
 
@@ -1828,8 +1857,42 @@ class AppSettings: ObservableObject {
     }
     var selectionScopeHotkeyEnabled: Bool { _selectionScopeHotkeyKeyCode != 0 }
 
+    /// Adaptive thinking is on by default here, which is what lets it pass through a bridge
+    /// that requires it.
+    static let defaultClaudeBridgeModelID = "claude-opus-5"
+
+    static let defaultChatGPTBridgeModelID = "gpt-5.4"
+
+    /// API model names the subscription bridge does not serve.
+    private static let bridgeModelsNotOnSubscription: Set<String> = [
+        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "gpt-4.1",
+    ]
+
+    /// Bridge models that cannot answer through VibeProxy, whatever the endpoint says.
+    /// Held as data rather than fixed in the default alone: changing the default does
+    /// nothing for anyone who already has one of these saved, which is everyone who used
+    /// the bridge before today.
+    private static let bridgeModelsRequiringThinking: Set<String> = [
+        "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+        "claude-opus-4-5-20251101", "claude-opus-4-1-20250805", "claude-opus-4-20250514",
+        "claude-sonnet-4-6", "claude-sonnet-4-5-20250929", "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+    ]
+
+    private func migrateClaudeBridgeModelIfUnusable() {
+        guard Self.bridgeModelsRequiringThinking.contains(claudeBridgeModelID) else { return }
+        claudeBridgeModelID = Self.defaultClaudeBridgeModelID
+    }
+
+    private func migrateChatGPTBridgeModelIfUnusable() {
+        guard Self.bridgeModelsNotOnSubscription.contains(chatGPTBridgeModelID) else { return }
+        chatGPTBridgeModelID = Self.defaultChatGPTBridgeModelID
+    }
+
     init() {
         migrateAIKeysToKeychain()
+        migrateClaudeBridgeModelIfUnusable()
+        migrateChatGPTBridgeModelIfUnusable()
         loadPinnedApps()
         loadSearchDirectories()
         loadOllamaModels()
@@ -2228,6 +2291,9 @@ class AppSettings: ObservableObject {
             return !openAICompatibleEndpoint.isEmpty && !openAICompatibleModelID.isEmpty
         case .kimi:
             return !kimiAPIKey.isEmpty && !selectedKimiModel.isEmpty
+        case .claudeCode:
+            // Nothing to configure: it is ready exactly when the CLI is on the machine.
+            return ClaudeCodeCLIService.isInstalled
         case .claudeBridge:
             return !claudeBridgeEndpoint.isEmpty && !claudeBridgeModelID.isEmpty
         case .chatGPTBridge:

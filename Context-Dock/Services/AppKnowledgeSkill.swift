@@ -48,7 +48,8 @@ enum AppKnowledgeSkill {
         appName: String,
         version: String,
         helpTitles: [String],
-        capabilities: Capabilities
+        capabilities: Capabilities,
+        websiteKnowledge: String? = nil
     ) -> AdapterSkill? {
         let topics = cleanedTopics(helpTitles)
         // Nothing learned and nothing granted: a skill of empty headings is worse than no
@@ -85,6 +86,19 @@ enum AppKnowledgeSkill {
 
                 """
             for topic in topics { body += "- \(topic)\n" }
+        }
+
+        if let websiteKnowledge,
+            !websiteKnowledge.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body += """
+
+                What the makers of \(appName) say about it, from their own product page.
+                This is marketing copy as much as documentation — treat it as what the
+                product claims to be, not as proof of what it does on this Mac:
+
+                \(websiteKnowledge)
+
+                """
         }
 
         body += """

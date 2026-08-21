@@ -25,20 +25,46 @@ enum AppKnowledgeSkillRefresher {
     }
 
     static func refresh(bundleId: String, appName: String) {
+        refresh(bundleId: bundleId, appName: appName, websiteKnowledge: nil)
+
+        // The product page, when the user asked for it and told us where it is. Fetched
+        // after the local skill is already in place, so an unreachable page delays nothing
+        // and a switched-off setting costs nothing.
+        guard AppSettings.shared.appWebsiteKnowledgeEnabled,
+            let website = AppAdapterManager.shared.adapter(for: bundleId)?.website,
+            AppWebsiteKnowledge.fetchableURL(from: website) != nil
+        else { return }
+        let version = installedVersion(bundleId: bundleId)
+        Task {
+            guard let knowledge = await AppWebsiteKnowledge.knowledge(
+                bundleId: bundleId, version: version, website: website)
+            else { return }
+            await MainActor.run {
+                refresh(bundleId: bundleId, appName: appName, websiteKnowledge: knowledge)
+            }
+        }
+    }
+
+    private static func refresh(
+        bundleId: String, appName: String, websiteKnowledge: String?
+    ) {
         let version = installedVersion(bundleId: bundleId)
         let existing = SkillStore.shared.skills(for: bundleId)
             .first { $0.id == AppKnowledgeSkill.id(for: bundleId) }
 
         // The app has not changed, so neither has what we know about it. Re-writing on
-        // every launch would also throw away any edit the user made to the text.
-        if let existing, !version.isEmpty, existing.version == version { return }
+        // every launch would also throw away any edit the user made to the text. A page
+        // that has just arrived is new knowledge, so it passes.
+        if let existing, !version.isEmpty, existing.version == version,
+            websiteKnowledge == nil { return }
 
         guard var skill = AppKnowledgeSkill.make(
             bundleId: bundleId,
             appName: appName,
             version: version,
             helpTitles: helpTitles(bundleId: bundleId, appName: appName),
-            capabilities: capabilities(bundleId: bundleId, appName: appName))
+            capabilities: capabilities(bundleId: bundleId, appName: appName),
+            websiteKnowledge: websiteKnowledge)
         else { return }
 
         // A skill the user switched off stays off through a refresh; the refresh is about

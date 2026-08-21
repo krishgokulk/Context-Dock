@@ -180,19 +180,28 @@ struct AppAdapter: Identifiable, Codable {
     var isBuiltIn: Bool
     var actions: [AdapterAction]
     var contextReaders: [AdapterContextReader]
+    /// The product's own page, when the user has told us where it is.
+    ///
+    /// Never guessed from the bundle id: deriving "microsoft.com" from
+    /// com.microsoft.VSCode would send a request somewhere the user never named. Absent
+    /// unless configured, and only read when app-website knowledge is switched on.
+    var website: String?
     /// Non-codable: set at load time — path to the JSON file on disk (user adapters only)
     var sourceFileURL: URL?
 
     init(id: String, appName: String, bundleId: String, icon: String,
          isEnabled: Bool = true, isBuiltIn: Bool = true,
-         actions: [AdapterAction], contextReaders: [AdapterContextReader] = []) {
+         actions: [AdapterAction], contextReaders: [AdapterContextReader] = [],
+         website: String? = nil) {
         self.id = id; self.appName = appName; self.bundleId = bundleId
         self.icon = icon; self.isEnabled = isEnabled; self.isBuiltIn = isBuiltIn
         self.actions = actions; self.contextReaders = contextReaders
+        self.website = website
     }
 
     enum CodingKeys: String, CodingKey {
         case id, appName, bundleId, icon, isEnabled, isBuiltIn, actions, contextReaders
+        case website
     }
 
     // Tolerant decode: AI-generated packs (Adapter Pack Builder) legitimately omit
@@ -213,6 +222,7 @@ struct AppAdapter: Identifiable, Codable {
         isBuiltIn = try c.decodeIfPresent(Bool.self, forKey: .isBuiltIn) ?? false
         actions = try c.decodeIfPresent([AdapterAction].self, forKey: .actions) ?? []
         contextReaders = try c.decodeIfPresent([AdapterContextReader].self, forKey: .contextReaders) ?? []
+        website = try c.decodeIfPresent(String.self, forKey: .website)
     }
 }
 
