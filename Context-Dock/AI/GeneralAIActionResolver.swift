@@ -913,6 +913,46 @@ final class GeneralAIActionResolver {
         return (target.name, target.bundleId)
     }
 
+
+    // MARK: - App names that are also English
+
+    /// Nouns a person owns *inside* their machine. When one of these follows a possessive,
+    /// the sentence is about the user's own data, not about an app that happens to be
+    /// named like the phrase.
+    private static let possessedDataNouns: Set<String> = [
+        "note", "notes", "bookmark", "bookmarks", "file", "files", "folder", "folders",
+        "reminder", "reminders", "email", "emails", "mail", "tab", "tabs", "photo",
+        "photos", "document", "documents", "doc", "docs", "message", "messages",
+        "download", "downloads", "password", "passwords", "screenshot", "screenshots",
+        "calendar", "event", "events", "project", "projects", "task", "tasks",
+    ]
+
+    /// Whether an app-name match is really a possessive English phrase.
+    ///
+    /// "find my bookmarks note and summarise that" named no app. It used a possessive —
+    /// find / my / bookmarks note — but "Find My" is installed, `wordPhraseOffset` finds it
+    /// at position 0, and ranking is leftmost-first, so it beat the word "note" further
+    /// along the sentence and the user was asked to enable Find My.
+    ///
+    /// Not a special case for one app: the test is structural. A matched phrase ending in a
+    /// possessive pronoun, followed by something the user owns on this machine, is English.
+    /// Followed by anything else — a device, a person, nothing at all — it is the app, so
+    /// "find my iphone" and "open Find My" keep working.
+    static func isPossessiveEnglish(_ lowered: String, phrase: String, start: Int) -> Bool {
+        let pronouns: Set<String> = ["my", "our", "your"]
+        guard let last = phrase.split(separator: " ").last.map(String.init),
+            pronouns.contains(last)
+        else { return false }
+
+        let afterIndex = lowered.index(
+            lowered.startIndex, offsetBy: min(start + phrase.count, lowered.count))
+        let remainder = lowered[afterIndex...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let next = remainder.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).first
+        else { return false }
+        return possessedDataNouns.contains(String(next))
+    }
+
     private func resolveTargetApp(in lowered: String) -> TargetApp? {
         // Every name that appears in the sentence competes, whether it came from the alias
         // table or from the installed-apps catalog.
@@ -960,6 +1000,12 @@ final class GeneralAIActionResolver {
                 Match(
                     start: offset, matchedLength: name.count, name: entry.name,
                     bundleId: entry.bundleId, matchedPhrase: name))
+        }
+
+        // Drop the ones that are only English. Done after collection rather than inside
+        // each loop so alias and catalog matches are judged by the same rule.
+        matches.removeAll {
+            Self.isPossessiveEnglish(lowered, phrase: $0.matchedPhrase, start: $0.start)
         }
 
         let best = matches.min { lhs, rhs in
