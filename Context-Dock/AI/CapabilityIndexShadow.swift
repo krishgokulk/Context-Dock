@@ -64,6 +64,9 @@ enum CapabilityIndexShadow {
             .map { "\($0.record.id)=\(String(format: "%.2f", $0.score))" }
             .joined(separator: " ")
 
+        record(
+            query: trimmed, live: liveChoice, scope: app, hits: hits, decision: decision)
+
         log.notice(
             """
             q=\(trimmed, privacy: .public) \
@@ -72,5 +75,72 @@ enum CapabilityIndexShadow {
             index=[\(ranked, privacy: .public)] \
             would=\(decision.summary, privacy: .public)
             """)
+    }
+
+    // MARK: - The turn, as a graph
+
+    /// One turn written down as nodes, so it can be looked at rather than read.
+    ///
+    /// A log line says what happened; it does not show the shape of it. "Which app did it
+    /// pick, out of what, and why did it stop there" is a question about a path, and a path
+    /// is easier to see than to parse.
+    private struct TurnGraph: Codable {
+        struct Candidate: Codable {
+            let id: String
+            let app: String
+            let kind: String
+            let score: Double
+            let coverage: Double
+            let matched: [String]
+            let isWrite: Bool
+        }
+        let at: Date
+        let query: String
+        let scope: String
+        let liveChoice: String
+        let decision: String
+        let candidates: [Candidate]
+    }
+
+    private static var graphFile: URL {
+        let directory = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("Context-Dock", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("turn-graphs.json")
+    }
+
+    /// The last twenty turns. Enough to see a pattern, small enough that nobody has to
+    /// think about the file.
+    private static let keptTurns = 20
+
+    private static func record(
+        query: String, live: String, scope: String?,
+        hits: [CapabilityIndex.Hit], decision: CapabilityDecision
+    ) {
+        let graph = TurnGraph(
+            at: Date(),
+            query: query,
+            scope: scope ?? "",
+            liveChoice: live,
+            decision: decision.summary,
+            candidates: hits.prefix(8).map {
+                .init(
+                    id: $0.record.id, app: $0.record.app, kind: $0.record.kind.rawValue,
+                    score: $0.score, coverage: $0.coverage, matched: $0.matched,
+                    isWrite: $0.record.isWrite)
+            })
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var existing = (try? Data(contentsOf: graphFile))
+            .flatMap { try? decoder.decode([TurnGraph].self, from: $0) } ?? []
+        existing.append(graph)
+        if existing.count > keptTurns { existing.removeFirst(existing.count - keptTurns) }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try? encoder.encode(existing).write(to: graphFile, options: .atomic)
     }
 }
