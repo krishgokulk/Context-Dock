@@ -340,6 +340,16 @@ extension LauncherView {
             onStep: { [self] step in
                 MainActor.assumeIsolated { dockTraceStep(step) }
             })
+        // Shadow only: what the one index would have ranked for this sentence, beside what
+        // the live routers chose. Changes nothing; see CapabilityIndexShadow.
+        CapabilityIndexShadow.observe(
+            query: query,
+            liveChoice: {
+                guard case .candidates(let found) = resolution, let first = found.first
+                else { return "none" }
+                return first.capabilityID ?? first.id
+            }())
+
         guard case .candidates(let candidates) = resolution,
             let candidate = candidates.first(where: {
                 $0.route == .verifiedMenu || $0.route == .keyboardShortcut
@@ -1220,7 +1230,10 @@ extension LauncherView {
     }
 
     func readOnlyCapabilityAnswer(query: String) async -> String? {
-        if let domain = readOnlyDataDomain(for: query) {
+        let domain = readOnlyDataDomain(for: query)
+        CapabilityIndexShadow.observe(
+            query: query, liveChoice: domain.map { "domain.\($0.rawValue)" } ?? "none")
+        if let domain {
             guard await requestReadApproval(domain: domain) else {
                 return "I won't read your \(domain.displayName) without permission. "
                     + "Ask again and choose Allow to let me."
