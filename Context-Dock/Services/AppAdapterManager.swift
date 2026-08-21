@@ -604,6 +604,9 @@ final class AppAdapterManager: ObservableObject {
         await seedStarterActionsIntoAdapters()
         await AdapterIntegrationSeeder.seedIfNeeded()
         AdapterSkillSeeder.seedIfNeeded()
+        // What the app itself says it is, refreshed when the app's version changes.
+        // Read from the menu cache and the registry — nothing is opened to learn it.
+        AppKnowledgeSkillRefresher.refreshAll()
     }
 
     /// Add the current built-in pack to every adapter once per catalog version.
