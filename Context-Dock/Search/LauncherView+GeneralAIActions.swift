@@ -1346,7 +1346,14 @@ extension LauncherView {
         // data and no explanation, which is where invented answers about the user's own
         // apps come from — "did I view any videos in Tutorine" against an adapter that
         // has actions and no reader.
-        guard !candidates.isEmpty else { return capabilityGapAnswer(query: query) }
+        guard !candidates.isEmpty else {
+            // The scoped dock chat resolves an app's real routes — its adapter readers,
+            // MCP tools, CLI — and General Chat never called that resolver, so the same
+            // question answered well in one surface and not at all in the other. Same
+            // resolver, offered rather than run.
+            if let offer = await appReadRouteOffer(query: query) { return offer }
+            return capabilityGapAnswer(query: query)
+        }
 
         if shouldClarifyReadCandidates(candidates, query: query) {
             let options = candidates.prefix(4).compactMap { candidate -> String? in
@@ -1397,6 +1404,40 @@ extension LauncherView {
             )
             return message
         }
+    }
+
+    /// The app's own read routes, offered as choices.
+    ///
+    /// ChatRouteResolver knows how to reach an app — adapter readers, MCP tools, the CLI
+    /// linked to it — and only the scoped dock chat ever asked it. General Chat resolved a
+    /// narrower set of its own and gave up when that came back empty, which is why the same
+    /// question could be answered in one surface and not the other.
+    ///
+    /// Offered, never run. The user picks, and the pick goes through the approval and
+    /// verification path every other action uses. Reads only: this is the read fallthrough,
+    /// and a question is not a licence to write.
+    private func appReadRouteOffer(query: String) async -> String? {
+        guard let named = GeneralAIActionResolver.shared.namedInstalledApp(in: query),
+            let adapter = AppAdapterManager.shared.adapter(for: named.bundleId),
+            adapter.isEnabled
+        else { return nil }
+
+        let routes = await ChatRouteResolver.routes(
+            for: query, bundleId: named.bundleId, appName: adapter.appName)
+        // `.cli` deliberately has no candidate conversion — it keeps its own terminal
+        // path — so it cannot be offered here.
+        let offerable = routes.filter { $0.isReadOnly && $0.asCandidate() != nil }
+        guard !offerable.isEmpty else { return nil }
+
+        let candidates = offerable.compactMap { $0.asCandidate() }
+        await MainActor.run {
+            pendingActionCandidates = candidates
+            pendingActionQuery = query
+            aiMode.pendingActionChoices = Array(offerable.prefix(3)).map(\.asActionChoice)
+        }
+        return offerable.count == 1
+            ? "I can read that from \(adapter.appName). Run it?"
+            : "\(adapter.appName) has \(offerable.count) ways to answer that. Which one?"
     }
 
     /// What DoraX has for the app the user named, and what it would need to answer them.
