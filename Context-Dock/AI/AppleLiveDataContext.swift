@@ -99,11 +99,13 @@ enum AppleLiveDataContext {
         }
 
         if ["note", "notes"].contains(where: q.contains) {
-            let nameGuess = query.split(separator: " ").map(String.init)
-                .filter { $0.first?.isUppercase ?? false }
-                .max(by: { $0.count < $1.count }) ?? ""
+            // The search term used to be whichever capitalised word was longest, so a
+            // sentence typed in lower case had no term at all and this listed recent notes
+            // instead of searching — with the subject sitting in the sentence, unused.
+            // "find my bookmarks note and summarise that" is the reported case.
+            let subject = DataSubject.subject(in: query)
             let notes =
-                nameGuess.isEmpty ? api.getNotes(limit: 15) : api.searchNotes(query: nameGuess)
+                subject.isEmpty ? api.getNotes(limit: 15) : api.searchNotes(query: subject)
             if !notes.isEmpty {
                 let lines = notes.prefix(15).map { n -> String in
                     let title = (n["title"] as? String) ?? "(untitled)"
