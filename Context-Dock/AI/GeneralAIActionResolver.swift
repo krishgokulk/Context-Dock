@@ -953,6 +953,29 @@ final class GeneralAIActionResolver {
         return possessedDataNouns.contains(String(next))
     }
 
+
+    /// Ordering for competing app-name matches: what the user granted, then position.
+    ///
+    /// "find my bookmarks note" resolved to the Find My application because every app on
+    /// the disk competes by name and the ranking was leftmost-first. Find My was never a
+    /// capability — it is a file in /Applications, and it won on position alone.
+    ///
+    /// AppAccessLevel already draws the line and is already Comparable: `awareness` is
+    /// "installed, maybe running, nothing more"; `menuOnly` is a real handle; `adapter` is
+    /// something the user added. Authority first means an app the user actually connected
+    /// beats a name that merely appears earlier. Everything after that is the old rule,
+    /// unchanged — leftmost, then longest, then stable by name — so launching an app by
+    /// name still works when nothing better is named.
+    static func matchOutranks(
+        lhsLevel: AppAccessLevel, lhsStart: Int, lhsLength: Int, lhsName: String,
+        rhsLevel: AppAccessLevel, rhsStart: Int, rhsLength: Int, rhsName: String
+    ) -> Bool {
+        if lhsLevel != rhsLevel { return lhsLevel > rhsLevel }
+        if lhsStart != rhsStart { return lhsStart < rhsStart }
+        if lhsLength != rhsLength { return lhsLength > rhsLength }
+        return lhsName < rhsName
+    }
+
     private func resolveTargetApp(in lowered: String) -> TargetApp? {
         // Every name that appears in the sentence competes, whether it came from the alias
         // table or from the installed-apps catalog.
@@ -1009,9 +1032,11 @@ final class GeneralAIActionResolver {
         }
 
         let best = matches.min { lhs, rhs in
-            if lhs.start != rhs.start { return lhs.start < rhs.start }
-            if lhs.matchedLength != rhs.matchedLength { return lhs.matchedLength > rhs.matchedLength }
-            return lhs.name < rhs.name  // stable, so the same query always resolves the same way
+            Self.matchOutranks(
+                lhsLevel: AppAccessPolicy.level(for: lhs.bundleId),
+                lhsStart: lhs.start, lhsLength: lhs.matchedLength, lhsName: lhs.name,
+                rhsLevel: AppAccessPolicy.level(for: rhs.bundleId),
+                rhsStart: rhs.start, rhsLength: rhs.matchedLength, rhsName: rhs.name)
         }
         guard let best else { return nil }
         return TargetApp(
