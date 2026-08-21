@@ -113,9 +113,18 @@ struct CapabilityIndex {
         return log((total + 1) / (seen + 1)) + 0.1
     }
 
-    func search(_ query: String, limit: Int = 5) -> [Hit] {
+    /// How much being the app in scope is worth.
+    ///
+    /// A preference, not a filter. "From that app, get its tools" is how people think, and
+    /// it is right most of the time — but choosing the app first is exactly where "find my
+    /// bookmarks note" went to Find My, and a hard filter on a wrong app leaves nothing to
+    /// recover with. Weighted, a clearly-named capability elsewhere can still win.
+    private static let scopeBoost = 1.6
+
+    func search(_ query: String, scopedTo app: String? = nil, limit: Int = 5) -> [Hit] {
         let queryTerms = Set(Self.terms(in: query)).filter { !Self.filler.contains($0) }
         guard !queryTerms.isEmpty else { return [] }
+        let scope = app?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         var hits: [Hit] = []
         for record in records {
@@ -135,6 +144,10 @@ struct CapabilityIndex {
                 guard best > 0 else { continue }
                 score += best * weight(of: term)
                 matched.append(term)
+            }
+            // Machine-wide commands belong to no app and are never demoted for it.
+            if !scope.isEmpty, record.app.lowercased() == scope {
+                score *= Self.scopeBoost
             }
             guard score >= Self.floor else { continue }
             hits.append(Hit(record: record, score: score, matched: matched.sorted()))

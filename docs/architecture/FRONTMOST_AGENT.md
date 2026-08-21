@@ -59,6 +59,33 @@ visible way the assistant looks stupid.
 
 ---
 
+## 2a. The graph, end to end
+
+```
+user input
+  → understand            question or instruction?        asksOnly / requestsChange
+  → scope                 which app is this about?        named app > frontmost > none
+  → candidates            that app's tools, ranked        CapabilityIndex(scopedTo:)
+  → decide                act · ask · answer              CapabilityDecision
+  → plan                  typed steps, chosen by id       ChatPlanRunner
+  → execute               with authority and approval     GeneralAIActionExecutor
+  → verify                typed read-back where one exists
+  → report                what ran, what was observed
+```
+
+**The scope step is a preference, not a filter**, and this is the part worth being careful
+about. "Choose the app, then use that app's tools" is how people think and is right most of
+the time — but choosing the app first is exactly where `find my bookmarks note` went to Find
+My. A hard filter on a wrong app leaves nothing to recover with: every later step is then
+confidently wrong, and the user sees an assistant that has understood nothing.
+
+So the app in scope is a weight. Scoped to Code, "new window" resolves to Code's; "empty the
+trash" still finds Finder's, because the sentence names it plainly. Machine-wide commands
+belong to no app and are never demoted for it.
+
+The recovery matters more than the precision here. Being slightly worse at the common case
+buys being able to survive the case where the first decision was wrong.
+
 ## 3. What "agentic" means here
 
 Not a free-running loop. One turn is:
