@@ -90,6 +90,34 @@ cannot see what it did.
 `asksOnly`. Tests: the exact sentence from the report, plus a genuine instruction that must
 still be offered.
 
+**Step 0.5 — uncertainty is a question, not a guess.**
+
+An agent that cannot tell asks. DoraX has the machinery —
+`GeneralAIActionResolution.clarify(question:options:)`, `PendingClarification` holding the
+original query for two minutes, a renderer, and `shouldClarifyBetweenPeers`, which already
+states the honest test: candidates of the same semantic type within 0.05 confidence of each
+other are a tie, and a tie is a question.
+
+It is invoked at six sites by hand, so a seventh path that is uncertain guesses instead.
+Every failure reported today was a guess that could have been a question:
+
+| Typed | Guessed | Should have asked |
+|---|---|---|
+| `find my bookmarks note` | browser bookmarks | the note called bookmarks, or your bookmarks? |
+| `is this page related to our project?` | offered Run Open Social | nothing — it is a question |
+| `turn on dark mode` | reported the value | act, or ask which — never report instead |
+
+Make it the rule rather than a call: one place decides whether the top candidates are
+separated enough to act on, and everything that resolves goes through it. The bar is not
+"is DoraX confident" — it is **"would a wrong choice here cost the user something they
+cannot undo in one step"**. A read that picks the wrong list wastes a sentence. A write that
+picks the wrong target does not.
+
+Two things this must not become: a prompt on every request, which is worse than guessing,
+and a way to avoid doing the work — `find my bookmarks note` has a right answer and asking
+would be a cop-out. Ask when the sentence is genuinely two-ways, not when reading it is
+merely hard.
+
 **Step 1 — the frontmost inventory becomes the plan's catalogue.** Today the scoped chat
 resolves routes, and the agent tools resolve capabilities, and the two lists are built
 differently. `ScopeInventory` already unifies them for *display*. Make it the single
@@ -116,7 +144,7 @@ the app able to say it itself.
 route per app and intent shape. Extend to whole plans: a plan that verified is a plan worth
 offering again.
 
-Steps 0 and 3 are correctness. 1, 2 and 4 are the product. 5 is the compounding one and
+Steps 0, 0.5 and 3 are correctness. 1, 2 and 4 are the product. 5 is the compounding one and
 should come last, because remembering the wrong thing is worse than remembering nothing.
 
 ---
