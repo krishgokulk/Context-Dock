@@ -60,3 +60,50 @@ struct ReadOnlyDataRouterTests {
         #expect(ReadOnlyDataRouter.domain(for: "show me salman's phone number") == .contacts)
     }
 }
+
+// MARK: - The head noun decides
+//
+// "find my bookmarks note and summarise that" answered from browser bookmarks. The user
+// asked for a *note* — in English a noun phrase is head-final, so "bookmarks note" is a
+// note about bookmarks, not a bookmark. The router matched on whichever domain came first
+// in its own list rather than on which word the sentence was actually about.
+
+@MainActor
+struct ReadDomainHeadNounTests {
+
+    /// The sentence from the report.
+    @Test func aBookmarksNoteIsANote() {
+        #expect(ReadOnlyDataRouter.domain(for: "find my bookmarks note and summarise that")
+            == .notes)
+    }
+
+    @Test func theModifierDoesNotWin() {
+        #expect(ReadOnlyDataRouter.domain(for: "show me my meeting notes") == .notes)
+    }
+
+    /// A phrase states the subject outright and beats a later bare word: "note about the
+    /// meeting" is a note, even though "meeting" is the last domain word in it.
+    @Test func aPhraseBeatsALaterBareWord() {
+        #expect(ReadOnlyDataRouter.domain(for: "find my note about the meeting") == .notes)
+    }
+
+    /// Not covered, and deliberately left alone: "find my email notes" resolves to
+    /// contacts, because looksLikeContactInfoLookup returns before this map is consulted.
+    /// That early return predates the head-noun rule and changing it is a separate
+    /// question about what "email" means in a sentence.
+    @Test func theContactShortcutStillRunsFirst() {
+        #expect(ReadOnlyDataRouter.domain(for: "find my email notes") == .contacts)
+    }
+
+    /// Single-domain sentences are unchanged.
+    @Test func plainQueriesAreUnaffected() {
+        #expect(ReadOnlyDataRouter.domain(for: "what's on my calendar today") == .calendar)
+        #expect(ReadOnlyDataRouter.domain(for: "show me my unread messages") == .messages)
+        #expect(ReadOnlyDataRouter.domain(for: "list my reminders") == .reminders)
+    }
+
+    /// Whole words only: "notebook" is not "note".
+    @Test func partialWordsAreNotTheHeadNoun() {
+        #expect(ReadOnlyDataRouter.domain(for: "find my notebook charger") != .notes)
+    }
+}

@@ -70,13 +70,60 @@ enum ReadOnlyDataRouter {
             (.mail, ["email", "mail", "inbox"]),
             (.calendar, ["calendar", "event", "meeting", "schedule", "appointment"]),
             (.reminders, ["reminder", "to-do", "todo", "task"]),
-            (.notes, ["note about", "notes about", "my note", "my notes"]),
+            (.notes, ["note about", "notes about", "my note", "my notes", "note", "notes"]),
             (.photos, ["photo", "picture", "screenshot", "image of mine"]),
         ]
-        for (domain, keywords) in map where keywords.contains(where: q.contains) {
-            return domain
+        // The head noun decides, and in English it comes last: "my bookmarks note" is a
+        // note about bookmarks, and "my notes reminder" is a reminder. Taking the first
+        // domain in this list instead answered "find my bookmarks note and summarise that"
+        // from browser bookmarks — the sentence's subject lost to the order of a literal.
+        // Specificity first, then position — the same order app-name matches use.
+        //
+        // A phrase like "note about" states the subject outright and beats a later bare
+        // word: "find my note about the meeting" is a note, even though "meeting" comes
+        // last. Among bare words the later one wins, because an English noun phrase is
+        // head-final: "my bookmarks note" is a note, and reading it as a bookmark is what
+        // answered "find my bookmarks note and summarise that" from the browser.
+        var best: (domain: ReadOnlyDataDomain, isPhrase: Bool, position: String.Index)?
+        for (domain, keywords) in map {
+            for keyword in keywords {
+                guard let range = lastWordRange(of: keyword, in: q) else { continue }
+                let isPhrase = keyword.contains(" ")
+                guard let current = best else {
+                    best = (domain, isPhrase, range.lowerBound)
+                    continue
+                }
+                if isPhrase != current.isPhrase {
+                    if isPhrase { best = (domain, isPhrase, range.lowerBound) }
+                } else if range.lowerBound > current.position {
+                    best = (domain, isPhrase, range.lowerBound)
+                }
+            }
         }
-        return nil
+        return best?.domain
+    }
+
+    /// The last whole-word occurrence of `keyword`. Whole-word because "notebook" is not
+    /// "note", and a substring match would make a notebook charger a note.
+    private static func lastWordRange(of keyword: String, in text: String) -> Range<String.Index>? {
+        var found: Range<String.Index>?
+        var searchStart = text.startIndex
+        while let range = text.range(of: keyword, range: searchStart..<text.endIndex) {
+            let beforeOK = range.lowerBound == text.startIndex
+                || !text[text.index(before: range.lowerBound)].isLetter
+            // A trailing plural still names the same thing: "messages" is "message", and
+            // rejecting it made every plural query resolve to nothing. Anything longer than
+            // one letter is a different word — "notebook" is not "note".
+            var afterIndex = range.upperBound
+            if afterIndex < text.endIndex, text[afterIndex] == "s" {
+                afterIndex = text.index(after: afterIndex)
+            }
+            let afterOK = afterIndex == text.endIndex || !text[afterIndex].isLetter
+            if beforeOK && afterOK { found = range }
+            searchStart = text.index(after: range.lowerBound)
+            if searchStart >= text.endIndex { break }
+        }
+        return found
     }
 
     private static func looksLikeContactInfoLookup(_ q: String) -> Bool {
