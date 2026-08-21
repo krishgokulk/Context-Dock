@@ -607,7 +607,13 @@ extension LauncherView {
             // NOT force the idle pill once a conversation exists — otherwise the opaque
             // card (drawn only when !idle) never appears and the sheet is see-through
             // while typing. Idle only when the conversation is empty.
-            return l2.chatMessages.isEmpty && !l2.isLoading
+            //
+            // "Empty" stopped meaning "nothing to show" when the scoped thread learned to
+            // list what the app can do before anyone types. Clear emptied the messages, the
+            // pill came back, and the strip was left drawn onto the bare window — the same
+            // see-through sheet this case has now been fixed for three times, in a third
+            // place. There is content; there must be a card behind it.
+            return l2.chatMessages.isEmpty && !l2.isLoading && !shouldShowDockScopeStart
         case .globalContext:
             if shouldShowGlobalScopedChatPin || shouldAutoArmGlobalInlineScopeChat {
                 // Only the EMPTY scoped-chat prompt is the compact idle pill. Once a
