@@ -3310,63 +3310,13 @@ extension LauncherView {
         l2.isLoading = false
         l2.loadingStatus = nil
         l2.currentTask = nil
-        handOffArtifactIfProduced()
-    }
-
-    /// An answer that built something moves to the window, carrying the conversation.
-    ///
-    /// The dock is a strip. An artifact is a chart, a table, a diagram — a thing to look at
-    /// — and a strip can only show its source, which is the problem artifacts exist to
-    /// solve. Rather than render it badly here, the surface that can show it properly is
-    /// opened, with the transcript, so the user is not moved away from their conversation
-    /// to look at what their conversation produced.
-    ///
-    /// Every choke point runs through here, so this fires once per turn regardless of which
-    /// path answered.
-    /// Moves to the window when the answer produced something to *look at*.
-    ///
-    /// The dock is a strip: it reads a paragraph well and shows a document, a rendered
-    /// artifact, a live terminal or a six-step run badly. Those all have somewhere proper to
-    /// be — the window's Preview panel, its Artifacts tab, its terminal, its console — and
-    /// leaving the user in the strip means the work is finished somewhere they cannot see
-    /// it, and they have to know to go looking.
-    ///
-    /// A long *text* answer is deliberately not a trigger. Prose reads fine in the dock,
-    /// and expanding for it would make the window appear on almost every question, which is
-    /// the app taking over the screen rather than helping.
-    private func handOffArtifactIfProduced() {
-        guard let last = l2.chatMessages.last, last.role == .assistant else { return }
-        let scopeInfo = currentContextDockChatScope
-        let scope: GeneralChatScope = scopeInfo.bundleId.isEmpty
-            ? .general : .app(bundleId: scopeInfo.bundleId)
-
-        // A rendered thing, then a file it produced: both belong in Preview, and the
-        // handoff carries the file so the window opens on it rather than near it.
-        if let artifact = ArtifactStore.extract(from: last.content, scope: scope).last {
-            previewFileInChatWindow(
-                artifact, bundleId: scopeInfo.bundleId, appName: scopeInfo.appName)
-            return
-        }
-        if let file = last.recentFiles.first?.url,
-            FileManager.default.fileExists(atPath: file.path)
-        {
-            previewFileInChatWindow(
-                file, bundleId: scopeInfo.bundleId, appName: scopeInfo.appName)
-            return
-        }
-
-        // A run worth watching rather than reading: several steps, or a tool drawing its
-        // own screen. Three is the point where the receipt stops fitting the strip —
-        // one or two steps are legible where they happened.
-        let manySteps = last.trace.count >= 3
-        let hasTerminal = ChatThreadTerminalManager.shared.hasTerminal(for: scope)
-        guard manySteps || hasTerminal else { return }
-
-        GeneralChatWindowModel.shared.openSession(
-            scope, title: scopeInfo.appName.isEmpty ? "General" : scopeInfo.appName,
-            seed: l2.chatMessages)
-        handOffChatToWindow()
-        GeneralChatWindowController.shared.show()
+        // The window opens when the user asks for it — the glyph beside Clear. It used
+        // to open itself whenever a turn ran three or more steps or a terminal existed,
+        // which is an ordinary instruction like "new window", and the sheet the user was
+        // reading was replaced by a window they did not ask for. The rule was already
+        // written down for General Chat one screen away: "a window appearing unasked
+        // would be the app taking over a sheet the user is reading. Here it is a press,
+        // next to Clear."
     }
 
     @MainActor
