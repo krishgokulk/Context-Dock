@@ -197,12 +197,18 @@ struct DockHeightResolver {
             120,
             maxSheetContent - bars - header - 18 - metrics.cliTerminalReservedHeight
         )
-        // Once a scoped conversation starts, keep one stable transcript viewport. Measuring
-        // every streamed token/card and feeding that height back into the NSWindow made the
-        // entire result sheet breathe while the user typed or the model responded. Short
-        // conversations simply occupy the top of this viewport; longer ones scroll inside it.
-        let scroll = min(400, availableScroll)
-        return bars + header + scroll + 18 + metrics.cliTerminalReservedHeight
+        // Hug the conversation, up to a bounded viewport — the same shape generalChat uses
+        // directly above, and what the chat window does by being a window.
+        //
+        // This was a fixed 400 for a reason worth keeping in mind: feeding a measured height
+        // back into the NSWindow once made the sheet breathe while the model typed. What is
+        // measured now is the messages' *intrinsic* height, taken inside the scroll view, so
+        // it cannot be changed by the frame it is placed in — no loop to close. The cost of
+        // the fixed viewport was that one short answer sat at the top of 400 points of empty
+        // sheet, which is the thing a scoped thread is most often showing.
+        let cap = min(400, availableScroll)
+        let content = min(max(metrics.measuredChatContentHeight, 60), cap)
+        return bars + header + content + 18 + metrics.cliTerminalReservedHeight
     }
 
     private static func mediaDockHeight(_ metrics: DockHeightMetrics) -> CGFloat {

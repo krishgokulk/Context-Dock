@@ -1535,8 +1535,9 @@ extension LauncherView {
                         }
                         // When the scoped terminal opens, chat yields viewport height to it
                         // and stays bottom-anchored, like coding-agent transcript panes.
-                        // Scoped chat owns a stable viewport. Intrinsic measurement is still
-                        // useful for scrolling, but must not resize the outer dock per token.
+                        // Otherwise the frame hugs the measured transcript: the measurement
+                        // is intrinsic and taken inside this scroll view, so sizing the
+                        // frame from it cannot feed back into it.
                         .frame(height: contextDockChatScrollHeight)
                         .onChange(of: l2.chatMessages.count) { _, _ in
                             withAnimation {
@@ -1598,9 +1599,13 @@ extension LauncherView {
     }
 
     var contextDockChatScrollHeight: CGFloat {
-        guard isInCLIToolScope, cliScopeTerminal.isExpanded else { return 400 }
-        // Leave enough history visible above the terminal while keeping the total sheet compact.
-        return 180
+        // Leave enough history visible above the terminal while keeping the total sheet
+        // compact.
+        if isInCLIToolScope, cliScopeTerminal.isExpanded { return 180 }
+        // Hug the transcript up to the viewport cap, so a two-line answer is a two-line
+        // sheet. The outer window height is resolved from the same measurement, so the
+        // frame and the window agree instead of one padding out the other.
+        return min(max(measuredChatContentHeight, 60), 400)
     }
 
     /// Second step of "summarise this and mail it to <address>": the content is written, and
