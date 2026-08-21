@@ -248,6 +248,11 @@ enum ScopedAppPromptBuilder {
             + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, say what "
             + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
             + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI).")
+        lines.append(
+            "Intent rule: a question is answered from the supplied live context, observed data, "
+            + "adapter readers, MCP results, skills, memory, or reference material. Never run a "
+            + "menu command merely to discover an answer. Menu commands are for explicit requests "
+            + "to change or navigate the app.")
         if !clis.isEmpty {
             lines.append(
                 "CLI fallback rule: only when no adapter/native/MCP/API/Shortcut/menu capability "

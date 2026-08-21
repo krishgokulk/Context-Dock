@@ -1203,6 +1203,7 @@ class AIProviderService: ObservableObject {
 
         let resume = TaskRunStore.shared.resolve(message)
         let effectiveMessage = resume.message
+        AgentToolRegistry.shared.prepareTurnBudget(query: effectiveMessage, provider: provider)
         let guardedCommandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
             command, purpose, approval in
             if let cached = TaskRunStore.shared.cachedSuccessfulCommand(command, from: resume.source) {

@@ -139,12 +139,17 @@ struct ScopedPromptAssembler {
     /// Sections are dropped whole. Half a menu list or a truncated JSON block is worse than
     /// its absence: the model reads a cut-off flag as a real one, and a list that stops
     /// mid-way reads as a complete list of fewer things.
-    func assemble(for provider: AIProvider) -> String {
+    func assemble(
+        for provider: AIProvider,
+        preserving sourceSections: Set<ScopedPromptSection> = []
+    ) -> String {
         var kept = blocks
         if let budget = Self.budget(for: provider) {
             var used = kept.values.reduce(0) { $0 + $1.count + 2 }
             for section in ScopedPromptSection.dropOrder where used > budget {
-                guard !section.isEssential, let text = kept[section] else { continue }
+                guard !section.isEssential, !sourceSections.contains(section),
+                    let text = kept[section]
+                else { continue }
                 kept.removeValue(forKey: section)
                 used -= text.count + 2
             }
@@ -157,6 +162,21 @@ struct ScopedPromptAssembler {
             // was. A list the model knows is partial produces "I can see these commands,
             // there may be more"; a list silently cut produces a confident claim that the
             // app has no other commands.
+            while used > budget,
+                let (section, text) = kept
+                    .filter({ $0.value.count > 200 && !sourceSections.contains($0.key) })
+                    .max(by: { $0.value.count < $1.value.count })
+            {
+                let room = max(200, text.count - (used - budget) - Self.shortenedNote.count)
+                let shortened = Self.truncatedAtLineBoundary(text, limit: room)
+                    + Self.shortenedNote
+                used -= text.count - shortened.count
+                kept[section] = shortened
+                if shortened.count >= text.count { break }
+            }
+            // If the selected evidence plus the irreducible identity still exceeds the
+            // model window, shorten evidence last and visibly. Dropping it would leave the
+            // model with tools but no facts — exactly the inverse of a question's needs.
             while used > budget,
                 let (section, text) = kept
                     .filter({ $0.value.count > 200 })

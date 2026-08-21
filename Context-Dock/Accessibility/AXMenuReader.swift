@@ -48,9 +48,15 @@ final class AXMenuReader {
 
     /// Max items read per menu level — bounds the AX-IPC cost of huge dynamic menus.
     static let maxChildrenPerMenu = 120
-    /// Menus whose recursive contents are skipped (dynamic URL lists surfaced natively
-    /// by BrowserURLLibraryService). Matched case-insensitively by title.
+    /// Browser menus whose recursive contents are skipped (dynamic URL lists surfaced
+    /// natively by BrowserURLLibraryService). Matched case-insensitively by title.
     static let skipRecursionMenuTitles: Set<String> = ["history", "bookmarks"]
+
+    static func shouldSkipRecursion(menuTitle: String, bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return AXContextReader.browserBundleIds.contains(bundleIdentifier)
+            && skipRecursionMenuTitles.contains(menuTitle.lowercased())
+    }
     private init() {}
 
     // MARK: - Structural cache
@@ -122,6 +128,7 @@ final class AXMenuReader {
         guard let bar = menuBarElement(for: pid),
             let topItems = childElements(of: bar)
         else { return [] }
+        let bundleIdentifier = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
 
         var tree: [AXMenuItem] = []
         for (idx, item) in topItems.enumerated() {
@@ -133,7 +140,8 @@ final class AXMenuReader {
             let container = submenuContainer(for: item) ?? item
             var children = readChildren(
                 of: container,
-                path: [title], depth: 1, maxDepth: maxDepth)
+                path: [title], depth: 1, maxDepth: maxDepth,
+                bundleIdentifier: bundleIdentifier)
             // TextEdit, Preview, and many document apps expose File's static children
             // immediately but populate its nested Open Recent branch only after File is
             // opened. Treat that as a narrow lazy-menu case; do not press every menu or
@@ -146,7 +154,8 @@ final class AXMenuReader {
                 usleep(25_000)
                 children = readChildren(
                     of: container,
-                    path: [title], depth: 1, maxDepth: maxDepth)
+                    path: [title], depth: 1, maxDepth: maxDepth,
+                    bundleIdentifier: bundleIdentifier)
                 if needsRecentExpansion,
                    let recentBranch = firstUnexpandedRecentBranch(in: children)
                 {
@@ -154,7 +163,8 @@ final class AXMenuReader {
                     usleep(25_000)
                     children = readChildren(
                         of: container,
-                        path: [title], depth: 1, maxDepth: maxDepth)
+                        path: [title], depth: 1, maxDepth: maxDepth,
+                        bundleIdentifier: bundleIdentifier)
                 }
                 didOpenTopLevelMenu = true
             }
@@ -242,7 +252,9 @@ final class AXMenuReader {
     /// maxDepth limits recursion to keep reads fast (4 covers File › Export › PDF…).
     func menuTree(for pid: pid_t, maxDepth: Int = 5) -> [AXMenuItem] {
         guard let bar = menuBarElement(for: pid) else { return [] }
-        return readChildren(of: bar, path: [], depth: 0, maxDepth: maxDepth)
+        return readChildren(
+            of: bar, path: [], depth: 0, maxDepth: maxDepth,
+            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
     }
 
     /// One leaf item from a live top-menu read: title, any URL the item exposes (via
@@ -513,8 +525,10 @@ final class AXMenuReader {
 
     // MARK: - Private — tree reading
 
-    private func readChildren(of parent: AXUIElement, path: [String],
-                              depth: Int, maxDepth: Int) -> [AXMenuItem] {
+    private func readChildren(
+        of parent: AXUIElement, path: [String], depth: Int, maxDepth: Int,
+        bundleIdentifier: String?
+    ) -> [AXMenuItem] {
         guard depth < maxDepth else { return [] }
         guard let children = childElements(of: parent) else { return [] }
 
@@ -530,7 +544,9 @@ final class AXMenuReader {
 
             // AXMenu containers are transparent wrappers — recurse without adding a level
             if role == "AXMenu" {
-                result += readChildren(of: child, path: path, depth: depth, maxDepth: maxDepth)
+                result += readChildren(
+                    of: child, path: path, depth: depth, maxDepth: maxDepth,
+                    bundleIdentifier: bundleIdentifier)
                 continue
             }
 
@@ -540,17 +556,20 @@ final class AXMenuReader {
 
             let isEnabled  = boolAttr(child, kAXEnabledAttribute as CFString) ?? true
             let childPath  = path + [title]
-            // Do NOT walk the huge dynamic browser menus — History and Bookmarks hold
+            // Do NOT walk huge dynamic browser menus — History and Bookmarks hold
             // thousands of URL rows read over slow AX IPC, and DoraX already surfaces
             // browser history/bookmarks natively (BrowserURLLibraryService). The menu
-            // item itself still appears; only its recursive contents are skipped.
+            // item itself still appears; only its recursive contents are skipped. Other
+            // apps may use History for their primary commands, so recurse normally there.
             let subItems: [AXMenuItem] =
-                Self.skipRecursionMenuTitles.contains(title.lowercased())
+                Self.shouldSkipRecursion(
+                    menuTitle: title, bundleIdentifier: bundleIdentifier)
                 ? []
                 : readChildren(of: submenuContainer(for: child) ?? child,
                                path: childPath,
                                depth: depth + 1,
-                               maxDepth: maxDepth)
+                               maxDepth: maxDepth,
+                               bundleIdentifier: bundleIdentifier)
 
             // Read keyboard shortcut and checked state from AX attributes
             let shortcutChar      = strAttr(child, "AXMenuItemCmdChar" as CFString)

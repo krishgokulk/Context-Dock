@@ -488,13 +488,32 @@ final class AgentToolRegistry {
     /// Trimmed to the turn's budget when the surface said what the turn is about. The cut
     /// happens here rather than at each call site so no provider path can forget it.
     func schemas(format: SchemaFormat) -> [[String: Any]] {
-        let rendered = renderedSchemas(format: format)
+        let available = toolsAvailable(for: turnQuery)
+        let rendered = renderedSchemas(format: format, tools: available)
         guard let provider = turnProvider else { return rendered }
         return AIToolBudget.trim(rendered, query: turnQuery, provider: provider)
     }
 
-    private func renderedSchemas(format: SchemaFormat) -> [[String: Any]] {
-        allTools.map { tool in
+    /// Questions get readers, not controls or command catalogues. Tool schemas are an
+    /// authority boundary: a model shown a tool treats it as available no matter how many
+    /// prompt sentences ask it not to use it.
+    func toolNamesAvailable(for query: String) -> Set<String> {
+        Set(toolsAvailable(for: query).map(\.name))
+    }
+
+    private func toolsAvailable(for query: String) -> [AgentTool] {
+        guard !query.isEmpty, GeneralAIActionResolver.shared.asksOnly(query) else {
+            return allTools
+        }
+        let actionOnly: Set<String> = [
+            "run_command", "spawn_worker", "send_keys", "window_control",
+            "run_adapter_action", "run_menu_command", "compose_message",
+        ]
+        return allTools.filter { !actionOnly.contains($0.name) }
+    }
+
+    private func renderedSchemas(format: SchemaFormat, tools: [AgentTool]? = nil) -> [[String: Any]] {
+        (tools ?? allTools).map { tool in
             switch format {
             case .openAI:
                 return [

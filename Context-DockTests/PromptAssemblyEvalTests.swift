@@ -99,6 +99,40 @@ struct ScopedPromptAssemblyEvalTests {
         let assembled = prompt.assemble(for: .onDevice)
         #expect(assembled.contains("REFERENCE-START") == assembled.contains("REFERENCE-END"))
     }
+
+    @Test func selectedLiveEvidenceSurvivesBeforeCapabilityCatalogues() {
+        var prompt = ScopedPromptAssembler()
+        prompt.set(.identity, "IDENTITY-" + filled(1_000))
+        prompt.set(.liveAppData, "OBSERVED-HISTORY\n- Real title\n" + filled(1_000))
+        prompt.set(.capabilities, "COMMAND-CATALOGUE-" + filled(8_000))
+
+        let assembled = prompt.assemble(for: .onDevice, preserving: [.liveAppData])
+        #expect(assembled.contains("OBSERVED-HISTORY"))
+        #expect(assembled.contains("Real title"))
+        #expect(!assembled.contains("COMMAND-CATALOGUE"))
+        #expect(assembled.count <= ScopedPromptAssembler.budget(for: .onDevice)!)
+    }
+}
+
+@MainActor
+struct AgentToolAuthorityEvalTests {
+    @Test func factualQuestionsExposeReadersButNotControls() {
+        let names = AgentToolRegistry.shared.toolNamesAvailable(
+            for: "What did I watch here before?")
+        #expect(names.contains("run_mcp_tool"))
+        #expect(!names.contains("run_menu_command"))
+        #expect(!names.contains("run_adapter_action"))
+        #expect(!names.contains("run_command"))
+        #expect(!names.contains("window_control"))
+        #expect(!names.contains("compose_message"))
+    }
+
+    @Test func actionRequestsStillExposeAppControls() {
+        let names = AgentToolRegistry.shared.toolNamesAvailable(
+            for: "Open the latest item in History")
+        #expect(names.contains("run_menu_command"))
+        #expect(names.contains("run_adapter_action"))
+    }
 }
 
 @MainActor

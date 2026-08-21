@@ -118,7 +118,8 @@ enum AgentSourceAuthority {
                          "newest", "last commit", "open ", "unread", "due ", "status"]
         let liveObjects = ["commit", "branch", "change", "workspace", "project", "file",
                            "window", "tab", "email", "mail", "note", "reminder", "inbox",
-                           "event", "calendar", "message", "song", "track"]
+                           "event", "calendar", "message", "song", "track", "history",
+                           "playback", "watched", "played", "viewed"]
         if freshness.contains(where: q.contains), liveObjects.contains(where: q.contains) {
             return true
         }
@@ -129,7 +130,8 @@ enum AgentSourceAuthority {
             "working tree", "git status", "files changed", "changes in this project",
         ]
         if intrinsicLiveState.contains(where: q.contains) { return true }
-        return ["what did i just", "what am i working on", "what is open",
+        return ["what did i just", "what did i watch", "what have i watched",
+                "what did i play", "what have i played", "what am i working on", "what is open",
                 "what's open", "whats open"].contains(where: q.contains)
     }
 }

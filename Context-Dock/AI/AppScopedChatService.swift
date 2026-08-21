@@ -48,6 +48,28 @@ enum AppScopedChatService {
         var subjectiveEvaluation: SubjectiveEvaluation? = nil
     }
 
+    struct ObservedMenuEvidence: Equatable {
+        let appName: String
+        let root: String
+        let freshness: String
+        let entries: [String]
+
+        var promptBlock: String {
+            var lines = [
+                "## \(appName) observed menu data — \(root) (\(freshness))",
+                "This is read-only evidence from menu labels DoraX already observed. No menu was opened or clicked for this question.",
+                "Answer factual questions from these rows when relevant. Do not call a menu command to inspect them, and do not describe a row as disabled unless the evidence explicitly says so.",
+            ]
+            lines += entries.prefix(30).map { "- \($0)" }
+            return lines.joined(separator: "\n")
+        }
+
+        var directAnswer: String {
+            let rows = entries.prefix(30).map { "- \($0)" }.joined(separator: "\n")
+            return "In \(appName), the \(root) menu shows:\n\n\(rows)"
+        }
+    }
+
     /// Paths an answer mentions, kept only when they are real.
     ///
     /// A file chat's answer is usually about files, and it names them: "there is one PDF:
@@ -588,6 +610,119 @@ enum AppScopedChatService {
         return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
+    /// Turns an already-observed menu snapshot into read-only evidence for a question.
+    /// This never opens or clicks a menu. It is deliberately separate from menu-command
+    /// routing: labels such as History entries can answer a question, while pressing one
+    /// would navigate the app and answer nothing about the list as a whole.
+    static func menuSnapshotEvidence(
+        query: String, appName: String, paths: [[String]], age: TimeInterval?
+    ) -> ObservedMenuEvidence? {
+        let normalized = query.lowercased()
+        let queryWords = Set(normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        guard !queryWords.isEmpty else { return nil }
+
+        var evidenceWords = queryWords
+        let mediaReadWords: Set<String> = [
+            "watch", "watched", "watching", "view", "viewed", "video", "videos",
+            "movie", "movies", "play", "played", "playing", "listen", "listened",
+            "song", "songs", "track", "tracks",
+        ]
+        if !queryWords.isDisjoint(with: mediaReadWords) {
+            evidenceWords.formUnion(["history", "playback", "recent", "previous"])
+        }
+        if queryWords.contains("before") || queryWords.contains("previously") {
+            evidenceWords.formUnion(["history", "recent", "previous"])
+        }
+
+        var grouped: [String: [[String]]] = [:]
+        var rootOrder: [String] = []
+        for path in paths {
+            let clean = path.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty && $0 != "-" }
+            guard clean.count > 1, let root = clean.first else { continue }
+            let key = root.lowercased()
+            if grouped[key] == nil { rootOrder.append(key) }
+            grouped[key, default: []].append(clean)
+        }
+
+        let candidates = rootOrder.compactMap { key -> (key: String, score: Int, count: Int)? in
+            guard let rows = grouped[key], let displayRoot = rows.first?.first else { return nil }
+            let rootWords = Set(
+                displayRoot.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+            let direct = rootWords.intersection(queryWords).count
+            let expanded = rootWords.intersection(evidenceWords).count
+            let score = direct * 4 + expanded * 2
+            guard score > 0 else { return nil }
+            return (key, score, rows.count)
+        }
+        guard let winner = candidates.max(by: {
+            $0.score == $1.score ? $0.count < $1.count : $0.score < $1.score
+        }), let rows = grouped[winner.key], let displayRoot = rows.first?.first
+        else { return nil }
+
+        let actionPrefixes = [
+            "clear ", "delete ", "remove ", "erase ", "show all ", "manage ",
+            "back", "forward", "home", "reopen ", "quit ",
+        ]
+        var seen = Set<String>()
+        let entries = rows.compactMap { path -> String? in
+            guard let title = path.last else { return nil }
+            let key = title.lowercased()
+            guard key != displayRoot.lowercased(),
+                !actionPrefixes.contains(where: key.hasPrefix),
+                !key.hasSuffix("%"),
+                seen.insert(key).inserted
+            else { return nil }
+            return title
+        }
+        guard !entries.isEmpty else { return nil }
+
+        let freshness: String = {
+            guard let age else { return "from the app's saved menu snapshot" }
+            if age < 5 { return "observed just now" }
+            if age < 60 { return "observed \(Int(age)) seconds ago" }
+            return "observed \(Int(age / 60)) minutes ago"
+        }()
+        return ObservedMenuEvidence(
+            appName: appName, root: displayRoot, freshness: freshness,
+            entries: Array(entries.prefix(30)))
+    }
+
+    static func menuSnapshotFactBlock(
+        query: String, appName: String, paths: [[String]], age: TimeInterval?
+    ) -> String? {
+        menuSnapshotEvidence(query: query, appName: appName, paths: paths, age: age)?.promptBlock
+    }
+
+    static func observedMenuEvidence(
+        bundleID: String, appName: String, query: String
+    ) -> ObservedMenuEvidence? {
+        guard GeneralAIActionResolver.shared.asksOnly(query) else { return nil }
+        let running = NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier?.caseInsensitiveCompare(bundleID) == .orderedSame
+                && !$0.isTerminated
+        }
+        var items: [AXMenuItem] = []
+        var age: TimeInterval?
+        if let running {
+            items = AXMenuReader.shared.peekCachedAllMenuItems(for: running.processIdentifier)
+            if !items.isEmpty { age = 0 }
+        }
+        if items.isEmpty {
+            items = AppMenuCapabilityCache.shared.menuItems(
+                bundleIdentifier: bundleID, appName: appName, query: "", maxResults: 120)
+            age = AppMenuCapabilityCache.shared.snapshotAge(bundleIdentifier: bundleID)
+        }
+        let paths = items.filter(\.isLeaf).map(\.path)
+        return menuSnapshotEvidence(
+            query: query, appName: appName, paths: paths, age: age)
+    }
+
+    static func observedMenuFacts(bundleID: String, appName: String, query: String) -> String? {
+        observedMenuEvidence(bundleID: bundleID, appName: appName, query: query)?.promptBlock
+    }
+
     // MARK: - Request
 
     /// Asks the provider about an app or CLI scope with the grounding above, and lets it
@@ -762,8 +897,13 @@ enum AppScopedChatService {
             let routingAppName =
                 bundleId == ChatAppDirectory.finderBundleID && scope.folderURL != nil
                 ? "Finder" : appName
-            let routes = await ChatRouteResolver.routes(
+            let resolvedRoutes = await ChatRouteResolver.routes(
                 for: query, bundleId: bundleId, appName: routingAppName)
+            // Questions may use genuine read-only data integrations, but never screen-driving
+            // menu commands or writes. A menu click is not a way to find out what a menu lists.
+            let routes = GeneralAIActionResolver.shared.asksOnly(query)
+                ? resolvedRoutes.filter { $0.isReadOnly && !$0.kind.takesTheScreen }
+                : resolvedRoutes
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")
@@ -814,6 +954,19 @@ enum AppScopedChatService {
                     appName: appName, attachments: attachments,
                     extraAppNames: extraAppNames, finderSelection: finderSelection)
             }
+        }
+
+        // A simple list question that the app's already-observed menu answers does not
+        // need probabilistic planning. Returning typed evidence directly prevents a model
+        // from blending History rows with unrelated command labels such as zoom or Quit.
+        if case .app(let bundleID) = scope,
+            let evidence = observedMenuEvidence(
+                bundleID: bundleID, appName: appName, query: query)
+        {
+            log.notice("stage: direct observed menu answer \(evidence.root, privacy: .public)")
+            return Answer(
+                text: evidence.directAnswer,
+                toolChips: ["Observed \(evidence.root) · \(evidence.freshness)"])
         }
 
         // Which source this question should be answered from — live state, the app's own
@@ -888,6 +1041,11 @@ enum AppScopedChatService {
             if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
                 prompt.append(
                     .browserPage, UntrustedContent.fenced(history, from: "browser history"))
+            }
+            if let menuFacts = observedMenuFacts(
+                bundleID: bundleId, appName: appName, query: query)
+            {
+                prompt.append(.liveAppData, menuFacts)
             }
             // The same block the dock builds for its scoped chat — adapter actions, menu
             // commands, MCP, API, Shortcuts, skills, CLI, and the tool-choice order.
@@ -1007,7 +1165,7 @@ enum AppScopedChatService {
         let liveAppleData = await withTimeout(seconds: 8, fallback: "") {
             await AppleLiveDataContext.appleAppsAndWeatherContext(for: query)
         }
-        prompt.set(.liveAppData, liveAppleData)
+        prompt.append(.liveAppData, liveAppleData)
 
         // Registered capabilities, MCP tools and skills — the same block General Chat uses.
         // A CLI thread is one executable. The cross-app catalogue is noise there — and
@@ -1063,7 +1221,16 @@ enum AppScopedChatService {
                 query: query, appBundleID: memoryBundleID)
         }
 
-        let systemPrompt = prompt.assemble(for: provider)
+        let preservedSources: Set<ScopedPromptSection> = {
+            switch sourceDecision.primary {
+            case .liveState:
+                return [.liveAppData, .browserPage, .workspace, .resolvedContext]
+            case .officialReference: return [.reference]
+            case .durableMemory: return [.memory]
+            case .conversation, .action: return []
+            }
+        }()
+        let systemPrompt = prompt.assemble(for: provider, preserving: preservedSources)
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, so it takes the plain path.
