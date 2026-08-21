@@ -310,6 +310,13 @@ extension LauncherView {
         query: String, bundleId: String, appName: String, requestID: UUID
     ) async -> Bool {
         guard !bundleId.isEmpty else { return false }
+        // A question is answered, never offered as an action. Without this the gate below
+        // is "some capability's keywords overlap the sentence, or it looks executable" —
+        // which turned "is this page related to our contextdock project in any ways you
+        // think?" into "I found an enabled Safari tool for this task. Run it? → Run Open
+        // Social". The guard existed on the General AI path and not on this one; a rule
+        // that lives in one caller is not a rule.
+        guard !GeneralAIActionResolver.shared.asksOnly(query) else { return false }
         // Read-style verbs such as "summarize" are conversation-shaped globally, but in a
         // Notes scope they name an enabled tool. Resolve the scoped catalog before applying
         // the generic executable-intent gate so the provider cannot guess "I can't read it".

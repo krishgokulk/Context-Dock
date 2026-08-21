@@ -742,8 +742,23 @@ final class GeneralAIActionResolver {
     ///
     /// The verbs are actions, never nouns. "trash" and "bin" are absent deliberately: they
     /// are what the user is asking *about* in the sentence this exists to catch.
+    /// The user is asking, not instructing — so answer, and offer nothing to run.
+    ///
+    /// This used to be `isLikelyReadOnly && !requestsChange`, and isLikelyReadOnly needs a
+    /// read *keyword*: "what", "show", "list". "is this page related to our contextdock
+    /// project in any ways you think?" contains none of them, so it read as executable and
+    /// was answered with an offer to Run Open Social. It is a question by shape, which
+    /// isQuestionShaped already knew and nothing had ever asked it.
+    ///
+    /// Order matters. A named change wins over a question mark, and an opening instruction
+    /// verb wins over both, so "can you open safari?" stays an instruction.
     func asksOnly(_ query: String) -> Bool {
-        isLikelyReadOnly(query) && !requestsChange(query)
+        let lowered = withoutPoliteWrapper(
+            query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !lowered.isEmpty else { return false }
+        if requestsChange(lowered) { return false }
+        if Self.executeStarts.contains(where: lowered.hasPrefix) { return false }
+        return isLikelyReadOnly(lowered) || isQuestionShaped(lowered)
     }
 
     /// True when the sentence asks for something to change, anywhere in it.
@@ -845,15 +860,31 @@ final class GeneralAIActionResolver {
         }
     }
 
+    /// Verbs that open a sentence with an instruction. Shared, because "open safari?" is
+    /// an instruction with a question mark on it and both the read check and the intent
+    /// check have to agree about that.
+    private static let executeStarts = [
+        "clear ", "delete ", "remove ", "erase ", "open ", "launch ", "start ",
+        "stop ", "pause ", "play ", "quit ", "close ", "create ", "add ", "send ",
+        "share ", "save ", "export ", "download ", "turn ", "enable ", "disable ",
+    ]
+
+    /// "can you open safari?" is "open safari?" with manners on it. Judged with the
+    /// wrapper still attached, every polite instruction reads as a question.
+    private func withoutPoliteWrapper(_ lowered: String) -> String {
+        for prefix in ["please ", "can you please ", "could you please ",
+                       "would you please ", "can you ", "could you ", "would you "]
+        where lowered.hasPrefix(prefix) {
+            return String(lowered.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return lowered
+    }
+
     private func isLikelyReadOnly(_ query: String) -> Bool {
         let lowered = query.lowercased()
         guard !lowered.isEmpty, lowered.count < 240 else { return false }
-        let executeStarts = [
-            "clear ", "delete ", "remove ", "erase ", "open ", "launch ", "start ",
-            "stop ", "pause ", "play ", "quit ", "close ", "create ", "add ", "send ",
-            "share ", "save ", "export ", "download ", "turn ", "enable ", "disable ",
-        ]
-        if executeStarts.contains(where: lowered.hasPrefix) { return false }
+        if Self.executeStarts.contains(where: lowered.hasPrefix) { return false }
         let readSignals = [
             "what", "when", "where", "who", "which", "show", "list", "tell me",
             "latest", "last", "recent", "history", "watched", "played", "viewed",
