@@ -37,8 +37,26 @@ enum CapabilityDecision: Equatable {
     private static let readMargin = CapabilityIndex.tieMargin
     private static let writeMargin = 1.0
 
+    /// How much of the sentence the leader has to account for.
+    ///
+    /// From the first shadow log: "new chat" produced a five-way tie at 10.39 — New Board,
+    /// New Automator Document, New Event, New Card, Check Mail — because "new" is in all of
+    /// them and nothing in the capability set is about chat. The score was high; the
+    /// coverage was half, and the half that matched was the half that meant least.
+    ///
+    /// A threshold on score would not have caught it, and the first version of this did
+    /// not. More than half the meaningful words have to land, or the index found something
+    /// adjacent to the request rather than the request.
+    private static let minimumCoverage = 0.5
+
+    /// Nobody wants six options. Past three, a question stops being a choice.
+    private static let maximumOptions = 3
+
     static func make(from hits: [CapabilityIndex.Hit]) -> CapabilityDecision {
         guard let top = hits.first else { return .answer }
+        // Most of the sentence has to be accounted for. Scoring well on one word out of
+        // three means something adjacent was found, not the thing asked for.
+        guard top.coverage > minimumCoverage else { return .answer }
         guard let second = hits.dropFirst().first else { return .act(top) }
 
         let margin = top.record.isWrite ? writeMargin : readMargin
@@ -46,7 +64,7 @@ enum CapabilityDecision: Equatable {
             // Everything within the margin of the leader is a real alternative; anything
             // further back is not worth putting in front of the user.
             let contenders = hits.filter { top.score - $0.score <= margin }
-            return .ask(contenders)
+            return .ask(Array(contenders.prefix(maximumOptions)))
         }
         return .act(top)
     }

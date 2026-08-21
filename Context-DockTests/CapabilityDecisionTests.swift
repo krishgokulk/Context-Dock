@@ -12,12 +12,15 @@ import Foundation
 
 struct CapabilityDecisionTests {
 
-    private func hit(_ id: String, _ score: Double, write: Bool) -> CapabilityIndex.Hit {
+    private func hit(
+        _ id: String, _ score: Double, write: Bool, coverage: Double = 1.0
+    ) -> CapabilityIndex.Hit {
         .init(
             record: CapabilityRecord(
                 id: id, app: "App", kind: .capability, title: id, isWrite: write),
             score: score,
-            matched: ["x"])
+            matched: ["x"],
+            coverage: coverage)
     }
 
     // MARK: - Nothing named
@@ -86,6 +89,49 @@ struct CapabilityDecisionTests {
             return
         }
         #expect(offered.first?.record.id == "a")
+    }
+
+    // MARK: - A tie that means nothing
+
+    /// From the first shadow log: "new chat" tied five ways at 10.39 — New Board, New
+    /// Automator Document, New Event, New Card, Check Mail — because "new" is in all of
+    /// them and nothing in the capability set is about chat. Asking between five unrelated
+    /// things is the ranking passing its own failure to the user.
+    @Test func aTieAmongThingsThatBarelyRegisteredIsNotAQuestion() {
+        // The real shape of it: a high score, and half the sentence unaccounted for. A
+        // threshold on score alone does not catch this, and the first attempt at this fix
+        // did not — 10.39 clears any floor worth having.
+        let hits = [
+            hit("a", 10.39, write: false, coverage: 0.5),
+            hit("b", 10.39, write: false, coverage: 0.5),
+            hit("c", 10.39, write: false, coverage: 0.5),
+        ]
+        #expect(CapabilityDecision.make(from: hits) == .answer)
+    }
+
+    /// A single strong candidate that only explains half the sentence is the same problem
+    /// without the tie, and must not be acted on either.
+    @Test func aLoneCandidateMustAlsoExplainTheSentence() {
+        #expect(CapabilityDecision.make(from: [hit("a", 12.0, write: true, coverage: 0.5)])
+            == .answer)
+    }
+
+    /// A real tie between things that scored well is still a question.
+    @Test func aTieAmongStrongCandidatesIsStillAsked() {
+        let hits = [hit("a", 9.0, write: false), hit("b", 9.0, write: false)]
+        if case .ask = CapabilityDecision.make(from: hits) {} else {
+            Issue.record("a strong tie must still ask")
+        }
+    }
+
+    /// Past three, a question stops being a choice.
+    @Test func neverMoreThanThreeOptions() {
+        let hits = (0..<6).map { hit("c\($0)", 9.0, write: false) }
+        guard case .ask(let offered) = CapabilityDecision.make(from: hits) else {
+            Issue.record("expected ask")
+            return
+        }
+        #expect(offered.count == 3)
     }
 
     // MARK: - Explaining itself

@@ -348,7 +348,8 @@ extension LauncherView {
                 guard case .candidates(let found) = resolution, let first = found.first
                 else { return "none" }
                 return first.capabilityID ?? first.id
-            }())
+            }(),
+            scopedTo: appName)
 
         guard case .candidates(let candidates) = resolution,
             let candidate = candidates.first(where: {

@@ -70,6 +70,14 @@ struct CapabilityIndex {
         /// The query words that actually matched, so a choice can be explained and a
         /// receipt can say why this capability was picked.
         let matched: [String]
+        /// How much of the sentence this capability accounts for, 0…1.
+        ///
+        /// The score alone cannot tell "empty the trash" from "new chat": both can score
+        /// well off one strong word. In "new chat" only "new" matched anything — "chat"
+        /// found nothing in the whole capability set — and five unrelated New-something
+        /// commands tied at 10.39. A high score covering half a sentence means the index
+        /// found something adjacent, not something asked for.
+        let coverage: Double
     }
 
     /// Field weights. A word in the title names the thing; the same word in prose merely
@@ -150,7 +158,10 @@ struct CapabilityIndex {
                 score *= Self.scopeBoost
             }
             guard score >= Self.floor else { continue }
-            hits.append(Hit(record: record, score: score, matched: matched.sorted()))
+            hits.append(
+                Hit(
+                    record: record, score: score, matched: matched.sorted(),
+                    coverage: Double(matched.count) / Double(queryTerms.count)))
         }
 
         // Stable: score first, then id, so the same sentence resolves the same way on every

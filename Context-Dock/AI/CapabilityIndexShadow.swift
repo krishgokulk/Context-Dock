@@ -49,11 +49,16 @@ enum CapabilityIndexShadow {
     /// capability id, a route label, a domain, or "none". Comparing the two by hand is the
     /// point; a machine-readable verdict would mean deciding now what "agreement" means,
     /// which is the question this is meant to answer.
-    static func observe(query: String, liveChoice: String) {
+    static func observe(query: String, liveChoice: String, scopedTo app: String? = nil) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count < 400 else { return }
 
-        let hits = index().search(trimmed)
+        // Without the scope the comparison is unfair and the log misleads. The first three
+        // lines it ever produced included "new tab window", where the live router knew the
+        // chat was scoped to Code and the index — asked blind — preferred Safari's New Tab.
+        // That is not the index disagreeing; it is the index being asked a different
+        // question.
+        let hits = index().search(trimmed, scopedTo: app)
         let decision = CapabilityDecision.make(from: hits)
         let ranked = hits.prefix(3)
             .map { "\($0.record.id)=\(String(format: "%.2f", $0.score))" }
@@ -63,6 +68,7 @@ enum CapabilityIndexShadow {
             """
             q=\(trimmed, privacy: .public) \
             live=\(liveChoice, privacy: .public) \
+            scope=\(app ?? "none", privacy: .public) \
             index=[\(ranked, privacy: .public)] \
             would=\(decision.summary, privacy: .public)
             """)
