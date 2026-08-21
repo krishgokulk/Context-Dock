@@ -760,7 +760,7 @@ final class GeneralAIActionResolver {
             "delete", "remove", "erase", "empty", "clear", "wipe", "uninstall",
             "create", "add", "make", "send", "share", "move", "rename", "install",
             "quit", "close", "kill", "stop", "restart", "shutdown", "reboot",
-            "enable", "disable", "toggle", "turn", "set", "reset",
+            "enable", "disable", "toggle", "switch", "turn", "set", "reset",
             "save", "export", "download", "run", "execute", "schedule", "remind",
         ]
         let words = query.lowercased()

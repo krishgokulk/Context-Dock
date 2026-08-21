@@ -30,6 +30,14 @@ struct AICapabilityExecutionRequest {
     /// it may not reach outside of, and somewhere to file a report it produces.
     var chatScope: GeneralChatScope? = nil
 
+    /// What the user actually asked, verbatim, when the caller knows it.
+    ///
+    /// A capability could see its inputs and the user's selection and never their intent,
+    /// so an interactive Global Command answered "turn on dark mode" with "Appearance
+    /// current value: true" — a reading is the right answer to a question and the wrong
+    /// answer to an instruction, and nothing here could tell them apart.
+    var userRequest: String = ""
+
     /// The folder this conversation is confined to, when it is confined to one. Nil
     /// everywhere else, where the scope is the machine.
     var scopeRoot: URL? { chatScope?.folderURL }
@@ -669,7 +677,8 @@ final class AIExecutionEngine {
         _ plan: AIActionPlan,
         context: UserContext,
         approved: Bool = false,
-        chatScope: GeneralChatScope? = nil
+        chatScope: GeneralChatScope? = nil,
+        userRequest: String = ""
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
@@ -694,13 +703,16 @@ final class AIExecutionEngine {
             }
         }
         return try await capability.executor(
-            .init(input: plan.input, context: context, chatScope: chatScope))
+            .init(
+                input: plan.input, context: context, chatScope: chatScope,
+                userRequest: userRequest))
     }
 
     func executeWithApproval(
         _ plan: AIActionPlan,
         context: UserContext,
-        chatScope: GeneralChatScope? = nil
+        chatScope: GeneralChatScope? = nil,
+        userRequest: String = ""
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
@@ -733,7 +745,8 @@ final class AIExecutionEngine {
         }
         do {
             let result = try await execute(
-                plan, context: context, approved: true, chatScope: chatScope)
+                plan, context: context, approved: true, chatScope: chatScope,
+                userRequest: userRequest)
             AIAuditHistory.shared.record(
                 capabilityID: capability.id,
                 risk: capability.riskLevel,

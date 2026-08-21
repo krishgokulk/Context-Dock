@@ -1789,7 +1789,8 @@ final class AgentToolRegistry {
                 capability: capabilityID, input: input, explanation: explanation)
             do {
                 let result = try await AIExecutionEngine.shared.executeWithApproval(
-                    plan, context: context.userContext, chatScope: context.chatScope)
+                    plan, context: context.userContext, chatScope: context.chatScope,
+                    userRequest: context.userRequest)
                 if result.success, isWrite {
                     RecentCapabilityWrites.record(capabilityID, input: input)
                 }

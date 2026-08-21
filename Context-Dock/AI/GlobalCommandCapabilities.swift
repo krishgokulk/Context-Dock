@@ -245,8 +245,8 @@ enum GlobalCommandCapabilities {
                     return AICapabilityExecutionResult(
                         success: false, output: "Command no longer exists")
                 }
-                let value = request.input["value"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let normalized = value.lowercased()
+                var value = request.input["value"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                var normalized = value.lowercased()
 
                 // `$CD_QUERY` is the command's target. Running with an empty target makes
                 // `open "$CD_QUERY"` resolve to a working directory and unexpectedly opens
@@ -265,9 +265,12 @@ enum GlobalCommandCapabilities {
                     )
                 }
 
-                // An omitted value on an interactive command means "read it", not "run a
-                // mutation with an empty argument". This makes the same capability useful
-                // for compact status phrases while keeping explicit values on the write path.
+                // An omitted value on an interactive command used to mean "read it",
+                // unconditionally. That is the right answer to "is dark mode on?" and the
+                // wrong one to "turn on dark mode", which came back as "Appearance current
+                // value: true" — DoraX reporting the switch's position instead of moving
+                // it. Reading is still the default; an explicit instruction is now carried
+                // out. See InteractiveCommandIntent.
                 if normalized.isEmpty, command.interactionType != .none {
                     let valueScript = live.valueScript.trimmingCharacters(
                         in: .whitespacesAndNewlines)
@@ -277,9 +280,22 @@ enum GlobalCommandCapabilities {
                             SystemCommandInteractiveRunner.runForOutput(
                                 script: valueScript, actionType: actionType)
                         }.value?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if let current, !current.isEmpty {
-                            return AICapabilityExecutionResult(
-                                success: true, output: "\(live.name) current value: \(current)")
+                        switch InteractiveCommandIntent.fallback(
+                            userRequest: request.userRequest,
+                            isToggle: isToggle,
+                            current: current)
+                        {
+                        case .readCurrentValue:
+                            if let current, !current.isEmpty {
+                                return AICapabilityExecutionResult(
+                                    success: true,
+                                    output: "\(live.name) current value: \(current)")
+                            }
+                        case .set(let wanted):
+                            value = wanted
+                            normalized = wanted
+                        case .runAsIs:
+                            break
                         }
                     }
                 }

@@ -541,7 +541,10 @@ final class GeneralAIActionExecutor {
                 explanation: "DoraX Action Chat: \(candidate.title)")
             do {
                 let result = try await AIExecutionEngine.shared.execute(
-                    plan, context: .none, approved: true)
+                    plan, context: .none, approved: true,
+                    // The user's own sentence, so an interactive Global Command can tell
+                    // "is dark mode on?" from "turn on dark mode".
+                    userRequest: candidate.inputValues["query"] ?? "")
                 return .init(success: result.success, message: result.output)
             } catch {
                 return .init(success: false, message: error.localizedDescription)
