@@ -1395,6 +1395,17 @@ extension LauncherView {
                     Divider().opacity(0.15)
                 }
 
+                // Before anything has been said, the dock showed the header and then empty
+                // space. The window's thread answers "this app, what now" with its start
+                // view; the dock — where people actually scope to the frontmost app —
+                // answered it with nothing.
+                if !hasConversation, let scopedTarget {
+                    DockScopeStartStrip(
+                        appName: scopedTarget.name,
+                        bundleId: scopedTarget.bundleId,
+                        onPick: { prompt in searchState.query = prompt })
+                }
+
                 if hasConversation {
                     ScrollViewReader { proxy in
                         ScrollView(.vertical, showsIndicators: false) {
@@ -5624,6 +5635,14 @@ extension LauncherView {
                         return .cloudAPIError("\(provider.shortName) returned an error: \(desc)")
                     }()
                     let guide = QueryFailureGuide.shared.instant(for: kind, originalQuery: query)
+                    // The evidence exists exactly here and nowhere later. Captured at the
+                    // point of failure rather than reconstructed from a description of it —
+                    // "it didn't work" costs an hour of rebuilding context the app was
+                    // holding when it broke.
+                    DoraXDiagnosticCapture.shared.record(
+                        symptom: desc,
+                        query: query,
+                        scope: GeneralChatScope(dockBundleId: currentGlobalScopedBundleID))
                     let errorMessage = AIChatMessage(
                         role: .assistant, content: guide, isError: true)
                     l2.chatMessages.append(errorMessage)
