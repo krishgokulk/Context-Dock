@@ -1310,6 +1310,28 @@ extension LauncherView {
         return pageTitle
     }
 
+    /// A scoped thread the user has opened and not yet used.
+    ///
+    /// The dock draws nothing in this state — every gate on the way down asks for a
+    /// conversation, a popover or a load in flight, and an armed thread is none of those.
+    /// That is why the start strip did not appear: it was rendering inside a section that
+    /// was never reached. One property, read by every gate that needs it, because three
+    /// copies of a condition is how they drift apart.
+    var shouldShowDockScopeStart: Bool {
+        // Not `l2.targetApp`: a frontmost-app thread is scoped by the draft or by the
+        // frontmost app itself and never pins a target, so keying off targetApp meant the
+        // strip stayed hidden for exactly the case it was built for.
+        !currentContextDockChatScope.bundleId
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && l2.chatArmed
+            && !l2.chatDismissed
+            && l2.chatMessages.isEmpty
+            && !l2.isLoading
+            // Auto-arming because a query matched no menu item is not a session the user
+            // started, and it must not put a start strip on screen either.
+            && !l2.chatAutoArmedForNoMenuMatch
+    }
+
     @ViewBuilder
     var l2ChatSection: some View {
         let hasConversation = !l2.chatMessages.isEmpty || l2.isLoading
@@ -1322,7 +1344,7 @@ extension LauncherView {
                     .map { NSWorkspace.shared.icon(forFile: $0.path) }
         }
         let providerSymbol = settings.selectedAIProvider.iconName
-        if hasConversation || l2.showChatPopover {
+        if hasConversation || l2.showChatPopover || shouldShowDockScopeStart {
             VStack(spacing: 0) {
                 if hasConversation {
                     // Minimal header — app name + Clear + Exit Scope only (icon already in search bar)
@@ -1399,10 +1421,11 @@ extension LauncherView {
                 // space. The window's thread answers "this app, what now" with its start
                 // view; the dock — where people actually scope to the frontmost app —
                 // answered it with nothing.
-                if !hasConversation, let scopedTarget {
+                if shouldShowDockScopeStart {
+                    let scope = currentContextDockChatScope
                     DockScopeStartStrip(
-                        appName: scopedTarget.name,
-                        bundleId: scopedTarget.bundleId,
+                        appName: scope.appName,
+                        bundleId: scope.bundleId,
                         onPick: { prompt in searchState.query = prompt })
                 }
 

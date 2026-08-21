@@ -439,6 +439,10 @@ extension LauncherView {
                 || l2.showChatPopover
                 || !l2.chatMessages.isEmpty
                 || l2.isLoading
+                // An armed-but-unused thread has content to show now: what this app can
+                // do. Without this the mode content declines to render and the start strip
+                // never reaches the screen.
+                || shouldShowDockScopeStart
         case .globalContext:
             return false
         case .contextDock:
