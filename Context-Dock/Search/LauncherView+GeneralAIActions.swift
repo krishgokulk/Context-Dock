@@ -1341,7 +1341,11 @@ extension LauncherView {
     /// metadata only; this function only reads the selected grounded source.
     private func groundedCapabilityReadAnswer(query: String) async -> String? {
         let candidates = await GeneralAIActionResolver.shared.resolveReadCandidates(query: query)
-        guard !candidates.isEmpty else { return nil }
+        // Nothing here can read. Returning nil hands the question to the model with no
+        // data and no explanation, which is where invented answers about the user's own
+        // apps come from — "did I view any videos in Tutorine" against an adapter that
+        // has actions and no reader.
+        guard !candidates.isEmpty else { return capabilityGapAnswer(query: query) }
 
         if shouldClarifyReadCandidates(candidates, query: query) {
             let options = candidates.prefix(4).compactMap { candidate -> String? in
@@ -1392,6 +1396,26 @@ extension LauncherView {
             )
             return message
         }
+    }
+
+    /// What DoraX has for the app the user named, and what it would need to answer them.
+    ///
+    /// Only for an app the user actually connected. A bare installed app has no inventory
+    /// worth reporting, and a question naming no app at all — "what is the weather" — is
+    /// not about capability and must not be answered with a capability report.
+    private func capabilityGapAnswer(query: String) -> String? {
+        guard let named = GeneralAIActionResolver.shared.namedInstalledApp(in: query),
+            let adapter = AppAdapterManager.shared.adapter(for: named.bundleId),
+            adapter.isEnabled
+        else { return nil }
+
+        let records = CapabilityCatalog.allRecords().filter {
+            $0.app.caseInsensitiveCompare(adapter.appName) == .orderedSame
+        }
+        let menus = AppMenuCapabilityCache.shared
+            .summary(bundleIdentifier: named.bundleId)?.recordCount ?? 0
+        return CapabilityGap.explain(
+            appName: adapter.appName, records: records, menuCommands: menus)
     }
 
     private func shouldClarifyReadCandidates(
