@@ -8,6 +8,7 @@
 
 import AppKit
 import ApplicationServices
+import OSLog
 
 // MARK: - AXMenuItem
 
@@ -349,7 +350,7 @@ final class AXMenuReader {
     /// Press a menu item element directly (navigates without opening the menu on screen).
     @discardableResult
     func pressMenuElement(_ element: AXUIElement) -> Bool {
-        AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
     }
 
     /// Flatten the tree to all leaf menu items (no submenus), skipping separators.
@@ -487,6 +488,24 @@ final class AXMenuReader {
     }
 
     @discardableResult
+    /// Close any menu this app has left open.
+    ///
+    /// A failed menu click leaves the menu bar open on screen — Safari sat with
+    /// Edit ▸ Extension Actions hanging open, highlighting whatever happened to be first,
+    /// because the item being looked for was not there and nothing dismissed what the
+    /// search had opened. Whatever opened a menu is responsible for closing it.
+    func dismissOpenMenus(in pid: pid_t) {
+        guard let menuBar = menuBarElement(for: pid) else { return }
+        for item in childElements(of: menuBar) ?? [] {
+            var menuRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(item, "AXMenu" as CFString, &menuRef) == .success,
+                let menu = menuRef
+            else { continue }
+            AXUIElementPerformAction(
+                unsafeBitCast(menu, to: AXUIElement.self), kAXCancelAction as CFString)
+        }
+    }
+
     func clickMenuItemReliably(path: [String], in pid: pid_t) -> Bool {
         if clickMenuItem(path: path, in: pid) { return true }
         return clickMenuItemViaSystemEvents(path: path, in: pid)

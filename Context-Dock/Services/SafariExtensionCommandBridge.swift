@@ -132,12 +132,23 @@ actor SafariExtensionCommandBridge {
         // so it can't fire late on some unrelated click.
         defer { try? FileManager.default.removeItem(at: pendingURL) }
 
+        // The verdict was being written and never read. `run` clicked the menu regardless
+        // of what the last attempt had learned, so an app without the extension enabled had
+        // its Edit menu opened for every single query — a Safari chat answered "hi hello"
+        // by opening Edit ▸ Extension Actions and leaving it hanging there, because the
+        // Context Dock item does not exist to be clicked. The memory this file already
+        // keeps is consulted now, which is what it was built for.
         let key = Self.verdictKey(for: app)
+        guard isAvailable(in: app) else { throw BridgeError.extensionNotInMenu }
+
         guard AXMenuReader.shared.clickMenuItemReliably(path: Self.menuPath,
                                                         in: app.processIdentifier) else {
             // Settles the undecidable case for good: this app has no extension item, so
             // stop opening its menus on every action.
             verdicts[key] = (false, Date())
+            // Searching for an item that is not there opens menus on the way. Leaving them
+            // open is how the user ends up staring at a submenu nobody asked for.
+            AXMenuReader.shared.dismissOpenMenus(in: app.processIdentifier)
             throw BridgeError.extensionNotInMenu
         }
         verdicts[key] = (true, Date())
