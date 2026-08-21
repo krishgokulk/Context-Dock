@@ -1427,6 +1427,12 @@ extension LauncherView {
                         appName: scope.appName,
                         bundleId: scope.bundleId,
                         onPick: { prompt in searchState.query = prompt })
+                        // The strip appearing is a content change like any other; without
+                        // asking, the window keeps whatever height it had until something
+                        // unrelated happens to trigger a resize.
+                        .onAppear {
+                            requestWindowSizeUpdate(reason: .chatChanged, animated: true)
+                        }
                 }
 
                 if hasConversation {

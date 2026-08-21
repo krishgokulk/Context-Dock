@@ -65,6 +65,7 @@ extension LauncherView {
             loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
             l1ResultsReservedHeight: pureGlobalCompactTyping ? 0 : l1ResultsReservedHeight,
             measuredChatContentHeight: measuredChatContentHeight,
+            dockScopeStartHeight: dockScopeStartHeightForCurrentState,
             cliTerminalReservedHeight: cliTerminalReservedHeight
         )
     }
@@ -88,6 +89,22 @@ extension LauncherView {
             searchBarExpanded: isSearchBarExpanded,
             aiMessageCount: aiMode.messages.count
         )
+    }
+
+    /// Room for the scoped-thread start strip: one summary line, then one row per group,
+    /// three at most. Measured the same way the rest of the dock reserves space — from what
+    /// will be drawn, not from a guess that drifts when the content changes.
+    var dockScopeStartHeightForCurrentState: CGFloat {
+        guard shouldShowDockScopeStart else { return 0 }
+        let scope = currentContextDockChatScope
+        let groups = ScopeInventory.app(bundleId: scope.bundleId, appName: scope.appName)
+            .groups.count
+        let summaryLine: CGFloat = 16
+        let rowHeight: CGFloat = 22
+        let verticalPadding: CGFloat = 16
+        let separator: CGFloat = 6
+        return summaryLine + separator
+            + CGFloat(min(groups, 3)) * rowHeight + verticalPadding
     }
 
     var finderSearchPanelHeightForCurrentState: CGFloat {

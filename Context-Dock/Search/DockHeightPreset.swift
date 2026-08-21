@@ -87,6 +87,10 @@ struct DockHeightMetrics {
     var loadingApps: Bool
     var l1ResultsReservedHeight: CGFloat
     var measuredChatContentHeight: CGFloat = 0
+    /// Reserved space for the strip that tells a scoped thread what it can do before
+    /// anything has been said. Nothing was reserved for it, so it rendered below the
+    /// window's edge and the user saw a summary line with a row sliced in half.
+    var dockScopeStartHeight: CGFloat = 0
     /// Reserved space for the terminal that belongs to a scoped CLI chat. It is
     /// part of the chat sheet, never an independently resizing window.
     var cliTerminalReservedHeight: CGFloat = 0
@@ -182,7 +186,7 @@ struct DockHeightResolver {
         let bars = metrics.statusBarHeight + metrics.searchBarHeight
         // Gate on real message count (ignore stale measured) so Clear/Exit collapses to the pill.
         guard metrics.contextDockChatMessageCount > 0 else {
-            return bars + metrics.cliTerminalReservedHeight
+            return bars + metrics.cliTerminalReservedHeight + metrics.dockScopeStartHeight
         }
         // Fixed header (~52) above a scroll capped at 400; measured is the message height only.
         let header: CGFloat = 52
