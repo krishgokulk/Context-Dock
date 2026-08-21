@@ -97,23 +97,42 @@ struct CapabilityDecisionTests {
     /// Automator Document, New Event, New Card, Check Mail — because "new" is in all of
     /// them and nothing in the capability set is about chat. Asking between five unrelated
     /// things is the ranking passing its own failure to the user.
-    @Test func aTieAmongThingsThatBarelyRegisteredIsNotAQuestion() {
-        // The real shape of it: a high score, and half the sentence unaccounted for. A
-        // threshold on score alone does not catch this, and the first attempt at this fix
-        // did not — 10.39 clears any floor worth having.
+    /// The real shape of it: a high score, and half the sentence unaccounted for. A
+    /// threshold on score alone does not catch this, and the first attempt at this fix did
+    /// not — 10.39 clears any floor worth having.
+    ///
+    /// These are not answers and must not be offered as a menu; none of the five
+    /// New-something commands is a chat. They are near misses, and saying so is what
+    /// separates "I could not find that, here is what I have" from both a wrong choice and
+    /// an unhelpful silence.
+    @Test func aHalfMatchedSentenceOffersNearMissesNotAnswers() {
         let hits = [
             hit("a", 10.39, write: false, coverage: 0.5),
             hit("b", 10.39, write: false, coverage: 0.5),
             hit("c", 10.39, write: false, coverage: 0.5),
         ]
-        #expect(CapabilityDecision.make(from: hits) == .answer)
+        guard case .suggest(let near) = CapabilityDecision.make(from: hits) else {
+            Issue.record("half a sentence matched should suggest, not answer or ask")
+            return
+        }
+        #expect(near.count == 3)
     }
 
     /// A single strong candidate that only explains half the sentence is the same problem
     /// without the tie, and must not be acted on either.
     @Test func aLoneCandidateMustAlsoExplainTheSentence() {
-        #expect(CapabilityDecision.make(from: [hit("a", 12.0, write: true, coverage: 0.5)])
-            == .answer)
+        guard case .suggest = CapabilityDecision.make(
+            from: [hit("a", 12.0, write: true, coverage: 0.5)])
+        else {
+            Issue.record("a half-matched leader must not be acted on")
+            return
+        }
+    }
+
+    /// Nothing at all is still nothing: with no hits there is no near miss to name, and
+    /// inventing one would be worse than silence.
+    @Test func withNoHitsThereIsNothingToSuggest() {
+        #expect(CapabilityDecision.make(from: []) == .answer)
     }
 
     /// A real tie between things that scored well is still a question.
@@ -140,6 +159,8 @@ struct CapabilityDecisionTests {
     /// log is unreadable and so is the receipt.
     @Test func everyDecisionExplainsItself() {
         #expect(CapabilityDecision.make(from: []).summary.contains("nothing"))
+        #expect(CapabilityDecision.make(from: [hit("a", 9.0, write: false, coverage: 0.4)])
+            .summary.contains("near"))
         #expect(CapabilityDecision.make(from: [hit("finder.trash", 9.0, write: true)])
             .summary.contains("finder.trash"))
         #expect(CapabilityDecision.make(from: [hit("a", 4.0, write: true), hit("b", 3.9, write: true)])

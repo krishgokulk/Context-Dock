@@ -28,6 +28,15 @@ enum CapabilityDecision: Equatable {
     case ask([CapabilityIndex.Hit])
     /// The sentence named nothing DoraX can do. Answer it as a question.
     case answer
+    /// Nothing matched what was actually asked, but these came close enough to be worth
+    /// naming. Not a menu of answers — a statement that the thing asked for was not found,
+    /// with what *is* here beside it.
+    ///
+    /// "new chat" is the case: five New-something commands, none of them a chat. Offering
+    /// them as choices presents wrong options as though one must be right; saying nothing
+    /// leaves the user to guess what DoraX can do. Naming them as near misses is the only
+    /// honest reading of a half-matched sentence.
+    case suggest([CapabilityIndex.Hit])
 
     /// How much clearer the leader must be before acting without asking.
     ///
@@ -55,8 +64,11 @@ enum CapabilityDecision: Equatable {
     static func make(from hits: [CapabilityIndex.Hit]) -> CapabilityDecision {
         guard let top = hits.first else { return .answer }
         // Most of the sentence has to be accounted for. Scoring well on one word out of
-        // three means something adjacent was found, not the thing asked for.
-        guard top.coverage > minimumCoverage else { return .answer }
+        // three means something adjacent was found, not the thing asked for — so it is
+        // offered as a near miss rather than as an answer.
+        guard top.coverage > minimumCoverage else {
+            return .suggest(Array(hits.prefix(maximumOptions)))
+        }
         guard let second = hits.dropFirst().first else { return .act(top) }
 
         let margin = top.record.isWrite ? writeMargin : readMargin
@@ -77,6 +89,8 @@ enum CapabilityDecision: Equatable {
                 + "on [\(hit.matched.joined(separator: " "))]"
         case .ask(let hits):
             return "ask between " + hits.map(\.record.id).joined(separator: ", ")
+        case .suggest(let hits):
+            return "suggest near misses " + hits.map(\.record.id).joined(separator: ", ")
         case .answer:
             return "answer in prose — nothing named"
         }
