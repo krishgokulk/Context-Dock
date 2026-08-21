@@ -1230,6 +1230,7 @@ extension LauncherView {
             case .calendar: return await calendarReadAnswer(query: query)
             case .reminders: return await remindersReadAnswer(query: query)
             case .contacts: return await contactsReadAnswer(query: query)
+            case .notes: return await notesReadAnswer(query: query)
             default:
                 // Approved, but no direct local read wired yet — let the existing Apple-data
                 // enrichment / tool-loop fetch it (they read via MCP/automation).
@@ -1558,6 +1559,65 @@ extension LauncherView {
         }.joined(separator: "\n")
         return await summarizeGroundedData(
             userQuery: query, dataLabel: "reminders", dataBlock: lines)
+    }
+
+    /// Notes was the one domain with no reader.
+    ///
+    /// Messages, Calendar, Reminders and Contacts each answer their own questions; .notes
+    /// fell through to `default:` and returned nil, so "find my bookmarks note and
+    /// summarise that" resolved to the notes domain, asked for permission to read them,
+    /// and then produced nothing. No plan, no tool — the request dropped into prompt
+    /// enrichment and the model talked without ever looking.
+    ///
+    /// Siri, asked the same sentence, searched Notes, found three candidates and asked
+    /// which one to summarise. That is the shape here: search for what the sentence names,
+    /// answer when there is one, and ask when there are several — because choosing for the
+    /// user is how the wrong note gets summarised.
+    private func notesReadAnswer(query: String) async -> String? {
+        let subject = DataSubject.subject(in: query)
+        await MainActor.run {
+            aiMode.loadingStatus = subject.isEmpty
+                ? "Reading your Notes…" : "Searching Notes for “\(subject)”…"
+        }
+        let notes = await Task.detached(priority: .utility) {
+            subject.isEmpty
+                ? AppleAppsAPI.shared.getNotes(limit: 20)
+                : AppleAppsAPI.shared.searchNotes(query: subject)
+        }.value
+        await MainActor.run { aiMode.loadingStatus = nil }
+
+        func title(_ note: [String: Any]) -> String {
+            ((note["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func body(_ note: [String: Any]) -> String {
+            ((note["body"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard !notes.isEmpty else {
+            return subject.isEmpty
+                ? "I couldn't find any notes."
+                : "I couldn't find a note matching “\(subject)”."
+        }
+
+        // Several matches is a question, not a coin toss. The user asked for one note;
+        // picking the wrong one and summarising it confidently is worse than asking.
+        if !subject.isEmpty, notes.count > 1 {
+            let named = notes.prefix(6).enumerated().map { index, note -> String in
+                let name = title(note).isEmpty ? "(untitled)" : title(note)
+                let preview = body(note).prefix(80)
+                return "\(index + 1). \(name)\(preview.isEmpty ? "" : " — \(preview)…")"
+            }.joined(separator: "\n")
+            return "I found \(notes.count) notes matching “\(subject)”. Which one do you "
+                + "want?\n\n\(named)"
+        }
+
+        let block = notes.prefix(20).map { note -> String in
+            let name = title(note).isEmpty ? "(untitled)" : title(note)
+            let text = body(note)
+            return text.isEmpty ? "## \(name)" : "## \(name)\n\(text.prefix(4_000))"
+        }.joined(separator: "\n\n")
+        return await summarizeGroundedData(
+            userQuery: query, dataLabel: "notes", dataBlock: block)
     }
 
     private func contactsReadAnswer(query: String) async -> String? {
