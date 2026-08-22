@@ -23,7 +23,7 @@ consolidation extends these rather than inventing parallel abstractions.
 | Risk / approval | `AICapabilityRiskLevel` | `AI/AICapabilityRegistry.swift:5` | Complete. `low`/`medium`/`high`/`critical`. `.critical` is hard-denied at `AICapabilityRegistry.swift:677` **before** the approval check — deliberate, not a gap |
 | Approval | `ApprovalCenter`, `ApprovalRisk` | `AI/ApprovalCenter.swift` | Complete. Already collapsed three earlier approval systems into one risk scale |
 | Folder-scope guard | `CapabilityScopeGuard` | `AI/CapabilityScopeGuard.swift` | Complete. Runs before executor, over arguments as written, symlink-resolved |
-| Durable task state | `TaskRunStore` | `AI/TaskRunStore.swift` | Real and on disk (`~/…/Context-Dock/task-runs/*.json`). Resumable, interrupts survive relaunch. **Scoped to provider tool loops only** — see §4 |
+| Durable task state | `TaskRunStore` | `AI/TaskRunStore.swift` | Real and on disk (`~/…/Context-Dock/task-runs/*.json`). Resumable; interrupts survive relaunch. Provider-loop runs now persist objective, current/completed nodes, enforced tool budget, classified failures and idempotent action checkpoints. **Still scoped to provider tool loops only** — see §4 |
 | Turn result | `GeneralChatWorkflowResult` | `AI/GeneralChatWorkflowResult.swift` | Surface-neutral by design. Carries `route`, `status`, `complexity`, `taskRunID`, `receipts`, `verification` |
 | Capability output rows | `CapabilityResultTable` / `Row` | `AI/CapabilityResult.swift` | Complete. Structured rows alongside prose |
 
@@ -217,8 +217,14 @@ registry, Global Context, or the typing path.
    the window it opens is the outcome, and the user is looking at it. `axFallback` is
    reached only after a live menu verification has already passed.
 
-Only after 1–4: `DoraXTaskContract`, TaskRunStore beyond the provider loop, bounded
-loops, graphs, scheduled autonomy.
+Provider-loop harnessing now has a deterministic outer tool budget, typed local failure
+policies and replay-safe action checkpoints. Remaining work after 1–4 is TaskRunStore beyond
+the provider loop, richer task contracts, repair loops, graphs and scheduled autonomy.
+
+The checkpoint rule is deliberately asymmetric: write/screen-driving calls can be reused on
+resume, but reads always execute again. A resumed side effect therefore cannot create a
+second reminder or repeat a menu action, while its completion still requires fresh read-only
+verification against current Mac state.
 
 ---
 
@@ -717,4 +723,3 @@ stays a separate axis by design.
 Bounded loops, graph orchestration, scheduled autonomy, multi-agent. **Gate A is closed**:
 every capability has an owner, an authority class, a canonical executor and a verification
 state. What remains in §10d are bugs, not structure.
-

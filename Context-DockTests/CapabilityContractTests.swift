@@ -36,7 +36,7 @@ final class CapabilityContractTests: XCTestCase {
     /// nothing.
     func testNewCapabilitiesAreRegistered() throws {
         for id in [
-            "browser.history", "browser.bookmarks", "browser.tabs",
+            "browser.history", "browser.bookmarks", "browser.currentPage", "browser.tabs",
             "files.recentDocuments", "files.search",
             "quicknotes.search", "apps.mostUsed",
             "clipboard.history", "extensions.list",
@@ -76,7 +76,7 @@ final class CapabilityContractTests: XCTestCase {
     /// makes every other approval worthless.
     func testReadsDoNotDemandApproval() throws {
         for id in [
-            "browser.history", "browser.bookmarks", "browser.tabs",
+            "browser.history", "browser.bookmarks", "browser.currentPage", "browser.tabs",
             "files.recentDocuments", "files.search", "quicknotes.search",
             "apps.mostUsed", "clipboard.history", "extensions.list",
             "cli.list", "memory.search",

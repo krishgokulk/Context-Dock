@@ -38,6 +38,9 @@ struct AgentSourceDecision: Equatable {
             return """
                 SOURCE AUTHORITY: This is an action request. Prefer an installed typed capability;
                 use live readers for required inputs and report only observed execution results.
+                The current request is the execution authority. A restriction from an earlier
+                turn applies only to the app or operation it explicitly named; do not extend a
+                Messages draft-only instruction to Reminders, Notes, Calendar, or another app.
                 """
         case .conversation:
             return "SOURCE AUTHORITY: Answer conversationally; do not claim unobserved app state."
@@ -63,7 +66,12 @@ enum AgentSourceAuthority {
         }
         if GeneralAIActionResolver.shared.looksExecutable(q) {
             return AgentSourceDecision(
-                primary: .action, requiresFreshRead: true, allowsMemoryEvidence: true)
+                // A saved preference may help compose an action, but it cannot grant,
+                // cancel or narrow one. In General Chat, "Messages: draft only" from an
+                // earlier audit was retrieved for a later Reminders create and the model
+                // treated that unrelated memory as a global prohibition. The current user
+                // request and the approval gate are the authority for execution.
+                primary: .action, requiresFreshRead: true, allowsMemoryEvidence: false)
         }
         return AgentSourceDecision(
             primary: .conversation, requiresFreshRead: false, allowsMemoryEvidence: true)
@@ -117,7 +125,7 @@ enum AgentSourceAuthority {
         let freshness = ["latest", "recent", "current", "right now", "just now", "today",
                          "newest", "last commit", "open ", "unread", "due ", "status"]
         let liveObjects = ["commit", "branch", "change", "workspace", "project", "file",
-                           "window", "tab", "email", "mail", "note", "reminder", "inbox",
+                           "window", "tab", "page", "website", "site", "url", "email", "mail", "note", "reminder", "inbox",
                            "event", "calendar", "message", "song", "track", "history",
                            "playback", "watched", "played", "viewed"]
         if freshness.contains(where: q.contains), liveObjects.contains(where: q.contains) {
@@ -128,6 +136,8 @@ enum AgentSourceAuthority {
         let intrinsicLiveState = [
             "which branch", "what branch", "branch am i on", "uncommitted change",
             "working tree", "git status", "files changed", "changes in this project",
+            "what page is open", "which page is open", "what page am i on",
+            "current page", "active page", "current tab", "active tab",
         ]
         if intrinsicLiveState.contains(where: q.contains) { return true }
         return ["what did i just", "what did i watch", "what have i watched",

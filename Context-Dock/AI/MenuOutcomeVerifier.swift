@@ -35,6 +35,9 @@ enum MenuOutcomeVerifier {
         let bundleID: String
         let isRunning: Bool
         let windowTitles: [String]
+        let nowPlayingTitle: String?
+        let playbackState: String
+        let playbackBundleID: String?
     }
 
     static func snapshot(bundleID: String) -> Snapshot? {
@@ -43,11 +46,18 @@ enum MenuOutcomeVerifier {
             .runningApplications(withBundleIdentifier: bundleID)
             .first(where: { !$0.isTerminated })
         else {
-            return Snapshot(bundleID: bundleID, isRunning: false, windowTitles: [])
+            let media = MediaInfoProvider.shared.getNowPlayingSourceInfo()
+            return Snapshot(
+                bundleID: bundleID, isRunning: false, windowTitles: [],
+                nowPlayingTitle: media.title, playbackState: media.state,
+                playbackBundleID: media.bundleID)
         }
+        let media = MediaInfoProvider.shared.getNowPlayingSourceInfo()
         return Snapshot(
             bundleID: bundleID, isRunning: true,
-            windowTitles: windowTitles(pid: app.processIdentifier))
+            windowTitles: windowTitles(pid: app.processIdentifier),
+            nowPlayingTitle: media.title, playbackState: media.state,
+            playbackBundleID: media.bundleID)
     }
 
     /// What changed, in the words of the thing that changed.
@@ -58,7 +68,29 @@ enum MenuOutcomeVerifier {
         before: Snapshot, appName: String, path: [String]
     ) -> (verified: Bool, message: String)? {
         guard let after = snapshot(bundleID: before.bundleID) else { return nil }
+        return compare(before: before, after: after, appName: appName, path: path)
+    }
+
+    static func compare(
+        before: Snapshot, after: Snapshot, appName: String, path: [String]
+    ) -> (verified: Bool, message: String)? {
         let item = path.last ?? ""
+
+        // History selections in media apps commonly keep the same window while changing
+        // the system Now Playing session. That is stronger evidence than the click receipt:
+        // it identifies both the source app and whether playback actually began.
+        if isMediaSelection(path: path),
+            after.playbackBundleID?.caseInsensitiveCompare(before.bundleID) == .orderedSame
+        {
+            let beganPlaying = after.playbackState.lowercased() == "playing"
+                && before.playbackState.lowercased() != "playing"
+            let changedTitle = after.nowPlayingTitle != nil
+                && after.nowPlayingTitle != before.nowPlayingTitle
+            if beganPlaying || changedTitle {
+                let title = after.nowPlayingTitle ?? item
+                return (true, "Verified: \(appName) is playing “\(title)”.")
+            }
+        }
 
         if before.isRunning, !after.isRunning {
             return (true, "Verified: \(appName) is no longer running.")
@@ -100,6 +132,12 @@ enum MenuOutcomeVerifier {
         let lowered = item.lowercased()
         return ["about", "settings", "preferences", "get info", "inspector"]
             .contains { lowered.contains($0) }
+    }
+
+    private static func isMediaSelection(path: [String]) -> Bool {
+        let words = path.joined(separator: " ").lowercased()
+        return ["history", "recent", "watch", "video", "playback", "track", "song"]
+            .contains { words.contains($0) }
     }
 
     private static func windowTitles(pid: pid_t) -> [String] {

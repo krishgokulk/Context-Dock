@@ -33,6 +33,7 @@ enum LocalDataCapabilities {
     static func register(in registry: CapabilityRegistry) {
         registerBrowserHistory(registry)
         registerBrowserBookmarks(registry)
+        registerCurrentBrowserPage(registry)
         registerBrowserTabs(registry)
         registerRecentDocuments(registry)
         registerFileSearch(registry)
@@ -510,6 +511,42 @@ enum LocalDataCapabilities {
                     success: true,
                     output: "\(tabs.count) open tab\(tabs.count == 1 ? "" : "s"):\n"
                         + lines.joined(separator: "\n"))
+            }
+        )
+    }
+
+    /// One deterministic reader for the question users actually ask. Listing every tab is
+    /// not the same as identifying the active one, and `safari.summarizePage` requires fresh
+    /// extension text even when Safari can still provide its title and URL directly.
+    private static func registerCurrentBrowserPage(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "browser.currentPage",
+                title: "Read Current Browser Page",
+                appBundleID: nil,
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                let detector = ContextDetector.shared
+                if let page = detector.getSafariContext() {
+                    let domain = URL(string: page.url)?.host ?? "Unknown domain"
+                    let pageText = detector.getSafariPageContextForAI() ?? ""
+                    var output = "Current Safari page (read just now):\n"
+                        + "Title: \(page.title)\nDomain: \(domain)\nURL: \(page.url)"
+                    if pageText.isEmpty {
+                        output += "\nPage text: unavailable because the Context Dock Safari "
+                            + "Extension has not supplied fresh page content. Report the title "
+                            + "and domain, and say a content summary is unavailable."
+                    } else {
+                        output += "\nPage content:\n" + MarkItDownService.compact(
+                            pageText, for: "summarize current page", limit: 5_000)
+                    }
+                    return .init(success: true, output: output)
+                }
+                return .init(
+                    success: false,
+                    output: "The current Safari page could not be read. Safari may not be "
+                        + "running, or macOS Automation access may be disabled.")
             }
         )
     }

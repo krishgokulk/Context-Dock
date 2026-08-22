@@ -55,4 +55,23 @@ struct ApprovalCardTruthTests {
         #expect(first == second)
         #expect(first == "x.y\nalpha: 2\nmiddle: 3\nzebra: 1")
     }
+
+    @Test @MainActor
+    func rephrasingAnExplanationDoesNotCreateASecondCapabilityAction() {
+        let first = AgentToolRegistry.callSignature(
+            name: "run_capability",
+            arguments: [
+                "capability_id": "reminders.create",
+                "input": ["title": "DoraX Agent Eval"],
+                "explanation": "Create the reminder",
+            ])
+        let retry = AgentToolRegistry.callSignature(
+            name: "run_capability",
+            arguments: [
+                "capability_id": "reminders.create",
+                "input": ["title": "DoraX Agent Eval"],
+                "explanation": "Add it for the user",
+            ])
+        #expect(first == retry)
+    }
 }

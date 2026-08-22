@@ -145,6 +145,9 @@ struct ChatRoute: Identifiable, Equatable {
             candidate.adapterActionID = payload
         case .menuCommand:
             candidate.menuPath = payload.split(separator: "\u{1}").map(String.init)
+            candidate.caveat =
+                "Plan: launch or activate \(appName), live-check this exact menu item, "
+                + "click it, then read back the app and Now Playing state to verify it worked."
         case .mcpTool:
             let parts = payload.split(separator: "\u{1}").map(String.init)
             // Half a payload would reach the runtime as a tool call with an empty name and
@@ -457,6 +460,12 @@ enum ChatRouteResolver {
         routes.first { $0.isReadOnly && !$0.kind.takesTheScreen }
     }
 
+    /// App access makes a route available; it does not approve taking over the screen.
+    /// Kept as a pure decision so every chat surface can share and test the same boundary.
+    static func executionApproval(for route: ChatRoute) -> ExecutionApproval {
+        route.kind == .menuCommand ? .ask : .granted(.accessPolicy)
+    }
+
     /// True when the user should be asked which route to take.
     ///
     /// Only when the routes differ in consequence — several exist, at least one changes
@@ -529,8 +538,10 @@ enum ChatRouteResolver {
             }
             // The user's own words, for an adapter script that interpolates {query}.
             candidate.inputValues["query"] = query
+            // Menu routes take the screen. AppAccessPolicy authorizes DoraX to offer the
+            // route; it is not the user's approval to launch an app and click it now.
             let outcome = await GeneralAIActionExecutor.shared.execute(
-                candidate, approval: .granted(.accessPolicy))
+                candidate, approval: executionApproval(for: route))
             return (outcome.success, outcome.message)
 
         case .skill, .model:

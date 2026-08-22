@@ -1141,6 +1141,28 @@ enum AppScopedChatService {
                 below to answer from real data rather than from memory. Never print a tool \
                 call as text — call it, then answer in plain language.
                 """)
+            // General Chat is frontmost while the user asks, so its UserContext cannot name
+            // the browser that was underneath it. A live page question still has a direct
+            // reader: try supported running browsers and provide the first current page that
+            // can be read. Without this, "what page is open?" was correctly classified as
+            // live state but received no live evidence and answered from nothing.
+            if sourceDecision.primary == .liveState,
+                ["page", "tab", "website", "site", "url"].contains(where: {
+                    query.lowercased().contains($0)
+                })
+            {
+                let runningBrowserIDs = NSWorkspace.shared.runningApplications
+                    .compactMap(\.bundleIdentifier)
+                    .filter(ScopedAppPromptBuilder.isBrowserBundle)
+                for bundleID in runningBrowserIDs {
+                    if let page = browserPageFacts(bundleID: bundleID) {
+                        prompt.set(
+                            .browserPage,
+                            UntrustedContent.fenced(page, from: "the current web page"))
+                        break
+                    }
+                }
+            }
         }
 
         // A combined chat is scoped to several apps; each one is grounded the same way.

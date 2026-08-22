@@ -14,6 +14,36 @@ final class TaskRunStore {
     /// already carry these keys, so the type moved out without a migration.
     typealias Receipt = DoraXActionReceipt
 
+    struct Budget: Codable, Equatable {
+        let maxToolCalls: Int
+        let maxAttempts: Int
+        let maxWallClockSeconds: Int
+        var usedToolCalls: Int = 0
+    }
+
+    enum FailureKind: String, Codable, Equatable {
+        case transient, staleState, routeUnavailable, permissionRequired
+        case validationFailed, repeatedFailure, terminal
+    }
+
+    enum FailurePolicy: String, Codable, Equatable {
+        case retry, refreshContext, fallback, requestApproval, repair, stop
+    }
+
+    struct FailureEvent: Codable, Equatable {
+        let node: String
+        let kind: FailureKind
+        let policy: FailurePolicy
+        let observation: String
+        let recordedAt: Date
+    }
+
+    struct ActionCheckpoint: Codable, Equatable {
+        let key: String
+        let output: String
+        let recordedAt: Date
+    }
+
     struct Run: Codable, Identifiable {
         let id: UUID
         let request: String
@@ -25,6 +55,67 @@ final class TaskRunStore {
         var finalResponse: String?
         var failure: String?
         var resumedFrom: UUID?
+        var objective: String
+        var currentNode: String?
+        var completedNodes: [String]
+        var budget: Budget
+        var failures: [FailureEvent]
+        var actionCheckpoints: [ActionCheckpoint]
+
+        enum CodingKeys: String, CodingKey {
+            case id, request, provider, createdAt, updatedAt, status, receipts
+            case finalResponse, failure, resumedFrom, objective, currentNode
+            case completedNodes, budget, failures, actionCheckpoints
+        }
+
+        init(
+            id: UUID, request: String, provider: String, createdAt: Date,
+            updatedAt: Date, status: Status, receipts: [Receipt],
+            finalResponse: String?, failure: String?, resumedFrom: UUID?,
+            objective: String, currentNode: String?, completedNodes: [String],
+            budget: Budget, failures: [FailureEvent],
+            actionCheckpoints: [ActionCheckpoint]
+        ) {
+            self.id = id
+            self.request = request
+            self.provider = provider
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.status = status
+            self.receipts = receipts
+            self.finalResponse = finalResponse
+            self.failure = failure
+            self.resumedFrom = resumedFrom
+            self.objective = objective
+            self.currentNode = currentNode
+            self.completedNodes = completedNodes
+            self.budget = budget
+            self.failures = failures
+            self.actionCheckpoints = actionCheckpoints
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            id = try values.decode(UUID.self, forKey: .id)
+            request = try values.decode(String.self, forKey: .request)
+            provider = try values.decode(String.self, forKey: .provider)
+            createdAt = try values.decode(Date.self, forKey: .createdAt)
+            updatedAt = try values.decode(Date.self, forKey: .updatedAt)
+            status = try values.decode(Status.self, forKey: .status)
+            receipts = try values.decodeIfPresent([Receipt].self, forKey: .receipts) ?? []
+            finalResponse = try values.decodeIfPresent(String.self, forKey: .finalResponse)
+            failure = try values.decodeIfPresent(String.self, forKey: .failure)
+            resumedFrom = try values.decodeIfPresent(UUID.self, forKey: .resumedFrom)
+            objective = try values.decodeIfPresent(String.self, forKey: .objective) ?? request
+            currentNode = try values.decodeIfPresent(String.self, forKey: .currentNode)
+            completedNodes = try values.decodeIfPresent(
+                [String].self, forKey: .completedNodes) ?? []
+            budget = try values.decodeIfPresent(Budget.self, forKey: .budget)
+                ?? Budget(maxToolCalls: 5, maxAttempts: 1, maxWallClockSeconds: 120)
+            failures = try values.decodeIfPresent([FailureEvent].self, forKey: .failures) ?? []
+            actionCheckpoints = try values.decodeIfPresent(
+                [ActionCheckpoint].self, forKey: .actionCheckpoints) ?? []
+        }
     }
 
     struct ResumeRequest {
@@ -74,9 +165,12 @@ final class TaskRunStore {
         request: String,
         provider: String,
         resumedFrom: UUID?,
+        maxToolCalls: Int,
         operation: () async throws -> T
     ) async throws -> T {
-        let run = start(request: request, provider: provider, resumedFrom: resumedFrom)
+        let run = start(
+            request: request, provider: provider, resumedFrom: resumedFrom,
+            maxToolCalls: maxToolCalls)
         return try await Self.$activeRunID.withValue(run.id) {
             do {
                 let result = try await operation()
@@ -116,12 +210,90 @@ final class TaskRunStore {
         source?.receipts.last { $0.success && !$0.isVerification && $0.command == "run_command(\(command))" }
     }
 
-    private func start(request: String, provider: String, resumedFrom: UUID?) -> Run {
+    /// Reserves one bounded tool slot before execution. Provider iterations are not a tool
+    /// budget: one response can contain several calls. This is the deterministic outer stop.
+    func reserveToolCall(_ node: String) -> String? {
+        guard let id = Self.activeRunID, var run = runs[id] else { return nil }
+        guard run.budget.usedToolCalls < run.budget.maxToolCalls else {
+            return "Tool budget reached (\(run.budget.maxToolCalls) calls). Stop and report "
+                + "the completed work and the remaining unmet criterion."
+        }
+        run.budget.usedToolCalls += 1
+        run.currentNode = node
+        run.updatedAt = Date()
+        runs[id] = run
+        persist(id)
+        return nil
+    }
+
+    func finishToolCall(node: String, success: Bool, output: String) {
+        guard let id = Self.activeRunID, var run = runs[id] else { return }
+        if success {
+            if !run.completedNodes.contains(node) { run.completedNodes.append(node) }
+        } else {
+            let classification = Self.classifyFailure(output)
+            run.failures.append(FailureEvent(
+                node: node, kind: classification.kind, policy: classification.policy,
+                observation: String(output.prefix(800)), recordedAt: Date()))
+        }
+        run.currentNode = nil
+        run.updatedAt = Date()
+        runs[id] = run
+        persist(id)
+    }
+
+    func checkpointAction(key: String, output: String) {
+        guard let id = Self.activeRunID, var run = runs[id] else { return }
+        guard !run.actionCheckpoints.contains(where: { $0.key == key }) else { return }
+        run.actionCheckpoints.append(ActionCheckpoint(
+            key: key, output: String(output.prefix(1200)), recordedAt: Date()))
+        run.updatedAt = Date()
+        runs[id] = run
+        persist(id)
+    }
+
+    func resumedAction(key: String) -> ActionCheckpoint? {
+        guard let id = Self.activeRunID, let sourceID = runs[id]?.resumedFrom else { return nil }
+        return runs[sourceID]?.actionCheckpoints.last { $0.key == key }
+    }
+
+    static func classifyFailure(_ observation: String) -> (
+        kind: FailureKind, policy: FailurePolicy
+    ) {
+        let lower = observation.lowercased()
+        if lower.contains("permission") || lower.contains("not granted")
+            || lower.contains("approval") || lower.contains("access is blocked")
+        { return (.permissionRequired, .requestApproval) }
+        if lower.contains("stale") || lower.contains("no longer exists")
+            || lower.contains("refresh context")
+        { return (.staleState, .refreshContext) }
+        if lower.contains("timed out") || lower.contains("timeout")
+            || lower.contains("temporarily") || lower.contains("rate limit")
+        { return (.transient, .retry) }
+        if lower.contains("not available") || lower.contains("not found")
+            || lower.contains("no route") || lower.contains("unsupported")
+        { return (.routeUnavailable, .fallback) }
+        if lower.contains("verify") || lower.contains("criterion")
+            || lower.contains("mismatch")
+        { return (.validationFailed, .repair) }
+        if lower.contains("already called") || lower.contains("repeated")
+        { return (.repeatedFailure, .stop) }
+        return (.terminal, .stop)
+    }
+
+    private func start(
+        request: String, provider: String, resumedFrom: UUID?, maxToolCalls: Int
+    ) -> Run {
         let now = Date()
         let run = Run(
             id: UUID(), request: request, provider: provider, createdAt: now,
             updatedAt: now, status: .running, receipts: [], finalResponse: nil,
-            failure: nil, resumedFrom: resumedFrom)
+            failure: nil, resumedFrom: resumedFrom, objective: request,
+            currentNode: nil, completedNodes: [],
+            budget: Budget(
+                maxToolCalls: max(1, maxToolCalls), maxAttempts: 1,
+                maxWallClockSeconds: 120),
+            failures: [], actionCheckpoints: [])
         runs[run.id] = run
         persist(run.id)
         return run

@@ -28,6 +28,7 @@ final class CapabilityDiscoveryTests: XCTestCase {
     private let catalogue: [(id: String, title: String)] = [
         ("browser.history", "Read Browser History"),
         ("browser.bookmarks", "Read Browser Bookmarks"),
+        ("browser.currentPage", "Read Current Browser Page"),
         ("browser.tabs", "List Open Browser Tabs"),
         ("clipboard.read", "Read Clipboard"),
         ("clipboard.history", "Search Clipboard History"),
@@ -79,6 +80,12 @@ final class CapabilityDiscoveryTests: XCTestCase {
 
     func testOpenTabsAreNotHistory() {
         assertTop("browser.tabs", "which tabs do i have open")
+    }
+
+    func testCurrentPageReaderBeatsTheAllTabsReader() {
+        assertTop(
+            "browser.currentPage",
+            "what page is open give me the exact title domain and summary")
     }
 
     // MARK: - Reading a capture versus taking one

@@ -1215,7 +1215,8 @@ class AIProviderService: ObservableObject {
         return try await TaskRunStore.shared.track(
             request: resume.source?.request ?? message,
             provider: String(describing: provider),
-            resumedFrom: resume.source?.id
+            resumedFrom: resume.source?.id,
+            maxToolCalls: maxIterations
         ) {
 
         var contextPrompt: String

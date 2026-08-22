@@ -8,7 +8,10 @@ enum TaskComplexityRoute: String {
     var maxToolIterations: Int {
         switch self {
         case .direct: return 2
-        case .bounded: return 5
+        // Five cut off immediately after the final successful reader in a real browser
+        // turn (two failed routes, discovery, summarize attempt, browser.tabs). The answer
+        // itself needs a round too, with one spare for recovery from an unavailable source.
+        case .bounded: return 7
         case .extended: return 9
         }
     }
@@ -42,7 +45,15 @@ enum TaskComplexityRouter {
         if sequenceMarkers.contains(where: text.contains) || actionCount >= 3 {
             return .extended
         }
-        if actionCount > 0 || text.contains("current ") || text.contains("latest ") {
+        // Live-state questions need one round to choose/read a source and another to answer.
+        // A first imperfect lookup can require one more. "What page is open?" previously
+        // received the two-round direct budget, used browser.tabs discovery on round two,
+        // then hit the limit before it could run the reader or answer.
+        let liveStateTerms = [
+            "current ", "latest ", "open page", "page is open", "open tab", "active tab",
+            "frontmost", "right now", "today", "tomorrow",
+        ]
+        if actionCount > 0 || liveStateTerms.contains(where: text.contains) {
             return .bounded
         }
         return .direct

@@ -19,6 +19,29 @@ import Testing
 @MainActor
 struct CapabilityScopeEvalTests {
 
+    @Test func builtInCapabilitySentAsMCPUsesCapabilityExecutor() {
+        // Reported by General Chat as run_mcp_tool(browser.currentPage). `builtin` is a
+        // capability namespace, not an MCP server, so the call must retain local page data.
+        let capabilityID = AgentToolRegistry.bridgedBuiltInCapabilityID(
+            toolName: "run_mcp_tool",
+            arguments: [
+                "app": "builtin",
+                "server": "builtin",
+                "tool": "browser.currentPage",
+                "arguments": [String: Any](),
+            ],
+            registeredCapabilityIDs: ["browser.currentPage"])
+        #expect(capabilityID == "browser.currentPage")
+    }
+
+    @Test func realMCPToolsAreNotRewrittenAsCapabilities() {
+        let capabilityID = AgentToolRegistry.bridgedBuiltInCapabilityID(
+            toolName: "run_mcp_tool",
+            arguments: ["server": "linear", "tool": "browser.currentPage"],
+            registeredCapabilityIDs: ["browser.currentPage"])
+        #expect(capabilityID == nil)
+    }
+
     private func capability(id: String, owner: String?) -> AICapability {
         AICapability(
             id: id,
@@ -156,6 +179,23 @@ struct ChatHistoryBudgetEvalTests {
     }
 }
 
+@MainActor
+struct CompletedAgentStepsViewTests {
+    @Test func toolCallsAreFoldedIntoOneDeduplicatedStepsList() {
+        let lines = AIChatMessageView.completedStepLines(
+            trace: ["Reading current Safari page", "run_capability(browser.currentPage)"],
+            toolCalls: [
+                "run_capability(browser.currentPage)",
+                "find_capability(current browser page)",
+            ])
+        #expect(lines == [
+            "Reading current Safari page",
+            "run_capability(browser.currentPage)",
+            "find_capability(current browser page)",
+        ])
+    }
+}
+
 // MARK: - Question or command
 
 @MainActor
@@ -205,6 +245,32 @@ struct TaskComplexityEvalTests {
 
     @Test func askingForCurrentStateEarnsTools() {
         #expect(TaskComplexityRouter.route("what is the current branch") == .bounded)
+    }
+
+    @Test func askingAboutTheOpenBrowserPageHasRoomToReadAndAnswer() {
+        let route = TaskComplexityRouter.route(
+            "What page is open? Give me its exact title, domain, and a short summary.")
+        #expect(route == .bounded)
+        #expect(route.maxToolIterations >= 6)
+    }
+}
+
+struct AgentSourceAuthorityEvalTests {
+    @Test @MainActor
+    func anActionDoesNotTreatUnrelatedMemoryAsAuthority() {
+        let decision = AgentSourceAuthority.decide(
+            query: "Create a reminder named DoraX Agent Eval for tomorrow")
+        #expect(decision.primary == .action)
+        #expect(!decision.allowsMemoryEvidence)
+    }
+
+    @Test @MainActor
+    func anOpenPageQuestionRequiresLiveBrowserEvidence() {
+        let decision = AgentSourceAuthority.decide(
+            query: "What page is open? Give me its exact title and domain.")
+        #expect(decision.primary == .liveState)
+        #expect(decision.requiresFreshRead)
+        #expect(!decision.allowsMemoryEvidence)
     }
 }
 
@@ -313,5 +379,37 @@ struct AgentTurnEvalTests {
         #expect(first != second)
         AgentToolRegistry.shared.endTurn(first)
         AgentToolRegistry.shared.endTurn(second)
+    }
+}
+
+@MainActor
+struct ScreenDrivingPlanEvalTests {
+    private let historyRoute = ChatRoute(
+        id: "menu:History > Video", kind: .menuCommand,
+        title: "History > Video", payload: "History\u{1}Video",
+        appName: "Tutorini Player", bundleId: "app.tutorini.Tutorini",
+        isReadOnly: false)
+
+    @Test func historyPlaybackRequiresExecutionApproval() {
+        #expect(ChatRouteResolver.executionApproval(for: historyRoute) == .ask)
+        #expect(historyRoute.asCandidate()?.caveat?.contains("launch or activate") == true)
+        #expect(historyRoute.asCandidate()?.caveat?.contains("verify") == true)
+    }
+
+    @Test func nowPlayingReadBackVerifiesHistoryPlayback() {
+        let before = MenuOutcomeVerifier.Snapshot(
+            bundleID: "app.tutorini.Tutorini", isRunning: false, windowTitles: [],
+            nowPlayingTitle: nil, playbackState: "stopped", playbackBundleID: nil)
+        let after = MenuOutcomeVerifier.Snapshot(
+            bundleID: "app.tutorini.Tutorini", isRunning: true,
+            windowTitles: ["Tutorini Player"],
+            nowPlayingTitle: "How to Build an AI Email Agent", playbackState: "playing",
+            playbackBundleID: "app.tutorini.Tutorini")
+
+        let outcome = MenuOutcomeVerifier.compare(
+            before: before, after: after, appName: "Tutorini Player",
+            path: ["History", "How to Build an AI Email Agent"])
+        #expect(outcome?.verified == true)
+        #expect(outcome?.message.contains("is playing") == true)
     }
 }

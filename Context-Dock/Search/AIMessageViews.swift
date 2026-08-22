@@ -1319,28 +1319,6 @@ struct AIChatMessageView: View {
         }
     }
 
-    @ViewBuilder
-    private var mcpToolChips: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(message.mcpToolsRan, id: \.self) { label in
-                HStack(spacing: 5) {
-                    Image(systemName: "cpu")
-                        .font(.system(size: 10, weight: .semibold))
-                    // No verb bolted on here. These chips carry different kinds of thing —
-                    // a capability that ran, memory that was read, a route that was looked
-                    // up — and "ran Used memory: …" was the view asserting the same verb
-                    // over all of them. The label says what it is.
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(.purple)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.purple.opacity(0.12), in: Capsule())
-            }
-        }
-    }
-
     private var evidenceReceiptView: some View {
         VStack(alignment: .leading, spacing: 5) {
             Button {
@@ -1420,7 +1398,6 @@ struct AIChatMessageView: View {
 
     /// Collapsed record of how the answer was routed. Every line is real work the app did
     /// (catalog size, chosen path, executed row) — never model reasoning.
-    @ViewBuilder
     /// One line describing what the trace did, instead of a bare step count.
     ///
     /// Categorised by the prefixes this app writes itself — `dockTraceStep`,
@@ -1452,6 +1429,22 @@ struct AIChatMessageView: View {
         return parts.joined(separator: ", ")
     }
 
+    /// The provider tool labels and the routing trace describe the same completed work.
+    /// Keep one ordered, deduplicated list so the transcript does not expose a second row
+    /// of purple implementation chips beneath the Steps disclosure.
+    static func completedStepLines(trace: [String], toolCalls: [String]) -> [String] {
+        var seen: Set<String> = []
+        return (trace + toolCalls).filter { line in
+            let key = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, seen.insert(key).inserted else { return false }
+            return true
+        }
+    }
+
+    private var completedStepLines: [String] {
+        Self.completedStepLines(trace: message.trace, toolCalls: message.mcpToolsRan)
+    }
+
     private var routerTraceView: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
@@ -1464,7 +1457,7 @@ struct AIChatMessageView: View {
                         .font(.system(size: 8, weight: .bold))
                     Image(systemName: "point.3.connected.trianglepath.dotted")
                         .font(.system(size: 9, weight: .semibold))
-                    Text(Self.traceSummary(message.trace))
+                    Text(Self.traceSummary(completedStepLines))
                         .font(.system(size: 11, weight: .medium))
                 }
                 .foregroundStyle(.secondary)
@@ -1476,7 +1469,7 @@ struct AIChatMessageView: View {
 
             if isTraceExpanded {
                 VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(message.trace.enumerated()), id: \.offset) { _, step in
+                    ForEach(Array(completedStepLines.enumerated()), id: \.offset) { _, step in
                         HStack(alignment: .top, spacing: 6) {
                             Circle()
                                 .fill(Color.secondary.opacity(0.45))
@@ -1585,8 +1578,10 @@ struct AIChatMessageView: View {
                 if !message.attachments.isEmpty {
                     attachmentChips
                 }
-                // Routing trace ("Matching 31 actions…", "Best path: Share · Notes")
-                if message.role == .assistant, !message.trace.isEmpty {
+                // Completed routing and tool activity stays behind one disclosure. While the
+                // provider is working, the progress surface already communicates activity;
+                // showing raw purple calls here duplicates it and makes the answer jump.
+                if message.role == .assistant, !isStreaming, !completedStepLines.isEmpty {
                     routerTraceView
                 }
                 // Script/terminal output — collapsed. A conversion log is hundreds of lines of
@@ -1594,10 +1589,6 @@ struct AIChatMessageView: View {
                 // dumped between two chat bubbles.
                 if let runOutput = message.runOutput, !runOutput.isEmpty {
                     runOutputView(runOutput)
-                }
-                // MCP tool-run chips ("ran <tool> via <server>")
-                if !message.mcpToolsRan.isEmpty && message.reminderResults.isEmpty {
-                    mcpToolChips
                 }
                 if !message.evidenceReceipts.isEmpty {
                     evidenceReceiptView

@@ -97,6 +97,7 @@ struct ApprovalCard: View {
         switch request.kind {
         case .command: return "terminal.fill"
         case .capability: return "checkmark.shield"
+        case .generalAction: return "play.rectangle.on.rectangle"
         case .adapter: return "app.connected.to.app.below.fill"
         }
     }

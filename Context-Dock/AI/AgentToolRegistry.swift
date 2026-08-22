@@ -414,11 +414,76 @@ final class AgentToolRegistry {
             + "disagree with it by looking somewhere else. Report what was observed above."
     }
 
+    /// Stable identity of the operation, excluding model-authored prose that cannot alter it.
+    static func callSignature(name: String, arguments: [String: Any]) -> String {
+        let signatureArguments = arguments.filter { key, _ in
+            !(name == "run_capability" && key == "explanation")
+        }
+        if JSONSerialization.isValidJSONObject(signatureArguments),
+            let data = try? JSONSerialization.data(
+                withJSONObject: signatureArguments, options: [.sortedKeys]),
+            let encoded = String(data: data, encoding: .utf8)
+        {
+            return name + "|" + encoded
+        }
+        return name + "|" + String(describing: signatureArguments)
+    }
+
+    /// Reads must be fresh after resume. Writes and screen-driving actions must not be
+    /// replayed merely because the provider/session restarted after their side effect landed.
+    static func isReplaySensitive(name: String, arguments: [String: Any]) -> Bool {
+        switch name {
+        case "run_command", "run_menu_command", "run_adapter_action", "window_control":
+            return true
+        case "run_capability":
+            guard let id = arguments["capability_id"] as? String,
+                let capability = CapabilityRegistry.shared.capability(id: id)
+            else { return false }
+            return capability.riskLevel != .low
+        default:
+            return false
+        }
+    }
+
+    /// Models occasionally wrap a built-in DoraX capability in the MCP envelope. The two
+    /// namespaces look alike in the prompt, but `builtin` is not an MCP server: sending it
+    /// to MCPRuntime discards the local Safari/Calendar/etc. context. Normalize that call at
+    /// the dispatch boundary so the capability keeps its ordinary scope, approval and
+    /// verification behaviour.
+    static func bridgedBuiltInCapabilityID(
+        toolName: String,
+        arguments: [String: Any],
+        registeredCapabilityIDs: Set<String>
+    ) -> String? {
+        guard toolName == "run_mcp_tool" else { return nil }
+        let server = (arguments["server"] as? String ?? "").lowercased()
+        let app = (arguments["app"] as? String ?? "").lowercased()
+        guard server == "builtin" || app == "builtin" else { return nil }
+        guard let capabilityID = arguments["tool"] as? String,
+            registeredCapabilityIDs.contains(capabilityID)
+        else { return nil }
+        return capabilityID
+    }
+
     func dispatch(
         name: String,
         arguments: [String: Any],
         context: AgentToolContext
     ) async -> AgentToolResult? {
+        if let capabilityID = Self.bridgedBuiltInCapabilityID(
+            toolName: name,
+            arguments: arguments,
+            registeredCapabilityIDs: Set(CapabilityRegistry.shared.all.map(\.id)))
+        {
+            return await dispatch(
+                name: "run_capability",
+                arguments: [
+                    "capability_id": capabilityID,
+                    "input": (arguments["arguments"] as? [String: Any]) ?? [:],
+                    "explanation": "Requested through the built-in capability bridge",
+                ],
+                context: context)
+        }
         guard let tool = tool(named: name) else { return nil }
 
         if let turn = context.turn,
@@ -432,10 +497,10 @@ final class AgentToolRegistry {
                 displayCommand: "\(name) (already settled by a read-back)")
         }
 
-        let signature = name + "|"
-            + arguments.keys.sorted()
-                .map { "\($0)=\(String(describing: arguments[$0] ?? ""))" }
-                .joined(separator: ",")
+        // A model may rephrase its explanation after an approval is denied or expires.
+        // That prose is not an action input, so it must not turn the same mutation into a
+        // fresh call (the reminder test otherwise raised two one-minute approvals).
+        let signature = Self.callSignature(name: name, arguments: arguments)
         if let turn = context.turn, let previous = callsByTurn[turn]?[signature] {
             return AgentToolResult(
                 success: false,
@@ -445,7 +510,30 @@ final class AgentToolRegistry {
                 displayCommand: "\(name) (repeat suppressed)")
         }
 
+        if let budgetMessage = TaskRunStore.shared.reserveToolCall(name) {
+            return AgentToolResult(
+                success: false, output: budgetMessage,
+                displayCommand: "\(name) (tool budget reached)")
+        }
+
+        if Self.isReplaySensitive(name: name, arguments: arguments),
+            let checkpoint = TaskRunStore.shared.resumedAction(key: signature)
+        {
+            let output = "Resumed from a durable action checkpoint; this side effect was not "
+                + "run twice. Previous result:\n\(checkpoint.output)\n\nPerform a fresh read-only "
+                + "verification before reporting completion."
+            TaskRunStore.shared.finishToolCall(node: name, success: true, output: output)
+            return AgentToolResult(
+                success: true, output: output,
+                displayCommand: "\(name) (resumed checkpoint)")
+        }
+
         let result = await tool.handler(arguments, context)
+        TaskRunStore.shared.finishToolCall(
+            node: name, success: result.success, output: result.output)
+        if result.success, Self.isReplaySensitive(name: name, arguments: arguments) {
+            TaskRunStore.shared.checkpointAction(key: signature, output: result.output)
+        }
         if let turn = context.turn, callsByTurn[turn] != nil {
             callsByTurn[turn]?[signature] = String(result.output.prefix(400))
         }
@@ -722,6 +810,9 @@ final class AgentToolRegistry {
                 + "scan recognise recognize"
         case "capture.area":
             return "region area crop snip selection part of the screen rectangle grab"
+        case "browser.currentPage":
+            return "current active open frontmost exact title domain summary summarize "
+                + "content page website site url tab"
         case "app.menu.click":
             return "menu minimize maximize zoom hide quit close window save open new "
                 + "preferences settings command item click run app"
@@ -1531,7 +1622,9 @@ final class AgentToolRegistry {
                 + "\"Disk Utility > About Disk Utility\". Use for apps whose menus DoraX has "
                 + "cached but which have no adapter. The path must match a real cached menu "
                 + "item — it is checked against the cache and live-verified in the app before "
-                + "clicking, and a path that does not exist is refused.",
+                + "clicking, and a path that does not exist is refused. Before a screen-driving "
+                + "command runs, DoraX shows the user a plan for launching/activating the app, "
+                + "clicking the exact item, and verifying the result.",
             properties: [
                 "app": ["type": "string", "description": "The app's name."],
                 "path": [
@@ -1629,7 +1722,8 @@ final class AgentToolRegistry {
                         output: "\(appName) has not granted menu control.",
                         displayCommand: "run_menu_command(\(appName))")
                 }
-                let outcome = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.accessPolicy))
+                let outcome = await GeneralAIActionExecutor.shared.execute(
+                    candidate, approval: .ask)
                 guard outcome.success else {
                     return AgentToolResult(
                         success: false,

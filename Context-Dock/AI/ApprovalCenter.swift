@@ -5,7 +5,8 @@
 //
 // There were three, each with its own publisher, its own risk scale and its own card:
 // a shell command waited in TerminalAIBridge, a capability in
-// AICapabilityApprovalCenter, an adapter action in AppAdapterManager. Every surface had
+// AICapabilityApprovalCenter, a general app action in GeneralAIActionApprovalCenter, and
+// an adapter action in AppAdapterManager. Every surface had
 // to know all three existed and render all three, and the preview panel proved what
 // happens when one is missed — "convert this to JPEG" sat spinning behind a question
 // the user was never shown, because the surface watched one inbox and suppressed the
@@ -69,6 +70,7 @@ struct ApprovalRequest: Identifiable {
     enum Kind {
         case command(TerminalAIBridge.PendingCommand)
         case capability(AICapabilityApprovalCenter.PendingApproval)
+        case generalAction(GeneralAIActionApprovalCenter.PendingApproval)
         case adapter(AdapterActionRequest)
     }
 
@@ -116,7 +118,7 @@ struct ApprovalRequest: Identifiable {
     /// The two AI paths ask in a model's words; an adapter action does not.
     static func requester(of kind: Kind) -> Requester {
         switch kind {
-        case .capability, .command: return .assistant
+        case .capability, .generalAction, .command: return .assistant
         case .adapter: return .connectedApp
         }
     }
@@ -139,7 +141,7 @@ struct ApprovalRequest: Identifiable {
     var approveTitle: String {
         switch kind {
         case .command: return "Approve & Run"
-        case .capability, .adapter: return "Approve"
+        case .capability, .generalAction, .adapter: return "Approve"
         }
     }
 }
@@ -169,6 +171,9 @@ final class ApprovalCenter: ObservableObject {
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
         AICapabilityApprovalCenter.shared.$pending
+            .sink { [weak self] _ in self?.refresh() }
+            .store(in: &cancellables)
+        GeneralAIActionApprovalCenter.shared.$pending
             .sink { [weak self] _ in self?.refresh() }
             .store(in: &cancellables)
         AppAdapterManager.shared.$pendingApproval
@@ -211,6 +216,25 @@ final class ApprovalCenter: ObservableObject {
                 risk: ApprovalRisk(capability.capability.riskLevel),
                 origin: nil)
         }
+        if let action = GeneralAIActionApprovalCenter.shared.pending {
+            let candidate = action.candidate
+            var details: [String] = []
+            if let menuPath = candidate.menuPath, !menuPath.isEmpty {
+                details.append(menuPath.joined(separator: " → "))
+            }
+            details.append(contentsOf: candidate.inputValues.sorted { $0.key < $1.key }
+                .map { "\($0.key): \($0.value)" })
+            return ApprovalRequest(
+                id: "general-action:\(action.id.uuidString)",
+                kind: .generalAction(action),
+                title: candidate.title,
+                subtitle: candidate.appName.map { "Run with \($0) via \(candidate.routeLabel)" }
+                    ?? candidate.routeLabel,
+                requesterClaim: nil,
+                body: details.isEmpty ? nil : details.joined(separator: "\n"),
+                risk: ApprovalRisk(candidate.riskLevel),
+                origin: nil)
+        }
         if let adapter = AppAdapterManager.shared.pendingApproval {
             return ApprovalRequest(
                 id: "adapter:\(adapter.id)",
@@ -234,6 +258,8 @@ final class ApprovalCenter: ObservableObject {
             TerminalAIBridge.shared.approveCommand(command.command)
         case .capability:
             AICapabilityApprovalCenter.shared.approve()
+        case .generalAction:
+            GeneralAIActionApprovalCenter.shared.resolve(.allowOnce)
         case .adapter(let adapter):
             adapter.onApprove()
         }
@@ -245,6 +271,8 @@ final class ApprovalCenter: ObservableObject {
             TerminalAIBridge.shared.denyCommand()
         case .capability:
             AICapabilityApprovalCenter.shared.deny()
+        case .generalAction:
+            GeneralAIActionApprovalCenter.shared.resolve(.cancel)
         case .adapter(let adapter):
             adapter.onDeny()
         }
@@ -270,7 +298,7 @@ final class ApprovalCenter: ObservableObject {
             }
         }
 
-        // Capabilities and adapter actions name no surface, so they go to the one in
+        // Capabilities, general actions and adapter actions name no surface, so they go to the one in
         // front: the preview window if its assistant is open, then the chat window, then
         // the dock.
         return surface == frontmostSurface ? request : nil
@@ -294,7 +322,13 @@ final class ApprovalCenter: ObservableObject {
     /// Only offered when the request itself allows it — a destructive adapter action has
     /// no standing grant, and neither commands nor capabilities have one at all.
     func approveAlways(_ request: ApprovalRequest) -> (() -> Void)? {
-        guard case .adapter(let adapter) = request.kind else { return nil }
-        return adapter.onApproveAlways
+        switch request.kind {
+        case .generalAction:
+            return { GeneralAIActionApprovalCenter.shared.resolve(.allowAlways) }
+        case .adapter(let adapter):
+            return adapter.onApproveAlways
+        case .command, .capability:
+            return nil
+        }
     }
 }
