@@ -23,6 +23,16 @@
 import Foundation
 
 enum ConversationDistiller {
+    /// Chat transcripts are ephemeral context by default. Turning them into durable memory
+    /// is a separate privacy choice, even when extraction is deterministic and verbatim.
+    /// A future settings surface may expose this; until the user opts in, the daily pass is
+    /// intentionally a no-op.
+    static let automaticDistillationKey = "dorax.brain.autoDistillConversations.v1"
+
+    static var isAutomaticDistillationEnabled: Bool {
+        UserDefaults.standard.bool(forKey: automaticDistillationKey)
+    }
+
     /// Openings that make a sentence a durable statement about the user rather than a
     /// request. "open safari" is a command; "i always use safari" is a fact.
     private static let patterns: [String] = [
@@ -39,6 +49,7 @@ enum ConversationDistiller {
 
     @MainActor
     static func distillRecentConversations() {
+        guard isAutomaticDistillationEnabled else { return }
         let sessions = GeneralChatSessionStore.index()
         let cutoff = Calendar.current.date(byAdding: .day, value: -2, to: Date()) ?? Date()
 

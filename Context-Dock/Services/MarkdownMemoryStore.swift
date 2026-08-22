@@ -19,6 +19,7 @@ final class MarkdownMemoryStore {
     static let shared = MarkdownMemoryStore()
 
     private let fileManager = FileManager.default
+    private let rootOverride: URL?
     private let maxContextCharacters = 8_000
 
     /// Where the vault lives. Defaults to Application Support, and moves wherever the user
@@ -34,12 +35,16 @@ final class MarkdownMemoryStore {
     }
 
     var root: URL {
+        if let rootOverride { return rootOverride }
         guard let path = UserDefaults.standard.string(forKey: Self.vaultPathKey), !path.isEmpty
         else { return Self.defaultRoot }
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
-    private init() {
+    /// A private vault root keeps automated tests and import previews away from the user's
+    /// real memory. Production callers continue to use `shared` and the configured folder.
+    init(rootOverride: URL? = nil) {
+        self.rootOverride = rootOverride
         bootstrapIfNeeded()
     }
 
@@ -202,7 +207,12 @@ final class MarkdownMemoryStore {
         return nil
     }
 
-    func remember(_ rawText: String, appBundleID: String? = nil, appName: String? = nil) -> String? {
+    func remember(
+        _ rawText: String,
+        appBundleID: String? = nil,
+        appName: String? = nil,
+        capturedAt: Date = Date()
+    ) -> String? {
         guard let fact = explicitMemoryFact(from: rawText) else { return nil }
 
         let destination: (url: URL, label: String)
@@ -232,6 +242,11 @@ final class MarkdownMemoryStore {
             content += "\n"
         }
         content += line + "\n"
+        content += explicitProvenanceComment(
+            capturedAt: capturedAt,
+            appBundleID: appBundleID,
+            appName: appName
+        ) + "\n"
 
         do {
             try fileManager.createDirectory(
@@ -720,6 +735,37 @@ final class MarkdownMemoryStore {
         let fact = trimmed[start...].trimmingCharacters(in: .whitespacesAndNewlines)
         guard fact.count >= 2 else { return nil }
         return fact.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+    }
+
+    /// Human-readable provenance kept beside the fact without becoming another searchable
+    /// bullet. Future answers can distinguish something the user explicitly saved from an
+    /// inferred or imported memory, and the Markdown remains understandable outside DoraX.
+    private func explicitProvenanceComment(
+        capturedAt: Date,
+        appBundleID: String?,
+        appName: String?
+    ) -> String {
+        func safe(_ value: String?) -> String? {
+            guard let value else { return nil }
+            let cleaned = value
+                .replacingOccurrences(of: "--", with: "-")
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return cleaned.isEmpty ? nil : cleaned
+        }
+
+        var lines = [
+            "  <!-- dorax-provenance",
+            "  source: explicit-user-request",
+            "  confidence: explicit",
+            "  captured-at: \(ISO8601DateFormatter().string(from: capturedAt))",
+        ]
+        if let appName = safe(appName) { lines.append("  source-app: \(appName)") }
+        if let appBundleID = safe(appBundleID) {
+            lines.append("  source-bundle-id: \(appBundleID)")
+        }
+        lines.append("  -->")
+        return lines.joined(separator: "\n")
     }
 
     private func memoryFactFiles(appBundleID: String?) -> [URL] {
