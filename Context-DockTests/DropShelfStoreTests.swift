@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -210,5 +211,87 @@ struct DropShelfLifecycleTests {
         let reopened = DropShelfStore(root: store.root)
 
         #expect(reopened.items.count == 1)
+    }
+}
+
+// MARK: - Reading a dropped pasteboard
+
+@MainActor
+struct DropShelfPasteboardTests {
+    private func pasteboard() -> NSPasteboard {
+        let pb = NSPasteboard(name: .init("shelf-test-\(UUID().uuidString)"))
+        pb.clearContents()
+        return pb
+    }
+
+    private let source = (name: "Finder", bundleId: "com.apple.finder")
+
+    @Test func aDroppedFileLandsOnTheShelfAsAFile() {
+        let store = makeStore()
+        let pb = pasteboard()
+        pb.writeObjects([makeFile("dropped.pdf") as NSURL])
+
+        let accepted = store.ingest(pasteboard: pb, source: source)
+
+        #expect(accepted == 1)
+        #expect(store.items.first?.kind == .documents)
+        #expect(store.items.first?.originalName == "dropped.pdf")
+    }
+
+    @Test func droppingSeveralFilesAtOnceKeepsAllOfThem() {
+        let store = makeStore()
+        let pb = pasteboard()
+        pb.writeObjects([makeFile("a.png") as NSURL, makeFile("b.pdf") as NSURL])
+
+        let accepted = store.ingest(pasteboard: pb, source: source)
+
+        #expect(accepted == 2)
+        #expect(store.items.count == 2)
+    }
+
+    @Test func aDroppedWebLinkLandsAsALinkRatherThanAFile() {
+        let store = makeStore()
+        let pb = pasteboard()
+        pb.writeObjects([URL(string: "https://example.com/board")! as NSURL])
+
+        let accepted = store.ingest(pasteboard: pb, source: source)
+
+        #expect(accepted == 1)
+        #expect(store.items.first?.kind == .links)
+    }
+
+    /// A dropped file also puts its path on the pasteboard as a string. Reading the string
+    /// first would file every dropped file as a text note.
+    @Test func aDroppedFileIsNotMistakenForItsOwnPath() {
+        let store = makeStore()
+        let pb = pasteboard()
+        let file = makeFile("real.png")
+        pb.writeObjects([file as NSURL])
+        pb.setString(file.path, forType: .string)
+
+        _ = store.ingest(pasteboard: pb, source: source)
+
+        #expect(store.items.count == 1)
+        #expect(store.items.first?.kind == .images)
+    }
+
+    @Test func droppedTextWithNoFileBehindItBecomesANote() {
+        let store = makeStore()
+        let pb = pasteboard()
+        pb.setString("a paragraph worth keeping", forType: .string)
+
+        let accepted = store.ingest(pasteboard: pb, source: source)
+
+        #expect(accepted == 1)
+        #expect(store.items.first?.kind == .text)
+    }
+
+    @Test func anEmptyDropChangesNothing() {
+        let store = makeStore()
+
+        let accepted = store.ingest(pasteboard: pasteboard(), source: source)
+
+        #expect(accepted == 0)
+        #expect(store.items.isEmpty)
     }
 }

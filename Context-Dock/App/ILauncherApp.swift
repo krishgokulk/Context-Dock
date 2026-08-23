@@ -2161,13 +2161,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func activateDropShelf() {
+        DropShelfController.shared.activate()
+    }
+
     func activateClipboardScope() {
         guard settings.enableLayer2 else { return }
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        if toggleOffSmartScopeIfActive("clipboard") { return }
-        presentSmartScope(.activateClipboardScope, key: "clipboard")
+        ClipboardPanelController.shared.toggle()
     }
 
     /// Global hotkey → open the dock directly in Selection Scope for whatever the frontmost

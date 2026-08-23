@@ -141,6 +141,41 @@ final class DropShelfStore: ObservableObject {
         return try record(at: destination, kind: .links, originalName: name, app: app)
     }
 
+    /// Everything a dropped pasteboard holds, in the order that keeps each thing what it
+    /// is. Returns how many items were taken.
+    ///
+    /// URLs are read before the plain string on purpose: a dragged file also puts its own
+    /// path on the pasteboard as text, so reading the string first would file every
+    /// dropped file as a text note about itself.
+    @discardableResult
+    func ingest(
+        pasteboard: NSPasteboard, source app: (name: String, bundleId: String)
+    ) -> Int {
+        var accepted = 0
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self]) as? [URL] {
+            for url in urls {
+                do {
+                    if url.isFileURL {
+                        try ingestFile(at: url, source: app)
+                    } else {
+                        try ingestURL(url, source: app)
+                    }
+                    accepted += 1
+                } catch {
+                    continue
+                }
+            }
+        }
+        guard accepted == 0 else { return accepted }
+
+        if let text = pasteboard.string(forType: .string),
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            if (try? ingestText(text, source: app)) != nil { accepted += 1 }
+        }
+        return accepted
+    }
+
     /// First line of the text, trimmed of anything a filename cannot carry. Falls back to
     /// the clock when the text opens with blank lines.
     static func fileName(forText text: String) -> String {

@@ -46,6 +46,7 @@ final class ClipboardPanelController: NSObject {
     private var returnApplication: NSRunningApplication?
     private var hoverMonitors: [Any] = []
     private var outsideClickMonitor: Any?
+    private var isSuppressed = false
     /// True only for the hotkey path, which is allowed to take focus. A copy-triggered
     /// pill must never pull the user out of what they are typing in.
     private var didTakeFocus = false
@@ -56,10 +57,21 @@ final class ClipboardPanelController: NSObject {
 
     /// A copy landed anywhere on the system. Ambient: orders in without activating us.
     func didCopy(_ entry: LauncherView.ClipboardEntry) {
+        guard !isSuppressed else { return }
         ensurePanel()
         model.reload()
         model.ingest(entry)
         model.didCopy()
+    }
+
+    /// Stood down while a drag is in flight. A drag is not a copy, so the ambient pill
+    /// has nothing to announce, and standing it down removes the only case where it and
+    /// the Drop Shelf fight for the same corner and the same pointer. The hotkey is
+    /// unaffected — that is a deliberate ask, not an ambient reaction.
+    func setSuppressed(_ suppressed: Bool) {
+        isSuppressed = suppressed
+        guard suppressed, !model.isKeyboardArmed else { return }
+        model.dismiss()
     }
 
     /// Clipboard-scope hotkey.

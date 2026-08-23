@@ -400,6 +400,9 @@ extension LauncherView {
                 lastCheckedPasteboardCount = NSPasteboard.general.changeCount
                 startClipboardExpiryTimer()
                 startClipboardMonitorTimer()
+                // The Drop Shelf's edge strip does not exist until this runs, so nothing
+                // it does can affect the system before the app is up.
+                DropShelfController.shared.activate()
 
                 // Start observing app switches if enabled (frontmost app already detected in ILauncherApp)
                 if settings.enableFrontmostDetection {
