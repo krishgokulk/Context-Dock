@@ -19,7 +19,8 @@ extension LauncherView {
         // Cleared automatically once the scope is exited.
         syncScopeChatSpaceHold()
 
-        if isGlobalContextActive,
+        if !dockUsesFixedHost,
+            isGlobalContextActive,
             globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch,
             reason.isTypingOrContentRefresh,
             !hasMatchingGlobalContextResults
@@ -1512,7 +1513,14 @@ extension LauncherView {
                 // "the launcher opening", and it is now the card's to perform. Row churn
                 // while typing stays instant so the dock never lags the keyboard.
                 let isReveal = animated && (presetChanged || modeChanged || globalPhaseChanged)
-                if isReveal {
+                // Global Context sizes its sheet from an estimate (rows × 52) and corrects
+                // it once the rows have measured themselves. That correction is not a
+                // reveal and was landing in one frame, which reads as the sheet jumping
+                // after it has already opened. Anything that big glides; per-keystroke
+                // churn stays instant so the dock never lags the keyboard.
+                let previousCard = self.renderedDockHeight ?? effectiveHeight
+                let isCorrection = animated && abs(previousCard - effectiveHeight) > 24
+                if isReveal || isCorrection {
                     withAnimation(.dockSheet) {
                         self.renderedDockHeight = effectiveHeight
                     }
