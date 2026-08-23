@@ -19,6 +19,19 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
     // click controls) immediately.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// The fixed host is far taller than the card, so most of it is empty glass-less
+    /// space. Without this, that emptiness would swallow every click aimed at whatever is
+    /// behind the launcher. Drag and key routing are unaffected — only hit testing.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let window = window as? KeyableWindow, window.usesFixedHost {
+            let cardHeight = window.dockCardHeight
+            if cardHeight > 0, point.y < bounds.height - cardHeight {
+                return nil
+            }
+        }
+        return super.hitTest(point)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         wantsLayer = true
@@ -64,6 +77,22 @@ class KeyableWindow: NSPanel {
     /// True while the panel is mid surface-transition. Content-churn resizes are dropped
     /// during it — a second setFrame lands as a visible hitch in the middle of the reveal.
     private(set) var isAnimatingDockFrame = false
+
+    /// Stage 1 of removing the sheet-expansion race: the window stops being sized from
+    /// content and becomes a fixed transparent host with the card animating inside it.
+    /// Kept as a switch so the old measured-resize path is one flag away while this is
+    /// still being proven on screen.
+    var usesFixedHost = true
+    /// Height of the card currently drawn at the top of the host. Only used to decide
+    /// which part of the window is empty enough to click through.
+    var dockCardHeight: CGFloat = 0
+
+    /// The tallest the dock may ever be on this screen. Fixed for the session: nothing
+    /// about content may change it, which is the entire point.
+    func fixedHostHeight(for screen: NSScreen?) -> CGFloat {
+        let visible = (screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        return max(240, visible.height - 24)
+    }
 
     override var canBecomeKey: Bool {
         return true

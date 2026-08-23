@@ -1476,6 +1476,45 @@ extension LauncherView {
                 newY = topAnchor - effectiveHeight
             }
 
+            // The card's height is content-driven and lands asynchronously; the host's is
+            // not. Committing the content height as a window frame is what made the two
+            // geometries race and produced the half sheet, so under the fixed host the
+            // frame carries width and position only and the card animates inside it.
+            if let keyableWindow = window as? KeyableWindow, keyableWindow.usesFixedHost {
+                let hostHeight = keyableWindow.fixedHostHeight(for: window.screen)
+                keyableWindow.dockCardHeight = effectiveHeight
+                let topAnchor = keyableWindow.pinnedTopY ?? currentFrame.maxY
+                keyableWindow.pinnedTopY = topAnchor
+                let hostFrame = NSRect(
+                    x: newX, y: topAnchor - hostHeight, width: newWidth, height: hostHeight)
+                // Collapsed capsule ⇄ result sheet is the one motion the user reads as
+                // "the launcher opening", and it is now the card's to perform. Row churn
+                // while typing stays instant so the dock never lags the keyboard.
+                let isReveal = animated && (presetChanged || modeChanged || globalPhaseChanged)
+                if isReveal {
+                    withAnimation(.dockSheet) {
+                        self.renderedDockHeight = effectiveHeight
+                    }
+                } else {
+                    var instant = Transaction()
+                    instant.animation = nil
+                    withTransaction(instant) {
+                        self.renderedDockHeight = effectiveHeight
+                    }
+                }
+                if abs(window.frame.width - newWidth) > 1
+                    || abs(window.frame.height - hostHeight) > 1
+                    || abs(window.frame.maxY - topAnchor) > 1
+                {
+                    keyableWindow.applyDockFrame(hostFrame, animated: false)
+                    window.invalidateShadow()
+                }
+                self.lastAppliedDockHeightPreset = heightPreset
+                self.lastAppliedDockSurfaceMode = surfaceMode
+                self.lastAppliedGlobalTypingPhase = globalPhase
+                return
+            }
+
             let newFrame = NSRect(x: newX, y: newY, width: newWidth, height: effectiveHeight)
 
             // Keep the shell and its host in lockstep.  The old implementation grew the
