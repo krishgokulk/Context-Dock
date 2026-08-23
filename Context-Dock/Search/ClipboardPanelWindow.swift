@@ -26,8 +26,14 @@ enum ClipboardPillMetrics {
             height: expandedSize.height + shadowPad * 2)
     }
 
+    static let miniSize = CGSize(width: 96, height: 44)
+
     static func cardSize(for phase: PillPhase) -> CGSize {
-        phase == .expanded ? expandedSize : collapsedSize
+        switch phase {
+        case .expanded: return expandedSize
+        case .mini: return miniSize
+        case .collapsed, .hidden: return collapsedSize
+        }
     }
 }
 
@@ -367,8 +373,10 @@ final class ClipboardPanelModel: ObservableObject {
 
     // MARK: - Pill phase
 
-    /// How long the pill lingers after a copy nobody reached for.
+    /// How long the full pill lingers after a copy nobody reached for.
     static let copyDwell: TimeInterval = 4
+    /// How long the shrunken badge lingers after that.
+    static let miniDwell: TimeInterval = 3
     /// Shorter: the pointer has already been here and left.
     static let hoverExitDwell: TimeInterval = 1.5
 
@@ -392,6 +400,10 @@ final class ClipboardPanelModel: ObservableObject {
     /// steals focus; the click is the deliberate act that hands over the keyboard, and an
     /// armed card stops behaving like an ambient pill — it stays until dismissed.
     @Published private(set) var isKeyboardArmed = false
+
+    /// Copies that landed while the pill was already up. Shown as "+N" so a burst reads
+    /// as "three more were caught" rather than one clip silently replacing another.
+    @Published private(set) var burstCount = 0
 
     func armKeyboard() {
         guard phase.isVisible else { return }
@@ -418,20 +430,37 @@ final class ClipboardPanelModel: ObservableObject {
     /// card is left alone rather than yanked back to a pill under the pointer.
     func didCopy() {
         guard phase != .expanded else { return }
+        // Already on screen: this is a burst, and the count is what the user needs.
+        if phase.isVisible {
+            burstCount += 1
+        } else {
+            burstCount = 0
+        }
         phase = .collapsed
-        armHide(after: Self.copyDwell)
+        armShrink(after: Self.copyDwell)
+    }
+
+    /// Full pill has aged out. It becomes a badge rather than vanishing, so there is still
+    /// something to reach for.
+    func autoShrink() {
+        guard phase == .collapsed else { return }
+        cancelHide()
+        phase = .mini
+        armHide(after: Self.miniDwell)
     }
 
     func hoverBegan() {
         guard phase != .hidden else { return }
         cancelHide()
+        // The clips have been looked at, so there is no longer a backlog to report.
+        burstCount = 0
         phase = .expanded
     }
 
     func hoverEnded() {
         guard phase == .expanded, !isKeyboardArmed else { return }
         phase = .collapsed
-        armHide(after: Self.hoverExitDwell)
+        armShrink(after: Self.hoverExitDwell)
     }
 
     /// The hotkey is a deliberate ask: open the card and leave it open.
@@ -450,6 +479,22 @@ final class ClipboardPanelModel: ObservableObject {
         phase = .hidden
         focusedEntryIndex = nil
         isKeyboardArmed = false
+        burstCount = 0
+    }
+
+    private func armShrink(after delay: TimeInterval) {
+        hideTask?.cancel()
+        isHideArmed = true
+        hideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.autoShrink()
+        }
+    }
+
+    /// The badge's own stand-down.
+    func autoHide() {
+        dismiss()
     }
 
     private func armHide(after delay: TimeInterval) {
@@ -458,7 +503,7 @@ final class ClipboardPanelModel: ObservableObject {
         hideTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            self?.dismiss()
+            self?.autoHide()
         }
     }
 
@@ -479,6 +524,9 @@ enum ClipboardPreviewTarget: Equatable {
 
 enum PillPhase: Equatable {
     case hidden
+    /// Icon and count only: the pill has aged out of its full form but is still there to
+    /// be caught.
+    case mini
     case collapsed
     case expanded
 
@@ -497,8 +545,10 @@ struct ClipboardDockPill: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
+            miniContent
+                .opacity(model.phase == .mini ? 1 : 0)
             collapsedContent
-                .opacity(expanded ? 0 : 1)
+                .opacity(model.phase == .collapsed ? 1 : 0)
             expandedContent
                 .opacity(expanded ? 1 : 0)
         }
@@ -526,6 +576,7 @@ struct ClipboardDockPill: View {
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: model.phase)
+        .animation(.spring(response: 0.28, dampingFraction: 0.8), value: model.burstCount)
         .focusable(model.isKeyboardArmed)
         .focusEffectDisabled()
         .focused($cardFocused)
@@ -582,6 +633,15 @@ struct ClipboardDockPill: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            if model.burstCount > 0 {
+                Text("+\(model.burstCount)")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.accentColor.opacity(0.16), in: Capsule())
+                    .transition(.scale.combined(with: .opacity))
+            }
             Text("\(model.entries.count)")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
@@ -593,6 +653,28 @@ struct ClipboardDockPill: View {
         .frame(
             width: ClipboardPillMetrics.collapsedSize.width,
             height: ClipboardPillMetrics.collapsedSize.height)
+    }
+
+    /// What the pill ages into: enough to say the clipboard is there and how much is in
+    /// it, small enough to stop being furniture.
+    private var miniContent: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "doc.on.clipboard")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("\(model.entries.count)")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            if model.burstCount > 0 {
+                Text("+\(model.burstCount)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(
+            width: ClipboardPillMetrics.miniSize.width,
+            height: ClipboardPillMetrics.miniSize.height)
     }
 
     private var collapsedSubtitle: String {

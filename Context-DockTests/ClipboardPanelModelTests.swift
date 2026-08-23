@@ -306,3 +306,127 @@ struct ClipboardKeyboardTests {
         #expect(model.previewTarget == .text("newest"))
     }
 }
+
+// MARK: - Bursts and shrinking
+
+@MainActor
+struct ClipboardBurstTests {
+    private func entry(_ text: String) -> LauncherView.ClipboardEntry {
+        LauncherView.ClipboardEntry(
+            text: text, timestamp: Date(),
+            sourceAppName: "Finder", sourceBundleId: "com.apple.finder",
+            contentHash: text)
+    }
+
+    private func model() -> ClipboardPanelModel {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipboard-\(UUID().uuidString).json")
+        return ClipboardPanelModel(storeURL: url)
+    }
+
+    @Test func theFirstCopyIsNotABurst() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+
+        #expect(model.burstCount == 0)
+    }
+
+    /// Copying faster than the pill can stand down should say how much was caught, not
+    /// silently replace one clip with the next.
+    @Test func copiesLandingWhileThePillIsUpAreCounted() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+
+        model.ingest(entry("two"))
+        model.didCopy()
+        model.ingest(entry("three"))
+        model.didCopy()
+
+        #expect(model.burstCount == 2)
+    }
+
+    @Test func openingTheCardClearsTheBurstBecauseTheClipsHaveBeenSeen() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+        model.ingest(entry("two"))
+        model.didCopy()
+
+        model.hoverBegan()
+
+        #expect(model.burstCount == 0)
+    }
+
+    @Test func aBurstDoesNotCarryIntoTheNextTimeThePillAppears() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+        model.ingest(entry("two"))
+        model.didCopy()
+        model.dismiss()
+
+        model.ingest(entry("three"))
+        model.didCopy()
+
+        #expect(model.burstCount == 0)
+    }
+
+    @Test func thePillShrinksToABadgeBeforeItGoesAway() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+
+        model.autoShrink()
+
+        #expect(model.phase == .mini)
+        #expect(model.isHideArmed)
+    }
+
+    @Test func theBadgeIsStillTheClipboardSoHoveringItOpensTheCard() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+        model.autoShrink()
+
+        model.hoverBegan()
+
+        #expect(model.phase == .expanded)
+    }
+
+    @Test func theBadgeGoesAwayOnItsOwn() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+        model.autoShrink()
+
+        model.autoHide()
+
+        #expect(model.phase == .hidden)
+    }
+
+    /// A card being read belongs to the pointer; it must not shrink underneath it.
+    @Test func anOpenCardNeverShrinks() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.summon()
+
+        model.autoShrink()
+
+        #expect(model.phase == .expanded)
+    }
+
+    @Test func aCopyDuringTheBadgeStageBringsTheFullPillBack() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+        model.autoShrink()
+
+        model.ingest(entry("two"))
+        model.didCopy()
+
+        #expect(model.phase == .collapsed)
+        #expect(model.burstCount == 1)
+    }
+}
