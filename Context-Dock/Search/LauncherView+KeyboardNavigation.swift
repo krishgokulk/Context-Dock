@@ -1442,8 +1442,16 @@ extension LauncherView {
                 return
             }
 
+            // Under a fixed host the window's height is the screen's, not the card's, so
+            // comparing them answers the wrong question: when a tall sheet happened to
+            // match the host height this returned early and the card was never updated.
+            // Compare against what the card is currently drawn at instead.
+            let cardDelta =
+                self.dockUsesFixedHost
+                ? abs((self.renderedDockHeight ?? 0) - newHeight)
+                : heightDelta
             // Only update if size actually changed
-            guard heightDelta > 1 || widthChanged
+            guard cardDelta > 1 || widthChanged
             else {
                 self.lastAppliedDockHeightPreset = heightPreset
                 self.lastAppliedDockSurfaceMode = surfaceMode
