@@ -399,7 +399,9 @@ extension LauncherView {
         // or the script runs with the literal braces and silently does nothing.
         let script = expandSelectionPlaceholders(in: rawScript)
         let ctx = effectiveShareAXContext()
-        let filePaths = ctx.selectedFilePaths
+        let frozenFilePaths = effectiveSelectedFileURLsForConversation().map(\.path)
+        let filePaths = SelectionScopeExtensionPolicy.resolvedFilePaths(
+            context: ctx, frozenFilePaths: frozenFilePaths)
         var env: [String: String] = [
             "CD_TEXT":      ctx.selectedText ?? "",
             "CD_URL":       ctx.currentURL ?? "",

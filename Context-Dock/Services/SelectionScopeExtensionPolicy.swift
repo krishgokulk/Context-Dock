@@ -13,9 +13,12 @@ enum SelectionScopeExtensionPolicy {
             return false
         }
 
-        let paths = filePaths.isEmpty ? context.selectedFilePaths : filePaths
+        let paths = resolvedFilePaths(context: context, frozenFilePaths: filePaths)
         let text = context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let url = context.currentURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        // Selection Scope is authority over a captured payload, not merely an app context.
+        // Even an `.always` extension must not appear when there is nothing selected.
+        guard !text.isEmpty || !url.isEmpty || !paths.isEmpty else { return false }
         let nonKeywordTriggers = ext.triggers.filter {
             if case .keyword = $0 { return false }
             return true
@@ -23,7 +26,7 @@ enum SelectionScopeExtensionPolicy {
 
         // Legacy extensions created before Selection Scope gained typed triggers are kept
         // compatible, but still require an actual selected payload.
-        guard !nonKeywordTriggers.isEmpty else { return !text.isEmpty || !url.isEmpty || !paths.isEmpty }
+        guard !nonKeywordTriggers.isEmpty else { return true }
 
         return nonKeywordTriggers.allSatisfy { trigger in
             switch trigger {
@@ -50,6 +53,12 @@ enum SelectionScopeExtensionPolicy {
                 return true
             }
         }
+    }
+
+    /// One source of truth for both discovery and execution. The explicitly frozen Selection
+    /// Scope file list wins; AX is only a compatibility fallback for older activation payloads.
+    static func resolvedFilePaths(context: AXContext, frozenFilePaths: [String]) -> [String] {
+        frozenFilePaths.isEmpty ? context.selectedFilePaths : frozenFilePaths
     }
 
     /// A conservative classification for scripts supplied by a person or an AI.  A click is
