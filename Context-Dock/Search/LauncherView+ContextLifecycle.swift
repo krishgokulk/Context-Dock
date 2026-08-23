@@ -1088,7 +1088,7 @@ extension LauncherView {
                 handleCommandKeyContextScopeToggle()
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
-                activateClipboardScope()
+                ClipboardPanelController.shared.show()
             }
             .onReceive(ClipboardIngestBus.shared.captures) { payload in
                 handleClipboardCapture(payload)
@@ -2146,6 +2146,11 @@ extension LauncherView {
         savePersistedClipboardHistory()
 
         globalClipboardText = text
+
+        // The ambient clipboard pill is a system-wide surface, so it is told about every
+        // copy — including the ones that land while the dock is hidden, which is most of
+        // them. It orders itself in without activating us.
+        ClipboardPanelController.shared.didCopy(entry)
 
         // Everything below is dock chrome. The monitor runs even while the launcher is
         // hidden, so a background copy must cost a store + a disk write — no animations,
