@@ -244,8 +244,9 @@ struct ClipboardKeyboardTests {
     }
 
     /// Hovering is mouse-only; a click is the deliberate act that hands the card the
-    /// keyboard. Once armed it must stop behaving like an ambient pill.
-    @Test func armingTheKeyboardKeepsTheCardOpenAfterThePointerLeaves() {
+    /// keyboard. The card stays open when the pointer leaves — but it is now ticking,
+    /// because nothing on this surface outlives the user's attention.
+    @Test func armingTheKeyboardKeepsTheCardOpenButStillTicking() {
         let model = loaded(entry("one"))
         model.didCopy()
         model.hoverBegan()
@@ -254,7 +255,45 @@ struct ClipboardKeyboardTests {
         model.hoverEnded()
 
         #expect(model.phase == .expanded)
-        #expect(!model.isHideArmed)
+        #expect(model.isHideArmed)
+    }
+
+    /// Driving the card with the keyboard is attention: it puts the clock back to full
+    /// rather than making the card immortal.
+    @Test func arrowingThroughTheRowsPutsTheClockBack() {
+        let model = loaded(entry("one"), entry("two"))
+        model.summon()
+        model.armKeyboard()
+
+        model.moveEntry(1)
+
+        #expect(model.phase == .expanded)
+        #expect(model.isHideArmed)
+        #expect(model.focusedEntry?.text == "one")
+    }
+
+    @Test func anIdleArmedCardShrinksLikeAnyOther() {
+        let model = loaded(entry("one"))
+        model.summon()
+        model.armKeyboard()
+        model.hoverEnded()
+
+        model.standDown()
+
+        #expect(model.phase == .collapsed)
+        #expect(!model.isKeyboardArmed)
+    }
+
+    /// Switching Space is leaving: the card is about a corner of the screen the user just
+    /// walked away from.
+    @Test func switchingSpaceTakesTheCardWithIt() {
+        let model = loaded(entry("one"))
+        model.summon()
+        model.armKeyboard()
+
+        model.userLeftTheSpace()
+
+        #expect(model.phase == .hidden)
     }
 
     @Test func dismissDisarmsTheKeyboard() {
@@ -378,7 +417,7 @@ struct ClipboardBurstTests {
         model.ingest(entry("one"))
         model.didCopy()
 
-        model.autoShrink()
+        model.standDown()
 
         #expect(model.phase == .mini)
         #expect(model.isHideArmed)
@@ -388,7 +427,7 @@ struct ClipboardBurstTests {
         let model = model()
         model.ingest(entry("one"))
         model.didCopy()
-        model.autoShrink()
+        model.standDown()
 
         model.hoverBegan()
 
@@ -399,29 +438,42 @@ struct ClipboardBurstTests {
         let model = model()
         model.ingest(entry("one"))
         model.didCopy()
-        model.autoShrink()
+        model.standDown()
 
-        model.autoHide()
+        model.standDown()
 
         #expect(model.phase == .hidden)
     }
 
-    /// A card being read belongs to the pointer; it must not shrink underneath it.
-    @Test func anOpenCardNeverShrinks() {
+    /// A card under the pointer belongs to the pointer; it must not shrink underneath it.
+    @Test func aCardUnderThePointerNeverShrinks() {
         let model = model()
         model.ingest(entry("one"))
         model.summon()
+        model.hoverBegan()
 
-        model.autoShrink()
+        model.standDown()
 
         #expect(model.phase == .expanded)
+    }
+
+    /// Every stand-down is one step smaller, never straight to nothing.
+    @Test func standingDownShrinksOneStageAtATime() {
+        let model = model()
+        model.ingest(entry("one"))
+        model.didCopy()
+
+        model.standDown()
+        #expect(model.phase == .mini)
+        model.standDown()
+        #expect(model.phase == .hidden)
     }
 
     @Test func aCopyDuringTheBadgeStageBringsTheFullPillBack() {
         let model = model()
         model.ingest(entry("one"))
         model.didCopy()
-        model.autoShrink()
+        model.standDown()
 
         model.ingest(entry("two"))
         model.didCopy()

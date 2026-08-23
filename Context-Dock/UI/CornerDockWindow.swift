@@ -107,6 +107,18 @@ final class CornerDockController: NSObject {
 
         // One shell, two independent surfaces: it follows both and shows itself whenever
         // either has something to say.
+        // Leaving for another Space is leaving. Following the user there with a card
+        // about the corner they walked away from is an interruption, not a service.
+        NotificationCenter.default.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                ClipboardPanelController.shared.model.userLeftTheSpace()
+                DropShelfController.shared.presentation.autoHide()
+            }
+        }
+
         clipboardModel.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)

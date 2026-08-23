@@ -342,6 +342,7 @@ final class ClipboardPanelModel: ObservableObject {
     }
 
     func cycleSource(_ direction: Int) {
+        noteInteraction()
         let count = sources.count
         guard count > 0 else { return }
         sourceIndex = (sourceIndex + (direction >= 0 ? 1 : -1) + count) % count
@@ -349,12 +350,20 @@ final class ClipboardPanelModel: ObservableObject {
     }
 
     func selectSource(bundleID: String) {
+        noteInteraction()
         guard let index = sources.firstIndex(where: { $0.bundleID == bundleID }) else { return }
         sourceIndex = index
         focusedEntryIndex = nil
     }
 
+    /// Any deliberate interaction is attention: it puts the stand-down back to full.
+    private func noteInteraction() {
+        guard phase.isVisible else { return }
+        armStandDown(after: Self.armedDwell)
+    }
+
     func moveEntry(_ direction: Int) {
+        noteInteraction()
         let count = visibleEntries.count
         guard count > 0 else {
             focusedEntryIndex = nil
@@ -377,6 +386,9 @@ final class ClipboardPanelModel: ObservableObject {
     static let copyDwell: TimeInterval = 4
     /// How long the shrunken badge lingers after that.
     static let miniDwell: TimeInterval = 3
+    /// How long a card the user drove with the keyboard waits before standing down. It
+    /// outlives an ambient pill, but it does not outlive the user's attention.
+    static let armedDwell: TimeInterval = 5
     /// Shorter: the pointer has already been here and left.
     static let hoverExitDwell: TimeInterval = 1.5
 
@@ -405,11 +417,14 @@ final class ClipboardPanelModel: ObservableObject {
     /// as "three more were caught" rather than one clip silently replacing another.
     @Published private(set) var burstCount = 0
 
+    /// The pointer is on the card. Nothing shrinks underneath it.
+    private var isPointerOver = false
+
     func armKeyboard() {
         guard phase.isVisible else { return }
         isKeyboardArmed = true
-        cancelHide()
         phase = .expanded
+        armStandDown(after: Self.armedDwell)
     }
 
     /// What Space should open for the row the user is on, or for the newest clip when
@@ -437,19 +452,11 @@ final class ClipboardPanelModel: ObservableObject {
             burstCount = 0
         }
         phase = .collapsed
-        armShrink(after: Self.copyDwell)
-    }
-
-    /// Full pill has aged out. It becomes a badge rather than vanishing, so there is still
-    /// something to reach for.
-    func autoShrink() {
-        guard phase == .collapsed else { return }
-        cancelHide()
-        phase = .mini
-        armHide(after: Self.miniDwell)
+        armStandDown(after: Self.copyDwell)
     }
 
     func hoverBegan() {
+        isPointerOver = true
         guard phase != .hidden else { return }
         cancelHide()
         // The clips have been looked at, so there is no longer a backlog to report.
@@ -458,9 +465,44 @@ final class ClipboardPanelModel: ObservableObject {
     }
 
     func hoverEnded() {
-        guard phase == .expanded, !isKeyboardArmed else { return }
-        phase = .collapsed
-        armShrink(after: Self.hoverExitDwell)
+        isPointerOver = false
+        guard phase == .expanded else { return }
+        // A card holding the keyboard stays open, but it starts ticking: the pointer
+        // leaving is the last thing that kept it exempt.
+        if isKeyboardArmed {
+            armStandDown(after: Self.armedDwell)
+        } else {
+            phase = .collapsed
+            armStandDown(after: Self.hoverExitDwell)
+        }
+    }
+
+    /// One step smaller, never straight to nothing: card, pill, badge, gone. A card under
+    /// the pointer is exempt — it belongs to whoever is reading it.
+    func standDown() {
+        guard !isPointerOver else {
+            armStandDown(after: Self.armedDwell)
+            return
+        }
+        switch phase {
+        case .expanded:
+            isKeyboardArmed = false
+            phase = .collapsed
+            armStandDown(after: Self.hoverExitDwell)
+        case .collapsed:
+            phase = .mini
+            armStandDown(after: Self.miniDwell)
+        case .mini:
+            dismiss()
+        case .hidden:
+            break
+        }
+    }
+
+    /// Switching Space is leaving. The card is about a corner of a screen the user has
+    /// walked away from, and following them there would be an interruption, not a service.
+    func userLeftTheSpace() {
+        dismiss()
     }
 
     /// The hotkey is a deliberate ask: open the card and leave it open.
@@ -482,28 +524,13 @@ final class ClipboardPanelModel: ObservableObject {
         burstCount = 0
     }
 
-    private func armShrink(after delay: TimeInterval) {
+    private func armStandDown(after delay: TimeInterval) {
         hideTask?.cancel()
         isHideArmed = true
         hideTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            self?.autoShrink()
-        }
-    }
-
-    /// The badge's own stand-down.
-    func autoHide() {
-        dismiss()
-    }
-
-    private func armHide(after delay: TimeInterval) {
-        hideTask?.cancel()
-        isHideArmed = true
-        hideTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.autoHide()
+            self?.standDown()
         }
     }
 
@@ -568,10 +595,7 @@ struct ClipboardDockPill: View {
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(
-                            model.isKeyboardArmed
-                                ? Color.accentColor.opacity(0.75) : Color.white.opacity(0.16),
-                            lineWidth: model.isKeyboardArmed ? 1.5 : 1)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
