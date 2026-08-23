@@ -51,6 +51,17 @@ extension LauncherView {
                 height: renderedDockHeight ?? calculatedHeight,
                 alignment: settings.effectiveDockAtBottom ? .bottom : .top
             )
+            // The host is far taller than the card, and everything below the card has to
+            // stay click-through. Report what the card *actually* measures rather than
+            // what something computed for it: a height that is only published when a
+            // resize happens leaves the window swallowing clicks in every state where no
+            // resize ran.
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { height in
+                (AppDelegate.shared?.launcherWindow as? KeyableWindow)?.dockCardHeight =
+                    height
+            }
             .background(
                 backgroundView
                     .animation(

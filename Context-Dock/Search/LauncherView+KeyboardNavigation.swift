@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 
 extension LauncherView {
+    /// True once the window stopped being sized from content. The stabilizers below all
+    /// exist to referee the old race between the window frame and the card; under a fixed
+    /// host there is no race, and every one of them now only delays the card.
+    var dockUsesFixedHost: Bool {
+        (AppDelegate.shared?.launcherWindow as? KeyableWindow)?.usesFixedHost == true
+    }
+
     func requestWindowSizeUpdate(
         reason: DockResizeReason,
         animated: Bool = true,
@@ -24,7 +31,8 @@ extension LauncherView {
         let presetChanged = lastAppliedDockHeightPreset != preset
         let modeChanged = lastAppliedDockSurfaceMode != mode
 
-        if showContextInDock,
+        if !dockUsesFixedHost,
+            showContextInDock,
             !isGlobalContextActive,
             mode == .contextDock,
             reason.isTypingOrContentRefresh,
@@ -35,8 +43,8 @@ extension LauncherView {
             return
         }
 
-        if reason.isTypingOrContentRefresh && preset.stabilizesResize && !presetChanged
-            && !modeChanged
+        if !dockUsesFixedHost, reason.isTypingOrContentRefresh, preset.stabilizesResize,
+            !presetChanged, !modeChanged
         {
             if let window = AppDelegate.shared?.launcherWindow {
                 let heightDelta = abs(window.frame.height - calculatedHeight)
@@ -1364,7 +1372,10 @@ extension LauncherView {
         windowResizeTask = Task { @MainActor in
             // Debounce absorbs burst calls. Result-list churn uses a wider debounce and no frame
             // animation so typing stays visually locked while ranking/list height settles.
-            try? await Task.sleep(nanoseconds: debounceNanoseconds)
+            let effectiveDebounce = self.dockUsesFixedHost ? 0 : debounceNanoseconds
+            if effectiveDebounce > 0 {
+                try? await Task.sleep(nanoseconds: effectiveDebounce)
+            }
             guard !Task.isCancelled else { return }
             guard !self.suppressOpenResize else { return }
 
@@ -1412,6 +1423,7 @@ extension LauncherView {
             // group) must not interrupt it with a second setFrame — that is the "expands,
             // stops, expands again" stutter. It settles on the next request instead.
             if let keyableWindow = window as? KeyableWindow,
+                !keyableWindow.usesFixedHost,
                 keyableWindow.isAnimatingDockFrame,
                 !presetChanged,
                 !modeChanged
@@ -1420,11 +1432,12 @@ extension LauncherView {
             }
             let widthChanged = abs(currentFrame.width - newWidth) > 1
             let heightDelta = abs(currentFrame.height - newHeight)
-            if heightPreset.stabilizesResize
-                && !presetChanged
-                && !modeChanged
-                && !widthChanged
-                && heightDelta <= 24
+            if !self.dockUsesFixedHost,
+                heightPreset.stabilizesResize,
+                !presetChanged,
+                !modeChanged,
+                !widthChanged,
+                heightDelta <= 24
             {
                 return
             }
