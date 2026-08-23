@@ -223,6 +223,7 @@ final class DropShelfController: NSObject {
         presentation.onPhaseChange = { [weak self] phase in
             self?.applyPhase(phase)
         }
+        positionPillPanel()
         updateInteractiveRect()
     }
 
@@ -251,8 +252,15 @@ final class DropShelfController: NSObject {
             }
             startHoverWatch()
         } else {
-            stopHoverWatch()
             pillPanel.orderOut(nil)
+            // The corner keeps answering the pointer while items are held: the pill has
+            // stood down, but the shelf still has things in it and they must stay
+            // reachable. An empty shelf stops watching entirely.
+            if presentation.itemCount > 0 {
+                startHoverWatch()
+            } else {
+                stopHoverWatch()
+            }
         }
     }
 
@@ -308,7 +316,13 @@ final class DropShelfController: NSObject {
     }
 
     private func evaluateHover() {
-        guard let pillPanel, pillPanel.isVisible else { return }
+        guard let pillPanel else { return }
+        guard presentation.phase.isVisible || presentation.itemCount > 0 else { return }
+        // A hidden pill is measured where it will *reappear*, not where it last was. The
+        // panel is repositioned as it is ordered in, so testing the pointer against the
+        // stale frame first would reveal the card and then immediately judge the pointer
+        // outside it — the pill flickering open and straight back to a pill.
+        if !pillPanel.isVisible { positionPillPanel() }
         let pad = DropShelfMetrics.shadowPad
         let size = DropShelfMetrics.cardSize(for: presentation.phase)
         let slack = DropShelfMetrics.hoverTolerance

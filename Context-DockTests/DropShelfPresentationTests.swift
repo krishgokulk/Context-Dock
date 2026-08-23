@@ -112,3 +112,91 @@ struct DropShelfPresentationTests {
         #expect(!presentation.wantsClipboardSuppressed)
     }
 }
+
+// MARK: - Standing down
+
+@MainActor
+struct DropShelfAutoHideTests {
+    private func holdingShelf(_ count: Int = 2) -> DropShelfPresentation {
+        let presentation = DropShelfPresentation()
+        presentation.itemCount = count
+        presentation.itemCountChanged()
+        return presentation
+    }
+
+    /// The shelf keeps what it holds, but it does not squat in the corner forever.
+    @Test func settlingIntoHoldingArmsTheAutoHide() {
+        let presentation = holdingShelf()
+
+        #expect(presentation.phase == .holding)
+        #expect(presentation.isHideArmed)
+    }
+
+    @Test func reachingForTheShelfCancelsTheAutoHide() {
+        let presentation = holdingShelf()
+
+        presentation.hoverBegan()
+
+        #expect(presentation.phase == .expanded)
+        #expect(!presentation.isHideArmed)
+    }
+
+    @Test func leavingTheCardRearmsTheAutoHide() {
+        let presentation = holdingShelf()
+        presentation.hoverBegan()
+
+        presentation.hoverEnded()
+
+        #expect(presentation.phase == .holding)
+        #expect(presentation.isHideArmed)
+    }
+
+    /// Hiding is only the pill going away. Nothing is dropped from the shelf.
+    @Test func hidingItselfDoesNotDiscardWhatItHolds() {
+        let presentation = holdingShelf(3)
+
+        presentation.autoHide()
+
+        #expect(presentation.phase == .hidden)
+        #expect(presentation.itemCount == 3)
+    }
+
+    /// Once hidden the items would be stranded, so the corner still answers the pointer.
+    @Test func movingIntoTheCornerBringsAHiddenShelfBack() {
+        let presentation = holdingShelf()
+        presentation.autoHide()
+
+        presentation.hoverBegan()
+
+        #expect(presentation.phase == .expanded)
+    }
+
+    @Test func aDragRevealsAHiddenShelfToCatchTheDrop() {
+        let presentation = holdingShelf()
+        presentation.autoHide()
+
+        presentation.dragEntered()
+
+        #expect(presentation.phase == .inviting)
+    }
+
+    @Test func aNewDropBringsTheHiddenPillBack() {
+        let presentation = holdingShelf()
+        presentation.autoHide()
+
+        presentation.itemCount += 1
+        presentation.itemCountChanged()
+
+        #expect(presentation.phase == .holding)
+    }
+
+    @Test func anEmptyShelfStaysHiddenAndArmsNothing() {
+        let presentation = DropShelfPresentation()
+        presentation.itemCount = 0
+
+        presentation.itemCountChanged()
+
+        #expect(presentation.phase == .hidden)
+        #expect(!presentation.isHideArmed)
+    }
+}
