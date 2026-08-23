@@ -45,6 +45,7 @@ final class ClipboardPanelController: NSObject {
     private var panel: ClipboardPillPanel?
     private var returnApplication: NSRunningApplication?
     private var hoverMonitors: [Any] = []
+    private var outsideClickMonitor: Any?
     /// True only for the hotkey path, which is allowed to take focus. A copy-triggered
     /// pill must never pull the user out of what they are typing in.
     private var didTakeFocus = false
@@ -78,6 +79,7 @@ final class ClipboardPanelController: NSObject {
         ensurePanel()
         model.reload()
         model.summon()
+        model.armKeyboard()
         didTakeFocus = true
         NSApp.activate()
         panel?.makeKeyAndOrderFront(nil)
@@ -85,6 +87,39 @@ final class ClipboardPanelController: NSObject {
 
     func close() {
         model.dismiss()
+    }
+
+    /// The card was clicked. Hovering deliberately leaves focus alone, so this is the
+    /// first moment the user has asked for the keyboard.
+    func armKeyboard() {
+        guard model.phase.isVisible, !model.isKeyboardArmed else { return }
+        captureReturnApplication()
+        model.armKeyboard()
+        didTakeFocus = true
+        // `.nonactivatingPanel` is what keeps the ambient pill harmless, and it is also
+        // exactly what stops this window from ever becoming key. The armed card is a
+        // deliberate ask, so it drops the style for as long as it holds the keyboard.
+        panel?.styleMask = [.borderless]
+        NSApp.activate()
+        panel?.makeKeyAndOrderFront(nil)
+        startOutsideClickWatch()
+    }
+
+    /// Space on the focused row. Text has no file of its own, so it gets a scratch one —
+    /// reused rather than accumulating a file per preview.
+    func preview() {
+        guard let target = model.previewTarget else { return }
+        switch target {
+        case .file(let url):
+            PreviewController.shared.present(url: url, toggleIfSame: true)
+        case .text(let text):
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("context-dock-clip-preview.txt")
+            guard (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil else {
+                return
+            }
+            PreviewController.shared.present(url: url, toggleIfSame: true)
+        }
     }
 
     func paste(_ entry: LauncherView.ClipboardEntry) {
@@ -154,6 +189,26 @@ final class ClipboardPanelController: NSObject {
         model.onPhaseChange = { [weak self] phase in
             self?.applyPhase(phase)
         }
+
+    }
+
+    /// An armed card is dismissed by a click anywhere else. App-active state cannot be
+    /// used for this: activating an accessory app whose only window is a floating panel
+    /// bounces active straight back, so `didResignActive` fires immediately after arming.
+    private func startOutsideClickWatch() {
+        guard outsideClickMonitor == nil, let panel else { return }
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            guard let self, self.model.isKeyboardArmed else { return }
+            guard !panel.frame.contains(NSEvent.mouseLocation) else { return }
+            self.model.dismiss()
+        }
+    }
+
+    private func stopOutsideClickWatch() {
+        if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
+        outsideClickMonitor = nil
     }
 
     private func applyPhase(_ phase: PillPhase) {
@@ -166,7 +221,10 @@ final class ClipboardPanelController: NSObject {
             startHoverWatch()
         } else {
             stopHoverWatch()
+            stopOutsideClickWatch()
             panel.orderOut(nil)
+            // Back to a window that cannot take focus from anyone.
+            panel.styleMask = [.borderless, .nonactivatingPanel]
             if didTakeFocus {
                 didTakeFocus = false
                 returnApplication?.activate()
@@ -413,6 +471,32 @@ final class ClipboardPanelModel: ObservableObject {
     private(set) var isHideArmed = false
     private var hideTask: Task<Void, Never>?
 
+    /// True once the user has clicked the card. Hovering is mouse-only so the pill never
+    /// steals focus; the click is the deliberate act that hands over the keyboard, and an
+    /// armed card stops behaving like an ambient pill — it stays until dismissed.
+    @Published private(set) var isKeyboardArmed = false
+
+    func armKeyboard() {
+        guard phase.isVisible else { return }
+        isKeyboardArmed = true
+        cancelHide()
+        phase = .expanded
+    }
+
+    /// What Space should open for the row the user is on, or for the newest clip when
+    /// they have not arrowed anywhere yet.
+    var previewTarget: ClipboardPreviewTarget? {
+        guard let entry = focusedEntry ?? visibleEntries.first else { return nil }
+        if let path = entry.filePaths.first {
+            return .file(URL(fileURLWithPath: path))
+        }
+        if let fileName = entry.imageFileName {
+            return .file(ClipboardImageStore.url(for: fileName))
+        }
+        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : .text(entry.text)
+    }
+
     /// A copy landed. Reading the history outranks announcing a new clip, so an open
     /// card is left alone rather than yanked back to a pill under the pointer.
     func didCopy() {
@@ -428,7 +512,7 @@ final class ClipboardPanelModel: ObservableObject {
     }
 
     func hoverEnded() {
-        guard phase == .expanded else { return }
+        guard phase == .expanded, !isKeyboardArmed else { return }
         phase = .collapsed
         armHide(after: Self.hoverExitDwell)
     }
@@ -448,6 +532,7 @@ final class ClipboardPanelModel: ObservableObject {
         cancelHide()
         phase = .hidden
         focusedEntryIndex = nil
+        isKeyboardArmed = false
     }
 
     private func armHide(after delay: TimeInterval) {
@@ -467,6 +552,14 @@ final class ClipboardPanelModel: ObservableObject {
     }
 }
 
+/// Space previews a clip through the shared PreviewController. A file clip points at the
+/// file, an image clip at its stored blob; text has no URL until someone writes one, which
+/// is the controller's job, not the model's.
+enum ClipboardPreviewTarget: Equatable {
+    case file(URL)
+    case text(String)
+}
+
 enum PillPhase: Equatable {
     case hidden
     case collapsed
@@ -477,6 +570,9 @@ enum PillPhase: Equatable {
 
 struct ClipboardDockPill: View {
     @ObservedObject var model: ClipboardPanelModel
+    /// `onKeyPress` only delivers to a focused view, so a key window is not enough on its
+    /// own — the card has to actually hold SwiftUI focus once it is armed.
+    @FocusState private var cardFocused: Bool
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private var expanded: Bool { model.phase == .expanded }
@@ -494,6 +590,10 @@ struct ClipboardDockPill: View {
         // overflows is clipped by the window itself — newest rows first. Clip to the
         // card instead, and let the scroll view own the leftover height.
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture {
+            ClipboardPanelController.shared.armKeyboard()
+        }
         .background {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color.clear)
@@ -501,7 +601,10 @@ struct ClipboardDockPill: View {
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16))
+                        .strokeBorder(
+                            model.isKeyboardArmed
+                                ? Color.accentColor.opacity(0.75) : Color.white.opacity(0.16),
+                            lineWidth: model.isKeyboardArmed ? 1.5 : 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
@@ -511,6 +614,12 @@ struct ClipboardDockPill: View {
         )
         .padding(ClipboardPillMetrics.shadowPad)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: model.phase)
+        .focusable(model.isKeyboardArmed)
+        .focusEffectDisabled()
+        .focused($cardFocused)
+        .onChange(of: model.isKeyboardArmed) { _, armed in
+            cardFocused = armed
+        }
         .onReceive(refresh) { _ in
             guard model.phase.isVisible else { return }
             model.reload()
@@ -533,6 +642,10 @@ struct ClipboardDockPill: View {
         }
         .onKeyPress(.rightArrow) {
             model.cycleSource(1)
+            return .handled
+        }
+        .onKeyPress(.space) {
+            ClipboardPanelController.shared.preview()
             return .handled
         }
         .onKeyPress(.return) {

@@ -216,3 +216,93 @@ struct ClipboardIngestTests {
         #expect(model.visibleEntries.map(\.text) == ["one", "two"])
     }
 }
+
+// MARK: - Keyboard arming and preview targets
+
+@MainActor
+struct ClipboardKeyboardTests {
+    private func entry(
+        _ text: String, files: [String] = [], imageFileName: String? = nil
+    ) -> LauncherView.ClipboardEntry {
+        LauncherView.ClipboardEntry(
+            text: text,
+            timestamp: Date(),
+            filePaths: files,
+            imageFileName: imageFileName,
+            sourceAppName: "Code",
+            sourceBundleId: "com.microsoft.VSCode",
+            contentHash: text + files.joined()
+        )
+    }
+
+    private func loaded(_ entries: LauncherView.ClipboardEntry...) -> ClipboardPanelModel {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipboard-\(UUID().uuidString).json")
+        let model = ClipboardPanelModel(storeURL: url)
+        model.entries = entries
+        return model
+    }
+
+    /// Hovering is mouse-only; a click is the deliberate act that hands the card the
+    /// keyboard. Once armed it must stop behaving like an ambient pill.
+    @Test func armingTheKeyboardKeepsTheCardOpenAfterThePointerLeaves() {
+        let model = loaded(entry("one"))
+        model.didCopy()
+        model.hoverBegan()
+
+        model.armKeyboard()
+        model.hoverEnded()
+
+        #expect(model.phase == .expanded)
+        #expect(!model.isHideArmed)
+    }
+
+    @Test func dismissDisarmsTheKeyboard() {
+        let model = loaded(entry("one"))
+        model.summon()
+        model.armKeyboard()
+
+        model.dismiss()
+
+        #expect(!model.isKeyboardArmed)
+    }
+
+    @Test func aCopyDoesNotDisturbAnArmedCard() {
+        let model = loaded(entry("one"))
+        model.summon()
+        model.armKeyboard()
+
+        model.didCopy()
+
+        #expect(model.phase == .expanded)
+        #expect(model.isKeyboardArmed)
+    }
+
+    @Test func previewingAFileClipTargetsTheFileItself() {
+        let model = loaded(entry("", files: ["/tmp/report.pdf"]))
+        model.moveEntry(1)
+
+        #expect(model.previewTarget == .file(URL(fileURLWithPath: "/tmp/report.pdf")))
+    }
+
+    @Test func previewingAnImageClipTargetsItsStoredBlob() {
+        let model = loaded(entry("", imageFileName: "clip-7.png"))
+        model.moveEntry(1)
+
+        #expect(model.previewTarget == .file(ClipboardImageStore.url(for: "clip-7.png")))
+    }
+
+    @Test func previewingATextClipTargetsTheTextItself() {
+        let model = loaded(entry("some copied prose"))
+        model.moveEntry(1)
+
+        #expect(model.previewTarget == .text("some copied prose"))
+    }
+
+    /// Space with nothing arrowed to yet should still preview something sensible.
+    @Test func previewFallsBackToTheNewestClipWhenNoRowIsFocused() {
+        let model = loaded(entry("newest"), entry("older"))
+
+        #expect(model.previewTarget == .text("newest"))
+    }
+}
