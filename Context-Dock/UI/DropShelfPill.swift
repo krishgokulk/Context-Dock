@@ -37,8 +37,6 @@ struct DropShelfPill: View {
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-        .padding(DropShelfMetrics.shadowPad)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: presentation.phase)
     }
 

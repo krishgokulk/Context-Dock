@@ -119,9 +119,6 @@ final class DropShelfController: NSObject {
     let presentation = DropShelfPresentation()
 
     private var edgePanel: NSPanel?
-    private var pillPanel: DropShelfPanel?
-    private var pillView: DropShelfPillView?
-    private var hoverMonitors: [Any] = []
     private var storeSink: AnyCancellable?
     /// The strip and the pill overlap; a drag crossing from one to the other fires an exit
     /// on the first before the enter on the second. Ending the drag on the next runloop
@@ -186,7 +183,7 @@ final class DropShelfController: NSObject {
     // MARK: Windows
 
     private func ensurePanels() {
-        guard edgePanel == nil, pillPanel == nil else { return }
+        guard edgePanel == nil else { return }
         guard let screen = NSScreen.main else { return }
         let visible = screen.visibleFrame
 
@@ -196,145 +193,27 @@ final class DropShelfController: NSObject {
                 width: visible.width, height: DropShelfMetrics.edgeStripHeight),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
-        configure(edge)
+        edge.isOpaque = false
+        edge.backgroundColor = .clear
+        edge.hasShadow = false
+        edge.level = .floating
+        edge.hidesOnDeactivate = false
+        edge.isFloatingPanel = true
+        edge.becomesKeyOnlyIfNeeded = true
+        edge.isMovable = false
+        edge.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        edge.isReleasedWhenClosed = false
         let edgeView = DropShelfEdgeView(frame: .zero)
         edgeView.controller = self
         edge.contentView = edgeView
         edge.orderFrontRegardless()
         edgePanel = edge
 
-        let pill = DropShelfPanel(
-            contentRect: NSRect(origin: .zero, size: DropShelfMetrics.panelSize),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered, defer: false)
-        configure(pill)
-        let host = DropShelfPillView(frame: NSRect(origin: .zero, size: DropShelfMetrics.panelSize))
-        host.controller = self
-        host.autoresizingMask = [.width, .height]
-        let hosting = NSHostingView(
-            rootView: DropShelfPill(presentation: presentation, store: store))
-        hosting.frame = host.bounds
-        hosting.autoresizingMask = [.width, .height]
-        host.addSubview(hosting)
-        pill.contentView = host
-        pillView = host
-        pillPanel = pill
-
-        presentation.onPhaseChange = { [weak self] phase in
-            self?.applyPhase(phase)
-        }
-        positionPillPanel()
-        updateInteractiveRect()
-    }
-
-    private func configure(_ panel: NSPanel) {
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.level = .floating
-        panel.hidesOnDeactivate = false
-        panel.isFloatingPanel = true
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.isMovable = false
-        panel.ignoresMouseEvents = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        panel.isReleasedWhenClosed = false
-        panel.identifier = GlassFloatingPanel.identifier
-    }
-
-    private func applyPhase(_ phase: DropShelfPhase) {
-        guard let pillPanel else { return }
-        updateInteractiveRect()
-        if phase.isVisible {
-            if !pillPanel.isVisible {
-                positionPillPanel()
-                pillPanel.orderFrontRegardless()
-            }
-            startHoverWatch()
-        } else {
-            pillPanel.orderOut(nil)
-            // The corner keeps answering the pointer while items are held: the pill has
-            // stood down, but the shelf still has things in it and they must stay
-            // reachable. An empty shelf stops watching entirely.
-            if presentation.itemCount > 0 {
-                startHoverWatch()
-            } else {
-                stopHoverWatch()
-            }
+        // The pill itself lives in the shared corner shell, not in a window of its own.
+        CornerDockController.shared.activate()
+        presentation.onPhaseChange = { _ in
+            CornerDockController.shared.refresh()
         }
     }
 
-    private func positionPillPanel() {
-        guard let pillPanel else { return }
-        let screen =
-            NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let pad = DropShelfMetrics.shadowPad
-        let margin = DropShelfMetrics.screenMargin
-        let size = pillPanel.frame.size
-        pillPanel.setFrameOrigin(
-            NSPoint(
-                x: visible.maxX - margin + pad - size.width,
-                y: visible.minY + margin - pad + DropShelfMetrics.clipboardClearance))
-    }
-
-    /// The card's rect inside the transparent panel — the only part that takes the mouse.
-    private func updateInteractiveRect() {
-        guard let pillView else { return }
-        let size = DropShelfMetrics.cardSize(for: presentation.phase)
-        let pad = DropShelfMetrics.shadowPad
-        pillView.interactiveRect = NSRect(
-            x: pillView.bounds.maxX - pad - size.width,
-            y: pad,
-            width: size.width,
-            height: size.height)
-    }
-
-    private func startHoverWatch() {
-        guard hoverMonitors.isEmpty else { return }
-        let handler: (NSEvent) -> Void = { [weak self] _ in self?.evaluateHover() }
-        if let global = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved], handler: handler)
-        {
-            hoverMonitors.append(global)
-        }
-        if let local = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved],
-            handler: { [weak self] event in
-                self?.evaluateHover()
-                return event
-            })
-        {
-            hoverMonitors.append(local)
-        }
-    }
-
-    private func stopHoverWatch() {
-        hoverMonitors.forEach { NSEvent.removeMonitor($0) }
-        hoverMonitors.removeAll()
-    }
-
-    private func evaluateHover() {
-        guard let pillPanel else { return }
-        guard presentation.phase.isVisible || presentation.itemCount > 0 else { return }
-        // A hidden pill is measured where it will *reappear*, not where it last was. The
-        // panel is repositioned as it is ordered in, so testing the pointer against the
-        // stale frame first would reveal the card and then immediately judge the pointer
-        // outside it — the pill flickering open and straight back to a pill.
-        if !pillPanel.isVisible { positionPillPanel() }
-        let pad = DropShelfMetrics.shadowPad
-        let size = DropShelfMetrics.cardSize(for: presentation.phase)
-        let slack = DropShelfMetrics.hoverTolerance
-        let rect = NSRect(
-            x: pillPanel.frame.maxX - pad - size.width - slack,
-            y: pillPanel.frame.minY + pad - slack,
-            width: size.width + slack * 2,
-            height: size.height + slack * 2)
-        if rect.contains(NSEvent.mouseLocation) {
-            presentation.hoverBegan()
-        } else {
-            presentation.hoverEnded()
-        }
-    }
 }

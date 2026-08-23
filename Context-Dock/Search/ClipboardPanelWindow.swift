@@ -42,16 +42,14 @@ final class ClipboardPanelController: NSObject {
     static let shared = ClipboardPanelController()
 
     let model = ClipboardPanelModel()
-    private var panel: ClipboardPillPanel?
     private var returnApplication: NSRunningApplication?
-    private var hoverMonitors: [Any] = []
     private var outsideClickMonitor: Any?
     private var isSuppressed = false
     /// True only for the hotkey path, which is allowed to take focus. A copy-triggered
     /// pill must never pull the user out of what they are typing in.
     private var didTakeFocus = false
 
-    var isVisible: Bool { panel?.isVisible == true }
+    var isVisible: Bool { model.phase.isVisible }
 
     // MARK: - Entry points
 
@@ -93,8 +91,7 @@ final class ClipboardPanelController: NSObject {
         model.summon()
         model.armKeyboard()
         didTakeFocus = true
-        NSApp.activate()
-        panel?.makeKeyAndOrderFront(nil)
+        CornerDockController.shared.armKeyboard()
     }
 
     func close() {
@@ -111,9 +108,7 @@ final class ClipboardPanelController: NSObject {
         // `.nonactivatingPanel` is what keeps the ambient pill harmless, and it is also
         // exactly what stops this window from ever becoming key. The armed card is a
         // deliberate ask, so it drops the style for as long as it holds the keyboard.
-        panel?.styleMask = [.borderless]
-        NSApp.activate()
-        panel?.makeKeyAndOrderFront(nil)
+        CornerDockController.shared.armKeyboard()
         startOutsideClickWatch()
     }
 
@@ -175,40 +170,34 @@ final class ClipboardPanelController: NSObject {
     }
 
     private func ensurePanel() {
-        guard panel == nil else { return }
-        let p = ClipboardPillPanel(
-            contentRect: NSRect(origin: .zero, size: ClipboardPillMetrics.panelSize),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        p.isOpaque = false
-        p.backgroundColor = .clear
-        // SwiftUI draws the glass shadow; a native one would square off the card.
-        p.hasShadow = false
-        p.level = .floating
-        p.hidesOnDeactivate = false
-        p.isFloatingPanel = true
-        p.becomesKeyOnlyIfNeeded = true
-        p.isMovable = false
-        p.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
-        p.isReleasedWhenClosed = false
-        p.acceptsMouseMovedEvents = true
-        p.identifier = GlassFloatingPanel.identifier
-        p.contentView = NSHostingView(rootView: ClipboardDockPill(model: model))
-        panel = p
-
+        CornerDockController.shared.activate()
         model.onPhaseChange = { [weak self] phase in
             self?.applyPhase(phase)
         }
+    }
 
+    private func applyPhase(_ phase: PillPhase) {
+        // The shared shell owns the window; this surface owns only its own state.
+        CornerDockController.shared.refresh()
+        if phase.isVisible {
+            startOutsideClickWatch()
+        } else {
+            stopOutsideClickWatch()
+            CornerDockController.shared.disarmKeyboard()
+            if didTakeFocus {
+                didTakeFocus = false
+                returnApplication?.activate()
+            }
+        }
     }
 
     /// An armed card is dismissed by a click anywhere else. App-active state cannot be
     /// used for this: activating an accessory app whose only window is a floating panel
     /// bounces active straight back, so `didResignActive` fires immediately after arming.
     private func startOutsideClickWatch() {
-        guard outsideClickMonitor == nil, let panel else { return }
+        guard outsideClickMonitor == nil,
+            let panel = CornerDockController.shared.window
+        else { return }
         outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
@@ -221,90 +210,6 @@ final class ClipboardPanelController: NSObject {
     private func stopOutsideClickWatch() {
         if let outsideClickMonitor { NSEvent.removeMonitor(outsideClickMonitor) }
         outsideClickMonitor = nil
-    }
-
-    private func applyPhase(_ phase: PillPhase) {
-        guard let panel else { return }
-        if phase.isVisible {
-            if !panel.isVisible {
-                positionPanel()
-                panel.orderFrontRegardless()
-            }
-            startHoverWatch()
-        } else {
-            stopHoverWatch()
-            stopOutsideClickWatch()
-            panel.orderOut(nil)
-            // Back to a window that cannot take focus from anyone.
-            panel.styleMask = [.borderless, .nonactivatingPanel]
-            if didTakeFocus {
-                didTakeFocus = false
-                returnApplication?.activate()
-            }
-        }
-    }
-
-    private func positionPanel() {
-        guard let panel else { return }
-        let screen =
-            NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? NSScreen.main
-        guard let visible = screen?.visibleFrame else { return }
-        let pad = ClipboardPillMetrics.shadowPad
-        let margin = ClipboardPillMetrics.screenMargin
-        let size = panel.frame.size
-        panel.setFrameOrigin(
-            NSPoint(
-                x: visible.maxX - margin + pad - size.width,
-                y: visible.minY + margin - pad))
-    }
-
-    /// The card lives in a background app's non-key window, where SwiftUI's own hover
-    /// tracking is unreliable. Pointer position is watched directly instead, and the hit
-    /// rect is derived from the same metrics the layout uses.
-    private func startHoverWatch() {
-        guard hoverMonitors.isEmpty else { return }
-        let handler: (NSEvent) -> Void = { [weak self] _ in self?.evaluateHover() }
-        if let global = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDragged], handler: handler)
-        {
-            hoverMonitors.append(global)
-        }
-        if let local = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDragged],
-            handler: { [weak self] event in
-                self?.evaluateHover()
-                return event
-            })
-        {
-            hoverMonitors.append(local)
-        }
-        evaluateHover()
-    }
-
-    private func stopHoverWatch() {
-        hoverMonitors.forEach { NSEvent.removeMonitor($0) }
-        hoverMonitors.removeAll()
-    }
-
-    private func evaluateHover() {
-        guard let panel, panel.isVisible else { return }
-        if cardRect(in: panel).contains(NSEvent.mouseLocation) {
-            model.hoverBegan()
-        } else {
-            model.hoverEnded()
-        }
-    }
-
-    private func cardRect(in panel: NSPanel) -> NSRect {
-        let pad = ClipboardPillMetrics.shadowPad
-        let size = ClipboardPillMetrics.cardSize(for: model.phase)
-        let slack = ClipboardPillMetrics.hoverTolerance
-        return NSRect(
-            x: panel.frame.maxX - pad - size.width - slack,
-            y: panel.frame.minY + pad - slack,
-            width: size.width + slack * 2,
-            height: size.height + slack * 2)
     }
 }
 
@@ -620,11 +525,6 @@ struct ClipboardDockPill: View {
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
-        .frame(
-            maxWidth: .infinity, maxHeight: .infinity,
-            alignment: .bottomTrailing
-        )
-        .padding(ClipboardPillMetrics.shadowPad)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: model.phase)
         .focusable(model.isKeyboardArmed)
         .focusEffectDisabled()
