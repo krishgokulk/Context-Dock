@@ -7,6 +7,11 @@ struct LocalInstallationCheckTests {
         #expect(first?.displayName == "llmbrain")
         #expect(first?.executableNames.first == "llmbrain")
 
+        let screenshotWording = LocalInstallationCheck.parse(
+            "check is llmbrain installed on my system.")
+        #expect(screenshotWording?.displayName == "llmbrain")
+        #expect(screenshotWording?.executableNames.first == "llmbrain")
+
         let second = LocalInstallationCheck.parse("Is Visual Studio Code installed on my Mac?")
         #expect(second?.displayName == "Visual Studio Code")
         #expect(second?.executableNames.contains("visual-studio-code") == true)

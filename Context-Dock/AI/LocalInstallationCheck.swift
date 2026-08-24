@@ -63,7 +63,7 @@ enum LocalInstallationCheck {
         guard !trimmed.isEmpty else { return nil }
 
         let patterns = [
-            #"(?i)^\s*check\s+(?:if|whether|is)\s+(.+?)\s+is\s+installed(?:\s+on\s+(?:my|this)\s+(?:system|mac|computer))?[?.!]*\s*$"#,
+            #"(?i)^\s*check\s+(?:(?:if|whether|is)\s+)?(.+?)\s+(?:is\s+)?installed(?:\s+on\s+(?:my|this)\s+(?:system|mac|computer))?[?.!]*\s*$"#,
             #"(?i)^\s*(?:is|do\s+i\s+have)\s+(.+?)\s+installed(?:\s+on\s+(?:my|this)\s+(?:system|mac|computer))?[?.!]*\s*$"#,
             #"(?i)^\s*check\s+(.+?)\s+installation(?:\s+on\s+(?:my|this)\s+(?:system|mac|computer))?[?.!]*\s*$"#,
         ]
@@ -103,7 +103,7 @@ enum LocalInstallationCheck {
 
     @MainActor
     static func inspect(_ request: LocalInstallationCheckRequest) -> LocalInstallationCheckResult {
-        let executablePath = request.executableNames.lazy.compactMap(pathFromWhich).first
+        let executablePath = request.executableNames.lazy.compactMap(executablePath).first
 
         let packages = TerminalPackageManager.shared.packages
         let package = packages.first { package in
@@ -148,6 +148,28 @@ enum LocalInstallationCheck {
         guard let output, !output.isEmpty, FileManager.default.isExecutableFile(atPath: output)
         else { return nil }
         return output
+    }
+
+    /// GUI applications do not necessarily inherit the user's interactive-shell PATH.
+    /// Check `which` first, then the standard executable roots already watched by DoraX.
+    /// The candidate is parser-normalized to letters, digits, `_` and `-`; it is only ever
+    /// appended as a path component and never evaluated by a shell.
+    private static func executablePath(_ executable: String) -> String? {
+        if let path = pathFromWhich(executable) { return path }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let roots = [
+            URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true),
+            URL(fileURLWithPath: "/usr/local/bin", isDirectory: true),
+            URL(fileURLWithPath: "/usr/bin", isDirectory: true),
+            URL(fileURLWithPath: "/bin", isDirectory: true),
+            home.appendingPathComponent(".local/bin", isDirectory: true),
+            home.appendingPathComponent("bin", isDirectory: true),
+        ]
+        for root in roots {
+            let candidate = root.appendingPathComponent(executable).path
+            if FileManager.default.isExecutableFile(atPath: candidate) { return candidate }
+        }
+        return nil
     }
 
     private static func normalized(_ value: String) -> String {
