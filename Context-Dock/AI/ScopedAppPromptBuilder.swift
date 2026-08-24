@@ -270,6 +270,15 @@ enum ScopedAppPromptBuilder {
         // The whole reason the assistant reads as incurious: it was handed a snapshot and had
         // no way to go and get anything else. Saying the reading tools exist matters as much
         // as having them — a model that does not know it can look will not look.
+        // The failure this repeatedly produced: asked what an app does, the model read the
+        // one list it had — the menu bar — and recited it. "About, Check for Updates, Hide
+        // Others" is true of every Mac app and says nothing about this one.
+        lines.append(
+            "A MENU LIST IS NOT A DESCRIPTION. The commands above are how you DO things in "
+            + "\(appName); they are not what \(appName) is for. If the user asks what the app "
+            + "does or can do, answer from its documentation — read it with read_url if a link "
+            + "is listed above and no summary was supplied — and if there is none, say you "
+            + "have no description of the app rather than listing its menus.")
         lines.append(
             "LOOK BEFORE YOU ANSWER. read_page reads the page in front of the user, read_url "
             + "fetches a link, read_file reads a document or source file, read_selection reads "

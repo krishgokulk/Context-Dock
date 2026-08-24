@@ -61,6 +61,17 @@ actor AppReferenceIndex {
 
     /// Where an app points is stable; how long before we look again.
     private let discoveryLifetime: TimeInterval = 7 * 24 * 60 * 60
+
+    /// How long a *failed* discovery is trusted.
+    ///
+    /// Finding nothing is not an answer, and caching it like one is how an app stays
+    /// undocumented for a week. Tutorini was looked up before the App Store and bundle-scan
+    /// sources existed, found nothing, and that emptiness was cached with the same seven-day
+    /// lifetime as a real result — so when the new sources shipped they were never asked, and
+    /// the app whose Info.plist plainly names its own site kept answering "no readable
+    /// description available". Long enough not to re-scan a binary on every message; short
+    /// enough that adding a source, or an app gaining a homepage, is picked up the same day.
+    private let emptyDiscoveryLifetime: TimeInterval = 15 * 60
     /// Page content changes with releases — a day is current enough and keeps the network quiet.
     private let pageLifetime: TimeInterval = 24 * 60 * 60
     private let fetchTimeout: TimeInterval = 6
@@ -94,7 +105,8 @@ actor AppReferenceIndex {
     func references(bundleId: String, appName: String) async -> [AppReference] {
         guard !bundleId.isEmpty else { return [] }
         if let entry = index[bundleId],
-            Date().timeIntervalSince(entry.discoveredAt) < discoveryLifetime
+            Date().timeIntervalSince(entry.discoveredAt)
+                < (entry.references.isEmpty ? emptyDiscoveryLifetime : discoveryLifetime)
         {
             let curated = Self.curatedOfficialReferences[bundleId] ?? []
             let merged = entry.references + curated.filter { official in
@@ -109,7 +121,10 @@ actor AppReferenceIndex {
         }
         let discovered = await discover(bundleId: bundleId, appName: appName)
         index[bundleId] = IndexEntry(references: discovered, discoveredAt: Date())
-        persistIndex()
+        // A failure is remembered in memory to avoid re-scanning on every message of the same
+        // conversation, and deliberately not written to disk: a relaunch should try again
+        // rather than inherit a week-old verdict that the app cannot be documented.
+        if !discovered.isEmpty { persistIndex() }
         return discovered
     }
 
@@ -194,7 +209,78 @@ actor AppReferenceIndex {
         return markers.contains(where: q.contains)
     }
 
+    /// True when the question is about the software itself — what it is, what it can do,
+    /// whether it can do a particular thing.
+    ///
+    /// Separate from `looksLikeReferenceQuestion`, which asks whether a specific page is
+    /// worth fetching ("what changed in 1.13", "how do I configure X"). This is the broader
+    /// "what is this thing", and it is the question DoraX kept answering with a menu list:
+    /// About, Check for Updates…, Hide Others — true of every Mac app, informative about
+    /// none.
+    nonisolated static func describesTheProduct(_ query: String) -> Bool {
+        let q = query.lowercased()
+        if looksLikeReferenceQuestion(q) { return true }
+        let markers = [
+            "what does", "what do", "what can", "what is", "what's", "whats",
+            "tell me about", "explain", "capable", "used for", "good at", "purpose of",
+            "overview", "how does it work", "help me with", "can it ", "does it ",
+        ]
+        return markers.contains(where: q.contains)
+    }
+
     // MARK: - Discovery
+
+    /// The app's documentation, read one link deeper than its homepage.
+    ///
+    /// A homepage is a poster: it says what the app is for and keeps the features, the
+    /// shortcuts and the FAQ on the pages it links to. Reading only the homepage is why "what
+    /// can this app do" still came back thin — and why, with nothing better in front of it,
+    /// the model fell back to reciting the app's menu bar.
+    ///
+    /// Bounded hard. Same host, one level, a handful of pages, cached like any other page and
+    /// labelled with when it was read.
+    func documentationDigest(
+        bundleId: String, appName: String, query: String, budget: Int = 6_000
+    ) async -> PageSnapshot? {
+        let references = await references(bundleId: bundleId, appName: appName)
+        // The best entry point: real documentation if the app publishes any, else its
+        // homepage, else its repository readme.
+        let entry = references.first { $0.kind == .documentation }
+            ?? references.first { $0.kind == .homepage }
+            ?? references.first { $0.kind == .repository }
+        guard let entry else { return nil }
+        guard let root = await pageSnapshot(
+            for: entry, bundleId: bundleId, query: query, limit: budget)
+        else { return nil }
+
+        var sections = ["## \(appName) — \(entry.title)\n\(root.text)"]
+        var used = root.text.count
+        var oldest = root.syncedAt
+
+        let links = AppDocumentationCrawl.documentationLinks(
+            in: root.text, from: entry.url)
+        for link in links.prefix(AppDocumentationCrawl.maximumPages - 1) {
+            guard used < budget * 2 else { break }
+            let child = AppReference(
+                kind: .documentation, title: URL(string: link)?.lastPathComponent ?? link,
+                url: link)
+            guard let snapshot = await pageSnapshot(
+                for: child, bundleId: bundleId, query: query, limit: budget / 2)
+            else { continue }
+            // A page that came back as navigation and nothing else is not worth its share of
+            // the budget, and reads to the model as though the product has no documentation.
+            guard snapshot.text.count > 400 else { continue }
+            sections.append("### \(child.title) (\(link))\n\(snapshot.text)")
+            used += snapshot.text.count
+            oldest = min(oldest, snapshot.syncedAt)
+        }
+
+        return PageSnapshot(
+            text: sections.joined(separator: "\n\n"),
+            syncedAt: oldest,
+            converter: root.converter,
+            sourceURL: entry.url)
+    }
 
     private func discover(bundleId: String, appName: String) async -> [AppReference] {
         var found: [AppReference] = []
@@ -414,7 +500,10 @@ actor AppReferenceIndex {
     }
 
     private func persistIndex() {
-        write(index, to: directory.appendingPathComponent("index.json"))
+        // Empty entries never reach disk. They exist only to stop one conversation
+        // re-scanning the same app every message; a relaunch should ask again.
+        write(index.filter { !$0.value.references.isEmpty },
+              to: directory.appendingPathComponent("index.json"))
     }
 
     private func persistPages() {

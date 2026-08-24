@@ -76,6 +76,7 @@ enum ScopedTurnRunner {
         // one.
         let complexity = TaskComplexityRouter.route(query)
         log.notice("turn \(complexity.rawValue, privacy: .public) scope=\(scope.chatScope.storageKey, privacy: .public)")
+        onStatus?("Understanding your request…")
         onStatus?(
             scope.cliTool.map { "Working out the right \($0) command…" }
                 ?? (complexity == .direct
@@ -119,8 +120,43 @@ enum ScopedTurnRunner {
                 imageAttachments: imageAttachments,
                 chatScope: scope.chatScope,
                 grantedApps: grantedApps,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
+        }
+
+        onStatus?(executed.isEmpty ? "Preparing the response…" : "Reading the tool results…")
+
+        // "I can't tell from what I have" is a request for another round.
+        //
+        // The loop runs while the model keeps calling tools and ends the moment it writes
+        // prose — so a model that gives up on its first look is never argued with, and the
+        // turn ends with rounds unspent and sources untried. Pushed back exactly once: twice
+        // is nagging, and a model that has genuinely run out of sources says so again.
+        if !pageAnswerOnly, !Task.isCancelled,
+            EvidenceSufficiency.shouldRetry(
+                answer: text, executed: executed, roundsAllowed: complexity.maxToolIterations)
+        {
+            onStatus?("Looking again — that wasn't an answer…")
+            log.notice("evidence insufficient; retrying with \(executed.count, privacy: .public) receipts")
+            if let (retried, extra) = try? await AIProviderService.shared.sendWithTools(
+                EvidenceSufficiency.retryPrompt(
+                    query: query, answer: text, executed: executed),
+                context: scope.userContext, provider: provider, apiKey: apiKey,
+                conversationHistory: history, commandExecutor: executor,
+                maxIterations: complexity.maxToolIterations,
+                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
+                chatScope: scope.chatScope, grantedApps: grantedApps,
+                onStream: onStream)
+            {
+                // Kept only if the second look actually did something. A retry that also
+                // found nothing must not overwrite the first answer with a worse-worded
+                // version of the same admission.
+                if !extra.isEmpty || !EvidenceSufficiency.admitsDefeat(retried) {
+                    text = retried
+                    executed += extra
+                }
+            }
         }
 
         // Did it do what it says it did?

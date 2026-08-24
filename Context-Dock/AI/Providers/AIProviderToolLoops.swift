@@ -43,7 +43,8 @@ extension AIProviderService {
         chatScope: GeneralChatScope? = nil,
         grantedApps: [String: String] = [:],
         simulateAllTools: Bool,
-        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
@@ -86,6 +87,18 @@ extension AIProviderService {
         }
 
         let allTools = await AgentToolRegistry.shared.schemas(format: .openAI) + customTools
+        onStatus?("Found \(allTools.count) available tools; choosing the best route…")
+        // Whether the endpoint even engages with tools is otherwise unknowable from the
+        // outside: a proxy that drops the `tools` field answers in one round with prose, and
+        // looks exactly like a model that chose not to call anything. One line per turn says
+        // which it was.
+        var roundsUsed = 0
+        var toolCallsSeen = 0
+        defer {
+            AgentTurnDiagnostics.record(
+                model: model, toolsOffered: allTools.count,
+                rounds: roundsUsed, toolCalls: toolCallsSeen)
+        }
 
         for _ in 0..<maxIterations {
             // Stop is a decision the user already made. Without this check the loop kept
@@ -95,6 +108,7 @@ extension AIProviderService {
             if Task.isCancelled {
                 return ("Stopped.", executedCommands)
             }
+            roundsUsed += 1
             var body: [String: Any] = [
                 "model": model,
                 "messages": messages,
@@ -149,6 +163,7 @@ extension AIProviderService {
             }
             guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
 
+            toolCallsSeen += choice.message.tool_calls?.count ?? 0
             if let toolCalls = choice.message.tool_calls, !toolCalls.isEmpty {
                 var assistantMsg: [String: Any] = ["role": "assistant"]
                 if let content = choice.message.content { assistantMsg["content"] = content }
@@ -175,7 +190,7 @@ extension AIProviderService {
                             commandExecutor: commandExecutor, userContext: userContext,
                             userRequest: message,
                             attachments: imageAttachments, chatScope: chatScope,
-                            grantedApps: grantedApps, turn: turn)
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
                     ) {
                         success = result.success
                         output = result.output
@@ -196,7 +211,9 @@ extension AIProviderService {
                             success: success, output: output, exitCode: exitCode),
                     ])
                 }
+                onStatus?("Understanding the returned tool data…")
             } else {
+                onStatus?("Preparing the final response…")
                 return (choice.message.content ?? "(no response)", executedCommands)
             }
         }
@@ -230,7 +247,8 @@ extension AIProviderService {
         chatScope: GeneralChatScope? = nil,
         grantedApps: [String: String] = [:],
         simulateAllTools: Bool,
-        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
@@ -268,6 +286,14 @@ extension AIProviderService {
         let usesAdaptiveThinking = AnthropicModelCatalog.supportsAdaptiveThinking(model)
 
         let registryTools = await AgentToolRegistry.shared.schemas(format: .anthropic)
+        onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
+        var roundsUsed = 0
+        var toolCallsSeen = 0
+        defer {
+            AgentTurnDiagnostics.record(
+                model: model, toolsOffered: registryTools.count + customTools.count,
+                rounds: roundsUsed, toolCalls: toolCallsSeen)
+        }
 
         for _ in 0..<maxIterations {
             // Stop is a decision the user already made. Without this check the loop kept
@@ -325,8 +351,10 @@ extension AIProviderService {
                         + (usage.cache_creation_input_tokens ?? 0),
                     outputTokens: usage.output_tokens ?? 0)
             }
+            roundsUsed += 1
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
+            toolCallsSeen += toolUseBlocks.count
 
             // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
             // empty or partial, so reading it as an answer produces a blank or half reply.
@@ -342,6 +370,7 @@ extension AIProviderService {
 
             if toolUseBlocks.isEmpty {
                 let text = textBlocks.compactMap { $0.text }.joined(separator: "\n")
+                onStatus?("Preparing the final response…")
                 return (text.isEmpty ? "(no response)" : text, executedCommands)
             }
 
@@ -379,11 +408,11 @@ extension AIProviderService {
                 } else if let result = await AgentToolRegistry.shared.dispatch(
                     name: toolName,
                     arguments: args,
-                    context: AgentToolContext(
+                        context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
                             userRequest: message,
                             attachments: imageAttachments, chatScope: chatScope,
-                            grantedApps: grantedApps, turn: turn)
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
                 ) {
                     success = result.success
                     output = result.output
@@ -408,6 +437,7 @@ extension AIProviderService {
                 ])
             }
             messages.append(["role": "user", "content": resultBlocks])
+            onStatus?("Understanding the returned tool data…")
         }
         // The loop ran out of steps with the model still calling tools. "Commands completed"
         // read as success and hid that: the user was told the work was done when the turn had
@@ -438,7 +468,8 @@ extension AIProviderService {
         chatScope: GeneralChatScope? = nil,
         grantedApps: [String: String] = [:],
         simulateAllTools: Bool,
-        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
@@ -468,6 +499,7 @@ extension AIProviderService {
         contents.append(["role": "user", "parts": userParts])
 
         let registryTools = await AgentToolRegistry.shared.schemas(format: .gemini)
+        onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
 
         for _ in 0..<maxIterations {
             // Stop is a decision the user already made. Without this check the loop kept
@@ -518,6 +550,7 @@ extension AIProviderService {
 
             if functionParts.isEmpty {
                 let text = textParts.compactMap { $0.text }.joined(separator: "\n")
+                onStatus?("Preparing the final response…")
                 return (text.isEmpty ? "(no response)" : text, executedCommands)
             }
 
@@ -544,11 +577,11 @@ extension AIProviderService {
                 } else if let result = await AgentToolRegistry.shared.dispatch(
                     name: fc.name,
                     arguments: args,
-                    context: AgentToolContext(
+                        context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
                             userRequest: message,
                             attachments: imageAttachments, chatScope: chatScope,
-                            grantedApps: grantedApps, turn: turn)
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
                 ) {
                     success = result.success
                     output = result.output
@@ -575,6 +608,7 @@ extension AIProviderService {
                 ])
             }
             contents.append(["role": "function", "parts": functionResultParts])
+            onStatus?("Understanding the returned tool data…")
         }
         // The loop ran out of steps with the model still calling tools. "Commands completed"
         // read as success and hid that: the user was told the work was done when the turn had

@@ -53,6 +53,28 @@ enum ScopedGroundingBlocks {
         var lines = ["## \(appName) references"]
         lines += references.map { "- \($0.kind.label): \($0.title) — \($0.url)" }
 
+        // "What can this app do" is answered from the app's own documentation, one link
+        // deeper than its homepage — the features and the FAQ are never on the front page.
+        // Without this the model had a homepage blurb and a menu list, and answered with the
+        // menu list, which describes every Mac app and this one not at all.
+        if AppReferenceIndex.describesTheProduct(query),
+            let digest = await AppReferenceIndex.shared.documentationDigest(
+                bundleId: bundleId, appName: appName, query: query)
+        {
+            let age = RelativeDateTimeFormatter().localizedString(
+                for: digest.syncedAt, relativeTo: Date())
+            lines += [
+                "",
+                "### What \(appName) says about itself (read \(age) from \(digest.sourceURL))",
+                digest.text,
+                "",
+                "Answer from this, and cite the page. A list of menu commands is NOT a "
+                    + "description of what an app does — never answer \"what does this app "
+                    + "do\" with its menu bar.",
+            ]
+            return lines.joined(separator: "\n")
+        }
+
         // Reading a page costs a network round trip, so only a question that is actually
         // about the product pays for it — and only for the one page it names.
         if AppReferenceIndex.looksLikeReferenceQuestion(query),
