@@ -232,7 +232,13 @@ struct ChatRouteResolverEvalTests {
 struct TaskComplexityEvalTests {
 
     @Test func aPlainQuestionDoesNotBuyNineToolRounds() {
-        #expect(TaskComplexityRouter.route("what is a monad").maxToolIterations == 2)
+        // Asserted as "less than the extended budget" rather than a fixed number: the floor
+        // was deliberately raised from two to four so a question has room to read something
+        // before answering, and pinning the exact figure made that improvement look like a
+        // regression. What matters is that a plain question does not get an agent's budget.
+        let route = TaskComplexityRouter.route("what is a monad")
+        #expect(route == .direct)
+        #expect(route.maxToolIterations < TaskComplexityRoute.extended.maxToolIterations)
     }
 
     @Test func aChainedRequestGetsRoomToFinish() {

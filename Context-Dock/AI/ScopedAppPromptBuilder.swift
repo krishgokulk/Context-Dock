@@ -267,6 +267,17 @@ enum ScopedAppPromptBuilder {
             "Every route above is called as a TOOL. Never write a tool call as JSON in your "
             + "reply — a line of JSON in an answer runs nothing and is shown to the user as "
             + "gibberish. Call the tool, wait for its result, then answer in plain language.")
+        // The whole reason the assistant reads as incurious: it was handed a snapshot and had
+        // no way to go and get anything else. Saying the reading tools exist matters as much
+        // as having them — a model that does not know it can look will not look.
+        lines.append(
+            "LOOK BEFORE YOU ANSWER. read_page reads the page in front of the user, read_url "
+            + "fetches a link, read_file reads a document or source file, read_selection reads "
+            + "what they have highlighted. All four are read-only and need no approval, so "
+            + "reach for them freely: a question about \"this page\", \"this file\" or "
+            + "\"these\" is answered by reading it first, never from memory and never with "
+            + "\"I don't have access\". If you are unsure what an app can do, find_route "
+            + "lists what actually exists.")
         return lines.joined(separator: "\n")
     }
 }

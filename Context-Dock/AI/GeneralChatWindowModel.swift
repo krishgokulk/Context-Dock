@@ -275,13 +275,36 @@ final class GeneralChatWindowModel: ObservableObject {
                 messages.append(message)
             }
 
-        case .toolCallStarted:
+        case .toolCallStarted(let name):
             // Everything written so far was the model narrating its way towards a tool. The
             // answer comes from the round after the tool returns, so this text is not a
             // draft of it — leaving it on screen would put a stray half-sentence above the
             // real reply.
             clearStreamingMessage()
+            // The step itself is shown. A turn that reads a page, checks a file and then
+            // answers was indistinguishable from one that sat still for twenty seconds: the
+            // work was real, the transcript said nothing about it, and the user is the one
+            // deciding whether to trust the answer. These rows are removed when the answer
+            // lands — the receipts on the message are the durable record.
+            appendStepRow(ScopedToolStep.label(for: name))
         }
+    }
+
+    /// Steps shown while the turn is working, by message id, so they can be cleared when it
+    /// finishes. Transient by design: what ran durably is on the answer's receipts.
+    private var stepMessageIDs: [UUID] = []
+
+    private func appendStepRow(_ label: String) {
+        let message = AIChatMessage(role: .tool, content: label)
+        stepMessageIDs.append(message.id)
+        messages.append(message)
+    }
+
+    private func clearStepRows() {
+        guard !stepMessageIDs.isEmpty else { return }
+        let ids = Set(stepMessageIDs)
+        messages.removeAll { ids.contains($0.id) }
+        stepMessageIDs.removeAll()
     }
 
     /// Drops the in-flight bubble. Called when a tool interrupts the writing and again
@@ -318,6 +341,7 @@ final class GeneralChatWindowModel: ObservableObject {
                 evidenceReceipts: answer.evidenceReceipts,
                 subjectiveEvaluation: answer.subjectiveEvaluation,
                 enableAppRequest: answer.enableApp,
+                trace: answer.trace,
                 actionChoices: answer.routeChoices),
             to: scope, title: title)
     }
@@ -840,8 +864,10 @@ final class GeneralChatWindowModel: ObservableObject {
         // turn, and the loser is dropped rather than appended twice.
         guard sendingScopeKeys.contains(scope.storageKey) else { return }
         // The finished answer supersedes whatever was streamed into the bubble, including a
-        // partial one left behind by a turn that failed or timed out.
+        // partial one left behind by a turn that failed or timed out, and the step rows that
+        // described getting there.
         clearStreamingMessage()
+        clearStepRows()
         sendingScopeKeys.remove(scope.storageKey)
         settleConsole(scope)
         // Anything the answer built becomes a file, which the panel already knows how to

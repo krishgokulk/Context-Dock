@@ -7,7 +7,12 @@ enum TaskComplexityRoute: String {
 
     var maxToolIterations: Int {
         switch self {
-        case .direct: return 2
+        // Four, not two. Two bought exactly one tool call and an answer, which is why a
+        // question that needed a look — read the page, then answer from it — came back as
+        // "I don't have that" instead. Reading is cheap and read-only; the room to look
+        // before answering costs a few tokens and buys the difference between an assistant
+        // that checks and one that guesses.
+        case .direct: return 4
         // Five cut off immediately after the final successful reader in a real browser
         // turn (two failed routes, discovery, summarize attempt, browser.tabs). The answer
         // itself needs a round too, with one spare for recovery from an unavailable source.

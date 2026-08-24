@@ -1523,6 +1523,9 @@ extension LauncherView {
                                 }
 
                                 if l2.isLoading {
+                                    if !l2.routerTrace.isEmpty {
+                                        LiveAgentStepsView(steps: l2.routerTrace)
+                                    }
                                     AILoadingView(status: l2.loadingStatus).id("l2loading")
                                 }
                             }
@@ -1798,6 +1801,9 @@ extension LauncherView {
                                 .id("action-progress")
                         }
                         if aiMode.isLoading {
+                            if !aiMode.routerTrace.isEmpty {
+                                LiveAgentStepsView(steps: aiMode.routerTrace)
+                            }
                             AILoadingView(status: aiMode.loadingStatus)
                             .animation(.easeInOut(duration: 0.18), value: aiMode.loadingStatus)
                             .padding(.horizontal, 4)
@@ -3348,11 +3354,15 @@ extension LauncherView {
                 l2.chatMessages.append(
                     AIChatMessage(id: messageID, role: .assistant, content: fragment))
             }
-        case .toolCallStarted:
+        case .toolCallStarted(let name):
             // Narration on the way to a tool call. The answer is written in the round after
             // the tool returns, so this text is not a draft of it — leaving it on screen
             // puts a stray half-sentence above the real reply.
             clearDockStreamMessage(messageID)
+            // The step replaces it: a turn that reads a page and then answers should say so
+            // while it happens, rather than showing a spinner and a conclusion.
+            l2.loadingStatus = ScopedToolStep.label(for: name)
+            dockTraceStep(ScopedToolStep.label(for: name))
         }
     }
 
@@ -4750,7 +4760,11 @@ extension LauncherView {
         // exists. A page request ("dark mode for this page", "hide the sidebar") has no
         // menu item or adapter action anywhere — the capability belongs to the page — so
         // in a browser scope write the userscript instead of explaining how to do it.
-        if !isSafariPageUnderstandingReadQuery(query, bundleID: scopedBundleId),
+        if BrowserActionAuthor.isCrossAppProjectRequest(query) {
+            dockTraceStep("Cross-app project request — reading the page before resolving the project")
+        }
+        if !BrowserActionAuthor.isCrossAppProjectRequest(query),
+            !isSafariPageUnderstandingReadQuery(query, bundleID: scopedBundleId),
             !isSafariPageLinkOpenQuery(query, bundleID: scopedBundleId),
             tryAuthorBrowserPageAction(
             query: query, scopedBundleId: scopedBundleId, scopedAppName: scopedAppName)
@@ -4826,6 +4840,22 @@ extension LauncherView {
                 #if DEBUG
                 print("🧠 [L2 AI] Provider: \(provider.shortName), tool-aware message path")
                 #endif
+
+                // Personal history may belong to a browser, media player, or another app.
+                // Resolve its owner before a global history tool can escape this app scope.
+                let historyScope = self.currentContextDockChatScope
+                if let clarification = self.historySourceClarification(
+                    query: query,
+                    scopedApp: historyScope.bundleId.isEmpty
+                        ? nil : (historyScope.appName, historyScope.bundleId))
+                {
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(role: .assistant, content: clarification))
+                        finishL2AIRequest(l2RequestID)
+                    }
+                    return
+                }
 
                 // "test it" is about the user's project, not about the scoped app's
                 // capabilities, so it is recognised before the tool loop gets a chance to
@@ -5014,6 +5044,46 @@ extension LauncherView {
                     return
                 }
 
+                // This is a typed, read-only Code capability, not an open-ended planning
+                // problem. Run it directly so the provider cannot spend the whole turn
+                // discovering the exact capability and stop before executing it.
+                if submittedContextDockFiles.isEmpty,
+                    submittedContextDockText == nil,
+                    scopedBundleId == "com.microsoft.VSCode",
+                    VSCodeExtensionsIntent.matches(query)
+                {
+                    await MainActor.run {
+                        self.dockTraceStep("Reading installed VS Code extensions…")
+                    }
+                    let plan = AIActionPlan(
+                        capability: "vscode.extensions.list",
+                        input: [:],
+                        explanation: "List installed VS Code extensions with versions")
+                    let result = try await AIExecutionEngine.shared.executeWithApproval(
+                        plan, context: .none)
+                    let receipt = AIProviderService.ExecutedCommand(
+                        command: "run_capability(vscode.extensions.list)",
+                        output: result.output,
+                        success: result.success,
+                        isVerification: false)
+                    await MainActor.run {
+                        self.dockTraceStep(
+                            result.success
+                                ? "Read installed VS Code extensions"
+                                : "VS Code extension read failed")
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: result.output,
+                                isError: !result.success,
+                                mcpToolsRan: [receipt.command],
+                                evidenceReceipts: [DoraXActionReceipt(receipt)],
+                                trace: l2.routerTrace))
+                        finishL2AIRequest(l2RequestID)
+                    }
+                    return
+                }
+
                 // App UI work is proposed as a visible Computer Use action. Resolution is
                 // deterministic and local; the user's click is Allow Once. Only after that
                 // click may DoraX launch/restore the app and live-verify the cached menu path.
@@ -5060,7 +5130,9 @@ extension LauncherView {
                 // Extension, so every provider can answer "summarize this page",
                 // pass the video URL to yt-dlp, etc. — without a page-reading tool.
                 var browserPageBlock = await MainActor.run {
-                    self.browserScopeContextBlock(scopedBundleId: scopedBundleId, query: query)
+                    self.dockTraceStep("Reading the current browser page…")
+                    return self.browserScopeContextBlock(
+                        scopedBundleId: scopedBundleId, query: query)
                 }
                 // A stale native-message bridge must not leave Safari chat reasoning over an
                 // old page. Read the active DOM directly as a recovery path and give the model
@@ -5070,6 +5142,18 @@ extension LauncherView {
                     let directBlock = await self.readCurrentSafariPagePromptDirectly(query: query)
                 {
                     browserPageBlock = directBlock
+                }
+                var browserPageReceipts: [DoraXActionReceipt] = []
+                if let evidence = BrowserPageReadEvidence.parse(
+                    promptBlock: browserPageBlock,
+                    browserName: scopedAppName.isEmpty ? "Browser" : scopedAppName,
+                    source: SafariBrowserBridge.shared.isFresh
+                        ? "Context Dock Safari Extension" : "live browser reader")
+                {
+                    browserPageReceipts.append(evidence.receipt)
+                    await MainActor.run {
+                        evidence.traceLines.forEach { self.dockTraceStep($0) }
+                    }
                 }
                 // Adapter Skills — reusable instruction bundles for this app, fed
                 // as extra AI context (never executable).
@@ -5181,6 +5265,9 @@ extension LauncherView {
                 let activeContextPrompt: String = {
                     var prompt = ScopedPromptAssembler()
                     prompt.set(.sourceRule, sourceDecision.promptRule)
+                    prompt.append(
+                        .sourceRule,
+                        BrowserActionAuthor.crossAppProjectGuidance(query))
                     prompt.set(.resolvedContext, resolvedContextBlock)
                     prompt.set(.identity, identityBlock)
                     prompt.append(.identity, finalContextPrompt)
@@ -5302,7 +5389,8 @@ extension LauncherView {
                     await MainActor.run {
                         var msg = AIChatMessage(
                             role: .assistant, content: finalResponse, mcpToolsRan: toolsRan,
-                            evidenceReceipts: executed.map(DoraXActionReceipt.init),
+                            evidenceReceipts: browserPageReceipts
+                                + executed.map(DoraXActionReceipt.init),
                             subjectiveEvaluation: subjectiveEvaluation,
                             trace: self.l2.routerTrace)
                         msg = self.tagMessageWithProposal(msg)
@@ -6052,14 +6140,7 @@ extension LauncherView {
         guard bundleID == "com.apple.Safari" || bundleID.hasPrefix("com.apple.Safari.WebApp")
         else { return false }
         if isSafariPageLinkReadQuery(query, bundleID: bundleID) { return true }
-        let lower = query.lowercased()
-        let pageReference = lower.contains("this page") || lower.contains("current page")
-            || lower.contains("article") || lower.contains("website")
-        let readIntent = [
-            "summarize", "summarise", "explain", "what is", "what does", "tell me",
-            "key points", "main points", "read", "analyse", "analyze", "compare"
-        ].contains { lower.contains($0) }
-        return pageReference && readIntent
+        return BrowserPageUnderstandingIntent.matches(query)
     }
 
     @MainActor
@@ -6457,6 +6538,37 @@ extension LauncherView {
         return launches
     }
 
+    @MainActor
+    func historySourceClarification(
+        query: String,
+        scopedApp: (name: String, bundleId: String)?
+    ) -> String? {
+        HistorySourceClarifier.questionIfNeeded(
+            query: query,
+            namedApp: GeneralAIActionResolver.shared.namedInstalledApp(in: query),
+            scopedApp: scopedApp,
+            availableSources: availableHistorySources())
+    }
+
+    @MainActor
+    func availableHistorySources() -> [HistorySourceOption] {
+        var found: [HistorySourceOption] = []
+        var seen = Set<String>()
+        for adapter in AppAdapterManager.shared.adapters where adapter.isEnabled {
+            let actionTerms = adapter.actions.map(\.name).joined(separator: " ").lowercased()
+            let isBrowser = AXWebReader.shared.isBrowser(bundleId: adapter.bundleId)
+            let hasHistoryAction = ["history", "watched", "recently played", "recent items"]
+                .contains(where: actionTerms.contains)
+            guard isBrowser || hasHistoryAction,
+                seen.insert(adapter.bundleId.lowercased()).inserted
+            else { continue }
+            found.append(HistorySourceOption(name: adapter.appName, bundleID: adapter.bundleId))
+        }
+        return found.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
     /// Supplies interactive rows only when the user has explicitly enabled the named
     /// app for this General Chat and the shared Global Context semantic parser says the
     /// request is about recency. The service is already TTL-cached, so this is a cheap
@@ -6493,7 +6605,59 @@ extension LauncherView {
         }
         // A short follow-up such as “try again” refers to the last executable user request.
         // Resolve it locally instead of letting a provider narrate an action it cannot run.
-        let actionQuery = generalAIRetryExpandedQuery(query)
+        let retryQuery = generalAIRetryExpandedQuery(query)
+        let historySurface = "general-chat"
+        let exactNamedApp = GeneralAIActionResolver.shared.namedInstalledApp(in: retryQuery)
+        let confirmedApp = HistorySourceClarificationStore.shared.confirmedSuggestion(
+            surface: historySurface, reply: retryQuery)
+        let replyNamedApp = exactNamedApp
+            ?? confirmedApp.map { (name: $0.name, bundleId: $0.bundleID) }
+        let actionQuery = HistorySourceClarificationStore.shared.resume(
+            surface: historySurface,
+            namedApp: replyNamedApp
+        ) ?? retryQuery
+        let resumedConfirmedHistoryRequest = replyNamedApp != nil && actionQuery != retryQuery
+        if let clarification = CrossAppGeneralChatClarifier.questionIfNeeded(
+            query: actionQuery,
+            namedApp: GeneralAIActionResolver.shared.namedInstalledApp(in: actionQuery)
+        ) {
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = ["No tools ran"]
+                aiMode.routerTrace.append("Resolved app: \(exactNamedApp?.name ?? "named app")")
+                aiMode.routerTrace.append("Clarification required: operation and project app")
+            }
+            return clarification
+        }
+        if actionQuery == retryQuery,
+            exactNamedApp == nil,
+            HistorySourceClarificationStore.shared.hasPending(surface: historySurface),
+            let suggestion = HistorySourceAppMatcher.closestMatch(
+                in: retryQuery, sources: availableHistorySources())
+        {
+            HistorySourceClarificationStore.shared.suggest(surface: historySurface, app: suggestion)
+            await MainActor.run {
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = []
+            }
+            return "Did you mean **\(suggestion.name)**?"
+        }
+        let focusedHistoryScope: (name: String, bundleId: String)? =
+            chatFocusApps.count == 1
+            ? (chatFocusApps[0].name, chatFocusApps[0].bundleId) : nil
+        if let clarification = historySourceClarification(
+            query: actionQuery, scopedApp: focusedHistoryScope)
+        {
+            await MainActor.run {
+                if replyNamedApp == nil {
+                    HistorySourceClarificationStore.shared.begin(
+                        surface: historySurface, originalQuery: actionQuery)
+                }
+                aiMode.loadingStatus = nil
+                aiMode.pendingToolChips = []
+            }
+            return clarification
+        }
         let providerSelection = capturedSelection
             ?? AIProviderSelectionResolver.current(settings: settings)
         // Build context from previous messages (uses aiMode.messages for global AI mode)
@@ -6855,7 +7019,7 @@ extension LauncherView {
         }
 
         let exactSelectedAdapterAction = hasExactSelectedAdapterAction(query: actionQuery)
-        if (!modelFirst || exactSelectedAdapterAction),
+        if (!modelFirst || exactSelectedAdapterAction || resumedConfirmedHistoryRequest),
            attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer

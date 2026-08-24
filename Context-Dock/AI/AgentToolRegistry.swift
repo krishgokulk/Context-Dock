@@ -884,6 +884,12 @@ final class AgentToolRegistry {
         guard !didRegisterBuiltIns else { return }
         didRegisterBuiltIns = true
 
+        // Registered first, and deliberately so: reading is what the model should reach for
+        // before it reaches for anything that acts. See ReadingTools.swift.
+        registerReadingTools()
+        // The deterministic resolver, offered rather than applied. See RouteTools.swift.
+        registerRouteTools()
+
         register(AgentTool(
             name: "run_command",
             description: "Execute a terminal command on the user's Mac and return its output. "
@@ -1327,7 +1333,7 @@ final class AgentToolRegistry {
                 let all = Self.capabilitiesInScope(
                     CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID)
                 guard !terms.isEmpty else { return [] }
-                return all
+                let scored = all
                     .map { capability -> (score: Int, capability: AICapability) in
                         let haystack = (capability.id + " " + capability.title
                             + " " + Self.searchAliases(for: capability.id)).lowercased()
@@ -1340,8 +1346,12 @@ final class AgentToolRegistry {
                     }
                     .filter { $0.score > 0 }
                     .sorted { $0.score > $1.score }
-                    .prefix(12)
-                    .map(\.capability)
+                guard let highest = scored.first?.score else { return [] }
+                // A multi-term hit is specific enough to suppress one-word coincidences.
+                // "installed VS Code extensions" should return the VS Code inventory, not
+                // Xcode, System Settings, and every action whose title contains "Code".
+                let narrowed = highest >= 2 ? scored.filter { $0.score == highest } : scored
+                return Array(narrowed.prefix(12).map(\.capability))
             }
             // App adapter actions are DoraX routes too, and the scope prompt lists them —
             // but they were invisible to the tool the model is told to search with, so it
