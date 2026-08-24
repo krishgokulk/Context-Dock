@@ -28,6 +28,7 @@ enum AIToolBudget {
     static let essentials: Set<String> = [
         "find_capability",
         "run_capability",
+        "read_tool_result",
         "run_command",
         "verify_outcome",
     ]

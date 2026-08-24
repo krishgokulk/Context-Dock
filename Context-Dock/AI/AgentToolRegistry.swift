@@ -552,7 +552,21 @@ final class AgentToolRegistry {
         {
             settledByTurn[turn]?.append(reading)
         }
-        return result
+        guard result.success, result.verifiedByReadBack == nil, name != "read_tool_result" else {
+            return result
+        }
+        let compacted = AgentToolResultStore.compactForModel(
+            result.output, toolName: name)
+        guard compacted != result.output else { return result }
+        var offloaded = AgentToolResult(
+            success: result.success,
+            output: compacted,
+            displayCommand: result.displayCommand,
+            exitCode: result.exitCode,
+            stdout: result.stdout,
+            stderr: result.stderr)
+        offloaded.verifiedByReadBack = result.verifiedByReadBack
+        return offloaded
     }
 
     // MARK: - Schemas
@@ -899,6 +913,46 @@ final class AgentToolRegistry {
         registerReadingTools()
         // The deterministic resolver, offered rather than applied. See RouteTools.swift.
         registerRouteTools()
+
+        register(AgentTool(
+            name: "read_tool_result",
+            description: "Read one bounded chunk of a large tool result that DoraX offloaded. "
+                + "Use only with a result_id returned by another tool in this turn.",
+            properties: [
+                "result_id": [
+                    "type": "string",
+                    "description": "Opaque result_id returned by an offloaded tool result",
+                ],
+                "offset": [
+                    "type": "integer",
+                    "description": "Character offset to start at (default 0)",
+                ],
+                "limit": [
+                    "type": "integer",
+                    "description": "Maximum characters to return (default 3000, maximum 6000)",
+                ],
+            ],
+            required: ["result_id"]
+        ) { arguments, _ in
+            guard let id = arguments["result_id"] as? String else {
+                return AgentToolResult(
+                    success: false,
+                    output: "read_tool_result requires result_id.",
+                    displayCommand: "read_tool_result(invalid)")
+            }
+            let offset = arguments["offset"] as? Int ?? 0
+            let limit = arguments["limit"] as? Int ?? 3_000
+            switch AgentToolResultStore.read(id: id, offset: offset, limit: limit) {
+            case .success(let chunk):
+                return AgentToolResult(
+                    success: true, output: chunk,
+                    displayCommand: "read_tool_result(\(id), offset: \(offset))")
+            case .failure(let error):
+                return AgentToolResult(
+                    success: false, output: error.localizedDescription,
+                    displayCommand: "read_tool_result(\(id), offset: \(offset))")
+            }
+        })
 
         register(AgentTool(
             name: "run_command",
