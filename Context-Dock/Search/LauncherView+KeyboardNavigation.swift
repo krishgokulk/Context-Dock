@@ -1504,7 +1504,13 @@ extension LauncherView {
             // frame carries width and position only and the card animates inside it.
             if let keyableWindow = window as? KeyableWindow, keyableWindow.usesFixedHost {
                 let hostHeight = keyableWindow.fixedHostHeight(for: window.screen)
-                keyableWindow.dockCardHeight = effectiveHeight
+                // Deliberately does NOT touch dockCardRect/dockCardHeight. `effectiveHeight`
+                // is what the window was asked to make room for — clamped to the preset's
+                // minimum and to the space on screen — not what the card ended up drawing.
+                // Writing it here is what created a dead strip under a short result sheet:
+                // three rows on screen, a 600-point preset minimum, and 240 points of empty
+                // glass that still swallowed every click meant for the desktop. The card
+                // reports its own geometry; one writer, and it is the thing being looked at.
                 let topAnchor = keyableWindow.pinnedTopY ?? currentFrame.maxY
                 keyableWindow.pinnedTopY = topAnchor
                 let hostFrame = NSRect(

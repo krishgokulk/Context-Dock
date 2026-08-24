@@ -56,11 +56,15 @@ extension LauncherView {
             // what something computed for it: a height that is only published when a
             // resize happens leaves the window swallowing clicks in every state where no
             // resize ran.
-            .onGeometryChange(for: CGFloat.self) { proxy in
-                proxy.size.height
-            } action: { height in
-                (AppDelegate.shared?.launcherWindow as? KeyableWindow)?.dockCardHeight =
-                    height
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { frame in
+                // The rect, not just the height: the card is pinned to the bottom in dock
+                // mode, so a height alone described the wrong strip of the window and ate
+                // every click above it.
+                let window = AppDelegate.shared?.launcherWindow as? KeyableWindow
+                window?.dockCardRect = frame
+                window?.dockCardHeight = frame.height
             }
             .background(
                 backgroundView

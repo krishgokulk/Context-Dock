@@ -24,6 +24,18 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
     /// behind the launcher. Drag and key routing are unaffected — only hit testing.
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let window = window as? KeyableWindow, window.usesFixedHost {
+            let card = window.dockCardRect
+            if card.height > 0 {
+                // AppKit hands this view coordinates with the origin at the bottom-left and
+                // y rising; SwiftUI measured the card with the origin at the top-left and y
+                // falling. Same window, two conventions — comparing them unconverted is how
+                // a click-through region ends up mirrored about the middle of the screen.
+                let flipped = CGPoint(x: point.x, y: bounds.height - point.y)
+                return card.insetBy(dx: -1, dy: -1).contains(flipped)
+                    ? super.hitTest(point) : nil
+            }
+            // No measurement yet — first frame, or a surface that does not report one.
+            // Falls back to the old top-pinned assumption rather than swallowing the screen.
             let cardHeight = window.dockCardHeight
             if cardHeight > 0, point.y < bounds.height - cardHeight {
                 return nil
@@ -87,6 +99,62 @@ class KeyableWindow: NSPanel {
     /// which part of the window is empty enough to click through.
     var dockCardHeight: CGFloat = 0
 
+    /// Where the card actually is, in SwiftUI's window coordinates (origin top-left, y
+    /// down), as measured by the card itself.
+    ///
+    /// A height alone could not answer "is this point on the card". It assumed the card was
+    /// pinned to the top, so in bottom-anchored dock mode the empty space is ABOVE the card
+    /// and every click up there was swallowed; and it was written from two places — the
+    /// card's own measurement and the resize path's computed `effectiveHeight` — which
+    /// disagree whenever the resize stabiliser is deliberately holding the window steady
+    /// while the user types. A stale-tall height means the window keeps eating clicks in the
+    /// empty strip below a card that has already shrunk. A rect, reported by the thing that
+    /// is drawn, cannot disagree with what is on screen.
+    var dockCardRect: CGRect = .zero
+
+    /// The card's rectangle in screen coordinates, or nil before it has been measured.
+    ///
+    /// `dockCardRect` is SwiftUI's: origin top-left of the window's content, y falling.
+    /// Screens are the other way up, and the window's own origin has to be added back.
+    var dockCardScreenRect: CGRect? {
+        let card = dockCardRect
+        guard card.height > 0, let content = contentView else { return nil }
+        let bottomUpY = content.bounds.height - card.maxY
+        return CGRect(
+            x: frame.minX + card.minX,
+            y: frame.minY + bottomUpY,
+            width: card.width,
+            height: card.height)
+    }
+
+    /// Makes the window transparent to the mouse everywhere except the card.
+    ///
+    /// Hit-testing alone was not enough. A view returning nil stops *our* content from
+    /// reacting, but the window is still the frontmost thing under the pointer, so AppKit
+    /// hands it the click and the app behind never sees it — the user clicks their desktop
+    /// through what looks like empty air and nothing happens. Only `ignoresMouseEvents` lets
+    /// the click land where it was aimed.
+    ///
+    /// Driven from a pointer-position monitor rather than a tracking area, because a window
+    /// ignoring the mouse receives no events of its own to notice the pointer coming back.
+    func updateMouseTransparency(pointer: NSPoint, isDragging: Bool) {
+        // A drag that began on the card keeps the window interactive wherever it travels;
+        // dropping it mid-gesture would strand the launcher under the cursor.
+        guard !isDragging else {
+            if ignoresMouseEvents { ignoresMouseEvents = false }
+            return
+        }
+        guard let card = dockCardScreenRect else {
+            if ignoresMouseEvents { ignoresMouseEvents = false }
+            return
+        }
+        let shouldIgnore = !card.insetBy(dx: -1, dy: -1).contains(pointer)
+        if ignoresMouseEvents != shouldIgnore { ignoresMouseEvents = shouldIgnore }
+    }
+
+    /// True while a window drag started on the card is still in progress.
+    var isDraggingFromCard: Bool { initialMouseLocation != nil }
+
     /// The tallest the dock may ever be on this screen. Fixed for the session: nothing
     /// about content may change it, which is the entire point.
     func fixedHostHeight(for screen: NSScreen?) -> CGFloat {
@@ -108,7 +176,11 @@ class KeyableWindow: NSPanel {
     // text (or scrolling). Let those views handle the mouse; drag only from bare chrome.
     override func mouseDown(with event: NSEvent) {
         let hit = contentView?.hitTest(event.locationInWindow)
-        if hit?.mouseDownCanMoveWindow == false {
+        // A nil hit is the transparent remainder — the host is screen-tall and the card is
+        // not. `hit?.mouseDownCanMoveWindow == false` is false when `hit` is nil, so the
+        // empty glass fell into the "bare chrome, safe to drag from" branch and dragging
+        // anywhere under the capsule carried the whole launcher around.
+        if hit == nil || hit?.mouseDownCanMoveWindow == false {
             initialMouseLocation = nil
             initialWindowOrigin = nil
         } else {
@@ -330,6 +402,10 @@ struct ILauncherApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// Pointer monitors that keep the transparent part of the launcher click-through.
+    private var pointerTransparencyGlobalMonitor: Any?
+    private var pointerTransparencyLocalMonitor: Any?
+
     /// Global shared reference — safe to use from anywhere without NSApp.delegate cast.
     /// (The @NSApplicationDelegateAdaptor pattern can make NSApp.delegate as? AppDelegate fail.)
     static weak var shared: AppDelegate?
@@ -2436,8 +2512,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Watches where the pointer is so the launcher can stand aside.
+    ///
+    /// The host window is screen-tall and mostly empty; without this it sits over the whole
+    /// desktop as an invisible sheet of glass, taking every click aimed at what is behind it.
+    /// Two monitors because neither is enough alone: the global one sees the pointer while
+    /// another app is active, the local one sees it while the launcher itself is key.
+    private func startPointerTransparencyMonitor() {
+        stopPointerTransparencyMonitor()
+        let events: NSEvent.EventTypeMask = [
+            .mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown,
+        ]
+        pointerTransparencyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
+            [weak self] _ in
+            self?.applyPointerTransparency()
+        }
+        pointerTransparencyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: events) {
+            [weak self] event in
+            self?.applyPointerTransparency()
+            return event
+        }
+        applyPointerTransparency()
+    }
+
+    private func stopPointerTransparencyMonitor() {
+        if let monitor = pointerTransparencyGlobalMonitor {
+            NSEvent.removeMonitor(monitor)
+            pointerTransparencyGlobalMonitor = nil
+        }
+        if let monitor = pointerTransparencyLocalMonitor {
+            NSEvent.removeMonitor(monitor)
+            pointerTransparencyLocalMonitor = nil
+        }
+        // Left interactive on the way out: a hidden window ignoring the mouse would stay
+        // that way if it were ever shown by a path that does not restart the monitor.
+        (launcherWindow as? KeyableWindow)?.ignoresMouseEvents = false
+    }
+
+    private func applyPointerTransparency() {
+        guard let window = launcherWindow as? KeyableWindow, window.isVisible else { return }
+        window.updateMouseTransparency(
+            pointer: NSEvent.mouseLocation, isDragging: window.isDraggingFromCard)
+    }
+
     func showLauncher() {
         guard let window = launcherWindow else { return }
+        startPointerTransparencyMonitor()
 
         #if DEBUG
         print("🚀 [AppDelegate] ===== SHOW LAUNCHER CALLED =====")
@@ -2595,6 +2715,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the dock's selection goes away with the dock.
         PreviewController.shared.closeUnpinned()
         guard let window = launcherWindow else { return }
+        // Stopped only when the window is really going away — the persistent-scope paths
+        // below return early and keep it on screen, where it still has to stand aside.
+        defer {
+            if !window.isVisible { stopPointerTransparencyMonitor() }
+        }
         // Compact scopes are intentionally persistent while the user works in another app.
         // Only an explicit forced dismissal (Escape/hotkey) or clearSearchContext(), which
         // first clears smartScopeActive, may close them.
