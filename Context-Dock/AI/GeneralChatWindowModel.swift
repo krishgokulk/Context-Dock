@@ -29,6 +29,8 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Live human-readable stage per thread. Unlike a generic spinner, this tells the user
     /// whether DoraX is reading a page, extracting it, choosing a route, or verifying work.
     @Published private(set) var statusByScopeKey: [String: String] = [:]
+    /// Observable lifecycle events accumulated for each in-flight turn.
+    @Published private(set) var progressByScopeKey: [String: [String]] = [:]
     /// Files on the next message, shown as chips once it is sent.
     @Published var attachments: [URL] = []
     /// Apps the answer should be about — the composer's app picker. Several at once
@@ -83,6 +85,7 @@ final class GeneralChatWindowModel: ObservableObject {
     /// answer must not spin this one.
     var isSending: Bool { sendingScopeKeys.contains(activeScope.storageKey) }
     var activeStatus: String? { statusByScopeKey[activeScope.storageKey] }
+    var activeProgress: [String] { progressByScopeKey[activeScope.storageKey] ?? [] }
 
     /// Pull in whatever the result sheet has said since this window was last open.
     func reloadFromStore() {
@@ -337,6 +340,15 @@ final class GeneralChatWindowModel: ObservableObject {
         let named = answer.files.isEmpty
             ? AppScopedChatService.mentionedFiles(in: answer.text)
             : answer.files
+        let liveProgress = progressByScopeKey[scope.storageKey] ?? []
+        var durableTrace: [String] = []
+        for step in liveProgress + answer.trace + ["Task complete"] {
+            if !durableTrace.contains(where: {
+                $0.caseInsensitiveCompare(step) == .orderedSame
+            }) {
+                durableTrace.append(step)
+            }
+        }
         deliver(
             AIChatMessage(
                 role: .assistant, content: answer.text,
@@ -345,7 +357,7 @@ final class GeneralChatWindowModel: ObservableObject {
                 evidenceReceipts: answer.evidenceReceipts,
                 subjectiveEvaluation: answer.subjectiveEvaluation,
                 enableAppRequest: answer.enableApp,
-                trace: answer.trace,
+                trace: durableTrace,
                 actionChoices: answer.routeChoices),
             to: scope, title: title)
     }
@@ -367,6 +379,7 @@ final class GeneralChatWindowModel: ObservableObject {
         }
 
         sendingScopeKeys.insert(key)
+        progressByScopeKey[key] = ["Understanding your request…"]
         sendTasks[key] = Task { [weak self] in
             let answer = await AppScopedChatService.runChosenRoute(
                 choice.id, query: question, history: history, scope: scope)
@@ -396,8 +409,48 @@ final class GeneralChatWindowModel: ObservableObject {
         if !already {
             openCombination(currentMembership + [request.name])
         }
+        // Say what just changed, before the answer arrives.
+        //
+        // Enabling an app silently re-ran the question, so the next thing on screen was an
+        // answer with no account of why it could suddenly see the user's messages. The
+        // permission the user just granted, and the tools it brought with it, are the most
+        // important thing in the conversation at that moment — and the one thing they were
+        // never shown.
+        deliver(
+            AIChatMessage(role: .tool, content: Self.scopeSummary(for: request)),
+            to: activeScope, title: activeTitle)
         input = request.query
         send()
+    }
+
+    /// What this conversation can now reach, in the user's terms: the app, and what came
+    /// with it. Counted from the adapter rather than described in general, so it is true of
+    /// their setup rather than of the feature.
+    static func scopeSummary(for request: EnableAppRequest) -> String {
+        var parts: [String] = []
+        if let adapter = AppAdapterManager.shared.adapter(for: request.bundleId) {
+            let actions = adapter.actions.filter { $0.type != .aiPrompt }.count
+            if actions > 0 { parts.append("\(actions) action\(actions == 1 ? "" : "s")") }
+        }
+        let skills = SkillStore.shared.skills(for: request.bundleId).filter(\.isEnabled).count
+        if skills > 0 { parts.append("\(skills) skill\(skills == 1 ? "" : "s")") }
+        let capabilities = CapabilityRegistry.shared.all.filter {
+            $0.appBundleID?.caseInsensitiveCompare(request.bundleId) == .orderedSame
+        }.count
+        if capabilities > 0 { parts.append("\(capabilities) built-in tools") }
+        let clis = ScopedGroundingBlocks.runnableCommandBinaries(forBundleId: request.bundleId)
+        if !clis.isEmpty { parts.append("\(clis.count) CLI tool\(clis.count == 1 ? "" : "s")") }
+        let menus = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: request.bundleId, appName: request.name, query: "",
+            maxResults: 60
+        ).filter(\.isLeaf).count
+        if menus > 0 { parts.append("\(menus) menu commands") }
+
+        let inventory = parts.isEmpty
+            ? "no tools linked yet — answers will come from what DoraX can read directly"
+            : parts.joined(separator: " · ")
+        return "\(request.name) is now in this chat — \(inventory). This question is answered "
+            + "from \(request.name) only; other apps stay out unless you add them."
     }
 
     /// The trash in the composer clears the thread you are reading, and only that one —
@@ -779,6 +832,7 @@ final class GeneralChatWindowModel: ObservableObject {
         Self.log.notice(
             "turn start scope=\(sendKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
         sendingScopeKeys.insert(sendKey)
+        progressByScopeKey[sendKey] = ["Understanding your request…"]
         sendTasks[sendKey] = Task { [weak self] in
             // A provider or tool loop that never returns must still end the turn. Without
             // this the thread sat on "Thinking…" with no way back except relaunching.
@@ -819,7 +873,7 @@ final class GeneralChatWindowModel: ObservableObject {
                     onStatus: { status in
                         Task { @MainActor [weak self] in
                             guard self?.sendingScopeKeys.contains(sendKey) == true else { return }
-                            self?.statusByScopeKey[sendKey] = status
+                            self?.recordProgress(status, for: sendKey)
                         }
                     })
                 guard !Task.isCancelled else {
@@ -857,7 +911,19 @@ final class GeneralChatWindowModel: ObservableObject {
     private func finishSending(_ key: String) {
         sendingScopeKeys.remove(key)
         statusByScopeKey[key] = nil
+        progressByScopeKey[key] = nil
         sendTasks[key] = nil
+    }
+
+    private func recordProgress(_ status: String, for key: String) {
+        statusByScopeKey[key] = status
+        let normalized = status.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        var steps = progressByScopeKey[key] ?? []
+        if steps.last?.caseInsensitiveCompare(normalized) != .orderedSame {
+            steps.append(normalized)
+        }
+        progressByScopeKey[key] = steps
     }
 
     /// Closes any console row still running for a thread whose turn has ended, so the log
@@ -880,6 +946,8 @@ final class GeneralChatWindowModel: ObservableObject {
         clearStreamingMessage()
         clearStepRows()
         sendingScopeKeys.remove(scope.storageKey)
+        statusByScopeKey[scope.storageKey] = nil
+        progressByScopeKey[scope.storageKey] = nil
         settleConsole(scope)
         // Anything the answer built becomes a file, which the panel already knows how to
         // show. Done here rather than in the view so an artifact survives the thread being

@@ -63,29 +63,10 @@ enum AppleMessagesMCPCapabilities {
                 let limit = max(1, min(Int(request.input["limit"] ?? "15") ?? 15, 30))
                 let output = await Task.detached(priority: .userInitiated) {
                     () -> String in
-                    // AppleScript first, and only while Messages is already open: asking it
-                    // anything launches the app, and reading someone's conversations should
-                    // never spring a window onto their screen.
-                    let scripted = MessagesAutomation.conversationSnapshot(
-                        contactFilter: contact, limit: limit)
-                    if !scripted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return scripted
-                    }
-                    // Messages closed, or AppleScript refused. The database says the same
-                    // thing without opening anything — it was already written and this
-                    // capability simply never called it.
                     guard let rows = MessagesChatDBReader.recent(limit: limit, contact: contact),
                         !rows.isEmpty
                     else { return "" }
-                    let formatter = DateFormatter()
-                    formatter.dateStyle = .short
-                    formatter.timeStyle = .short
-                    return rows.map { row in
-                        let who = row.handle.isEmpty ? "(group)" : row.handle
-                        let direction = row.fromMe ? "you → \(who)" : "\(who) → you"
-                        return "\(formatter.string(from: row.date)) · \(direction): "
-                            + row.text.prefix(160)
-                    }.joined(separator: "\n")
+                    return MessagesChatDBReader.formatted(rows)
                 }.value
 
                 // An empty string was being returned as a success. The model received
@@ -123,8 +104,21 @@ enum AppleMessagesMCPCapabilities {
                 guard let query = request.input["query"], !query.isEmpty else {
                     throw AICapabilityError.missingInput("query")
                 }
-                let output = await MessagesAutomation.openSearch(query: query)
-                return .init(success: !output.hasPrefix("❌"), output: output)
+                let rows = await Task.detached(priority: .userInitiated) {
+                    MessagesChatDBReader.search(query, limit: 40)
+                }.value
+                guard let rows else {
+                    return .init(
+                        success: false,
+                        output: "Messages could not be searched headlessly because DoraX "
+                            + "cannot read ~/Library/Messages/chat.db. Grant Full Disk Access "
+                            + "to Context-Dock, relaunch it, and retry. Messages was not opened "
+                            + "and no UI automation was attempted.")
+                }
+                guard !rows.isEmpty else {
+                    return .init(success: true, output: "No Messages matched ‘\(query)’. ")
+                }
+                return .init(success: true, output: MessagesChatDBReader.formatted(rows))
             }
         )
     }

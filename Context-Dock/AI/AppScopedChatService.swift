@@ -390,6 +390,10 @@ enum AppScopedChatService {
             GeneralAIActionResolver.shared.namedInstalledApp(in: query)
             ?? GeneralAIActionResolver.shared.namedInstalledApp(in: pluralised(query))
         guard let named else { return nil }
+        // A question that names no app at all is handled elsewhere — see
+        // `appSuggestionForUnnamedRequest`. This gate only ever speaks about an app the
+        // user actually mentioned, because offering to enable something they did not ask
+        // for reads as the app deciding what it wants access to.
         // Match on the name first. Resolving an attached name to a bundle id depends on
         // the app running or on a warmed installed-apps cache, and when neither held, an
         // app the user had just enabled looked unattached — so the gate asked again, and
@@ -407,6 +411,50 @@ enum AppScopedChatService {
             }.map { $0.lowercased() })
         guard !attachedBundleIDs.contains(named.bundleId.lowercased()) else { return nil }
         return EnableAppRequest(name: named.name, bundleId: named.bundleId, query: query)
+    }
+
+    /// The apps that could answer a question that names none, when the chat has none open.
+    ///
+    /// "Who do I talk to most" names no app and needs one; today that question reached a
+    /// model with no data source, which answered that it could not see the user's messages —
+    /// a true statement that reads as a refusal and leaves the user with nothing to do about
+    /// it. The subject is knowable from the question: talking is Messages, meetings are
+    /// Calendar, mail is Mail. Asking which one to open is a better answer than declining.
+    ///
+    /// Only ever a question, never an action: enabling an app is the user's decision, and
+    /// this is how they get asked rather than told.
+    static func appSuggestionForUnnamedRequest(
+        query: String, scope: GeneralChatScope, attachedAppNames: [String]
+    ) -> [EnableAppRequest] {
+        guard scope.isGeneralChat, attachedAppNames.isEmpty else { return [] }
+        // Naming an app already puts the request through the gate above.
+        guard GeneralAIActionResolver.shared.namedInstalledApp(in: query) == nil else {
+            return []
+        }
+        let lowered = query.lowercased()
+        // Subjects, not verbs: the word that says what the question is about.
+        let subjects: [(markers: [String], bundleId: String, name: String)] = [
+            (["message", "text", "imessage", "talk to", "chat with", "sms"],
+             "com.apple.MobileSMS", "Messages"),
+            (["email", "mail", "inbox", "sender", "unread"], "com.apple.mail", "Mail"),
+            (["meeting", "calendar", "event", "schedule", "appointment", "agenda"],
+             "com.apple.iCal", "Calendar"),
+            (["reminder", "todo", "to-do", "task list"], "com.apple.reminders", "Reminders"),
+            (["note", "notes"], "com.apple.Notes", "Notes"),
+            (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
+            (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
+        ]
+        var found: [EnableAppRequest] = []
+        for subject in subjects where subject.markers.contains(where: lowered.contains) {
+            // Only apps that are actually here. Offering to enable something not installed
+            // is a dead end dressed as an option.
+            guard NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: subject.bundleId) != nil
+            else { continue }
+            found.append(
+                EnableAppRequest(name: subject.name, bundleId: subject.bundleId, query: query))
+        }
+        return Array(found.prefix(3))
     }
 
     /// Runs `operation` on a detached task and gives up on it after `seconds`.
@@ -773,13 +821,11 @@ enum AppScopedChatService {
         // installed?" is not a request for Claude Code to inspect a repository, and "is
         // LLMBrain installed?" is not a request for an LLMBrain app adapter. Classify the
         // evidence needed before choosing a product route.
-        let isGeneralLike: Bool = {
-            switch scope {
-            case .general, .thread: return true
-            default: return false
-            }
-        }()
-        if isGeneralLike, let request = LocalInstallationCheck.parse(query) {
+        // Installation state belongs to the Mac, not to whichever chat scope happened to
+        // be active when the question was asked. The parser is intentionally narrow, so an
+        // explicit local-inspection request is safe to answer before app-specific routing in
+        // every scope.
+        if let request = LocalInstallationCheck.parse(query) {
             onStatus?("Checking whether \(request.displayName) is installed…")
             let result = LocalInstallationCheck.inspect(request)
             return Answer(
@@ -804,6 +850,25 @@ enum AppScopedChatService {
                 toolChips: [],
                 enableApp: request)
         }
+        // The question needs an app and named none. Ask which, rather than answering from
+        // nothing and leaving the user to work out that the app had to be enabled first.
+        let suggestions = appSuggestionForUnnamedRequest(
+            query: query, scope: scope, attachedAppNames: extraAppNames)
+        if let first = suggestions.first {
+            log.notice("stage: suggesting scope — \(first.bundleId, privacy: .public)")
+            let names = suggestions.map(\.name)
+            let list = names.count == 1
+                ? names[0]
+                : names.dropLast().joined(separator: ", ") + " or " + names[names.count - 1]
+            return Answer(
+                text: "That looks like a question about \(list). This chat isn't reading any "
+                    + "app yet — General Chat only reads what you enable, so nothing is "
+                    + "touched until you say so. Enable \(names[0]) below and I'll answer "
+                    + "from it.",
+                toolChips: [],
+                enableApp: first)
+        }
+
         // "test it", "save that as X", "run X" are about the user's own project rather than
         // about an app's capabilities, so they are recognised before route resolution —
         // there is no menu item or MCP tool that means "build what I'm working on".
@@ -1002,6 +1067,16 @@ enum AppScopedChatService {
         // question the same way and let the model pick, which is how a "what changed just
         // now" question got answered from a note written last week.
         let sourceDecision = AgentSourceAuthority.decide(query: query)
+        let taskPlan = FrontmostAppTaskPlan.make(
+            query: query,
+            bundleId: {
+                if case .app(let id) = scope { return id }
+                return ""
+            }(),
+            appName: appName,
+            hasSelection: !finderSelection.isEmpty,
+            hasAttachments: !attachments.isEmpty,
+            priorConversation: history.suffix(4).map(\.content).joined(separator: "\n"))
         // Assembled into named slots rather than a flat list, so reading order and the
         // budget for a small-context model are one rule shared with the dock instead of two
         // that drifted. This surface had no budget at all: on Apple's on-device model the
@@ -1049,25 +1124,28 @@ enum AppScopedChatService {
             // so the window could describe an app's tool inventory and nothing about the
             // work in progress inside it.
             log.notice("stage: workspace + reference")
-            let workspace = await withTimeout(seconds: 6, fallback: "", label: "workspace") {
-                await ScopedGroundingBlocks.workspace(
-                    bundleId: bundleId, appName: appName,
-                    forceRefresh: sourceDecision.requiresFreshRead)
-            }
+            let workspace = taskPlan.allows(.workspace)
+                ? await withTimeout(seconds: 6, fallback: "", label: "workspace") {
+                    await ScopedGroundingBlocks.workspace(
+                        bundleId: bundleId, appName: appName,
+                        forceRefresh: sourceDecision.requiresFreshRead)
+                } : ""
             prompt.set(.workspace, workspace)
-            let reference = await withTimeout(seconds: 8, fallback: "", label: "reference") {
-                await ScopedGroundingBlocks.reference(
-                    bundleId: bundleId, appName: appName, query: query)
-            }
+            let reference = taskPlan.allows(.officialReference)
+                ? await withTimeout(seconds: 8, fallback: "", label: "reference") {
+                    await ScopedGroundingBlocks.reference(
+                        bundleId: bundleId, appName: appName, query: query)
+                } : ""
             prompt.set(.reference, reference)
             // The page a browser scope is actually on. Without it a browser thread had the
             // app's capability list and no idea what was open in it, so it offered to reload
             // a page it could not name.
-            if ScopedAppPromptBuilder.isBrowserBundle(bundleId) {
+            if taskPlan.allows(.browserPage) {
                 onStatus?("Reading the current \(appName) page…")
                 sourceTrace.append("Resolved live page source: \(appName)")
             }
-            let page = ScopedGroundingBlocks.browserPage(bundleId: bundleId, query: query)
+            let page = taskPlan.allows(.browserPage)
+                ? ScopedGroundingBlocks.browserPage(bundleId: bundleId, query: query) : ""
             if !page.isEmpty {
                 prompt.set(.browserPage, UntrustedContent.fenced(page, from: "the current web page"))
                 let source = bundleId == "com.apple.Safari" && SafariBrowserBridge.shared.isFresh
@@ -1404,7 +1482,9 @@ enum AppScopedChatService {
                     if case .cli(let command) = scope { return command }
                     return nil
                 }(),
-                userContext: context),
+                approvalOrigin: .window,
+                userContext: context,
+                taskPlan: taskPlan),
             provider: provider,
             apiKey: apiKey,
             history: history,
