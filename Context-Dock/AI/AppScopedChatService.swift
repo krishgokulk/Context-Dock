@@ -382,7 +382,17 @@ enum AppScopedChatService {
     static func appNeedingAccess(
         query: String, scope: GeneralChatScope, attachedAppNames: [String]
     ) -> EnableAppRequest? {
-        guard scope.isGeneralChat else { return nil }
+        // App threads ask too. A Safari conversation told to "add this page to my notes"
+        // needs Notes, and until now nothing asked: the capability layer correctly hid
+        // Notes' tools, and the request then fell through to driving Notes' MENU BAR from
+        // inside a Safari chat — the same app operated by a worse route, with no consent
+        // and a prompt that called it "a native Safari command". A scope boundary that
+        // holds for tools and not for menus is not a boundary.
+        let scopeBundleID: String? = {
+            if case .app(let bundleId) = scope { return bundleId }
+            return nil
+        }()
+        guard scope.isGeneralChat || scopeBundleID != nil else { return nil }
         // "do i have any reminder today" names Reminders, but the resolver matches whole
         // words against app names, so the singular missed and the question fell through to
         // a model with no access and no explanation. Try the plural too.
@@ -390,6 +400,12 @@ enum AppScopedChatService {
             GeneralAIActionResolver.shared.namedInstalledApp(in: query)
             ?? GeneralAIActionResolver.shared.namedInstalledApp(in: pluralised(query))
         guard let named else { return nil }
+        // The thread's own app is not something to ask permission for.
+        if let scopeBundleID,
+            named.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame
+        {
+            return nil
+        }
         // A question that names no app at all is handled elsewhere — see
         // `appSuggestionForUnnamedRequest`. This gate only ever speaks about an app the
         // user actually mentioned, because offering to enable something they did not ask
@@ -842,9 +858,14 @@ enum AppScopedChatService {
             query: query, scope: scope, attachedAppNames: extraAppNames)
         {
             log.notice("stage: access gate — \(request.bundleId, privacy: .public)")
+            let inAppThread = { if case .app = scope { return true } else { return false } }()
             return Answer(
-                text:
-                    "**\(request.name)** isn't in this chat's scope yet. General Chat only reads "
+                text: inAppThread
+                    ? "That needs **\(request.name)**, and this chat is scoped to \(appName). "
+                        + "DoraX won't reach into another app without asking — enable "
+                        + "\(request.name) below and I'll use its own tools rather than "
+                        + "driving its menus."
+                    : "**\(request.name)** isn't in this chat's scope yet. General Chat only reads "
                     + "the apps you choose, so you stay in control — enable it below to let me "
                     + "answer about \(request.name).",
                 toolChips: [],

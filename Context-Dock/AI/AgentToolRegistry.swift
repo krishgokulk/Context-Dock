@@ -144,6 +144,10 @@ struct AgentToolContext {
     /// The Bool is the model's own `requires_approval` answer.
     let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32)
 
+    /// Factual execution progress for the chat surface. This reports observable lifecycle
+    /// events only (tool selected, started, completed); it never exposes model chain-of-thought.
+    var onStatus: ((String) -> Void)? = nil
+
     /// Apps this conversation is allowed to reach, by lowercased name and by bundle id.
     ///
     /// A scoped thread has exactly one; General Chat has whichever the user granted at the
@@ -191,7 +195,8 @@ struct AgentToolContext {
         attachments: [URL] = [],
         chatScope: GeneralChatScope? = nil,
         grantedApps: [String: String] = [:],
-        turn: AgentTurnToken? = nil
+        turn: AgentTurnToken? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) {
         self.commandExecutor = commandExecutor
         self.userContext = userContext
@@ -200,6 +205,7 @@ struct AgentToolContext {
         self.chatScope = chatScope
         self.grantedApps = grantedApps
         self.turn = turn
+        self.onStatus = onStatus
     }
 }
 
@@ -496,6 +502,8 @@ final class AgentToolRegistry {
         }
         guard let tool = tool(named: name) else { return nil }
 
+        context.onStatus?(ScopedToolStep.label(for: name))
+
         if let turn = context.turn,
             Self.isSupersededVerification(
                 toolName: name, settledReadings: settledByTurn[turn] ?? [])
@@ -539,6 +547,10 @@ final class AgentToolRegistry {
         }
 
         let result = await tool.handler(arguments, context)
+        context.onStatus?(
+            result.success
+                ? ScopedToolStep.completedLabel(for: name)
+                : ScopedToolStep.failedLabel(for: name))
         TaskRunStore.shared.finishToolCall(
             node: name, success: result.success, output: result.output)
         if result.success, Self.isReplaySensitive(name: name, arguments: arguments) {
@@ -584,13 +596,17 @@ final class AgentToolRegistry {
     /// is has given no grounds for leaving anything out.
     private var turnQuery: String = ""
     private var turnProvider: AIProvider?
+    private var turnAllowedToolNames: Set<String>?
 
     /// Told before the turn starts, separately from beginTurn, which the provider loops
     /// own and call themselves. Two calls rather than one parameter, so the budget can be
     /// adopted a surface at a time without every loop changing at once.
-    func prepareTurnBudget(query: String, provider: AIProvider) {
+    func prepareTurnBudget(
+        query: String, provider: AIProvider, allowedToolNames: Set<String>? = nil
+    ) {
         turnQuery = query
         turnProvider = provider
+        turnAllowedToolNames = allowedToolNames
     }
 
     /// The tool list as a provider expects to receive it. One source, three renderings —
@@ -614,14 +630,17 @@ final class AgentToolRegistry {
     }
 
     private func toolsAvailable(for query: String) -> [AgentTool] {
+        let policyFiltered = turnAllowedToolNames.map { allowed in
+            allTools.filter { allowed.contains($0.name) }
+        } ?? allTools
         guard !query.isEmpty, GeneralAIActionResolver.shared.asksOnly(query) else {
-            return allTools
+            return policyFiltered
         }
         let actionOnly: Set<String> = [
             "run_command", "spawn_worker", "send_keys", "window_control",
             "run_adapter_action", "run_menu_command", "compose_message",
         ]
-        return allTools.filter { !actionOnly.contains($0.name) }
+        return policyFiltered.filter { !actionOnly.contains($0.name) }
     }
 
     private func renderedSchemas(format: SchemaFormat, tools: [AgentTool]? = nil) -> [[String: Any]] {
@@ -694,12 +713,20 @@ final class AgentToolRegistry {
     /// a capability treats it as available, and "available but please do not use it" is an
     /// instruction, not a boundary.
     static func capabilitiesInScope(
-        _ capabilities: [AICapability], scopedBundleID: String?
+        _ capabilities: [AICapability], scopedBundleID: String?,
+        alsoAllowed: Set<String> = []
     ) -> [AICapability] {
         guard let scopedBundleID, !scopedBundleID.isEmpty else { return capabilities }
+        // The thread's own app, plus any the user has explicitly allowed into this
+        // conversation. Without the second half, "save this page to my notes" in a Safari
+        // thread could never reach notes.append however clearly the user asked for it — and
+        // the request fell through to driving Notes' menu bar instead, which is the same
+        // app reached by a worse road and without being asked.
+        var allowed = Set(alsoAllowed.map { $0.lowercased() })
+        allowed.insert(scopedBundleID.lowercased())
         return capabilities.filter { capability in
             guard let owner = capability.appBundleID, !owner.isEmpty else { return true }
-            return owner.caseInsensitiveCompare(scopedBundleID) == .orderedSame
+            return allowed.contains(owner.lowercased())
         }
     }
 
@@ -1393,9 +1420,11 @@ final class AgentToolRegistry {
             let scopedBundleID = await MainActor.run {
                 Self.scopedBundleID(for: context.chatScope)
             }
+            let granted = Set(context.grantedApps.values)
             let matches = await MainActor.run { () -> [AICapability] in
                 let all = Self.capabilitiesInScope(
-                    CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID)
+                    CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID,
+                    alsoAllowed: granted)
                 guard !terms.isEmpty else { return [] }
                 let scored = all
                     .map { capability -> (score: Int, capability: AICapability) in
@@ -1454,7 +1483,8 @@ final class AgentToolRegistry {
             if matches.isEmpty, adapterLines.isEmpty {
                 let all = await MainActor.run {
                     Self.capabilitiesInScope(
-                        CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID)
+                        CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID,
+                        alsoAllowed: granted)
                 }
                 let picked = await CapabilityFallbackClassifier.pick(
                     query: query, from: all.map { (id: $0.id, title: $0.title) })
@@ -1885,10 +1915,12 @@ final class AgentToolRegistry {
             // model that saw one in an earlier turn — or guessed the id — must not be able
             // to reach it by asking directly.
             let scopedBundleID = Self.scopedBundleID(for: context.chatScope)
+            let allowedElsewhere = Set(context.grantedApps.values.map { $0.lowercased() })
             if let scopedBundleID,
                 let owner = CapabilityRegistry.shared.capability(id: capabilityID)?.appBundleID,
                 !owner.isEmpty,
-                owner.caseInsensitiveCompare(scopedBundleID) != .orderedSame
+                owner.caseInsensitiveCompare(scopedBundleID) != .orderedSame,
+                !allowedElsewhere.contains(owner.lowercased())
             {
                 return AgentToolResult(
                     success: false,
@@ -2055,16 +2087,25 @@ final class AgentToolRegistry {
         ) { arguments, _ in
             let contactFilter = arguments["contact_filter"] as? String ?? ""
             let limit = arguments["limit"] as? Int ?? 15
-            let output = await MessagesAutomation.conversationSnapshot(
-                contactFilter: contactFilter, limit: limit)
+            guard let rows = MessagesChatDBReader.recent(
+                limit: limit, contact: contactFilter)
+            else {
+                return AgentToolResult(
+                    success: false,
+                    output: "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened.",
+                    displayCommand: "get_messages_conversations")
+            }
+            let output = rows.isEmpty
+                ? "No recent Messages conversations matched the request."
+                : MessagesChatDBReader.formatted(rows)
             return AgentToolResult(
                 success: true, output: output, displayCommand: "get_messages_conversations")
         })
 
         register(AgentTool(
             name: "search_messages",
-            description: "Open Messages and search for a contact, keyword, or phrase using the "
-                + "Messages search UI.",
+            description: "Search local Messages read-only for a contact, keyword, or phrase. "
+                + "Does not open or control the Messages app.",
             properties: [
                 "query": [
                     "type": "string",
@@ -2079,9 +2120,17 @@ final class AgentToolRegistry {
                     output: "search_messages requires 'query'.",
                     displayCommand: "search_messages(invalid)")
             }
-            let output = await MessagesAutomation.openSearch(query: query)
+            guard let rows = MessagesChatDBReader.search(query) else {
+                return AgentToolResult(
+                    success: false,
+                    output: "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened.",
+                    displayCommand: "search_messages(\(query))")
+            }
+            let output = rows.isEmpty
+                ? "No Messages matched \(query)."
+                : MessagesChatDBReader.formatted(rows)
             return AgentToolResult(
-                success: !output.hasPrefix("❌"),
+                success: true,
                 output: output,
                 displayCommand: "search_messages(\(query))")
         })

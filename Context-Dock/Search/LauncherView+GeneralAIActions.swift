@@ -370,9 +370,13 @@ extension LauncherView {
             dockTraceStep("Ready: \(candidate.routeLabel) · \(path)")
             pendingActionCandidates = candidates
             pendingActionQuery = query
+            // The button names the app it will operate. "Use Safari" on a button that drives
+            // Notes is the same lie as the prompt above it, and it is the half the user
+            // actually clicks.
+            let targetName = candidate.appName?.isEmpty == false ? candidate.appName! : appName
             let choice = ActionChoice(
                 id: candidate.id,
-                title: isComputerUse ? "Use \(appName)" : "Run \(candidate.title)",
+                title: isComputerUse ? "Use \(targetName)" : "Run \(candidate.title)",
                 routeLabel: isComputerUse ? "Computer Use · \(path)" : "\(candidate.routeLabel) · \(candidate.capabilityID ?? path)",
                 appName: appName)
             l2.chatMessages.append(
@@ -399,9 +403,21 @@ extension LauncherView {
             return "Delete “\(title)” from Reminders?"
         }
         let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
+        // The app that will be driven, which is not always the app being chatted with.
+        // Asked in a Safari thread to save a page into Notes, this offered to run a NOTES
+        // menu item under the words "a native Safari command" — so the one detail that
+        // mattered, that another app was about to be operated, was the detail it hid.
+        let targetName = candidate.appName?.isEmpty == false ? candidate.appName! : appName
+        let crossApp = !targetName.isEmpty
+            && targetName.caseInsensitiveCompare(appName) != .orderedSame
+        let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+        if crossApp {
+            return "This needs \(targetName), not \(appName) — it would run "
+                + "\(path) there. Allow \(targetName) for this chat and run it?"
+        }
         return isComputerUse
-            ? "I found a native \(appName) command for this task. Run it?"
-            : "I found an enabled \(appName) tool for this task. Run it?"
+            ? "I found a native \(targetName) command for this task. Run it?"
+            : "I found an enabled \(targetName) tool for this task. Run it?"
     }
 
     /// Executable-action interception for General AI Chat. Returns the final chat
