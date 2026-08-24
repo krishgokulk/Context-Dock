@@ -202,6 +202,10 @@ class AIProviderService: ObservableObject {
         print("🤖 [AIProviderService] Context: \(context.description)")
         #endif
 
+        // The plan already said when it comes back. Asking again before then buys a slow
+        // failure and nothing else.
+        try AISubscriptionGuard.check(provider)
+
         isProcessing = true
         error = nil
 
@@ -273,6 +277,20 @@ class AIProviderService: ObservableObject {
         print("🤖 [AIProviderService] Context prompt built (\(contextPrompt.count) chars)")
         #endif
 
+        // Not an HTTP provider: the subscription is reached by running the CLI the user has
+        // already signed in, so it takes its own path rather than an adapter with no
+        // endpoint to point at.
+        if provider == .claudeCode {
+            let response = try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: message, history: conversationHistory),
+                systemPrompt: contextPrompt,
+                model: AppSettings.shared.claudeCodeModel.isEmpty
+                    ? nil : AppSettings.shared.claudeCodeModel)
+            currentResponse = response
+            return response
+        }
+
         let response = try await AIProviderRouter.shared.sendPrepared(
             provider: provider,
             message: message,
@@ -294,6 +312,8 @@ class AIProviderService: ObservableObject {
 
     private func shouldIncludePrivateSafariData(for provider: AIProvider) -> Bool {
         switch provider {
+        // The CLI runs on this Mac against the user's own signed-in subscription, but the
+        // question still leaves the machine — it is not local in the sense this guard means.
         case .onDevice:
             return true
         case .ollama, .openAICompatible, .claudeBridge, .chatGPTBridge:
@@ -308,7 +328,7 @@ class AIProviderService: ObservableObject {
                   let host = components.host?.lowercased()
             else { return false }
             return host == "localhost" || host == "127.0.0.1" || host == "::1"
-        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts:
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode:
             return false
         }
     }
@@ -1194,12 +1214,18 @@ class AIProviderService: ObservableObject {
         imageAttachments: [URL] = [],
         /// The thread asking, so tools inherit its folder boundary and its artifact home.
         chatScope: GeneralChatScope? = nil,
+        /// Apps this conversation may reach, so a tool can resolve one the user named. In a
+        /// scoped thread that is the thread's app; in General Chat it is whatever the user
+        /// granted at the access gate.
+        grantedApps: [String: String] = [:],
         simulateAllTools: Bool = false,
         /// Called as the answer is written, when the provider supports it. Nil keeps the
         /// buffered behaviour — a caller that has nowhere to put a partial answer should not
         /// be handed one.
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
+
+        try AISubscriptionGuard.check(provider)
 
         let resume = TaskRunStore.shared.resolve(message)
         let effectiveMessage = resume.message
@@ -1232,6 +1258,21 @@ class AIProviderService: ObservableObject {
         }
         let extManager = L2ExtensionManager.shared
 
+        // The subscription CLI answers, it does not call our tools — DoraX runs it with
+        // none on purpose. Handled here rather than left to `default:`, which threw
+        // "onDevice_fallback" at every caller that reaches for tools without first checking
+        // supportsNativeTools. Most of them do, and a chat that only says hello should not
+        // depend on which of them asked.
+        if provider == .claudeCode {
+            let answer = try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: effectiveMessage, history: conversationHistory),
+                systemPrompt: contextPrompt,
+                model: AppSettings.shared.claudeCodeModel.isEmpty
+                    ? nil : AppSettings.shared.claudeCodeModel)
+            return (answer, [])
+        }
+
         switch provider {
         case .openAI:
             guard let key = apiKey, !key.isEmpty else {
@@ -1249,6 +1290,7 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
+                grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
                 onStream: onStream
             )
@@ -1269,6 +1311,7 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
+                grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
                 onStream: onStream
             )
@@ -1286,6 +1329,7 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
+                grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
                 onStream: onStream
             )
@@ -1355,6 +1399,7 @@ class AIProviderService: ObservableObject {
                 imageAttachments: imageAttachments,
                 userContext: context,
                 chatScope: chatScope,
+                grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
                 onStream: onStream)
 

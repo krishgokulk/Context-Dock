@@ -53,6 +53,12 @@ final class BrowserActionAuthor {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard q.count >= 3, !q.hasSuffix("?") else { return false }
 
+        // "Install this in my VS Code project" points *through* the page at another app
+        // and the local filesystem. It is not a request to mutate the DOM. The old generic
+        // `this` fallback captured it, asked the page-script author for JavaScript, and then
+        // displayed the author's inevitable filesystem refusal as the assistant's answer.
+        guard !isCrossAppProjectRequest(q) else { return false }
+
         // Browser chrome belongs to the app, not the rendered document. These requests must
         // continue into the shared app-capability resolver where cached/live menus, adapter
         // actions and shortcuts can compete. A page script can never reach this state.
@@ -92,6 +98,43 @@ final class BrowserActionAuthor {
         // Fall back to "imperative-looking": starts with a bare verb and mentions the page.
         let pageWords = ["page", "site", "tab", "this", "here", "video", "comments"]
         return pageWords.contains { q.contains($0) } && q.split(separator: " ").count <= 10
+    }
+
+    /// A browser-to-project handoff. These requests must continue to the scoped agent,
+    /// which can read the page and resolve a second app, rather than the page-JavaScript
+    /// author whose authority ends at the DOM.
+    static func isCrossAppProjectRequest(_ query: String) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let projectTerms = [
+            "project", "workspace", "repository", "repo", "codebase", "vs code",
+            "vscode", "vscide", "xcode",
+        ]
+        let transferTerms = [
+            "install", "add", "use", "copy", "save", "integrate", "set up", "setup",
+            "apply", "bring", "move", "clone", "build",
+        ]
+        return projectTerms.contains(where: q.contains)
+            && transferTerms.contains(where: q.contains)
+    }
+
+    static func crossAppProjectGuidance(_ query: String) -> String {
+        guard isCrossAppProjectRequest(query) else { return "" }
+        return """
+            ## Explicit browser-to-project workflow
+            This request is NOT a browser page-script task. Follow this order:
+            1. Read the supplied current-page evidence and briefly state what package, tool,
+               code, or installation instructions the page actually provides.
+            2. Resolve the named editor/project app through registered capabilities. Treat
+               obvious spelling variants such as "vscide" as a possible "VS Code", but ask
+               for confirmation when the target is not certain.
+            3. Before changing files, require the exact project/workspace or ask which open
+               project the user means. Do not guess a directory.
+            4. Propose the concrete file/command changes, obtain native approval, execute,
+               and verify the project state. If this turn lacks the project path, stop after
+               the page findings and that one clarification.
+            Never answer that a page script cannot access local files: no page script was
+            requested. Report each source read and each executed action as a visible receipt.
+            """
     }
 
     /// Ask the configured provider for one snippet. Throws rather than returning a

@@ -99,7 +99,7 @@ enum ScopedGroundingBlocks {
         {
             pageTitle = context.title
             pageURL = context.url
-            pageText = context.pageTextForAI
+            pageText = context.pageText
             selected = context.selectedText
             links = context.links
         }

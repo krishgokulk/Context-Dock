@@ -105,7 +105,9 @@ final class AISafetyPolicy {
                 : AppSettings.shared.chatGPTBridgeEndpoint
             guard let host = URLComponents(string: endpoint)?.host?.lowercased() else { return false }
             return ["localhost", "127.0.0.1", "::1"].contains(host)
-        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts:
+        // The binary runs here; the question does not stay here. Treating Claude Code as
+        // local would hand it private context that is meant never to leave the Mac.
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode:
             return false
         }
     }

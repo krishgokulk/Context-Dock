@@ -73,4 +73,38 @@ struct ContextDockChatAuthorityTests {
             #expect(allowed == (mechanism == .verifiedMenu))
         }
     }
+
+    @Test func mcpWritesRequireExactActionApproval() {
+        let write = ChatRoute(
+            id: "mcp:reminders.create", kind: .mcpTool,
+            title: "Create Reminder", payload: "reminders\u{1}create",
+            appName: "Reminders", bundleId: "com.apple.reminders",
+            isReadOnly: false)
+        #expect(ChatRouteResolver.executionApproval(for: write) == .ask)
+    }
+
+    @Test func mcpReadsRemainUnattended() {
+        let read = ChatRoute(
+            id: "mcp:reminders.list", kind: .mcpTool,
+            title: "List Reminders", payload: "reminders\u{1}list",
+            appName: "Reminders", bundleId: "com.apple.reminders",
+            isReadOnly: true)
+        #expect(
+            ChatRouteResolver.executionApproval(for: read)
+                == .granted(.accessPolicy))
+    }
+
+    @Test func adapterWritesKeepTheirOwnConsentGate() {
+        let write = ChatRoute(
+            id: "action:create", kind: .adapterAction,
+            title: "Create Item", payload: "create",
+            appName: "Example", bundleId: "com.example.app",
+            isReadOnly: false)
+        #expect(
+            ChatRouteResolver.executionApproval(for: write)
+                == .granted(.accessPolicy))
+        #expect(
+            !GeneralAIActionExecutor.suppressesAdapterPrompt(
+                ChatRouteResolver.executionApproval(for: write)))
+    }
 }

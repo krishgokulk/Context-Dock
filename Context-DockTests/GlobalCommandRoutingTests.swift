@@ -38,6 +38,18 @@ struct GlobalCommandRoutingTests {
         #expect(!resolver.looksReadOnly("empty the trash"))
         #expect(!resolver.looksReadOnly("delete these files"))
     }
+
+    @Test func safariProjectStatementDoesNotMatchBluetoothState() async {
+        let answer = await GlobalCommandCapabilities.liveStateAnswer(
+            for: "I was currently visiting Safari about llbrain.dev, for our project")
+        #expect(answer == nil)
+    }
+
+    @Test func explicitlyNamedBluetoothStillMatches() {
+        let matches = GlobalCommandCapabilities.matchingCommands(
+            for: "what is the bluetooth status")
+        #expect(matches.contains { $0.command.name.lowercased().contains("bluetooth") })
+    }
 }
 
 // MARK: - Capability identity and risk

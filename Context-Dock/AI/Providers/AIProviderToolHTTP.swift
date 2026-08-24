@@ -178,6 +178,19 @@ enum AIProviderToolHTTP {
                 {
                     continue
                 }
+                if let quota = Self.subscriptionQuotaMessage(in: detail) {
+                    // Filed as well as reported: the next surface to ask should know the
+                    // plan is spent without having to spend another request finding out.
+                    if let resetsAt = Self.quotaResetDate(in: detail) {
+                        let plan = Self.capturedPlanType(in: detail)
+                        let provider = Self.subscriptionProvider(forModelIn: body)
+                        await MainActor.run {
+                            AIProviderUsageStore.shared.recordSubscriptionExhausted(
+                                provider: provider, planType: plan, resetsAt: resetsAt)
+                        }
+                    }
+                    throw AIServiceError.networkError(quota)
+                }
                 throw AIServiceError.networkError(
                     "Provider HTTP \(http.statusCode): \(detail)")
             }
@@ -185,5 +198,66 @@ enum AIProviderToolHTTP {
         }
         throw AIServiceError.networkError(
             "The provider was busy and did not answer after \(AIProviderRetry.maxAttempts) tries.")
+    }
+
+    /// Turns a subscription bridge's quota refusal into something worth reading.
+    ///
+    /// A bridge fronts a Claude Pro or ChatGPT Plus plan, so its most common failure is not
+    /// a bad request but a plan that is spent for the hour — and the reply carries exactly
+    /// what the user needs: which plan, and when it comes back. Rendered as
+    /// "Provider HTTP 429: {"error":{"type":"usage_limit_reached"…}}" that is all noise,
+    /// and it reads like the app is broken rather than the quota being out.
+    private static func subscriptionQuotaMessage(in body: String) -> String? {
+        guard body.contains("usage_limit_reached") else { return nil }
+        let plan = capturedValue("plan_type", in: body).map { " (\($0))" } ?? ""
+        guard let seconds = capturedValue("resets_in_seconds", in: body).flatMap(Int.init),
+            seconds > 0
+        else {
+            return "Subscription limit reached\(plan). Try again later, or switch provider "
+                + "in Settings → AI Provider."
+        }
+        let wait = seconds < 60
+            ? "under a minute"
+            : (seconds < 3_600
+                ? "\(seconds / 60) min"
+                : "\(seconds / 3_600)h \((seconds % 3_600) / 60)m")
+        return "Subscription limit reached\(plan) — resets in \(wait). Switch provider in "
+            + "Settings → AI Provider to keep working."
+    }
+
+    /// When the plan comes back, as an absolute time. `resets_at` is a unix timestamp on
+    /// the ChatGPT bridge; `resets_in_seconds` is the same fact relative, and either is
+    /// enough to know when it is worth trying again.
+    static func quotaResetDate(in body: String) -> Date? {
+        if let stamp = capturedValue("resets_at", in: body).flatMap(Double.init), stamp > 0 {
+            return Date(timeIntervalSince1970: stamp)
+        }
+        if let seconds = capturedValue("resets_in_seconds", in: body).flatMap(Double.init),
+            seconds > 0
+        {
+            return Date().addingTimeInterval(seconds)
+        }
+        return nil
+    }
+
+    static func capturedPlanType(in body: String) -> String? {
+        capturedValue("plan_type", in: body)
+    }
+
+    /// Which subscription just refused. Both bridges are usually the same proxy on the same
+    /// port, so the host cannot tell them apart — the model can, and it is already in the
+    /// request that was rejected.
+    private static func subscriptionProvider(forModelIn body: [String: Any]) -> AIProvider {
+        let model = (body["model"] as? String ?? "").lowercased()
+        return model.hasPrefix("claude") ? .claudeBridge : .chatGPTBridge
+    }
+
+    /// Pulls one JSON value out without decoding the whole error shape, which differs per
+    /// bridge and is not worth a model for.
+    private static func capturedValue(_ key: String, in body: String) -> String? {
+        guard let range = body.range(of: "\"\(key)\"") else { return nil }
+        let rest = body[range.upperBound...].drop { $0 == ":" || $0 == " " || $0 == "\"" }
+        let value = rest.prefix { $0 != "," && $0 != "}" && $0 != "\"" }
+        return value.isEmpty ? nil : String(value)
     }
 }

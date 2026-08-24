@@ -5,7 +5,14 @@
 // the response headers each provider returns (Anthropic `anthropic-ratelimit-*`,
 // OpenAI/compatible `x-ratelimit-*`). This is the only usage data these APIs
 // expose — remaining requests/tokens for the current window + when it resets.
-// Subscription quotas (Claude Pro / ChatGPT Plus) are NOT exposed by any API.
+//
+// Subscription plans are a different question with a worse answer. A bridge fronting Claude
+// Pro or ChatGPT Plus strips the upstream rate-limit headers, so a *successful* request
+// carries no quota information at all — measured, not assumed. The plan says nothing about
+// how much is left until the moment it says there is none left, and that refusal does carry
+// the two facts worth having: which plan, and when it resets. So subscription usage here is
+// exactly that: known-exhausted until a stated time, or nothing. No percentage bar is drawn
+// for a denominator DoraX cannot see.
 
 import Combine
 import Foundation
@@ -21,19 +28,78 @@ struct AIProviderUsage: Identifiable, Codable {
     var capturedAt: Date
 }
 
+/// A subscription plan that has run out, and when it comes back.
+struct AISubscriptionQuota: Identifiable, Codable {
+    /// AIProvider raw value — the plan belongs to the provider, not to a host, because two
+    /// providers share one bridge host.
+    let id: String
+    var providerName: String
+    /// "pro", "plus" — as the bridge reported it, when it reported one.
+    var planType: String?
+    var resetsAt: Date
+    var capturedAt: Date
+
+    var isExhausted: Bool { resetsAt > Date() }
+}
+
 @MainActor
 final class AIProviderUsageStore: ObservableObject {
     static let shared = AIProviderUsageStore()
 
     @Published private(set) var usage: [AIProviderUsage] = []
+    @Published private(set) var subscriptionQuotas: [AISubscriptionQuota] = []
 
     private let persistenceKey = "AIProviderUsageStore.snapshots.v1"
+    private let quotaKey = "AIProviderUsageStore.subscriptionQuotas.v1"
 
     private init() {
+        if let data = UserDefaults.standard.data(forKey: quotaKey),
+            let saved = try? JSONDecoder().decode([AISubscriptionQuota].self, from: data)
+        {
+            // A window that has already passed is not news. Dropped on load so a quota from
+            // last week never greets the user as current.
+            subscriptionQuotas = saved.filter(\.isExhausted)
+        }
         guard let data = UserDefaults.standard.data(forKey: persistenceKey),
             let saved = try? JSONDecoder().decode([AIProviderUsage].self, from: data)
         else { return }
         usage = saved.sorted { $0.providerName < $1.providerName }
+    }
+
+    /// Files a plan as spent until `resetsAt`. Called from the one place that sees the
+    /// refusal — the HTTP layer — so every surface learns it at once.
+    func recordSubscriptionExhausted(
+        provider: AIProvider, planType: String?, resetsAt: Date
+    ) {
+        let quota = AISubscriptionQuota(
+            id: provider.rawValue,
+            providerName: provider.displayName,
+            planType: planType,
+            resetsAt: resetsAt,
+            capturedAt: Date())
+        subscriptionQuotas.removeAll { $0.id == quota.id }
+        subscriptionQuotas.append(quota)
+        subscriptionQuotas.sort { $0.providerName < $1.providerName }
+        persistQuotas()
+    }
+
+    /// The plan's state right now, dropping any window that has since reset.
+    func subscriptionQuota(for provider: AIProvider) -> AISubscriptionQuota? {
+        subscriptionQuotas.first { $0.id == provider.rawValue && $0.isExhausted }
+    }
+
+    /// Clears windows that have elapsed. Called by the surfaces that display them, so a
+    /// countdown reaching zero removes the row instead of sitting at "resets in 0m".
+    func pruneElapsedQuotas() {
+        let live = subscriptionQuotas.filter(\.isExhausted)
+        guard live.count != subscriptionQuotas.count else { return }
+        subscriptionQuotas = live
+        persistQuotas()
+    }
+
+    private func persistQuotas() {
+        guard let data = try? JSONEncoder().encode(subscriptionQuotas) else { return }
+        UserDefaults.standard.set(data, forKey: quotaKey)
     }
 
     /// Record rate-limit headers from a provider response, keyed by host.

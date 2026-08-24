@@ -1811,7 +1811,9 @@ final class AppAdapterManager: ObservableObject {
     private func injectPageContext(_ text: String, context: AXContext, query: String = "") -> String {
         let bridge = SafariBrowserBridge.shared
         var s = inject(text, context: context, query: query)
-        s = s.replacingOccurrences(of: "$PAGE_TEXT",     with: bridge.latestContext?.pageTextForAI ?? "")
+        s = s.replacingOccurrences(
+            of: "$PAGE_TEXT",
+            with: bridge.latestContext?.compactedPageText(for: query, limit: 5_000) ?? "")
         s = s.replacingOccurrences(of: "$SELECTED_TEXT", with: bridge.latestContext?.selectedText  ?? "")
         s = s.replacingOccurrences(of: "$PAGE_TITLE",    with: bridge.latestContext?.title         ?? "")
         return s

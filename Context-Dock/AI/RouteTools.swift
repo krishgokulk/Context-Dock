@@ -45,7 +45,12 @@ extension AgentToolRegistry {
                 "request": [
                     "type": "string",
                     "description": "What the user wants done, in their words.",
-                ]
+                ],
+                "app": [
+                    "type": "string",
+                    "description": "Which app to ask about. Needed in a general conversation "
+                        + "that has more than one app enabled; omit in an app's own thread.",
+                ],
             ],
             required: ["request"]
         ) { arguments, context in
@@ -56,20 +61,54 @@ extension AgentToolRegistry {
                     success: false, output: "find_route needs 'request'.",
                     displayCommand: "find_route")
             }
-            guard let bundleID = await MainActor.run(body: {
-                AgentToolRegistry.scopedBundleID(for: context.chatScope)
-            }) else {
+            // The thread's own app, or one the user named that this chat has been granted.
+            //
+            // Refusing outright unless the thread was app-scoped was wrong in exactly the
+            // case that matters: in General Chat the user is asked "enable Pearcleaner for
+            // this chat?", says yes, asks their question again — and the tool that lists what
+            // Pearcleaner can do still answered "this conversation is not scoped to an app".
+            // The grant is the scope, for that app, for this conversation.
+            let named = (arguments["app"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolved = await MainActor.run { () -> (id: String, name: String)? in
+                if !named.isEmpty {
+                    let key = named.lowercased()
+                    if let id = context.grantedApps[key] {
+                        return (id, named)
+                    }
+                    // Named an app that was never granted. Say which ones were, rather than
+                    // reaching into an app the user has not agreed to.
+                    return nil
+                }
+                if let scoped = AgentToolRegistry.scopedBundleID(for: context.chatScope) {
+                    let name = InstalledApplicationsCatalog.cachedInstalledApps()
+                        .first { $0.bundleId.caseInsensitiveCompare(scoped) == .orderedSame }?
+                        .name ?? scoped
+                    return (scoped, name)
+                }
+                // One granted app and no name given is unambiguous.
+                if context.grantedApps.count <= 2, let only = context.grantedApps.first {
+                    let name = InstalledApplicationsCatalog.cachedInstalledApps()
+                        .first { $0.bundleId.caseInsensitiveCompare(only.value) == .orderedSame }?
+                        .name ?? only.key
+                    return (only.value, name)
+                }
+                return nil
+            }
+            guard let resolved else {
+                let available = await MainActor.run {
+                    Set(context.grantedApps.values).sorted().joined(separator: ", ")
+                }
                 return AgentToolResult(
                     success: false,
-                    output: "This conversation is not scoped to an app, so it has no app "
-                        + "routes. Use find_capability for the system-wide ones.",
+                    output: available.isEmpty
+                        ? "This conversation has no app in scope. Use find_capability for the "
+                            + "system-wide routes, or ask the user to enable the app."
+                        : "Pass 'app' as one of the apps this chat can reach: \(available).",
                     displayCommand: "find_route")
             }
-            let appName = await MainActor.run {
-                InstalledApplicationsCatalog.cachedInstalledApps()
-                    .first { $0.bundleId.caseInsensitiveCompare(bundleID) == .orderedSame }?
-                    .name ?? bundleID
-            }
+            let bundleID = resolved.id
+            let appName = resolved.name
             let routes = await ChatRouteResolver.routes(
                 for: request, bundleId: bundleID, appName: appName)
             guard !routes.isEmpty else {

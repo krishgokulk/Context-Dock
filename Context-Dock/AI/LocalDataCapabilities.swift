@@ -27,6 +27,17 @@
 import AppKit
 import Foundation
 
+enum VSCodeExtensionsIntent {
+    static func matches(_ query: String) -> Bool {
+        let text = query.lowercased()
+        let words = Set(text.split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        let namesCode = text.contains("vs code") || text.contains("vscode")
+        let asksExtensions = text.contains("extension")
+        let asksInventory = !words.isDisjoint(with: ["installed", "list", "what", "which", "all"])
+        return namesCode && asksExtensions && asksInventory
+    }
+}
+
 @MainActor
 enum LocalDataCapabilities {
 
@@ -41,6 +52,7 @@ enum LocalDataCapabilities {
         registerMostUsedApps(registry)
         registerClipboardHistory(registry)
         registerExtensionsList(registry)
+        registerVSCodeExtensionsList(registry)
         registerCLITools(registry)
         registerMemory(registry)
     }
@@ -409,6 +421,64 @@ enum LocalDataCapabilities {
         )
     }
 
+    /// VS Code's own extension inventory. This is deliberately distinct from
+    /// `extensions.list`, which lists Context-Dock extensions.
+    private static func registerVSCodeExtensionsList(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "vscode.extensions.list",
+                title: "List Installed VS Code Extensions",
+                appBundleID: "com.microsoft.VSCode",
+                inputSchema: .init(fields: []),
+                riskLevel: .low
+            ) { _ in
+                await listVSCodeExtensions()
+            }
+        )
+    }
+
+    private static func listVSCodeExtensions() async -> AICapabilityExecutionResult {
+        guard let appURL = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.microsoft.VSCode")
+        else {
+            return .init(success: false, output: "Visual Studio Code is not installed.")
+        }
+        let executable = appURL.appendingPathComponent("Contents/Resources/app/bin/code").path
+        guard FileManager.default.isExecutableFile(atPath: executable) else {
+            return .init(success: false, output: "VS Code's command-line tool was not found.")
+        }
+        return await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = ["--list-extensions", "--show-versions"]
+            process.standardOutput = stdout
+            process.standardError = stderr
+            do {
+                try process.run()
+                process.waitUntilExit()
+                let out = String(
+                    data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
+                )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let error = String(
+                    data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
+                )?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard process.terminationStatus == 0 else {
+                    return AICapabilityExecutionResult(
+                        success: false,
+                        output: error.isEmpty ? "VS Code extension listing failed." : error)
+                }
+                return AICapabilityExecutionResult(
+                    success: true,
+                    output: out.isEmpty ? "No VS Code extensions are installed." : out)
+            } catch {
+                return AICapabilityExecutionResult(
+                    success: false, output: "Could not run VS Code's CLI: \(error.localizedDescription)")
+            }
+        }.value
+    }
+
     // MARK: - Browser
 
     private static func registerBrowserHistory(_ registry: CapabilityRegistry) {
@@ -530,7 +600,9 @@ enum LocalDataCapabilities {
                 let detector = ContextDetector.shared
                 if let page = detector.getSafariContext() {
                     let domain = URL(string: page.url)?.host ?? "Unknown domain"
-                    let pageText = detector.getSafariPageContextForAI() ?? ""
+                    let pageText = SafariBrowserBridge.shared.isFresh
+                        ? (SafariBrowserBridge.shared.currentContext()?.pageText ?? "")
+                        : ""
                     var output = "Current Safari page (read just now):\n"
                         + "Title: \(page.title)\nDomain: \(domain)\nURL: \(page.url)"
                     if pageText.isEmpty {

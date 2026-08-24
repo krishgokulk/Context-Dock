@@ -81,8 +81,16 @@ struct SafariPageContext {
 
     var hasSelectedText: Bool { !selectedText.isEmpty }
 
-    // Convenience: the first 5 000 chars of page text, suitable for AI context
-    var pageTextForAI: String { String(pageText.prefix(5000)) }
+    /// Query-aware page text for model context. Rank the complete extension snapshot before
+    /// cutting it: truncating first made relevant install/API sections later in a long page
+    /// permanently invisible to MarkItDown.
+    func compactedPageText(for query: String? = nil, limit: Int = 5_000) -> String {
+        MarkItDownService.compact(pageText, for: query, limit: limit)
+    }
+
+    /// Compatibility for context consumers that have no user query. This is still
+    /// structurally compacted rather than blindly taking the first 5,000 characters.
+    var pageTextForAI: String { compactedPageText() }
 
     /// Fill blanks from an earlier capture of the same page. Lightweight triggers
     /// (scroll, select) omit the expensive fields; this restores them.
@@ -288,15 +296,16 @@ extension SafariBrowserBridge {
     }
 
     /// Build an AI context block from the current page.
-    func aiContextBlock() -> String {
+    func aiContextBlock(query: String? = nil) -> String {
         guard let ctx = latestContext else { return "" }
         var parts: [String] = []
         parts.append("URL: \(ctx.url)")
         if !ctx.title.isEmpty     { parts.append("Title: \(ctx.title)") }
         if !ctx.description.isEmpty { parts.append("Description: \(ctx.description)") }
         if ctx.hasSelectedText    { parts.append("Selected text: \(ctx.selectedText)") }
-        if !ctx.pageTextForAI.isEmpty {
-            parts.append("Page content:\n\(ctx.pageTextForAI)")
+        let compacted = ctx.compactedPageText(for: query)
+        if !compacted.isEmpty {
+            parts.append("Page content:\n\(compacted)")
         }
         return parts.joined(separator: "\n")
     }

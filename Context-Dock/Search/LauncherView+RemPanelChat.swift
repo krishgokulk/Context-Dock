@@ -692,6 +692,9 @@ extension LauncherView {
             {
                 pageText = conv.markdown
             }
+            if !pageText.isEmpty {
+                pageText = MarkItDownService.compact(pageText, for: query, limit: 5_000)
+            }
             // These read via Safari's JavaScript bridge — skip for other browsers.
             let pageLinks = isBrowserScope ? [] : fetchSafariPageLinks()
             let pageImages = isBrowserScope ? [] : fetchSafariPageImages()
@@ -711,7 +714,7 @@ extension LauncherView {
             let pageTextSection =
                 pageText.isEmpty
                 ? "\nPAGE TEXT: (unavailable — Safari page content could not be read)"
-                : "\nPAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))"
+                : "\nPAGE TEXT EXCERPT:\n\(pageText)"
             let selectedTextSection =
                 selectedText.isEmpty
                 ? ""

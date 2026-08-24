@@ -267,6 +267,7 @@ extension LauncherView {
         case .googleGemini: return .blue
         case .openAI: return .green
         case .anthropic: return .orange
+        case .claudeCode: return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
@@ -523,6 +524,9 @@ extension LauncherView {
                                 }
                             )
                         }
+                    }
+                    if l2.isLoading, !l2.routerTrace.isEmpty {
+                        LiveAgentStepsView(steps: l2.routerTrace)
                     }
                     if l2.isLoading { AILoadingView(status: l2.loadingStatus) }
                 }

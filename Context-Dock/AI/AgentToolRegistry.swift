@@ -144,6 +144,14 @@ struct AgentToolContext {
     /// The Bool is the model's own `requires_approval` answer.
     let commandExecutor: (String, String, Bool) async -> (Bool, String, Int32)
 
+    /// Apps this conversation is allowed to reach, by lowercased name and by bundle id.
+    ///
+    /// A scoped thread has exactly one; General Chat has whichever the user granted at the
+    /// access gate. Without it, a tool asked about "Pearcleaner" in General Chat had no way
+    /// to turn that word into a bundle id, so it refused — one message after the user had
+    /// explicitly said yes to that app.
+    var grantedApps: [String: String] = [:]
+
     /// The turn these calls belong to. Nil means no repeat-suppression: a one-shot repair
     /// pass (the answer verifier) is deliberately allowed to re-run a call the turn it is
     /// checking already made — that re-run is the whole point of it.
@@ -182,6 +190,7 @@ struct AgentToolContext {
         userRequest: String = "",
         attachments: [URL] = [],
         chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
         turn: AgentTurnToken? = nil
     ) {
         self.commandExecutor = commandExecutor
@@ -189,6 +198,7 @@ struct AgentToolContext {
         self.userRequest = userRequest
         self.attachments = attachments
         self.chatScope = chatScope
+        self.grantedApps = grantedApps
         self.turn = turn
     }
 }

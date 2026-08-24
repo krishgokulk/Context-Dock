@@ -529,7 +529,7 @@ final class CapabilityRegistry {
                 let extensionContext = SafariBrowserBridge.shared.isFresh
                     ? SafariBrowserBridge.shared.currentContext() : nil
                 let snapshot = AXWebReader.shared.cachedSnapshot(for: live.pid)
-                let pageText = extensionContext?.pageTextForAI ?? snapshot?.text ?? ""
+                let pageText = extensionContext?.pageText ?? snapshot?.text ?? ""
                 let pageURL = extensionContext?.url ?? snapshot?.url ?? ""
                 let pageTitle = extensionContext?.title ?? snapshot?.title ?? ""
                 guard !pageText.isEmpty else {

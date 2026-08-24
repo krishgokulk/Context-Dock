@@ -46,6 +46,9 @@ enum AppScopedChatService {
         /// subjective work where that is a real question. The dock has shown this since it
         /// was written; the window had no way to receive it.
         var subjectiveEvaluation: SubjectiveEvaluation? = nil
+        /// Source collection and planning work performed before tools ran. The window keeps
+        /// this behind its completed Steps disclosure instead of exposing debug chips.
+        var trace: [String] = []
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -536,13 +539,17 @@ enum AppScopedChatService {
     /// The page a browser scope is currently on. "What page am I on?" is answerable from
     /// the browser itself; without this the window had the app's capability list and no
     /// idea what was open in it, so it offered to reload a page it could not name.
-    static func browserPageFacts(bundleID: String) -> String? {
+    static func browserPageFacts(bundleID: String, query: String? = nil) -> String? {
         guard ScopedAppPromptBuilder.isBrowserBundle(bundleID) else { return nil }
         let detector = ContextDetector.shared
         switch bundleID {
         case "com.apple.Safari":
-            if let page = detector.getSafariPageContextForAI() {
-                return "Current page (read just now, factual):\n\(page)"
+            if SafariBrowserBridge.shared.isFresh,
+                let context = SafariBrowserBridge.shared.currentContext()
+            {
+                let text = context.compactedPageText(for: query, limit: 5_000)
+                return "Current page (read just now, factual):\nTitle: \(context.title)\n"
+                    + "URL: \(context.url)\nPage content:\n\(text)"
             }
             if let page = detector.getSafariContext() {
                 return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
@@ -804,6 +811,26 @@ enum AppScopedChatService {
                 consoleOutput: result.transcript.isEmpty ? nil : result.transcript)
         }
 
+        // Codex and Claude answer "is X installed?" by inspecting the machine, not by
+        // searching for an app action named X. Keep that same ordering here: classify the
+        // evidence required, run bounded read-only probes, then report exactly what was
+        // found. A missing adapter is not evidence that software is absent.
+        let isGeneralLike: Bool = {
+            switch scope {
+            case .general, .thread: return true
+            default: return false
+            }
+        }()
+        if isGeneralLike, let request = LocalInstallationCheck.parse(query) {
+            onStatus?("Checking whether \(request.displayName) is installed…")
+            let result = LocalInstallationCheck.inspect(request)
+            return Answer(
+                text: result.answer,
+                toolChips: [],
+                evidenceReceipts: [result.receipt],
+                trace: result.trace)
+        }
+
         // A request that spans apps gets a plan rather than a route. Candidates are
         // resolved across every app this chat may touch, so the ordering the model does is
         // ordering of real capabilities — not an improvisation it then narrates.
@@ -987,6 +1014,8 @@ enum AppScopedChatService {
         /// The machine as it was before this turn ran anything, kept so a tool's claim can
         /// be checked against what actually changed.
         var contextBefore: ResolvedContext?
+        var sourceTrace: [String] = []
+        var sourceReceipts: [DoraXActionReceipt] = []
 
         switch scope {
         case .app(let bundleId):
@@ -1034,9 +1063,22 @@ enum AppScopedChatService {
             // The page a browser scope is actually on. Without it a browser thread had the
             // app's capability list and no idea what was open in it, so it offered to reload
             // a page it could not name.
+            if ScopedAppPromptBuilder.isBrowserBundle(bundleId) {
+                onStatus?("Reading the current \(appName) page…")
+                sourceTrace.append("Resolved live page source: \(appName)")
+            }
             let page = ScopedGroundingBlocks.browserPage(bundleId: bundleId, query: query)
             if !page.isEmpty {
                 prompt.set(.browserPage, UntrustedContent.fenced(page, from: "the current web page"))
+                let source = bundleId == "com.apple.Safari" && SafariBrowserBridge.shared.isFresh
+                    ? "Context Dock Safari Extension" : "live browser reader"
+                if let evidence = BrowserPageReadEvidence.parse(
+                    promptBlock: page, browserName: appName, source: source)
+                {
+                    sourceTrace += evidence.traceLines
+                    sourceReceipts.append(evidence.receipt)
+                    onStatus?(evidence.traceLines.last ?? "Extracted current page context")
+                }
             }
             if let history = browserHistoryFacts(bundleID: bundleId, appName: appName) {
                 prompt.append(
@@ -1151,16 +1193,52 @@ enum AppScopedChatService {
                     query.lowercased().contains($0)
                 })
             {
+                var foundCurrentPage = false
                 let runningBrowserIDs = NSWorkspace.shared.runningApplications
                     .compactMap(\.bundleIdentifier)
                     .filter(ScopedAppPromptBuilder.isBrowserBundle)
                 for bundleID in runningBrowserIDs {
-                    if let page = browserPageFacts(bundleID: bundleID) {
+                    if let page = browserPageFacts(bundleID: bundleID, query: query) {
                         prompt.set(
                             .browserPage,
                             UntrustedContent.fenced(page, from: "the current web page"))
+                        let browserName = NSRunningApplication
+                            .runningApplications(withBundleIdentifier: bundleID).first?
+                            .localizedName ?? "Browser"
+                        sourceTrace.append("Resolved live page source: \(browserName)")
+                        if let evidence = BrowserPageReadEvidence.parse(
+                            promptBlock: page, browserName: browserName,
+                            source: "live browser reader")
+                        {
+                            sourceTrace += evidence.traceLines
+                            sourceReceipts.append(evidence.receipt)
+                            onStatus?(evidence.traceLines.last ?? "Extracted current page context")
+                        }
+                        foundCurrentPage = true
                         break
                     }
+                }
+                // Browser history and tab indexes are useful fallback sources for history
+                // questions, but they cannot identify the active page. Stop before the
+                // provider can blend those rows into a plausible-looking current answer.
+                if !foundCurrentPage,
+                    BrowserPageUnderstandingIntent.matches(query)
+                {
+                    let trace = [
+                        "Resolved target app: running browser",
+                        "Checked live browser page readers",
+                        "No current-page snapshot was available",
+                    ]
+                    let receipt = DoraXActionReceipt(
+                        command: "read_current_browser_page",
+                        output: "No current-page snapshot was available",
+                        success: false,
+                        isVerification: true)
+                    return Answer(
+                        text: "I couldn't identify the current browser page from live data. "
+                            + "I did not use browser history or remembered tabs as a substitute. "
+                            + "For Safari, open the page and activate the Context Dock extension, then try again.",
+                        toolChips: [], evidenceReceipts: [receipt], trace: trace)
                 }
             }
         }
@@ -1177,6 +1255,19 @@ enum AppScopedChatService {
                 bundleId: bundleId, appName: name, query: query, compact: true)
             prompt.append(.identity, block)
             prompt.append(.resolvedContext, liveWindowFacts(bundleID: bundleId))
+            // What the vendor documents about it. An app's own thread has had this since it
+            // was written; an app enabled at the access gate got a shortened inventory and
+            // nothing else — so "what can Pearcleaner do about caches" was answered from a
+            // list of menu items, which does not mention caches, and the honest conclusion
+            // was that the feature could not be confirmed. The docs are where that answer
+            // lives, and they were never fetched.
+            let attachedReference = await withTimeout(
+                seconds: 8, fallback: "", label: "attached reference"
+            ) {
+                await ScopedGroundingBlocks.reference(
+                    bundleId: bundleId, appName: name, query: query)
+            }
+            prompt.append(.reference, attachedReference)
         }
 
         // Real Calendar / Reminders / Notes / Contacts data when the question is about
@@ -1276,6 +1367,24 @@ enum AppScopedChatService {
                 toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
         }
 
+        // Which apps this turn may reach, by name and by bundle id, so a tool asked about
+        // "Pearcleaner" can turn that word into something it is allowed to look at.
+        var grantedApps: [String: String] = [:]
+        if case .app(let bundleId) = scope {
+            grantedApps[appName.lowercased()] = bundleId
+            grantedApps[bundleId.lowercased()] = bundleId
+        }
+        for name in extraAppNames {
+            let bundleId =
+                NSWorkspace.shared.runningApplications
+                .first { $0.localizedName == name }?.bundleIdentifier
+                ?? InstalledApplicationsCatalog.cachedInstalledApps()
+                .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
+            guard let bundleId else { continue }
+            grantedApps[name.lowercased()] = bundleId
+            grantedApps[bundleId.lowercased()] = bundleId
+        }
+
         // Selected images are shown, not just named. "Explain these files" on two JPGs is a
         // question about what they depict, and neither OCR nor a file listing can answer it
         // — the provider has to actually see them. Non-image selections are left alone;
@@ -1299,6 +1408,7 @@ enum AppScopedChatService {
             provider: provider,
             apiKey: apiKey,
             history: history,
+            grantedApps: grantedApps,
             imageAttachments: visionAttachments,
             onStream: onStream,
             onStatus: onStatus)
@@ -1484,7 +1594,9 @@ enum AppScopedChatService {
         if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }
         return Answer(
             text: text, toolChips: chips,
-            subjectiveEvaluation: outcome.subjectiveEvaluation)
+            evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
+            subjectiveEvaluation: outcome.subjectiveEvaluation,
+            trace: sourceTrace)
     }
 }
 

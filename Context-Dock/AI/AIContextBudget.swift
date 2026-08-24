@@ -32,7 +32,8 @@ enum AIContextBudget {
         case .ollama, .openAICompatible, .shortcuts:
             // Local and bring-your-own endpoints: unknown window, frequently 8k or less.
             return 4_000
-        case .anthropic, .openAI, .googleGemini, .kimi, .claudeBridge, .chatGPTBridge:
+        case .anthropic, .openAI, .googleGemini, .kimi, .claudeBridge, .chatGPTBridge,
+            .claudeCode:
             return 12_000
         }
     }

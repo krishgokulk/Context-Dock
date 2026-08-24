@@ -38,6 +38,10 @@ struct GeneralChatWindowView: View {
     /// Bumped when remembered routes are cleared, so the list redraws — the store is
     /// UserDefaults-backed and publishes nothing on its own.
     @State private var routeResetToken = 0
+    /// The documentation link being typed for the app panel's current app, and a token that
+    /// redraws the list when one is added or removed.
+    @State private var documentationDraft = ""
+    @State private var documentationToken = 0
     @State private var cachedInventory: ScopeInventory?
     /// Bumped to rebuild the terminal view after its shell is restarted.
     @State private var terminalToken = 0
@@ -783,7 +787,7 @@ struct GeneralChatWindowView: View {
                     if model.isSending {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Thinking…")
+                            Text(model.activeStatus ?? "Thinking…")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
@@ -1341,6 +1345,18 @@ struct GeneralChatWindowView: View {
                             .id(routeResetToken)
                         }
 
+                        // Where this app documents itself.
+                        //
+                        // DoraX finds an app's docs from its adapter's links, its Sparkle
+                        // feed, Homebrew, the App Store listing and the URLs compiled into
+                        // its binary — and refuses to guess when none of those know it. That
+                        // leaves a long tail of small apps whose homepage is sitting in their
+                        // own Help menu as a title we can read and a URL we cannot. For those,
+                        // the user is the authority: one pasted link and the app is
+                        // documented, and answers about it come from its own pages instead of
+                        // from a list of menu items.
+                        appDocumentationField(bundleId: bundleId)
+
                         Button {
                             AppDelegate.shared?.showSettings()
                             // The settings window has to exist before it can be navigated.
@@ -1715,6 +1731,79 @@ struct GeneralChatWindowView: View {
 /// A thin owner around PreviewSession: the chat window knows which files a thread is
 /// working on, and the surface knows how to show any of them. Newest last, because the
 /// file most recently mentioned is the one being worked on.
+extension GeneralChatWindowView {
+
+    /// A place to paste the app's own documentation link, and the links already recorded.
+    @ViewBuilder
+    func appDocumentationField(bundleId: String) -> some View {
+        let saved = AppReferenceOverrides.urls(forBundleId: bundleId)
+        VStack(alignment: .leading, spacing: 6) {
+            Text("DOCUMENTATION")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .tracking(0.6)
+
+            ForEach(saved, id: \.self) { url in
+                HStack(spacing: 6) {
+                    Image(systemName: "book")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text(url)
+                        .font(.system(size: 11))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    Button {
+                        AppReferenceOverrides.remove(url, forBundleId: bundleId)
+                        Task { await AppReferenceIndex.shared.forget(bundleId: bundleId) }
+                        documentationToken += 1
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Forget this link")
+                }
+            }
+
+            HStack(spacing: 6) {
+                TextField("Paste this app's help or docs URL", text: $documentationDraft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .onSubmit { saveDocumentationLink(bundleId: bundleId) }
+                if !documentationDraft.isEmpty {
+                    Button("Add") { saveDocumentationLink(bundleId: bundleId) }
+                        .font(.system(size: 11, weight: .medium))
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+            )
+
+            Text("Its Help menu knows where this is — DoraX can read the menu item's name "
+                + "but not the address behind it.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+        }
+        .id(documentationToken)
+    }
+
+    private func saveDocumentationLink(bundleId: String) {
+        guard AppReferenceOverrides.add(documentationDraft, forBundleId: bundleId) else { return }
+        documentationDraft = ""
+        // Discovery is cached for a week; without this the new link would not be read until
+        // it expired, and the field would look broken.
+        Task { await AppReferenceIndex.shared.forget(bundleId: bundleId) }
+        documentationToken += 1
+    }
+}
+
 private struct EmbeddedPreviewPanel: View {
     let urls: [URL]
 

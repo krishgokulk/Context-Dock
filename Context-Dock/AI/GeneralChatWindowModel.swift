@@ -26,6 +26,9 @@ final class GeneralChatWindowModel: ObservableObject {
     /// sidebar stopped switching, so clicking tailscale left the previous thread on
     /// screen and looked like tailscale's conversation had become someone else's.
     @Published private(set) var sendingScopeKeys: Set<String> = []
+    /// Live human-readable stage per thread. Unlike a generic spinner, this tells the user
+    /// whether DoraX is reading a page, extracting it, choosing a route, or verifying work.
+    @Published private(set) var statusByScopeKey: [String: String] = [:]
     /// Files on the next message, shown as chips once it is sent.
     @Published var attachments: [URL] = []
     /// Apps the answer should be about — the composer's app picker. Several at once
@@ -79,6 +82,7 @@ final class GeneralChatWindowModel: ObservableObject {
     /// True when the thread on screen is waiting for an answer. Another thread's pending
     /// answer must not spin this one.
     var isSending: Bool { sendingScopeKeys.contains(activeScope.storageKey) }
+    var activeStatus: String? { statusByScopeKey[activeScope.storageKey] }
 
     /// Pull in whatever the result sheet has said since this window was last open.
     func reloadFromStore() {
@@ -811,6 +815,12 @@ final class GeneralChatWindowModel: ObservableObject {
                         Task { @MainActor [weak self] in
                             self?.receiveStream(event, scope: sendScope)
                         }
+                    },
+                    onStatus: { status in
+                        Task { @MainActor [weak self] in
+                            guard self?.sendingScopeKeys.contains(sendKey) == true else { return }
+                            self?.statusByScopeKey[sendKey] = status
+                        }
                     })
                 guard !Task.isCancelled else {
                     await MainActor.run { self?.finishSending(sendKey) }
@@ -846,6 +856,7 @@ final class GeneralChatWindowModel: ObservableObject {
     /// which is what "it just says Thinking… and ignores me" actually was.
     private func finishSending(_ key: String) {
         sendingScopeKeys.remove(key)
+        statusByScopeKey[key] = nil
         sendTasks[key] = nil
     }
 

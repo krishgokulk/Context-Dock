@@ -148,7 +148,12 @@ enum GlobalCommandCapabilities {
                 let name = command.name.lowercased()
                 let searchable = ([command.name, command.description] + command.keywords)
                     .joined(separator: " ").lowercased()
-                var score = terms.reduce(0) { $0 + (searchable.contains($1) ? 2 : 0) }
+                let searchableTerms = Set(searchable
+                    .split { !$0.isLetter && !$0.isNumber }
+                    .map(String.init))
+                // Match semantic words, not substrings. "our project" used to match
+                // "your devices" and route an unrelated Safari statement to Bluetooth.
+                var score = terms.reduce(0) { $0 + (searchableTerms.contains($1) ? 2 : 0) }
                 if query.lowercased().contains(name) { score += 5 }
                 return (command, score)
             }

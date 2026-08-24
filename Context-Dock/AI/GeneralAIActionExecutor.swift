@@ -879,7 +879,7 @@ final class GeneralAIActionExecutor {
                     URL: \(context.url)
 
                     Page content (from the DoraX Safari extension):
-                    \(context.pageTextForAI)
+                    \(context.compactedPageText(for: "summarize this page", limit: 5_000))
                     """
                 )
             )

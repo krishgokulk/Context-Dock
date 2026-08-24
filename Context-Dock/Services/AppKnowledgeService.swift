@@ -124,8 +124,9 @@ enum AppKnowledgeService {
             if !page.description.isEmpty {
                 parts.append("Description: \(page.description)")
             }
-            if !page.pageTextForAI.isEmpty {
-                parts.append("Page content:\n\(page.pageTextForAI)")
+            let compacted = page.compactedPageText(limit: 5_000)
+            if !compacted.isEmpty {
+                parts.append("Page content:\n\(compacted)")
             }
             if !page.links.isEmpty {
                 let links = page.links.prefix(40)

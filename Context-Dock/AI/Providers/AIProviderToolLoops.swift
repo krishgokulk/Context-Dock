@@ -41,6 +41,7 @@ extension AIProviderService {
         imageAttachments: [URL] = [],
         userContext: UserContext = .none,
         chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
         simulateAllTools: Bool,
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
@@ -173,7 +174,8 @@ extension AIProviderService {
                         context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
                             userRequest: message,
-                            attachments: imageAttachments, chatScope: chatScope, turn: turn)
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn)
                     ) {
                         success = result.success
                         output = result.output
@@ -226,6 +228,7 @@ extension AIProviderService {
         imageAttachments: [URL] = [],
         userContext: UserContext = .none,
         chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
         simulateAllTools: Bool,
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
@@ -379,7 +382,8 @@ extension AIProviderService {
                     context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
                             userRequest: message,
-                            attachments: imageAttachments, chatScope: chatScope, turn: turn)
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn)
                 ) {
                     success = result.success
                     output = result.output
@@ -432,6 +436,7 @@ extension AIProviderService {
         imageAttachments: [URL] = [],
         userContext: UserContext = .none,
         chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
         simulateAllTools: Bool,
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
@@ -542,7 +547,8 @@ extension AIProviderService {
                     context: AgentToolContext(
                             commandExecutor: commandExecutor, userContext: userContext,
                             userRequest: message,
-                            attachments: imageAttachments, chatScope: chatScope, turn: turn)
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn)
                 ) {
                     success = result.success
                     output = result.output

@@ -769,6 +769,7 @@ struct AIChatMessageView: View {
         case .googleGemini: return .blue
         case .openAI: return .green
         case .anthropic: return .orange
+        case .claudeCode: return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
@@ -1578,10 +1579,10 @@ struct AIChatMessageView: View {
                 if !message.attachments.isEmpty {
                     attachmentChips
                 }
-                // Completed routing and tool activity stays behind one disclosure. While the
-                // provider is working, the progress surface already communicates activity;
-                // showing raw purple calls here duplicates it and makes the answer jump.
-                if message.role == .assistant, !isStreaming, !completedStepLines.isEmpty {
+                // Completed routing and tool activity stays behind one disclosure. The live
+                // progress surface shows the same work above "Working" while execution runs;
+                // this disclosure remains the durable transcript once the response arrives.
+                if message.role == .assistant, !completedStepLines.isEmpty {
                     routerTraceView
                 }
                 // Script/terminal output — collapsed. A conversion log is hundreds of lines of
@@ -1970,6 +1971,7 @@ struct AILoadingView: View {
         case .googleGemini: return .blue
         case .openAI: return .green
         case .anthropic: return .orange
+        case .claudeCode: return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .green
         case .ollama: return .cyan

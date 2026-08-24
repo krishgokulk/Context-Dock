@@ -463,7 +463,16 @@ enum ChatRouteResolver {
     /// App access makes a route available; it does not approve taking over the screen.
     /// Kept as a pure decision so every chat surface can share and test the same boundary.
     static func executionApproval(for route: ChatRoute) -> ExecutionApproval {
-        route.kind == .menuCommand ? .ask : .granted(.accessPolicy)
+        // Reads have no consequence, and adapter writes retain their own per-action consent
+        // prompt. Menu control and MCP writes have no later gate, so app-level access is not
+        // enough: ask for this exact action at the point of execution.
+        if route.isReadOnly { return .granted(.accessPolicy) }
+        switch route.kind {
+        case .menuCommand, .mcpTool:
+            return .ask
+        case .adapterAction, .cli, .skill, .model:
+            return .granted(.accessPolicy)
+        }
     }
 
     /// True when the user should be asked which route to take.

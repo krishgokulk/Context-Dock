@@ -310,6 +310,10 @@ extension LauncherView {
         query: String, bundleId: String, appName: String, requestID: UUID
     ) async -> Bool {
         guard !bundleId.isEmpty else { return false }
+        // "Group those results and save them as Markdown" derives a new artifact from the
+        // previous chat receipt. Code's File > Save As menu only saves the active editor and
+        // cannot perform that transformation, so keep this turn in the agent/tool pipeline.
+        guard !DerivedArtifactIntent.shouldBypassNativeAppMenu(query) else { return false }
         // A question is answered, never offered as an action. Without this the gate below
         // is "some capability's keywords overlap the sentence, or it looks executable" —
         // which turned "is this page related to our contextdock project in any ways you
@@ -2021,7 +2025,9 @@ extension LauncherView {
             aiMode.loadingStatus = asksForRecentDocuments
                 ? "Reading \(app.name) and recent documents…"
                 : "Reading \(app.name) state…"
+            aiMode.routerTrace.append("Resolved target app: \(app.name)")
         }
+        var searchedSources = ["running state"]
         var lines: [String] = [
             "## Live \(app.name) state (read by DoraX just now — factual)",
         ]
@@ -2060,6 +2066,7 @@ extension LauncherView {
         // Adapter context readers — the same live readers frontmost-app chat runs
         // (current file, git branch, workspace, …).
         if AppAdapterManager.shared.adapter(for: app.bundleId) != nil, running != nil {
+            searchedSources.append("adapter context readers")
             // This app's own accessibility state, not the frontmost app's. Readers that
             // derive a project or document from the window title return nothing when handed
             // another app's snapshot — which is why enabling Code was followed by "the
@@ -2078,6 +2085,7 @@ extension LauncherView {
         // doing with them.
         let workspace = await appWorkspaceContextPrompt(
             bundleId: app.bundleId, appName: app.name)
+        searchedSources.append("workspace context")
         if !workspace.isEmpty {
             lines.append("")
             lines.append(workspace)
@@ -2086,6 +2094,7 @@ extension LauncherView {
         // Runtime CLI snapshots: VS Code `code --status`, Messages imsg, Tailscale CLI.
         let cliSnapshot = await runtimeAppCLIContextPrompt(
             bundleId: app.bundleId, appName: app.name, query: query)
+        searchedSources.append("linked CLI status")
         if !cliSnapshot.isEmpty {
             lines.append("")
             lines.append(cliSnapshot)
@@ -2094,6 +2103,7 @@ extension LauncherView {
         // Compact capability inventory so the model knows what DoraX can DO with
         // this app (and offers real next actions instead of "check their website").
         var inventory: [String] = []
+        searchedSources.append("registered adapter, MCP, and menu capabilities")
         let adapterActions = AppAdapterManager.shared.actions(for: app.bundleId)
         if !adapterActions.isEmpty {
             inventory.append(
@@ -2120,6 +2130,7 @@ extension LauncherView {
         // Do not label these as Preview's private Open Recent menu: they are DoraX's
         // cross-app recent-document index, which may contain files from other apps.
         if asksForRecentDocuments {
+            searchedSources.append("app Open Recent and DoraX Recent Items")
             // The app's OWN Open Recent entries first, from its cached menu snapshot. This
             // needs no Full Disk Access and does not need the app running — a question about
             // "recent TextEdit files" used to be answerable only from the cross-app list
@@ -2169,10 +2180,20 @@ extension LauncherView {
             + "If something isn't in the data, say DoraX couldn't read that specific detail — "
             + "NEVER reply \"unable to access application status\" and never answer from "
             + "generic product knowledge when live state is shown here.")
+        let result = lines.joined(separator: "\n")
         await MainActor.run {
             aiMode.pendingToolChips.append("\(app.name) live state")
+            aiMode.routerTrace.append("Read live \(app.name) context")
+            aiMode.routerTrace.append("Searched: \(searchedSources.joined(separator: ", "))")
+            aiMode.pendingEvidenceReceipts.append(
+                DoraXActionReceipt(
+                    command: "read_app_context(\(app.name))",
+                    output: String(result.prefix(8_000)),
+                    success: true,
+                    isVerification: true
+                ))
         }
-        return lines.joined(separator: "\n")
+        return result
     }
 }
 

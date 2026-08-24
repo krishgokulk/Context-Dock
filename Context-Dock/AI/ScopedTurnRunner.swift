@@ -55,6 +55,8 @@ enum ScopedTurnRunner {
         provider: AIProvider,
         apiKey: String?,
         history: [ChatMessage],
+        /// Apps this conversation may reach, by lowercased name and bundle id.
+        grantedApps: [String: String] = [:],
         imageAttachments: [URL] = [],
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
         onStatus: ((String) -> Void)? = nil
@@ -82,27 +84,51 @@ enum ScopedTurnRunner {
         // The prompt goes in the system slot and the question goes in the message slot.
         // The dock used to send the whole assembled prompt in *both*, which paid for every
         // menu path, every help page and every context block twice per turn.
-        var (text, executed) = try await AIProviderService.shared.sendWithTools(
-            query,
-            context: scope.userContext,
-            provider: provider,
-            apiKey: apiKey,
-            conversationHistory: history,
-            commandExecutor: executor,
-            maxIterations: complexity.maxToolIterations,
-            additionalSystemPrompt: [systemPrompt, complexity.instruction]
-                .filter { !$0.isEmpty }.joined(separator: "\n\n"),
-            imageAttachments: imageAttachments,
-            chatScope: scope.chatScope,
-            onStream: onStream
-        )
+        let pageAnswerOnly = BrowserPageUnderstandingIntent.matches(query)
+            && systemPrompt.contains("CURRENT PAGE")
+        var text: String
+        var executed: [AIProviderService.ExecutedCommand]
+        if pageAnswerOnly {
+            // The page has already been freshly read into the system prompt. Supplying the
+            // global tool catalogue here let a model choose app.menu.click, even though no
+            // menu can improve the snapshot, then repeat tools until the step limit. This
+            // path intentionally has zero tools: page understanding cannot operate Safari.
+            onStatus?("Understanding the extracted page content…")
+            text = try await AIProviderService.shared.sendMessage(
+                query,
+                context: scope.userContext,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: history,
+                additionalContextPrompt: [systemPrompt, complexity.instruction,
+                    "Answer only from the supplied current-page evidence. Do not navigate, "
+                        + "click menus, activate extensions, or request a tool."].joined(separator: "\n\n"),
+                surfaceScoped: true)
+            executed = []
+        } else {
+            (text, executed) = try await AIProviderService.shared.sendWithTools(
+                query,
+                context: scope.userContext,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: history,
+                commandExecutor: executor,
+                maxIterations: complexity.maxToolIterations,
+                additionalSystemPrompt: [systemPrompt, complexity.instruction]
+                    .filter { !$0.isEmpty }.joined(separator: "\n\n"),
+                imageAttachments: imageAttachments,
+                chatScope: scope.chatScope,
+                grantedApps: grantedApps,
+                onStream: onStream
+            )
+        }
 
         // Did it do what it says it did?
         //
         // An answer reporting an action nobody performed is the most damaging thing a chat
         // on someone's Mac can produce. These passes deliberately do not stream: their text
         // replaces the answer rather than continuing it.
-        if !Task.isCancelled,
+        if !pageAnswerOnly, !Task.isCancelled,
             AgentAnswerVerifier.claimsUnperformedWork(answer: text, executed: executed)
         {
             onStatus?("Checking that actually happened…")
@@ -119,7 +145,7 @@ enum ScopedTurnRunner {
             }
         }
 
-        if !Task.isCancelled,
+        if !pageAnswerOnly, !Task.isCancelled,
             AgentAnswerVerifier.claimsUnverifiedWork(answer: text, executed: executed)
         {
             onStatus?("Verifying the result…")
@@ -137,7 +163,7 @@ enum ScopedTurnRunner {
 
         // The user named the check themselves ("…and confirm it is gone"). Running it is not
         // optional politeness; it is the request.
-        if !Task.isCancelled,
+        if !pageAnswerOnly, !Task.isCancelled,
             AgentAnswerVerifier.explicitVerificationIsMissingOrMismatched(
                 query: query, executed: executed)
         {
@@ -150,7 +176,7 @@ enum ScopedTurnRunner {
             }
         }
 
-        if !Task.isCancelled,
+        if !pageAnswerOnly, !Task.isCancelled,
             AgentAnswerVerifier.explicitExecutionIsMissing(query: query, executed: executed)
         {
             onStatus?("Running the requested command…")

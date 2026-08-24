@@ -746,7 +746,7 @@ final class AIProviderRouter {
             return .init(apiKey: "", endpoint: settings.chatGPTBridgeEndpoint, modelID: settings.chatGPTBridgeModelID)
         case .shortcuts:
             return .init(apiKey: "", endpoint: "", modelID: settings.shortcutsProviderShortcut)
-        case .onDevice:
+        case .onDevice, .claudeCode:
             throw AIServiceError.unsupportedProvider("Provider does not use an HTTP adapter")
         }
     }
@@ -760,6 +760,7 @@ final class AIProviderRouter {
         case .openAICompatible, .kimi: return OpenAICompatibleProviderAdapter()
         case .claudeBridge, .chatGPTBridge: return OpenAICompatibleProviderAdapter()
         case .shortcuts: return ShortcutsProviderAdapter()
+        case .claudeCode: return ShortcutsProviderAdapter()
         case .onDevice:
             assertionFailure("Provider does not use an adapter")
             return OpenAICompatibleProviderAdapter()
