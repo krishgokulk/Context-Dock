@@ -80,6 +80,17 @@ actor AppReferenceIndex {
 
     // MARK: - References
 
+    /// Drops what was discovered for an app so the next question rediscovers it.
+    ///
+    /// Discovery is cached for a week, which is right for something that changes rarely and
+    /// wrong the moment the user hands us a link: without this, pasting a documentation URL
+    /// would have no visible effect for seven days, and the natural conclusion is that the
+    /// field does not work.
+    func forget(bundleId: String) {
+        index.removeValue(forKey: bundleId)
+        persistIndex()
+    }
+
     func references(bundleId: String, appName: String) async -> [AppReference] {
         guard !bundleId.isEmpty else { return [] }
         if let entry = index[bundleId],
@@ -202,6 +213,13 @@ actor AppReferenceIndex {
             add(reference.kind, reference.title, reference.url)
         }
 
+        // 0. What the user told us. Highest authority there is: they read the app's Help
+        //    menu, opened the page, and pasted where it went. Nothing DoraX can work out
+        //    beats being told.
+        for url in AppReferenceOverrides.urls(forBundleId: bundleId) {
+            add(kind(forURL: url, title: appName), "\(appName) (added by you)", url)
+        }
+
         // 1. The adapter's own links — seeded starter actions already point at the vendor's
         //    docs, and a user-added action is the strongest signal of all.
         for action in await MainActor.run(body: {
@@ -227,7 +245,29 @@ actor AppReferenceIndex {
             if let homepage = brew.homepage { add(kind(forURL: homepage, title: appName), "\(appName) homepage", homepage) }
         }
 
-        // 4. A repository gives its own releases page for free.
+        // 4. The App Store's listing for this bundle id names the developer's own site.
+        //    This is the source that covers the apps the others miss: a sideloaded or
+        //    Mac App Store app with no Sparkle feed and no Homebrew cask — which is exactly
+        //    the case where the Help menu shows a homepage DoraX could see but not read.
+        if found.isEmpty || !found.contains(where: { $0.kind == .homepage }) {
+            for url in await AppBundleLinks.fromAppStore(bundleId: bundleId) {
+                add(kind(forURL: url, title: appName), "\(appName) on the App Store", url)
+            }
+        }
+
+        // 5. URL literals shipped inside the app itself, kept only when they name the app.
+        //    Its Help menu knows the homepage; the string it opens is compiled into the
+        //    binary, so that is where it is read from rather than guessed at.
+        if !found.contains(where: { $0.kind == .homepage || $0.kind == .documentation }) {
+            let links = await Task.detached(priority: .utility) {
+                AppBundleLinks.fromBundle(bundleId: bundleId, appName: appName)
+            }.value
+            for url in links {
+                add(kind(forURL: url, title: appName), "\(appName) link", url)
+            }
+        }
+
+        // 6. A repository gives its own releases page for free.
         if let repo = found.first(where: { $0.kind == .repository }),
             let url = URL(string: repo.url), url.host?.contains("github.com") == true
         {

@@ -11,17 +11,22 @@ import Testing
 
 struct AppReferenceOverrideEvalTests {
 
-    private let bundleId = "eval.dorax.override"
+    /// A bundle id per test, not one shared by the suite.
+    ///
+    /// swift-testing runs these in parallel and they all write to the same UserDefaults key,
+    /// so a shared id meant one test's cleanup deleted another's fixture mid-assertion — two
+    /// failures that looked like a validation bug and were a test bug.
+    private var bundleId: String { "eval.dorax.override.\(UUID().uuidString)" }
 
-    private func clear() {
+    private func clear(_ bundleId: String) {
         for url in AppReferenceOverrides.urls(forBundleId: bundleId) {
             AppReferenceOverrides.remove(url, forBundleId: bundleId)
         }
     }
 
     @Test func aPastedLinkIsRemembered() {
-        clear()
-        defer { clear() }
+        let bundleId = bundleId
+        defer { clear(bundleId) }
         #expect(AppReferenceOverrides.add("https://tutorini.app/help", forBundleId: bundleId))
         #expect(AppReferenceOverrides.urls(forBundleId: bundleId) == ["https://tutorini.app/help"])
     }
@@ -29,8 +34,8 @@ struct AppReferenceOverrideEvalTests {
     @Test func aPastedAddressWithNoSchemeStillWorks() {
         // People copy "tutorini.app/help" out of a browser bar. Assuming https is not a guess
         // about which site — the user named it — only about how to reach it.
-        clear()
-        defer { clear() }
+        let bundleId = bundleId
+        defer { clear(bundleId) }
         #expect(AppReferenceOverrides.add("tutorini.app/help", forBundleId: bundleId))
         #expect(AppReferenceOverrides.urls(forBundleId: bundleId).first == "https://tutorini.app/help")
     }
@@ -38,24 +43,26 @@ struct AppReferenceOverrideEvalTests {
     @Test func somethingThatIsNotAnAddressIsRefused() {
         // Refused rather than stored: a bad link fails at fetch time, silently, long after
         // the user has forgotten typing it.
-        clear()
-        defer { clear() }
+        let bundleId = bundleId
+        defer { clear(bundleId) }
         #expect(!AppReferenceOverrides.add("see the help menu", forBundleId: bundleId))
         #expect(!AppReferenceOverrides.add("", forBundleId: bundleId))
+        // A bare word is a hostname to the parser and a mistake to everyone else.
+        #expect(!AppReferenceOverrides.add("tutorini", forBundleId: bundleId))
         #expect(AppReferenceOverrides.urls(forBundleId: bundleId).isEmpty)
     }
 
     @Test func addingTheSameLinkTwiceKeepsOneCopy() {
-        clear()
-        defer { clear() }
+        let bundleId = bundleId
+        defer { clear(bundleId) }
         AppReferenceOverrides.add("https://tutorini.app", forBundleId: bundleId)
         AppReferenceOverrides.add("https://TUTORINI.app", forBundleId: bundleId)
         #expect(AppReferenceOverrides.urls(forBundleId: bundleId).count == 1)
     }
 
     @Test func oneAppsLinksDoNotLeakIntoAnother() {
-        clear()
-        defer { clear() }
+        let bundleId = bundleId
+        defer { clear(bundleId) }
         AppReferenceOverrides.add("https://tutorini.app", forBundleId: bundleId)
         #expect(AppReferenceOverrides.urls(forBundleId: "eval.dorax.other").isEmpty)
     }

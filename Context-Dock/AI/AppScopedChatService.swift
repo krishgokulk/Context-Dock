@@ -769,6 +769,26 @@ enum AppScopedChatService {
 
         log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
 
+        // Local inspection precedes app access and specialist bridges. "Is Claude Code
+        // installed?" is not a request for Claude Code to inspect a repository, and "is
+        // LLMBrain installed?" is not a request for an LLMBrain app adapter. Classify the
+        // evidence needed before choosing a product route.
+        let isGeneralLike: Bool = {
+            switch scope {
+            case .general, .thread: return true
+            default: return false
+            }
+        }()
+        if isGeneralLike, let request = LocalInstallationCheck.parse(query) {
+            onStatus?("Checking whether \(request.displayName) is installed…")
+            let result = LocalInstallationCheck.inspect(request)
+            return Answer(
+                text: result.answer,
+                toolChips: [],
+                evidenceReceipts: [result.receipt],
+                trace: result.trace)
+        }
+
         // Ask before reaching. This also runs before any tool or capability work, so a
         // question about an app outside the chat's scope can never stall on a tool it was
         // never allowed to use.
@@ -809,26 +829,6 @@ enum AppScopedChatService {
                 text: result.text,
                 toolChips: result.toolsRan.map { "\($0) via Claude Code" },
                 consoleOutput: result.transcript.isEmpty ? nil : result.transcript)
-        }
-
-        // Codex and Claude answer "is X installed?" by inspecting the machine, not by
-        // searching for an app action named X. Keep that same ordering here: classify the
-        // evidence required, run bounded read-only probes, then report exactly what was
-        // found. A missing adapter is not evidence that software is absent.
-        let isGeneralLike: Bool = {
-            switch scope {
-            case .general, .thread: return true
-            default: return false
-            }
-        }()
-        if isGeneralLike, let request = LocalInstallationCheck.parse(query) {
-            onStatus?("Checking whether \(request.displayName) is installed…")
-            let result = LocalInstallationCheck.inspect(request)
-            return Answer(
-                text: result.answer,
-                toolChips: [],
-                evidenceReceipts: [result.receipt],
-                trace: result.trace)
         }
 
         // A request that spans apps gets a plan rather than a route. Candidates are
