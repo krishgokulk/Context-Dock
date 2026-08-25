@@ -165,24 +165,30 @@ struct AppChatPromptTests {
         #expect(model.phase == .hidden)
     }
 
-    /// The corner is an entry point, not a chat. Sending hands the question to Context
-    /// Dock's app-scoped chat and the corner gets out of the way.
-    @Test func sendingHandsTheQuestionOverAndClosesTheCorner() async {
+    /// This is the frontmost app chat: the question is asked and answered here.
+    @Test func sendingOpensTheConversationHere() {
         let model = AppChatPromptModel()
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
         model.query = "what changed here"
 
-        let handed = await withCheckedContinuation { continuation in
-            let token = NotificationCenter.default.addObserver(
-                forName: .appChatPromptSubmitted, object: nil, queue: .main
-            ) { note in
-                continuation.resume(returning: note.userInfo?["query"] as? String ?? "")
-            }
-            _ = model.submit()
-            NotificationCenter.default.removeObserver(token)
-        }
+        _ = model.submit()
 
-        #expect(handed == "what changed here")
+        #expect(model.phase == .chat)
+        #expect(model.messages.first?.text == "what changed here")
+        #expect(model.messages.first?.isFromUser == true)
+        // The answer's placeholder, waiting to be filled by the turn.
+        #expect(model.messages.last?.isFromUser == false)
+        #expect(model.isAnswering)
+        #expect(model.query.isEmpty)
+    }
+
+    /// Opening in the dock is still offered for when the corner is too small.
+    @Test func openingInTheDockClosesTheCorner() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+
+        model.openInDock()
+
         #expect(model.phase == .hidden)
     }
 }
@@ -236,6 +242,16 @@ struct AppChatControlsTests {
         #expect(model.submit())
     }
 
+    /// A second Enter while the first is still running must not start a second turn.
+    @Test func askingAgainMidAnswerIsIgnored() {
+        let model = opened()
+        model.query = "first"
+        _ = model.submit()
+        model.query = "second"
+
+        #expect(!model.submit())
+    }
+
     @Test func sendingAnEmptyQuestionDoesNothing() {
         let model = opened()
 
@@ -245,13 +261,26 @@ struct AppChatControlsTests {
         #expect(model.phase != .hidden)
     }
 
-    /// The middle control opens the conversation without asking anything yet.
-    @Test func openingInChatClosesTheCorner() {
+    /// A conversation is not an untouched prompt: it shrinks, it does not evaporate.
+    @Test func aConversationShrinksRatherThanVanishing() {
         let model = opened()
+        model.query = "a question"
+        _ = model.submit()
 
-        model.openInChat()
+        model.standDown()
 
-        #expect(model.phase == .hidden)
+        #expect(model.phase == .mini)
+    }
+
+    @Test func comingBackToAConversationReopensIt() {
+        let model = opened()
+        model.query = "a question"
+        _ = model.submit()
+        model.standDown()
+
+        model.hoverBegan()
+
+        #expect(model.phase == .chat)
     }
 
     @Test func attachmentsAreListedAndRemovable() {

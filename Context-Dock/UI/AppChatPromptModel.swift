@@ -4,13 +4,22 @@
 // Ask the frontmost app something without leaving it: a hotkey puts an input field in the
 // corner shell, alongside the clipboard and the shelf.
 //
-// It is an entry point, not a chat. Context Dock already has app-scoped chat — the same
-// conversation, with real answers and step traces — so a question typed here is handed to
-// that, and the corner gets out of the way. Building a second transcript here would have
-// been two surfaces doing one job.
+// This is the frontmost app chat. It answers here.
+//
+// The engine is not its own: turns go through `AppScopedChatService.send`, the same call
+// the other chat surfaces use, so grounding, tool routing and command approval behave
+// identically — a different window is not a reason to build a second brain or lower a
+// gate. What belongs to this surface is only how the conversation is shown.
 
 import Combine
 import Foundation
+
+/// One turn in the conversation.
+struct AppChatMessage: Identifiable, Equatable {
+    let id = UUID()
+    var text: String
+    let isFromUser: Bool
+}
 
 /// One thing the frontmost app can do, offered before the user has typed anything.
 struct AppChatSuggestion: Identifiable, Equatable {
@@ -34,9 +43,11 @@ enum AppChatPromptPhase: Equatable {
     case prompt
     /// The input plus what this app can do, which is how it opens.
     case suggesting
+    /// The conversation.
+    case chat
     var isVisible: Bool { self != .hidden }
     /// Every one of these draws the same input row; only what sits under it differs.
-    var showsInput: Bool { self == .prompt || self == .suggesting }
+    var showsInput: Bool { self == .prompt || self == .suggesting || self == .chat }
 }
 
 @MainActor
@@ -58,6 +69,11 @@ final class AppChatPromptModel: ObservableObject {
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
+    /// The conversation so far.
+    @Published private(set) var messages: [AppChatMessage] = []
+    /// What the turn is doing right now, in words.
+    @Published private(set) var status = ""
+    @Published private(set) var isAnswering = false
     /// Files the question should carry.
     @Published private(set) var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
@@ -104,9 +120,8 @@ final class AppChatPromptModel: ObservableObject {
         }
     }
 
-    /// Hand the app over to Context Dock's chat without a question — "open the
-    /// conversation", rather than "ask this now".
-    func openInChat() {
+    /// Opens the same conversation in the dock, for when the corner is too small for it.
+    func openInDock() {
         Self.handOff(app: appName, bundleID: appBundleID, query: "", attachments: attachments)
         dismiss()
     }
@@ -127,7 +142,7 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         guard phase.isVisible else { return }
-        set(restingInputPhase)
+        if phase != .chat { set(restingInputPhase) }
         touch()
     }
 
@@ -139,8 +154,9 @@ final class AppChatPromptModel: ObservableObject {
 
     func hoverBegan() {
         guard phase.isVisible else { return }
+        // Coming back reopens the conversation if there is one.
         if phase == .mini {
-            set(restingInputPhase)
+            set(messages.isEmpty ? restingInputPhase : .chat)
         }
         touch()
     }
@@ -153,7 +169,7 @@ final class AppChatPromptModel: ObservableObject {
     func standDown() {
         guard !isPinned else { return }
         switch phase {
-        case .prompt, .suggesting:
+        case .prompt, .suggesting, .chat:
             set(.mini)
             arm(after: Self.miniDwell)
         case .mini:
@@ -175,22 +191,66 @@ final class AppChatPromptModel: ObservableObject {
         suggestions = []
         capabilitySummary = ""
         attachments = []
+        messages = []
+        status = ""
         isPinned = false
         set(.hidden)
     }
 
     // MARK: - Sending
 
-    /// Hands the question to Context Dock's app-scoped chat — the conversation that
-    /// already exists, answers properly, and shows its steps. The corner's job ends here.
+    /// Asks, and answers here. The turn runs through the shared service, so this surface
+    /// owns the presentation and nothing else.
     @discardableResult
     func submit() -> Bool {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty else { return false }
-        Self.handOff(
-            app: appName, bundleID: appBundleID, query: question, attachments: attachments)
-        dismiss()
+        guard !question.isEmpty, !isAnswering else { return false }
+        let files = attachments
+
+        messages.append(AppChatMessage(text: question, isFromUser: true))
+        messages.append(AppChatMessage(text: "", isFromUser: false))
+        query = ""
+        attachments = []
+        isAnswering = true
+        status = ""
+        set(.chat)
+        touch()
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let answer = try await AppScopedChatService.send(
+                    scope: .app(bundleId: self.appBundleID),
+                    appName: self.appName,
+                    query: question,
+                    history: self.historyForService(),
+                    attachments: files,
+                    onStream: nil,
+                    onStatus: { [weak self] line in
+                        self?.status = line
+                    })
+                self.finish(with: answer.text)
+            } catch {
+                self.finish(with: "That didn't go through: \(error.localizedDescription)")
+            }
+        }
         return true
+    }
+
+    private func finish(with text: String) {
+        isAnswering = false
+        status = ""
+        if let index = messages.lastIndex(where: { !$0.isFromUser }) {
+            messages[index].text = text
+        }
+        touch()
+    }
+
+    /// Everything already said, in the shape the service expects.
+    private func historyForService() -> [ChatMessage] {
+        messages
+            .filter { !$0.text.isEmpty }
+            .map { ChatMessage(role: $0.isFromUser ? .user : .assistant, content: $0.text) }
     }
 
     private static func handOff(

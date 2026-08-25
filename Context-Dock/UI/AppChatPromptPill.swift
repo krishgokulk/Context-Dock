@@ -19,6 +19,8 @@ enum AppChatPromptMetrics {
     static let summaryHeight: CGFloat = 30
     /// Just the app's icon.
     static let miniSize = CGSize(width: 52, height: 44)
+    /// The conversation. Fixed, because the shell never resizes — the transcript scrolls.
+    static let chatHeight: CGFloat = 340
 
     static func size(for phase: AppChatPromptPhase, suggestions: Int) -> CGSize {
         switch phase {
@@ -26,6 +28,8 @@ enum AppChatPromptMetrics {
             return miniSize
         case .prompt:
             return CGSize(width: width, height: inputHeight)
+        case .chat:
+            return CGSize(width: width, height: chatHeight)
         case .suggesting:
             let rows = CGFloat(min(suggestions, 5))
             return CGSize(
@@ -81,6 +85,10 @@ struct AppChatPromptPill: View {
             if model.phase == .suggesting {
                 Divider().opacity(0.18)
                 suggestionList
+            }
+            if model.phase == .chat {
+                Divider().opacity(0.18)
+                transcript
             }
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
@@ -184,12 +192,12 @@ struct AppChatPromptPill: View {
             .help("Add context")
 
             Button {
-                model.openInChat()
+                model.openInDock()
             } label: {
-                controlGlyph("bubble.left.and.text.bubble.right")
+                controlGlyph("arrow.up.left.and.arrow.down.right")
             }
             .buttonStyle(.plain)
-            .help("Open in Context Dock chat")
+            .help("Open this conversation in the dock")
 
             Button {
                 model.togglePin()
@@ -289,6 +297,59 @@ struct AppChatPromptPill: View {
             }
         }
         .padding(.bottom, 12)
+    }
+
+    // MARK: - Conversation
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(model.messages) { message in
+                        HStack(alignment: .top) {
+                            if message.isFromUser { Spacer(minLength: 40) }
+                            bubble(message)
+                            if !message.isFromUser { Spacer(minLength: 40) }
+                        }
+                        .id(message.id)
+                    }
+                    if !model.status.isEmpty {
+                        Text(model.status)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary.opacity(0.8))
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .onChange(of: model.messages.count) { _, _ in
+                guard let last = model.messages.last else { return }
+                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func bubble(_ message: AppChatMessage) -> some View {
+        if message.text.isEmpty {
+            // The answer's placeholder, so the turn reads as underway rather than lost.
+            ProgressView()
+                .controlSize(.small)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+        } else {
+            Text(message.text)
+                .font(.system(size: 12.5))
+                .textSelection(.enabled)
+                .foregroundStyle(message.isFromUser ? .primary : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    message.isFromUser
+                        ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.06),
+                    in: RoundedRectangle(cornerRadius: 12))
+        }
     }
 
     // MARK: - Shrunken
