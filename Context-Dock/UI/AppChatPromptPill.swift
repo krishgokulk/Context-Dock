@@ -20,12 +20,18 @@ enum AppChatPromptMetrics {
     /// Just the app's icon.
     static let miniSize = CGSize(width: 52, height: 44)
 
+    /// The conversation view. Fixed rather than content-sized: the shell never resizes,
+    /// so the transcript scrolls inside a known height.
+    static let chatHeight: CGFloat = 320
+
     static func size(for phase: AppChatPromptPhase, suggestions: Int) -> CGSize {
         switch phase {
         case .hidden, .mini:
             return miniSize
         case .prompt:
             return CGSize(width: width, height: inputHeight)
+        case .chat:
+            return CGSize(width: width, height: chatHeight)
         case .suggesting:
             let rows = CGFloat(min(suggestions, 5))
             return CGSize(
@@ -75,9 +81,16 @@ struct AppChatPromptPill: View {
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 0) {
             inputRow
+            if !model.attachments.isEmpty {
+                attachmentRow
+            }
             if model.phase == .suggesting {
                 Divider().opacity(0.18)
                 suggestionList
+            }
+            if model.phase == .chat {
+                Divider().opacity(0.18)
+                transcript
             }
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
@@ -165,24 +178,129 @@ struct AppChatPromptPill: View {
 
     private var trailingControls: some View {
         HStack(spacing: 8) {
-            controlButton("plus", help: "Add context")
-            controlButton("bubble.left.and.text.bubble.right", help: "Open in chat")
-            controlButton("pin", help: "Keep this open")
+            Menu {
+                Button("Upload File") { pickFiles(imagesOnly: false) }
+                Button("Upload Photo") { pickFiles(imagesOnly: true) }
+                Divider()
+                Button("Take Screenshot") { capture(interactive: false) }
+                Button("Capture Area") { capture(interactive: true) }
+                Button("Capture Text") { captureText() }
+            } label: {
+                controlGlyph("plus")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 26, height: 26)
+            .help("Add context")
+
+            Button {
+                model.toggleExpanded()
+            } label: {
+                controlGlyph(
+                    model.phase == .chat
+                        ? "arrow.down.right.and.arrow.up.left"
+                        : "arrow.up.left.and.arrow.down.right",
+                    tinted: model.phase == .chat)
+            }
+            .buttonStyle(.plain)
+            .help(model.phase == .chat ? "Collapse" : "Expand")
+
+            Button {
+                model.togglePin()
+            } label: {
+                controlGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
+            }
+            .buttonStyle(.plain)
+            .help(model.isPinned ? "Unpin" : "Keep this open")
         }
     }
 
-    private func controlButton(_ symbol: String, help: String) -> some View {
-        Button {
-            // Controls are UI-only until the chat route exists.
-        } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 26, height: 26)
-                .background(Color.primary.opacity(0.08), in: Circle())
+    private func controlGlyph(_ symbol: String, tinted: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(tinted ? Color.accentColor : .secondary)
+            .frame(width: 26, height: 26)
+            .background(
+                tinted ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.08),
+                in: Circle())
+    }
+
+    // MARK: - Attachments
+
+    private func pickFiles(imagesOnly: Bool) {
+        for url in ChatAttachmentCapture.pickFiles(imagesOnly: imagesOnly) {
+            model.attach(url)
         }
-        .buttonStyle(.plain)
-        .help(help)
+    }
+
+    private func capture(interactive: Bool) {
+        ChatAttachmentCapture.captureScreenshot(interactive: interactive) { url in
+            model.attach(url)
+        }
+    }
+
+    private func captureText() {
+        ChatAttachmentCapture.captureScreenText { text in
+            model.query += model.query.isEmpty ? text : "\n" + text
+            model.queryChanged()
+        }
+    }
+
+    private var attachmentRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(model.attachments, id: \.self) { url in
+                    HStack(spacing: 5) {
+                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                            .resizable().frame(width: 13, height: 13)
+                        Text(url.lastPathComponent)
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                        Button {
+                            model.detach(url)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .frame(height: 34)
+    }
+
+    // MARK: - Conversation
+
+    private var transcript: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(model.messages) { message in
+                    HStack {
+                        if message.isFromUser { Spacer(minLength: 40) }
+                        Text(message.text)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(message.isFromUser ? .primary : .secondary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                message.isFromUser
+                                    ? Color.accentColor.opacity(0.22)
+                                    : Color.primary.opacity(0.06),
+                                in: RoundedRectangle(cornerRadius: 12))
+                        if !message.isFromUser { Spacer(minLength: 40) }
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Suggestions

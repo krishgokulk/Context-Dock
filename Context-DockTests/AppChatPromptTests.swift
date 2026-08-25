@@ -165,8 +165,9 @@ struct AppChatPromptTests {
         #expect(model.phase == .hidden)
     }
 
-    /// Submitting is the one thing not wired up yet, so it must not pretend to work.
-    @Test func submittingIsNotConnectedYetAndSaysSo() {
+    /// Submitting still sends nothing — but it keeps the question and says so, rather
+    /// than swallowing the Enter key and looking broken.
+    @Test func submittingReportsThatNothingWasSent() {
         let model = AppChatPromptModel()
         model.summon(app: "Safari")
         model.query = "what changed here"
@@ -174,6 +175,127 @@ struct AppChatPromptTests {
         let sent = model.submit()
 
         #expect(!sent)
-        #expect(model.phase == .prompt)
+        #expect(model.messages.first?.text == "what changed here")
+    }
+}
+
+// MARK: - Controls
+
+@MainActor
+struct AppChatControlsTests {
+    private func opened() -> AppChatPromptModel {
+        let model = AppChatPromptModel()
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        return model
+    }
+
+    /// Pinning is the user saying "stay". Nothing times it out after that.
+    @Test func pinningStopsTheStandDown() {
+        let model = opened()
+
+        model.togglePin()
+
+        #expect(model.isPinned)
+        #expect(!model.isStandDownArmed)
+    }
+
+    @Test func aPinnedPromptIgnoresTheClockEntirely() {
+        let model = opened()
+        model.togglePin()
+
+        model.standDown()
+
+        #expect(model.phase != .hidden)
+        #expect(model.phase != .mini)
+    }
+
+    @Test func unpinningPutsTheClockBack() {
+        let model = opened()
+        model.togglePin()
+
+        model.togglePin()
+
+        #expect(!model.isPinned)
+        #expect(model.isStandDownArmed)
+    }
+
+    @Test func expandingOpensTheChatSurfaceAndCollapsingReturns() {
+        let model = opened()
+
+        model.toggleExpanded()
+        #expect(model.phase == .chat)
+
+        model.toggleExpanded()
+        #expect(model.phase != .chat)
+    }
+
+    /// Enter used to do nothing at all, which reads as broken rather than unfinished.
+    @Test func sendingShowsTheQuestionAndSaysTheRouteIsMissing() {
+        let model = opened()
+        model.query = "why is this slow"
+
+        let sent = model.submit()
+
+        #expect(!sent)
+        #expect(model.phase == .chat)
+        #expect(model.messages.contains { $0.isFromUser && $0.text == "why is this slow" })
+        #expect(model.messages.contains { !$0.isFromUser })
+        #expect(model.query.isEmpty)
+    }
+
+    @Test func sendingAnEmptyQuestionDoesNothing() {
+        let model = opened()
+
+        let sent = model.submit()
+
+        #expect(!sent)
+        #expect(model.messages.isEmpty)
+        #expect(model.phase != .chat)
+    }
+
+    /// A sent question is a conversation the user is in: it must not time out underneath
+    /// them the way an untouched prompt does.
+    @Test func aConversationDoesNotStandDownToNothing() {
+        let model = opened()
+        model.query = "a question"
+        _ = model.submit()
+
+        model.standDown()
+
+        #expect(model.phase == .mini)
+    }
+
+    @Test func attachmentsAreListedAndRemovable() {
+        let model = opened()
+        let file = URL(fileURLWithPath: "/tmp/shot.png")
+
+        model.attach(file)
+        #expect(model.attachments == [file])
+
+        model.detach(file)
+        #expect(model.attachments.isEmpty)
+    }
+
+    @Test func attachingTheSameFileTwiceKeepsOneCopy() {
+        let model = opened()
+        let file = URL(fileURLWithPath: "/tmp/shot.png")
+
+        model.attach(file)
+        model.attach(file)
+
+        #expect(model.attachments.count == 1)
+    }
+
+    @Test func dismissingDropsTheAttachmentsAndTheConversation() {
+        let model = opened()
+        model.attach(URL(fileURLWithPath: "/tmp/shot.png"))
+        model.query = "q"
+        _ = model.submit()
+
+        model.dismiss()
+
+        #expect(model.attachments.isEmpty)
+        #expect(model.messages.isEmpty)
+        #expect(!model.isPinned)
     }
 }
