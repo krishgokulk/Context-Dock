@@ -137,3 +137,54 @@ struct AbsenceReportingTests {
                 answer: "No active reminders.", executed: [], roundsAllowed: 8))
     }
 }
+
+// MARK: - Every write capability's own verb counts as a change
+//
+// `requestsChange` is the gate that keeps a change out of the read paths: ReadOnlyDataRouter
+// refuses a domain when it fires, and `asksAboutScopedRecords` refuses to ground. A write
+// capability whose natural verb is missing from its list is therefore routed as a question —
+// answered from a reader, never executed, and never shown an approval sheet.
+//
+// The list was written from the verbs that existed then. Capabilities have been added since,
+// and their verbs were not added with them, so this ties the two together: if you register a
+// capability that changes something, the way a person would ask for it has to be recognised.
+
+@MainActor
+struct WriteVerbCoverageTests {
+
+    @Test func theNaturalPhrasingOfEveryWriteCapabilityIsSeenAsAChange() {
+        let cases: [(capability: String, asked: String)] = [
+            ("notes.create", "create a note called groceries"),
+            ("notes.append", "append the invoice number to my launch note"),
+            ("notes.update", "update my meeting note with the new date"),
+            ("reminders.create", "add a reminder to pay the bank tomorrow"),
+            ("reminders.complete", "mark the bank reminder as done"),
+            ("reminders.delete", "delete my grocery reminder"),
+        ]
+        for (capability, asked) in cases {
+            #expect(
+                GeneralAIActionResolver.shared.requestsChange(asked),
+                """
+                    \(capability) exists, but "\(asked)" is not recognised as a change, \
+                    so it would be answered from a reader instead of run
+                    """)
+        }
+    }
+
+    /// The counterweight. These name the same records and change nothing, so widening the verb
+    /// list must not swallow them — a read misread as a write loses its grounding and its
+    /// answer.
+    @Test func questionsAboutTheSameRecordsAreNotChanges() {
+        for asked in [
+            "what did i write recently?",
+            "show me my completed reminders",
+            "any updates on the launch note?",
+            "find my note about the meeting",
+            "what do i need to finish today?",
+        ] {
+            #expect(
+                !GeneralAIActionResolver.shared.requestsChange(asked),
+                "\"\(asked)\" is a question, not a change")
+        }
+    }
+}

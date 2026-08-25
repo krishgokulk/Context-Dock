@@ -777,6 +777,13 @@ final class GeneralAIActionResolver {
             "quit", "close", "kill", "stop", "restart", "shutdown", "reboot",
             "enable", "disable", "toggle", "switch", "turn", "set", "reset",
             "save", "export", "download", "run", "execute", "schedule", "remind",
+            // Added with the capabilities that need them. notes.append, notes.update and
+            // reminders.complete were all registered after this list was written, so the way a
+            // person asks for them — "append this", "update that", "mark it done" — read as a
+            // question, and the request was answered from a reader instead of run. Kept to
+            // verbs that name a registered capability's action: "write" is deliberately absent,
+            // because "what did I write recently?" is a question about the same records.
+            "append", "update", "edit", "complete", "mark", "insert",
         ]
         let words = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
