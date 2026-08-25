@@ -1087,7 +1087,12 @@ enum AppScopedChatService {
         // dock has decided this per question since it was written; the window asked every
         // question the same way and let the model pick, which is how a "what changed just
         // now" question got answered from a note written last week.
-        let sourceDecision = AgentSourceAuthority.decide(query: query)
+        let sourceDecision = AgentSourceAuthority.decide(
+            query: query,
+            scopeBundleId: {
+                if case .app(let id) = scope { return id }
+                return nil
+            }())
         let taskPlan = FrontmostAppTaskPlan.make(
             query: query,
             bundleId: {

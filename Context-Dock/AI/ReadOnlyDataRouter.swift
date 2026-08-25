@@ -41,6 +41,25 @@ enum ReadOnlyDataDomain: String, Equatable {
     }
 }
 
+extension ReadOnlyDataDomain {
+    /// The record set an app *is*. Scoped chat asks questions that never name their object
+    /// — "what do I need to finish today?" with Reminders in front — because the app in
+    /// front already said it. Only apps whose whole content is a record set belong here;
+    /// Safari is frontmost constantly and owns nothing a reader could return.
+    init?(scopeBundleId: String) {
+        switch scopeBundleId.lowercased() {
+        case "com.apple.reminders": self = .reminders
+        case "com.apple.notes": self = .notes
+        case "com.apple.mail": self = .mail
+        case "com.apple.ical", "com.apple.calendar": self = .calendar
+        case "com.apple.mobilesms", "com.apple.messages": self = .messages
+        case "com.apple.addressbook", "com.apple.contacts": self = .contacts
+        case "com.apple.photos": self = .photos
+        default: return nil
+        }
+    }
+}
+
 @MainActor
 enum ReadOnlyDataRouter {
 

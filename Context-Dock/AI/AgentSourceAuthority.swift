@@ -49,7 +49,9 @@ struct AgentSourceDecision: Equatable {
 }
 
 enum AgentSourceAuthority {
-    static func decide(query: String) -> AgentSourceDecision {
+    /// - Parameter scopeBundleId: the app a Context Dock Chat is scoped to, when there is
+    ///   one. General Chat spans apps and passes nil; the query is all it has.
+    static func decide(query: String, scopeBundleId: String? = nil) -> AgentSourceDecision {
         let q = normalized(query)
 
         if isExplicitMemoryRequest(q) {
@@ -61,6 +63,12 @@ enum AgentSourceAuthority {
                 primary: .officialReference, requiresFreshRead: false, allowsMemoryEvidence: true)
         }
         if isLiveStateQuestion(q) {
+            return AgentSourceDecision(
+                primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)
+        }
+        if let scopeBundleId, ReadOnlyDataDomain(scopeBundleId: scopeBundleId) != nil,
+            asksAboutScopedRecords(q)
+        {
             return AgentSourceDecision(
                 primary: .liveState, requiresFreshRead: true, allowsMemoryEvidence: false)
         }
@@ -93,6 +101,38 @@ enum AgentSourceAuthority {
                         "help", "configure", "configuration", "profile", "rule"]
         return prefixes.contains(where: q.hasPrefix)
             && subjects.contains(where: q.contains)
+    }
+
+    /// A question about the frontmost app's records that never named them. `isLiveStateQuestion`
+    /// wants a freshness word *and* an object noun; here the scope is the noun, so only the
+    /// freshness half has to be present. Asked in Reminders, "what do I need to finish today?"
+    /// carries "today" and nothing else, and used to fall through to `.conversation`, where the
+    /// model answered from nothing.
+    private static func asksAboutScopedRecords(_ q: String) -> Bool {
+        // A change is never a read, whatever app is in front. `create a reminder "call mum"
+        // today at 5pm` was once answered "You have no open reminders"; the write never ran.
+        if GeneralAIActionResolver.shared.requestsChange(q) { return false }
+        // A question about the interface carries the same freshness words as a question about
+        // the contents. "how do I see what is due today?" wants documentation, not a read.
+        let procedurePrefixes = [
+            "how do i ", "how can i ", "how to ", "where do i ", "where is ",
+            "what happens if ", "can i ",
+        ]
+        if procedurePrefixes.contains(where: q.hasPrefix) { return false }
+        // Two families, both of which name the record set without naming it. When the app in
+        // front *is* the records, "how many are there" is as much a read as "what is due".
+        // These mirror the read signals ReadOnlyDataRouter already trusts, so the two halves
+        // of the decision agree about what counts as a question about someone's own data.
+        let agenda = [
+            "today", "tomorrow", "tonight", "this week", "due", "overdue", "pending",
+            "outstanding", "unread", "upcoming", "latest", "recent", "left to do",
+            "remaining", "need to finish", "need to do", "right now", "currently",
+        ]
+        let readSignals = [
+            "how many", "do i have", "any ", "anything", "my ", "show me", "list ",
+            "what's on", "whats on",
+        ]
+        return agenda.contains(where: q.contains) || readSignals.contains(where: q.contains)
     }
 
     private static func isLiveStateQuestion(_ q: String) -> Bool {
@@ -128,7 +168,14 @@ enum AgentSourceAuthority {
                            "window", "tab", "page", "website", "site", "url", "email", "mail", "note", "reminder", "inbox",
                            "event", "calendar", "message", "song", "track", "history",
                            "playback", "watched", "played", "viewed"]
-        if freshness.contains(where: q.contains), liveObjects.contains(where: q.contains) {
+        // `create a reminder "call mum" today at 5pm` carries "today" and "reminder" and was
+        // classified live state, so the request that had to reach .action — the only kind
+        // that carries execution authority and the approval gate — was told to answer from a
+        // reader instead. ReadOnlyDataRouter was given this same gate after that request was
+        // answered "You have no open reminders"; this half of the decision never got it.
+        if freshness.contains(where: q.contains), liveObjects.contains(where: q.contains),
+            !GeneralAIActionResolver.shared.requestsChange(q)
+        {
             return true
         }
         // These phrases intrinsically name mutable state; requiring an extra word such as

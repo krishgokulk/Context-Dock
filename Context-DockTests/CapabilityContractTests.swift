@@ -63,6 +63,9 @@ final class CapabilityContractTests: XCTestCase {
             "cli.run",  // runs a linked binary
             "memory.save",  // changes what the user is told later
             "finder.trash",  // deletes
+            "reminders.create",  // writes to the user's reminder lists
+            "reminders.complete",  // changes a record the user owns
+            "reminders.delete",  // destroys one
         ] {
             let capability = try self.capability(id)
             XCTAssertTrue(
@@ -80,6 +83,7 @@ final class CapabilityContractTests: XCTestCase {
             "files.recentDocuments", "files.search", "quicknotes.search",
             "apps.mostUsed", "clipboard.history", "extensions.list",
             "cli.list", "memory.search",
+            "reminders.today", "reminders.list", "reminders.overdue",
         ] {
             let capability = try self.capability(id)
             XCTAssertFalse(
