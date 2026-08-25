@@ -784,6 +784,16 @@ final class GeneralAIActionResolver {
             // verbs that name a registered capability's action: "write" is deliberately absent,
             // because "what did I write recently?" is a question about the same records.
             "append", "update", "edit", "complete", "mark", "insert",
+            // Finder's own vocabulary. finder.organize and finder.copyFiles were registered
+            // without them, so "organize these" and "copy these to the Client folder" read as
+            // questions — described rather than done, and with no approval sheet in front of
+            // a capability declared .medium and .high respectively.
+            //
+            // "trash" is deliberately absent. It is a place as often as it is a verb, and
+            // "what's in my trash bin" is a question — WriteIntentGuardTests says so in three
+            // separate tests. finder.trash is still reachable through delete, remove and
+            // empty, and "move to trash" through move.
+            "organize", "organise", "copy", "tidy",
         ]
         let words = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
