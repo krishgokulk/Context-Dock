@@ -153,13 +153,13 @@ final class GeneralChatCapabilityHub {
             cachedKey == cacheKey,
             Date().timeIntervalSince(cachedAt) < cacheTTL
         {
-            let block = withInventory(
-                cacheFreshnessLine() + "\n" + joinedBlock(cachedBlock, builtinLines: builtinLines),
-                inventoryLines: inventoryLines
-            )
-            return AIContextBudget.fitReference(
-                compact ? compacted(block) : block, budget: characterBudget)
-                + actionHistory(for: scope)
+            return fittedReference(
+                core: cacheFreshnessLine() + "\n"
+                    + joinedBlock(cachedBlock, builtinLines: builtinLines),
+                inventoryLines: inventoryLines,
+                compact: compact,
+                budget: characterBudget
+            ) + actionHistory(for: scope)
         }
 
         Self.log.notice("hub: mcp servers")
@@ -313,13 +313,12 @@ final class GeneralChatCapabilityHub {
         cachedBlock = block
         cachedAt = Date()
         cachedKey = cacheKey
-        let full = withInventory(
-            cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
-            inventoryLines: inventoryLines
-        )
-        return AIContextBudget.fitReference(
-            compact ? compacted(full) : full, budget: characterBudget)
-            + actionHistory(for: scope)
+        return fittedReference(
+            core: cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
+            inventoryLines: inventoryLines,
+            compact: compact,
+            budget: characterBudget
+        ) + actionHistory(for: scope)
     }
 
     /// Lines describing enabled built-in capabilities (Notes/Calendar/Contacts/Reminders/
@@ -547,15 +546,39 @@ final class GeneralChatCapabilityHub {
         return base + "\n" + builtinLines.joined(separator: "\n")
     }
 
-    private func withInventory(_ base: String, inventoryLines: [String]) -> String {
-        guard !inventoryLines.isEmpty else { return base }
+    /// The reference block, fitted so the capabilities survive the cut.
+    ///
+    /// fitReference keeps the first N characters and drops the tail, and the inventory
+    /// snapshot is written first — so on-device, where the whole allowance is 1 500
+    /// characters, the snapshot could spend it and the app's own actions, skills and menu
+    /// commands fell off the end. The model then said DoraX could not read that app's
+    /// capabilities, which was true of what it had been handed and false of what DoraX
+    /// knew: the panel beside it was listing them.
+    ///
+    /// The capabilities are the answer to "what can you do with this app", so they are
+    /// fitted first and the snapshot gets what is left. Reading order is unchanged —
+    /// the snapshot still comes first in the text, it is just no longer first in line for
+    /// the budget.
+    private func fittedReference(
+        core: String,
+        inventoryLines: [String],
+        compact: Bool,
+        budget: Int
+    ) -> String {
+        let fittedCore = AIContextBudget.fitReference(
+            compact ? compacted(core) : core, budget: budget)
+        guard !inventoryLines.isEmpty else { return fittedCore }
+
+        // A snapshot worth less than a couple of lines is noise at this size; the
+        // capabilities keep the whole budget rather than losing their tail to a stub.
+        let remaining = budget - fittedCore.count
+        guard remaining > 240 else { return fittedCore }
+
         let inventoryBlock = ([
             "## Running App Status Snapshot",
         ] + inventoryLines).joined(separator: "\n")
-        guard !base.isEmpty else {
-            return inventoryBlock
-        }
-        return inventoryBlock + "\n\n" + base
+        let fittedInventory = AIContextBudget.fitReference(inventoryBlock, budget: remaining)
+        return fittedInventory + "\n\n" + fittedCore
     }
 
     private func compacted(_ block: String) -> String {
