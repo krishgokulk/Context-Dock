@@ -911,6 +911,8 @@ class AppSettings: ObservableObject {
     @AppStorage("hotkeyModifiers") private var _hotkeyModifiers: Int = Int(optionKey)
     @AppStorage("contextDockHotkeyKeyCode") private var _contextDockHotkeyKeyCode: Int = 0
     @AppStorage("contextDockHotkeyModifiers") private var _contextDockHotkeyModifiers: Int = 0
+    @AppStorage("appChatHotkeyKeyCode") private var _appChatHotkeyKeyCode: Int = 0
+    @AppStorage("appChatHotkeyModifiers") private var _appChatHotkeyModifiers: Int = 0
     @AppStorage("clipboardScopeHotkeyKeyCode") private var _clipboardScopeHotkeyKeyCode: Int = 0
     @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
     @AppStorage("quickNoteHotkeyKeyCode") private var _quickNoteHotkeyKeyCode: Int = 0
@@ -1780,6 +1782,24 @@ class AppSettings: ObservableObject {
     }
     var clipboardScopeHotkeyEnabled: Bool { _clipboardScopeHotkeyKeyCode != 0 }
 
+    /// Ask the frontmost app something without leaving it. The prompt surface is built;
+    /// what it does with the question is not wired up yet.
+    var appChatHotkeyKeyCode: UInt32 {
+        get { UInt32(_appChatHotkeyKeyCode) }
+        set {
+            objectWillChange.send()
+            _appChatHotkeyKeyCode = Int(newValue)
+        }
+    }
+    var appChatHotkeyModifiers: UInt32 {
+        get { UInt32(_appChatHotkeyModifiers) }
+        set {
+            objectWillChange.send()
+            _appChatHotkeyModifiers = Int(newValue)
+        }
+    }
+    var appChatHotkeyEnabled: Bool { _appChatHotkeyKeyCode != 0 }
+
     var quickNoteHotkeyKeyCode: UInt32 {
         get { UInt32(_quickNoteHotkeyKeyCode) }
         set {
@@ -2587,6 +2607,9 @@ class AppSettings: ObservableObject {
     var contextDockHotkeyDisplayString: String {
         hotkeyDisplayString(
             keyCode: contextDockHotkeyKeyCode, modifiers: contextDockHotkeyModifiers)
+    }
+    var appChatHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: appChatHotkeyKeyCode, modifiers: appChatHotkeyModifiers)
     }
     var clipboardScopeHotkeyDisplayString: String {
         hotkeyDisplayString(

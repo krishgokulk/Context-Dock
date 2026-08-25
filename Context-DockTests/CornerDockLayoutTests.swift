@@ -70,6 +70,28 @@ struct CornerDockLayoutTests {
         #expect(slots.shelf!.maxY + CornerDockLayout.pad <= CornerDockLayout.panelSize.height)
     }
 
+    /// The prompt is the one the user asked for by name, so it takes the corner and the
+    /// rest stack above it.
+    @Test func thePromptTakesTheCornerAndPushesTheOthersUp() throws {
+        let slots = CornerDockLayout.slots(shelf: pill, clipboard: pill, prompt: pill)
+        let prompt = try #require(slots.prompt)
+        let clipboard = try #require(slots.clipboard)
+        let shelf = try #require(slots.shelf)
+
+        #expect(prompt.minY == CornerDockLayout.pad)
+        #expect(clipboard.minY == prompt.maxY + CornerDockLayout.gap)
+        #expect(shelf.minY == clipboard.maxY + CornerDockLayout.gap)
+        #expect(!prompt.intersects(clipboard))
+        #expect(!clipboard.intersects(shelf))
+    }
+
+    @Test func theShellFitsACardAndBothOtherPills() throws {
+        let slots = CornerDockLayout.slots(shelf: pill, clipboard: pill, prompt: card)
+        let shelf = try #require(slots.shelf)
+
+        #expect(shelf.maxY + CornerDockLayout.pad <= CornerDockLayout.panelSize.height)
+    }
+
     @Test func nothingShowingMeansNoSlots() {
         let slots = CornerDockLayout.slots(shelf: nil, clipboard: nil)
 

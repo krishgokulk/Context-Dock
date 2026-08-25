@@ -429,6 +429,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var chatWindowHotKeyRef: EventHotKeyRef?
     var chatWindowEventHandlerRef: EventHandlerRef?
     var clipboardScopeEventHandlerRef: EventHandlerRef? // stored so re-register removes old handler
+    var appChatHotKeyRef: EventHotKeyRef?
+    var appChatEventHandlerRef: EventHandlerRef?
     var quickNoteHotKeyRef: EventHotKeyRef?
     var quickNoteEventHandlerRef: EventHandlerRef?
     var captureTextHotKeyRef: EventHotKeyRef?
@@ -647,6 +649,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerAppChatHotkey()
         registerChatWindowHotkey()
         registerCaptureHotkeys()
         registerOutsideMouseMonitor()
@@ -924,6 +927,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerAppChatHotkey()
         registerChatWindowHotkey()
         registerCaptureHotkeys()
 
@@ -1011,6 +1015,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerAppChatHotkey()
         registerChatWindowHotkey()
         registerCaptureHotkeys()
         unregisterModifierSideEffectMonitors()
@@ -1766,6 +1771,61 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         RegisterEventHotKey(
             settings.clipboardScopeHotkeyKeyCode, settings.clipboardScopeHotkeyModifiers,
             hotKeyID, GetApplicationEventTarget(), 0, &clipboardScopeHotKeyRef)
+    }
+
+    /// Global hotkey → put the App Chat prompt in the corner, aimed at whatever the user
+    /// is looking at. The surface is built; the route the question takes is not yet.
+    func registerAppChatHotkey() {
+        if let ref = appChatEventHandlerRef {
+            RemoveEventHandler(ref)
+            appChatEventHandlerRef = nil
+        }
+        if let ref = appChatHotKeyRef {
+            UnregisterEventHotKey(ref)
+            appChatHotKeyRef = nil
+        }
+        guard settings.appChatHotkeyEnabled else { return }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6163), id: 9)  // 'ILac'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_6163),
+                receivedID.id == 9
+            else { return OSStatus(eventNotHandledErr) }
+            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
+                return OSStatus(eventNotHandledErr)
+            }
+            delegate.activateAppChatPrompt()
+            return noErr
+        }
+        var selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        appChatEventHandlerRef = handlerRef
+        RegisterEventHotKey(
+            settings.appChatHotkeyKeyCode, settings.appChatHotkeyModifiers,
+            hotKeyID, GetApplicationEventTarget(), 0, &appChatHotKeyRef)
+    }
+
+    /// The prompt is about the app the user is looking at, so the app is captured here —
+    /// before opening the prompt makes Context-Dock frontmost.
+    func activateAppChatPrompt() {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        let target = NSWorkspace.shared.frontmostApplication
+        CornerDockController.shared.activate()
+        CornerDockController.shared.prompt.summon(
+            app: target?.localizedName ?? "",
+            bundleID: target?.bundleIdentifier ?? "")
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.

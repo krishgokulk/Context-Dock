@@ -25,38 +25,35 @@ enum CornerDockLayout {
     /// stacked above it. The window never resizes — the morph happens inside it — so this
     /// is sized once for the largest thing it will ever hold.
     static var panelSize: CGSize {
+        // Worst case: one surface fully expanded with both other pills stacked above it.
         CGSize(
             width: cardWidth + pad * 2,
-            height: cardHeight + gap + pillHeight + pad * 2)
+            height: cardHeight + (gap + pillHeight) * 2 + pad * 2)
     }
 
     /// Rects in the panel's coordinates, origin bottom-left. A nil size means that
     /// surface is showing nothing, and it takes no space: with no clipboard pill below
     /// it, the shelf drops into the corner rather than floating above a gap.
+    /// Stacked bottom-up in the order they are passed, each dropping out of the stack
+    /// when it has nothing to show. The prompt takes the corner when it is open: it is the
+    /// one the user just asked for by name.
     static func slots(
-        shelf: CGSize?, clipboard: CGSize?
-    ) -> (shelf: CGRect?, clipboard: CGRect?) {
+        shelf: CGSize? = nil, clipboard: CGSize? = nil, prompt: CGSize? = nil
+    ) -> (shelf: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
         let rightEdge = panelSize.width - pad
+        var baseline = pad
 
-        var clipboardRect: CGRect?
-        if let clipboard {
-            clipboardRect = CGRect(
-                x: rightEdge - clipboard.width,
-                y: pad,
-                width: clipboard.width,
-                height: clipboard.height)
+        func place(_ size: CGSize?) -> CGRect? {
+            guard let size else { return nil }
+            let rect = CGRect(
+                x: rightEdge - size.width, y: baseline, width: size.width, height: size.height)
+            baseline = rect.maxY + gap
+            return rect
         }
 
-        var shelfRect: CGRect?
-        if let shelf {
-            let baseline = clipboardRect.map { $0.maxY + gap } ?? pad
-            shelfRect = CGRect(
-                x: rightEdge - shelf.width,
-                y: baseline,
-                width: shelf.width,
-                height: shelf.height)
-        }
-
-        return (shelfRect, clipboardRect)
+        let promptRect = place(prompt)
+        let clipboardRect = place(clipboard)
+        let shelfRect = place(shelf)
+        return (shelfRect, clipboardRect, promptRect)
     }
 }

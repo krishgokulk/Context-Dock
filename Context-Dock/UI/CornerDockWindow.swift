@@ -61,6 +61,7 @@ final class CornerDockController: NSObject {
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
     private var shelf: DropShelfPresentation { DropShelfController.shared.presentation }
+    let prompt = AppChatPromptModel()
 
     var window: NSPanel? { panel }
 
@@ -116,6 +117,7 @@ final class CornerDockController: NSObject {
             MainActor.assumeIsolated {
                 ClipboardPanelController.shared.model.userLeftTheSpace()
                 DropShelfController.shared.presentation.autoHide()
+                CornerDockController.shared.prompt.userLeftTheSpace()
             }
         }
 
@@ -124,6 +126,18 @@ final class CornerDockController: NSObject {
         }.store(in: &sinks)
         shelf.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+        prompt.$phase.sink { [weak self] phase in
+            Task { @MainActor in
+                self?.refresh()
+                // The prompt is a text field the user asked for by name, so unlike the
+                // ambient pills it takes focus the moment it appears.
+                if phase == .prompt {
+                    self?.armKeyboard()
+                } else if phase == .hidden {
+                    self?.disarmKeyboard()
+                }
+            }
         }.store(in: &sinks)
     }
 
@@ -147,9 +161,10 @@ final class CornerDockController: NSObject {
     func refresh() {
         guard let panel, let hostView else { return }
         let slots = currentSlots()
-        hostView.interactiveRects = [slots.shelf, slots.clipboard].compactMap { $0 }
+        hostView.interactiveRects = [slots.shelf, slots.clipboard, slots.prompt]
+            .compactMap { $0 }
 
-        let shouldShow = slots.shelf != nil || slots.clipboard != nil
+        let shouldShow = slots.shelf != nil || slots.clipboard != nil || slots.prompt != nil
         if shouldShow {
             if !panel.isVisible {
                 position()
@@ -170,12 +185,13 @@ final class CornerDockController: NSObject {
 
     /// Sizes come from each surface's own phase; the placement comes from the shared
     /// layout, so what is drawn and what is hit-tested cannot drift apart.
-    private func currentSlots() -> (shelf: CGRect?, clipboard: CGRect?) {
+    private func currentSlots() -> (shelf: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
         CornerDockLayout.slots(
             shelf: shelf.phase.isVisible
                 ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
             clipboard: clipboardModel.phase.isVisible
-                ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil)
+                ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
+            prompt: prompt.phase.isVisible ? AppChatPromptMetrics.size(for: prompt.phase) : nil)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -184,7 +200,8 @@ final class CornerDockController: NSObject {
         return CornerDockLayout.slots(
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
-                ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil
+                ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
+            prompt: prompt.phase.isVisible ? AppChatPromptMetrics.size(for: prompt.phase) : nil
         ).shelf
     }
 
@@ -250,8 +267,13 @@ final class CornerDockController: NSObject {
         let slots = currentSlots()
         let overShelf = contains(slots.shelf) || contains(dormantShelfRect())
         let overClipboard = contains(slots.clipboard)
+        let overPrompt = contains(slots.prompt)
 
-        if overShelf {
+        if overPrompt {
+            shelf.hoverEnded()
+            clipboardModel.hoverEnded()
+            prompt.hoverBegan()
+        } else if overShelf {
             clipboardModel.hoverEnded()
             shelf.hoverBegan()
         } else if overClipboard {
@@ -270,6 +292,7 @@ struct CornerDockSurface: View {
     @ObservedObject private var clipboardModel = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
+    @ObservedObject private var prompt = CornerDockController.shared.prompt
 
     var body: some View {
         VStack(alignment: .trailing, spacing: CornerDockLayout.gap) {
@@ -278,6 +301,9 @@ struct CornerDockSurface: View {
             }
             if clipboardModel.phase.isVisible {
                 ClipboardDockPill(model: clipboardModel)
+            }
+            if prompt.phase.isVisible {
+                AppChatPromptPill(model: prompt)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -288,5 +314,7 @@ struct CornerDockSurface: View {
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84),
             value: clipboardModel.phase.isVisible)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
     }
 }

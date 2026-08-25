@@ -53,6 +53,21 @@ struct HotkeysSettingsPage: View {
                         }
                         Divider()
                         captureHotkeyRow(
+                            icon: "bubble.left.and.bubble.right.fill", color: .pink,
+                            title: "App Chat",
+                            subtitle: "Ask the frontmost app something from the corner,"
+                                + " without leaving it",
+                            display: settings.appChatHotkeyDisplayString,
+                            clear: {
+                                settings.appChatHotkeyKeyCode = 0
+                                settings.appChatHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.appChatHotkeyKeyCode = $0
+                                settings.appChatHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "note.text", color: .indigo,
                             title: "Quick Note",
                             subtitle: "Open a floating pinned note anywhere",
