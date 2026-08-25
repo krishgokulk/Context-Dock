@@ -875,8 +875,12 @@ class AppleAppsAPI {
         return createNote(title: noteTitle, body: body, folder: folder)
     }
 
-    func composeMail(subject: String, body: String) -> Bool {
-        var components = URLComponents(string: "mailto:")!
+    /// Opens a composer with the message filled in. Deliberately built on `mailto:` rather
+    /// than AppleScript: a mailto URL has no send verb, so this path *cannot* send, whatever
+    /// a model asks for. The user presses Send, or nothing is sent.
+    func composeMail(to recipient: String = "", subject: String, body: String) -> Bool {
+        let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        var components = URLComponents(string: "mailto:\(trimmedRecipient)")!
         var queryItems: [URLQueryItem] = []
         if !subject.isEmpty {
             queryItems.append(URLQueryItem(name: "subject", value: subject))
@@ -941,6 +945,37 @@ class AppleAppsAPI {
             }
         }
         return emails
+    }
+
+    /// The message the user currently has selected, or nil when Mail is not running, no
+    /// viewer is open, or nothing is selected. Never launches Mail to read — the same rule
+    /// getRecentEmails follows.
+    func getSelectedEmail() -> [String: Any]? {
+        guard Self.isRunning("com.apple.mail") else { return nil }
+        let script = """
+            tell application "Mail"
+                if (count of message viewers) is 0 then return ""
+                set viewerRef to item 1 of message viewers
+                set selectedMsgs to selected messages of viewerRef
+                if (count of selectedMsgs) is 0 then return ""
+                set m to item 1 of selectedMsgs
+                set msgBody to ""
+                try
+                    set msgBody to content of m
+                end try
+                return (subject of m) & "|||" & (sender of m) & "|||" & \
+                    ((date received of m) as text) & "|||" & msgBody
+            end tell
+            """
+        guard let result = runAppleScript(script), !result.isEmpty else { return nil }
+        let parts = result.components(separatedBy: "|||")
+        guard parts.count >= 3 else { return nil }
+        return [
+            "subject": parts[0],
+            "sender": parts[1],
+            "date": parts[2],
+            "body": parts.count >= 4 ? parts[3] : "",
+        ]
     }
 
     // MARK: - Helper
