@@ -20,18 +20,12 @@ enum AppChatPromptMetrics {
     /// Just the app's icon.
     static let miniSize = CGSize(width: 52, height: 44)
 
-    /// The conversation view. Fixed rather than content-sized: the shell never resizes,
-    /// so the transcript scrolls inside a known height.
-    static let chatHeight: CGFloat = 320
-
     static func size(for phase: AppChatPromptPhase, suggestions: Int) -> CGSize {
         switch phase {
         case .hidden, .mini:
             return miniSize
         case .prompt:
             return CGSize(width: width, height: inputHeight)
-        case .chat:
-            return CGSize(width: width, height: chatHeight)
         case .suggesting:
             let rows = CGFloat(min(suggestions, 5))
             return CGSize(
@@ -87,10 +81,6 @@ struct AppChatPromptPill: View {
             if model.phase == .suggesting {
                 Divider().opacity(0.18)
                 suggestionList
-            }
-            if model.phase == .chat {
-                Divider().opacity(0.18)
-                transcript
             }
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
@@ -194,16 +184,12 @@ struct AppChatPromptPill: View {
             .help("Add context")
 
             Button {
-                model.toggleExpanded()
+                model.openInChat()
             } label: {
-                controlGlyph(
-                    model.phase == .chat
-                        ? "arrow.down.right.and.arrow.up.left"
-                        : "arrow.up.left.and.arrow.down.right",
-                    tinted: model.phase == .chat)
+                controlGlyph("bubble.left.and.text.bubble.right")
             }
             .buttonStyle(.plain)
-            .help(model.phase == .chat ? "Collapse" : "Expand")
+            .help("Open in Context Dock chat")
 
             Button {
                 model.togglePin()
@@ -273,34 +259,6 @@ struct AppChatPromptPill: View {
             .padding(.horizontal, 14)
         }
         .frame(height: 34)
-    }
-
-    // MARK: - Conversation
-
-    private var transcript: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(model.messages) { message in
-                    HStack {
-                        if message.isFromUser { Spacer(minLength: 40) }
-                        Text(message.text)
-                            .font(.system(size: 12.5))
-                            .foregroundStyle(message.isFromUser ? .primary : .secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(
-                                message.isFromUser
-                                    ? Color.accentColor.opacity(0.22)
-                                    : Color.primary.opacity(0.06),
-                                in: RoundedRectangle(cornerRadius: 12))
-                        if !message.isFromUser { Spacer(minLength: 40) }
-                    }
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Suggestions

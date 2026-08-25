@@ -1105,6 +1105,10 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .commandKeyToggleContextScope)) { _ in
                 handleCommandKeyContextScopeToggle()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptSubmitted)) {
+                note in
+                handleAppChatPromptSubmission(note)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 ClipboardPanelController.shared.show()
             }
@@ -2029,6 +2033,34 @@ extension LauncherView {
             return
         }
         currentContext = .filesSelected(urls)
+    }
+
+    /// The corner prompt is an entry point, not a chat: it hands the question to the
+    /// app-scoped chat that already exists, down the same path the "Chat with <App>" pill
+    /// uses, so there is one conversation rather than two.
+    func handleAppChatPromptSubmission(_ note: Notification) {
+        guard let info = note.userInfo,
+            let bundleId = info["bundleId"] as? String,
+            let appName = info["appName"] as? String
+        else { return }
+        let query = (info["query"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        NotificationCenter.default.post(name: .activateContextDock, object: nil)
+        l2.chatDraftAppName = appName
+        l2.chatDraftBundleId = bundleId
+        l2.chatArmed = true
+        l2.chatDismissed = false
+
+        guard !query.isEmpty else {
+            requestWindowSizeUpdate(reason: .panelChanged, animated: true)
+            return
+        }
+        // Let the dock finish opening before the question lands in it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            dismissMediaLayer()
+            handleL2QuerySkippingMenuRouter(query)
+        }
     }
 
     func checkClipboardForGlobalContext() {

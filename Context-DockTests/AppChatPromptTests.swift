@@ -165,17 +165,25 @@ struct AppChatPromptTests {
         #expect(model.phase == .hidden)
     }
 
-    /// Submitting still sends nothing — but it keeps the question and says so, rather
-    /// than swallowing the Enter key and looking broken.
-    @Test func submittingReportsThatNothingWasSent() {
+    /// The corner is an entry point, not a chat. Sending hands the question to Context
+    /// Dock's app-scoped chat and the corner gets out of the way.
+    @Test func sendingHandsTheQuestionOverAndClosesTheCorner() async {
         let model = AppChatPromptModel()
-        model.summon(app: "Safari")
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
         model.query = "what changed here"
 
-        let sent = model.submit()
+        let handed = await withCheckedContinuation { continuation in
+            let token = NotificationCenter.default.addObserver(
+                forName: .appChatPromptSubmitted, object: nil, queue: .main
+            ) { note in
+                continuation.resume(returning: note.userInfo?["query"] as? String ?? "")
+            }
+            _ = model.submit()
+            NotificationCenter.default.removeObserver(token)
+        }
 
-        #expect(!sent)
-        #expect(model.messages.first?.text == "what changed here")
+        #expect(handed == "what changed here")
+        #expect(model.phase == .hidden)
     }
 }
 
@@ -219,28 +227,13 @@ struct AppChatControlsTests {
         #expect(model.isStandDownArmed)
     }
 
-    @Test func expandingOpensTheChatSurfaceAndCollapsingReturns() {
-        let model = opened()
-
-        model.toggleExpanded()
-        #expect(model.phase == .chat)
-
-        model.toggleExpanded()
-        #expect(model.phase != .chat)
-    }
-
-    /// Enter used to do nothing at all, which reads as broken rather than unfinished.
-    @Test func sendingShowsTheQuestionAndSaysTheRouteIsMissing() {
+    /// Sending is a real hand-off now, so it reports true — unlike before, when nothing
+    /// was sent and the prompt had to say so.
+    @Test func sendingReportsThatItWentSomewhere() {
         let model = opened()
         model.query = "why is this slow"
 
-        let sent = model.submit()
-
-        #expect(!sent)
-        #expect(model.phase == .chat)
-        #expect(model.messages.contains { $0.isFromUser && $0.text == "why is this slow" })
-        #expect(model.messages.contains { !$0.isFromUser })
-        #expect(model.query.isEmpty)
+        #expect(model.submit())
     }
 
     @Test func sendingAnEmptyQuestionDoesNothing() {
@@ -249,20 +242,16 @@ struct AppChatControlsTests {
         let sent = model.submit()
 
         #expect(!sent)
-        #expect(model.messages.isEmpty)
-        #expect(model.phase != .chat)
+        #expect(model.phase != .hidden)
     }
 
-    /// A sent question is a conversation the user is in: it must not time out underneath
-    /// them the way an untouched prompt does.
-    @Test func aConversationDoesNotStandDownToNothing() {
+    /// The middle control opens the conversation without asking anything yet.
+    @Test func openingInChatClosesTheCorner() {
         let model = opened()
-        model.query = "a question"
-        _ = model.submit()
 
-        model.standDown()
+        model.openInChat()
 
-        #expect(model.phase == .mini)
+        #expect(model.phase == .hidden)
     }
 
     @Test func attachmentsAreListedAndRemovable() {
@@ -286,16 +275,14 @@ struct AppChatControlsTests {
         #expect(model.attachments.count == 1)
     }
 
-    @Test func dismissingDropsTheAttachmentsAndTheConversation() {
+    @Test func dismissingDropsTheAttachmentsAndThePin() {
         let model = opened()
         model.attach(URL(fileURLWithPath: "/tmp/shot.png"))
-        model.query = "q"
-        _ = model.submit()
+        model.togglePin()
 
         model.dismiss()
 
         #expect(model.attachments.isEmpty)
-        #expect(model.messages.isEmpty)
         #expect(!model.isPinned)
     }
 }

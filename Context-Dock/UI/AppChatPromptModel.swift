@@ -4,20 +4,13 @@
 // Ask the frontmost app something without leaving it: a hotkey puts an input field in the
 // corner shell, alongside the clipboard and the shelf.
 //
-// The surface is built; what it does with the question is not. `submit()` deliberately
-// reports that it sent nothing rather than pretending, so nothing downstream can mistake
-// this for a working route.
+// It is an entry point, not a chat. Context Dock already has app-scoped chat — the same
+// conversation, with real answers and step traces — so a question typed here is handed to
+// that, and the corner gets out of the way. Building a second transcript here would have
+// been two surfaces doing one job.
 
 import Combine
 import Foundation
-
-/// One turn in the conversation. Nothing answers yet, so an assistant message is only
-/// ever the app saying what it cannot do.
-struct AppChatMessage: Identifiable, Equatable {
-    let id = UUID()
-    let text: String
-    let isFromUser: Bool
-}
 
 /// One thing the frontmost app can do, offered before the user has typed anything.
 struct AppChatSuggestion: Identifiable, Equatable {
@@ -41,12 +34,9 @@ enum AppChatPromptPhase: Equatable {
     case prompt
     /// The input plus what this app can do, which is how it opens.
     case suggesting
-    /// The conversation, opened by sending or by the expand control.
-    case chat
-
     var isVisible: Bool { self != .hidden }
     /// Every one of these draws the same input row; only what sits under it differs.
-    var showsInput: Bool { self == .prompt || self == .suggesting || self == .chat }
+    var showsInput: Bool { self == .prompt || self == .suggesting }
 }
 
 @MainActor
@@ -68,8 +58,6 @@ final class AppChatPromptModel: ObservableObject {
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
-    /// The conversation so far.
-    @Published private(set) var messages: [AppChatMessage] = []
     /// Files the question should carry.
     @Published private(set) var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
@@ -116,9 +104,11 @@ final class AppChatPromptModel: ObservableObject {
         }
     }
 
-    func toggleExpanded() {
-        set(phase == .chat ? restingInputPhase : .chat)
-        touch()
+    /// Hand the app over to Context Dock's chat without a question — "open the
+    /// conversation", rather than "ask this now".
+    func openInChat() {
+        Self.handOff(app: appName, bundleID: appBundleID, query: "", attachments: attachments)
+        dismiss()
     }
 
     func attach(_ url: URL) {
@@ -137,10 +127,7 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         guard phase.isVisible else { return }
-        // A conversation stays a conversation; only the pre-send states swap.
-        if phase != .chat {
-            set(restingInputPhase)
-        }
+        set(restingInputPhase)
         touch()
     }
 
@@ -152,9 +139,8 @@ final class AppChatPromptModel: ObservableObject {
 
     func hoverBegan() {
         guard phase.isVisible else { return }
-        // Coming back to a conversation reopens the conversation, not a blank prompt.
         if phase == .mini {
-            set(messages.isEmpty ? restingInputPhase : .chat)
+            set(restingInputPhase)
         }
         touch()
     }
@@ -167,7 +153,7 @@ final class AppChatPromptModel: ObservableObject {
     func standDown() {
         guard !isPinned else { return }
         switch phase {
-        case .prompt, .suggesting, .chat:
+        case .prompt, .suggesting:
             set(.mini)
             arm(after: Self.miniDwell)
         case .mini:
@@ -188,7 +174,6 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         suggestions = []
         capabilitySummary = ""
-        messages = []
         attachments = []
         isPinned = false
         set(.hidden)
@@ -196,24 +181,30 @@ final class AppChatPromptModel: ObservableObject {
 
     // MARK: - Sending
 
-    /// Not connected yet — but doing nothing at all reads as broken rather than
-    /// unfinished, so the question is kept, shown in the conversation, and answered with
-    /// the plain fact that there is nowhere to send it. Still returns false: nothing was
-    /// sent, and no caller should believe otherwise.
+    /// Hands the question to Context Dock's app-scoped chat — the conversation that
+    /// already exists, answers properly, and shows its steps. The corner's job ends here.
     @discardableResult
     func submit() -> Bool {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return false }
-        messages.append(AppChatMessage(text: question, isFromUser: true))
-        messages.append(
-            AppChatMessage(
-                text: "Not connected yet — \(appName.isEmpty ? "this app" : appName) chat has"
-                    + " no route to send this to. Your question is kept here.",
-                isFromUser: false))
-        query = ""
-        set(.chat)
-        touch()
-        return false
+        Self.handOff(
+            app: appName, bundleID: appBundleID, query: question, attachments: attachments)
+        dismiss()
+        return true
+    }
+
+    private static func handOff(
+        app: String, bundleID: String, query: String, attachments: [URL]
+    ) {
+        NotificationCenter.default.post(
+            name: .appChatPromptSubmitted,
+            object: nil,
+            userInfo: [
+                "appName": app,
+                "bundleId": bundleID,
+                "query": query,
+                "attachments": attachments.map(\.path),
+            ])
     }
 
     // MARK: - Timer
@@ -239,4 +230,10 @@ final class AppChatPromptModel: ObservableObject {
         phase = next
         onPhaseChange?(next)
     }
+}
+
+extension Notification.Name {
+    /// Corner prompt → Context Dock's app-scoped chat. Carried by notification because the
+    /// chat's state lives inside LauncherView and is not reachable from a window.
+    static let appChatPromptSubmitted = Notification.Name("appChatPromptSubmitted")
 }
