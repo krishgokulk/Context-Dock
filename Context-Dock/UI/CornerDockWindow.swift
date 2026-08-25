@@ -132,7 +132,7 @@ final class CornerDockController: NSObject {
                 self?.refresh()
                 // The prompt is a text field the user asked for by name, so unlike the
                 // ambient pills it takes focus the moment it appears.
-                if phase == .prompt {
+                if phase.showsInput {
                     self?.armKeyboard()
                 } else if phase == .hidden {
                     self?.disarmKeyboard()
@@ -191,7 +191,11 @@ final class CornerDockController: NSObject {
                 ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            prompt: prompt.phase.isVisible ? AppChatPromptMetrics.size(for: prompt.phase) : nil)
+            prompt: prompt.phase.isVisible ? promptSize : nil)
+    }
+
+    private var promptSize: CGSize {
+        AppChatPromptMetrics.size(for: prompt.phase, suggestions: prompt.suggestions.count)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -201,7 +205,7 @@ final class CornerDockController: NSObject {
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            prompt: prompt.phase.isVisible ? AppChatPromptMetrics.size(for: prompt.phase) : nil
+            prompt: prompt.phase.isVisible ? promptSize : nil
         ).shelf
     }
 

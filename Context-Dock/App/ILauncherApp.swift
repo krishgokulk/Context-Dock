@@ -1825,7 +1825,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CornerDockController.shared.activate()
         CornerDockController.shared.prompt.summon(
             app: target?.localizedName ?? "",
-            bundleID: target?.bundleIdentifier ?? "")
+            bundleID: target?.bundleIdentifier ?? "",
+            suggestions: AppChatSuggestionProvider.suggestions(for: target),
+            summary: AppChatSuggestionProvider.summary(for: target))
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.
