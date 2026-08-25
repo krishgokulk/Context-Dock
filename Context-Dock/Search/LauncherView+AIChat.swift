@@ -1490,7 +1490,8 @@ extension LauncherView {
                                                 offerReminderRowAction(reminder, operation: operation)
                                             },
                                             userAvatarSymbol: providerSymbol,
-                                            assistantAvatarImage: scopedAppIcon
+                                            assistantAvatarImage: scopedAppIcon,
+                                            liveSteps: dockLiveSteps(for: message)
                                         )
                                         .id(message.id)
                                     }
@@ -1522,11 +1523,12 @@ extension LauncherView {
                                     .id("toolChoice")
                                 }
 
-                                if l2.isLoading {
-                                    if !l2.routerTrace.isEmpty {
-                                        LiveAgentStepsView(steps: l2.routerTrace)
-                                    }
-                                    AILoadingView(status: l2.loadingStatus).id("l2loading")
+                                // Only until there is an assistant message to draw them in:
+                                // after that they render above its text instead, so the block
+                                // collapses where it stood rather than jumping.
+                                if l2.isLoading, !dockProgressBelongsToLastMessage {
+                                    LiveAgentProgressView(steps: dockLiveProgressSteps)
+                                        .id("l2loading")
                                 }
                             }
                             .padding(.horizontal, 16)
@@ -1792,7 +1794,8 @@ extension LauncherView {
                                 onRunOnceProposal: { json in runOnceFromProposal(json) },
                                 onReplaceText: selectionScopeReplaceTextAction(for: message),
                                 onEnableApp: { req in enableAppForGeneralChat(req) },
-                                onPickAction: { choice in runPickedActionChoice(choice) }
+                                onPickAction: { choice in runPickedActionChoice(choice) },
+                                liveSteps: generalLiveSteps(for: message)
                             )
                             .id(message.id)
                         }
@@ -1800,11 +1803,8 @@ extension LauncherView {
                             actionProgressCard(progress)
                                 .id("action-progress")
                         }
-                        if aiMode.isLoading {
-                            if !aiMode.routerTrace.isEmpty {
-                                LiveAgentStepsView(steps: aiMode.routerTrace)
-                            }
-                            AILoadingView(status: aiMode.loadingStatus)
+                        if aiMode.isLoading, aiMode.streamingId == nil {
+                            LiveAgentProgressView(steps: generalLiveProgressSteps)
                             .animation(.easeInOut(duration: 0.18), value: aiMode.loadingStatus)
                             .padding(.horizontal, 4)
                             .id("loading")

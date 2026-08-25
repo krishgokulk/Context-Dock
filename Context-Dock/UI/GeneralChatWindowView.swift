@@ -63,6 +63,35 @@ struct GeneralChatWindowView: View {
     @State private var panelDragStart: Double?
     private let bottomPanelHeight: CGFloat = 180
 
+    // MARK: - Live activity placement
+    //
+    // The steps belong to the message being written, not to the bottom of the transcript.
+    // Rendered as a sibling after the list they sat below an answer that was already on
+    // screen, which read as the reasoning arriving after the result.
+
+    private var windowLiveProgressSteps: [String] {
+        guard model.isSending else { return [] }
+        return model.activeProgress.isEmpty
+            ? [model.activeStatus ?? "Working…"] : model.activeProgress
+    }
+
+    /// True once there is an assistant message with content to draw the steps inside. Until
+    /// then the trailing block is correct, because the end of the list is where the answer
+    /// will appear anyway.
+    private var progressBelongsToLastMessage: Bool {
+        guard model.isSending, let last = model.messages.last, last.role == .assistant else {
+            return false
+        }
+        return !last.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func liveSteps(for message: AIChatMessage) -> [String] {
+        guard progressBelongsToLastMessage, message.id == model.messages.last?.id else {
+            return []
+        }
+        return windowLiveProgressSteps
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             if chrome.sidebarVisible {
@@ -764,7 +793,8 @@ struct GeneralChatWindowView: View {
                             AIChatMessageView(
                                 message: message,
                                 onEnableApp: { model.enableApp($0) },
-                                onPickAction: { model.pickRoute($0) })
+                                onPickAction: { model.pickRoute($0) },
+                                liveSteps: liveSteps(for: message))
 
                             // What this answer built, where it built it. The panel lists
                             // everything the thread has ever produced, which is the wrong
@@ -784,13 +814,10 @@ struct GeneralChatWindowView: View {
                         }
                         .id(message.id)
                     }
-                    if model.isSending {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(model.activeStatus ?? "Thinking…")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                        }
+                    // Only until there is an assistant message to draw them in — after that
+                    // they render above its text, so the block collapses where it stood.
+                    if model.isSending, !progressBelongsToLastMessage {
+                        LiveAgentProgressView(steps: windowLiveProgressSteps)
                         .id("thinking")
                     }
                 }

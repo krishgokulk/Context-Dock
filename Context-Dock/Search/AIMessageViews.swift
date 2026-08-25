@@ -757,6 +757,14 @@ struct AIChatMessageView: View {
     /// Both nil (General Chat) → renders exactly as before, no avatars.
     var userAvatarSymbol: String? = nil
     var assistantAvatarImage: NSImage? = nil
+    /// Execution steps for the turn still running into this message.
+    ///
+    /// Live activity used to be a sibling rendered *after* the whole message list, so once an
+    /// answer started streaming it appeared above while the activity stayed pinned below —
+    /// reading as though the reasoning came after the result. It belongs inside the assistant
+    /// turn, above the answer, where it collapses into `routerTraceView` in the same place
+    /// rather than being destroyed and redrawn somewhere else.
+    var liveSteps: [String] = []
     @State private var isTraceExpanded = false
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
@@ -1579,9 +1587,13 @@ struct AIChatMessageView: View {
                 if !message.attachments.isEmpty {
                     attachmentChips
                 }
-                // Completed routing and tool activity stays behind one disclosure. The live
-                // progress surface shows the same work above "Working" while execution runs;
-                // this disclosure remains the durable transcript once the response arrives.
+                // Live activity, in the place the answer is about to occupy.
+                if message.role == .assistant, !liveSteps.isEmpty {
+                    LiveAgentProgressView(steps: liveSteps)
+                }
+                // Completed routing and tool activity stays behind one disclosure — the same
+                // work the live view showed while it ran, in the same position, so finishing
+                // collapses the block instead of moving it.
                 if message.role == .assistant, !completedStepLines.isEmpty {
                     routerTraceView
                 }
