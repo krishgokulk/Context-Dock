@@ -222,10 +222,6 @@ struct PreviewAIComposer: View {
         Task { @MainActor in
             defer { isSending = false }
             do {
-                // What this turn is about, so the tool list can be cut to it — eight tools
-                // on-device, forty otherwise, with the capability lookup always kept so
-                // nothing is unreachable.
-                AgentToolRegistry.shared.prepareTurnBudget(query: question, provider: provider)
                 // The same capability block the chat surfaces get: ranked candidates for
                 // this question, the enabled adapters, MCP tools and local evidence, all
                 // gated by AppAccessPolicy. Without it the preview could shell out but

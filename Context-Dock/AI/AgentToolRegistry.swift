@@ -599,8 +599,11 @@ final class AgentToolRegistry {
     private var turnAllowedToolNames: Set<String>?
 
     /// Told before the turn starts, separately from beginTurn, which the provider loops
-    /// own and call themselves. Two calls rather than one parameter, so the budget can be
-    /// adopted a surface at a time without every loop changing at once.
+    /// own and call themselves.
+    ///
+    /// Called once, by sendWithTools, rather than by each surface: a budget a caller can
+    /// forget to set is a budget that silently stops applying, and the preview did briefly
+    /// set its own alongside this one.
     func prepareTurnBudget(
         query: String, provider: AIProvider, allowedToolNames: Set<String>? = nil
     ) {
