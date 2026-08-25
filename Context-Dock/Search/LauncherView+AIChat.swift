@@ -4363,9 +4363,13 @@ extension LauncherView {
         if dockScope.scopedBundleId == "com.apple.mail" {
             let isMailQuestion = isQuestionStyleMailQuery(rawScopedSearchQuery)
 
+            // Both halves: asking something, and asking about mail. This branch used to fire
+            // on question shape alone, so the Mail scope answered "hi hello?" by demanding an
+            // attached mailbox — a scope refusing to be a chat.
             if frontmost.bundleID == "com.apple.mail",
-                isMailQuestion,
-                !isCurrentMailContextAttached()
+                MailQuestionRouter.needsAttachedMailContext(
+                    query: rawScopedSearchQuery,
+                    isMailContextAttached: isCurrentMailContextAttached())
             {
                 l2.chatMessages.append(AIChatMessage(role: .user, content: query))
                 l2.chatMessages.append(
@@ -5169,7 +5173,8 @@ extension LauncherView {
                 // timeout. A frontmost-app question is exactly what on-device should answer,
                 // so the scope is described compactly instead of dropping to the cloud.
                 let usesOnDeviceModel = provider == .onDevice
-                let sourceDecision = AgentSourceAuthority.decide(query: query)
+                let sourceDecision = AgentSourceAuthority.decide(
+                    query: query, scopeBundleId: scopedBundleId)
                 // What the app is DOING right now — project, branch, changes, running
                 // agents. Without this a scope could only describe its own tool inventory.
                 let workspaceBlock = await self.appWorkspaceContextPrompt(
