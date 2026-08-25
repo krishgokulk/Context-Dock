@@ -40,3 +40,12 @@ graphify-out/
 
 # macOS/Google Drive custom folder-icon artifacts (one of these broke `xcodebuild test`)
 Icon?
+
+# macOS custom-folder-icon markers ("Icon" followed by a carriage return).
+#
+# Zero-byte files whose data lives in a resource fork. The project uses
+# PBXFileSystemSynchronizedRootGroup, so every file in a target's folder is a member
+# automatically — these get swept into the bundle as resources and codesign then rejects
+# it with "resource fork, Finder information, or similar detritus not allowed". 4,645 of
+# them accumulated across the tree and broke both DerivedData trees.
+Icon?
