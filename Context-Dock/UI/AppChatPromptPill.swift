@@ -78,17 +78,20 @@ struct AppChatPromptPill: View {
     /// I ask?", so it reads after the question line, not before it.
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            inputRow
-            if !model.attachments.isEmpty {
-                attachmentRow
-            }
-            if model.phase == .suggesting {
-                Divider().opacity(0.18)
-                suggestionList
-            }
+            // A conversation reads upward from the field you are typing in, so once there
+            // is one the input sits at the bottom and the answers stack above it.
             if model.phase == .chat {
-                Divider().opacity(0.18)
                 transcript
+                Divider().opacity(0.18)
+                if !model.attachments.isEmpty { attachmentRow }
+                inputRow
+            } else {
+                inputRow
+                if !model.attachments.isEmpty { attachmentRow }
+                if model.phase == .suggesting {
+                    Divider().opacity(0.18)
+                    suggestionList
+                }
             }
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
