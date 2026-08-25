@@ -1028,6 +1028,16 @@ struct AIProviderSettingsView: View {
 
                 Divider()
 
+                // Directly under the provider it describes. Usage was only reachable from a
+                // dock scope, which is not where anyone decides which provider to use.
+                ProviderUsagePanel(provider: settings.selectedAIProvider)
+
+                Divider()
+
+                DiagnosticsPanel()
+
+                Divider()
+
                 modelRateCardView
 
                 Divider()
@@ -1058,6 +1068,8 @@ struct AIProviderSettingsView: View {
                                 connectionResultView(result)
                             }
                         }
+                        Text("Diagnostics")
+                            .font(.caption).foregroundStyle(.secondary)
                         HStack {
                             Button("Test Text") { testProviderText() }
                             Button("Test Vision") { testProviderVision() }
@@ -1156,29 +1168,36 @@ struct AIProviderSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        case .claudeCode:
+            ClaudeSubscriptionConfigView()
         case .claudeBridge:
             bridgeConfigView(
-                title: "Claude Pro Bridge",
-                subtitle: "Connect via VibeProxy or any OpenAI-compatible bridge exposing your Claude subscription.",
+                title: "Claude via Local Bridge",
+                subtitle: "Any OpenAI-compatible bridge you run that fronts a Claude subscription.",
                 icon: "arrow.triangle.2.circlepath.circle.fill",
                 iconColor: .purple,
                 endpointBinding: $settings.claudeBridgeEndpoint,
                 modelBinding: $settings.claudeBridgeModelID,
                 defaultEndpoint: "http://localhost:8317/v1",
-                defaultModel: "claude-opus-4-8",
-                vibeProxyNote: "Claude Pro → VibeProxy :8317 → DoraX. Your existing subscription pays."
+                defaultModel: AppSettings.defaultClaudeBridgeModelID,
+                vibeProxyNote: "Runs against whatever local bridge you have started — the "
+                    + "endpoint is found automatically. Replaying a subscription token "
+                    + "through a proxy is outside Anthropic's and OpenAI's consumer terms; "
+                    + "Claude Subscription above uses the sanctioned route instead."
             )
         case .chatGPTBridge:
             bridgeConfigView(
-                title: "ChatGPT Plus Bridge",
-                subtitle: "Connect via VibeProxy or any OpenAI-compatible bridge exposing your ChatGPT subscription.",
+                title: "ChatGPT via Local Bridge",
+                subtitle: "Any OpenAI-compatible bridge you run that fronts a ChatGPT subscription.",
                 icon: "arrow.triangle.2.circlepath.circle",
                 iconColor: .green,
                 endpointBinding: $settings.chatGPTBridgeEndpoint,
                 modelBinding: $settings.chatGPTBridgeModelID,
                 defaultEndpoint: "http://localhost:8317/v1",
-                defaultModel: "gpt-4o",
-                vibeProxyNote: "ChatGPT Plus → VibeProxy :8317 → DoraX. Your existing subscription pays."
+                defaultModel: AppSettings.defaultChatGPTBridgeModelID,
+                vibeProxyNote: "Runs against whatever local bridge you have started — the "
+                    + "endpoint is found automatically. Replaying a subscription token "
+                    + "through a proxy is outside OpenAI's consumer terms."
             )
         case .shortcuts:
             shortcutsConfigView
@@ -1368,7 +1387,9 @@ struct AIProviderSettingsView: View {
         case .kimi: return settings.selectedKimiModel
         case .claudeBridge: return settings.claudeBridgeModelID
         case .chatGPTBridge: return settings.chatGPTBridgeModelID
-        case .onDevice, .shortcuts: return ""
+        // Claude Code bills nothing per token — the subscription already paid. A rate
+        // card for it would invite a number that is not a cost.
+        case .onDevice, .shortcuts, .claudeCode: return ""
         }
     }
 
@@ -4085,185 +4106,199 @@ private struct BridgeConfigView: View {
     let defaultModel: String
     let vibeProxyNote: String
 
-    @State private var testState: TestState = .idle
+    @State private var probe: ProbeState = .idle
     @State private var discoveredModels: [String] = []
+    @State private var showsAdvanced = false
 
-    enum TestState: Equatable {
+    /// Ports a local bridge is commonly published on. Scanned in order rather than typed:
+    /// the endpoint was a free-text field whose default nobody could verify, and both
+    /// bridges shipped pointing at a model their proxy did not serve.
+    private static let knownPorts = [8317, 8318, 3000, 4000, 1337]
+
+    enum ProbeState: Equatable {
         case idle
-        case testing
-        case success(String)
-        case failure(String)
+        case scanning
+        case connected(port: Int, models: Int)
+        case unreachable
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Header
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 26))
-                    .foregroundStyle(iconColor)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                }
+            header
+            statusRow
+
+            if case .connected = probe, !discoveredModels.isEmpty {
+                modelPicker
+            } else if case .unreachable = probe {
+                unreachableHelp
             }
 
-            // Feature callouts
-            VStack(alignment: .leading, spacing: 6) {
-                BridgeFeatureRow(icon: "creditcard.slash.fill", color: .green,
-                                 text: "No extra billing — uses your existing subscription")
-                BridgeFeatureRow(icon: "arrow.left.arrow.right.circle.fill", color: .blue,
-                                 text: vibeProxyNote)
-                BridgeFeatureRow(icon: "app.connected.to.app.below.fill", color: .orange,
-                                 text: "AI's connected tools (GitHub, Notion, Calendar…) flow through")
-            }
-            .padding(12)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-
-            Divider()
-
-            // Endpoint
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Bridge Endpoint")
-                    .font(.subheadline).fontWeight(.medium)
-
-                HStack(spacing: 6) {
-                    Button("VibeProxy :8317") {
-                        endpointBinding.wrappedValue = "http://localhost:8317/v1"
+            DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Endpoint").font(.caption).fontWeight(.medium)
+                        TextField(defaultEndpoint, text: endpointBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
                     }
-                    .buttonStyle(.bordered).controlSize(.small)
-
-                    Button("Port 3000") {
-                        endpointBinding.wrappedValue = "http://localhost:3000/v1"
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Model ID").font(.caption).fontWeight(.medium)
+                        TextField(defaultModel, text: modelBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
                     }
-                    .buttonStyle(.bordered).controlSize(.small)
-
-                    Button("Port 4000") {
-                        endpointBinding.wrappedValue = "http://localhost:4000/v1"
-                    }
-                    .buttonStyle(.bordered).controlSize(.small)
+                    Text(vibeProxyNote)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                TextField(defaultEndpoint, text: endpointBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
+                .padding(.top, 8)
             }
+            .font(.caption)
+        }
+        .task { await scan() }
+    }
 
-            // Model ID
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Model ID")
-                    .font(.subheadline).fontWeight(.medium)
+    // MARK: - Pieces
 
-                HStack {
-                    TextField(defaultModel, text: modelBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 26))
+                .foregroundStyle(iconColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                Task { await scan() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Look for the bridge again")
+            .disabled(probe == .scanning)
+        }
+    }
 
-                    if !discoveredModels.isEmpty {
-                        Menu("Pick") {
-                            ForEach(discoveredModels, id: \.self) { m in
-                                Button(m) { modelBinding.wrappedValue = m }
-                            }
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                    }
-                }
-
-                Text("Model name the bridge exposes. Run Test Connection to discover models.")
+    /// One line that answers the only question this screen is asked: is it working.
+    @ViewBuilder private var statusRow: some View {
+        HStack(spacing: 8) {
+            switch probe {
+            case .idle, .scanning:
+                ProgressView().scaleEffect(0.6)
+                Text("Looking for a local bridge…")
                     .font(.caption).foregroundStyle(.secondary)
+            case .connected(let port, let models):
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("Connected on port \(port) · \(models) model\(models == 1 ? "" : "s")")
+                    .font(.caption)
+            case .unreachable:
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                Text("No bridge running")
+                    .font(.caption)
             }
+            Spacer()
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
 
-            // Test Connection
-            HStack(spacing: 10) {
-                Button {
-                    Task { await testConnection() }
-                } label: {
-                    if case .testing = testState {
-                        HStack(spacing: 6) {
-                            ProgressView().scaleEffect(0.75)
-                            Text("Testing…")
-                        }
-                        .frame(minWidth: 120)
-                    } else {
-                        Label("Test Connection", systemImage: "network")
-                            .frame(minWidth: 120)
-                    }
+    /// The models the bridge actually serves. A picker rather than a text field because a
+    /// typed model name is a guess, and the two bugs this screen shipped with were both a
+    /// guess that the bridge rejected on the first message.
+    private var modelPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Model").font(.subheadline).fontWeight(.medium)
+            Picker("", selection: modelBinding) {
+                ForEach(relevantModels, id: \.self) { model in
+                    Text(model).tag(model)
                 }
-                .buttonStyle(.bordered)
-                .disabled(endpointBinding.wrappedValue.isEmpty || testState == .testing)
+                if !relevantModels.contains(modelBinding.wrappedValue),
+                    !modelBinding.wrappedValue.isEmpty
+                {
+                    Text("\(modelBinding.wrappedValue) (not served)")
+                        .tag(modelBinding.wrappedValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
 
-                switch testState {
-                case .idle: EmptyView()
-                case .testing: EmptyView()
-                case .success(let msg):
-                    Label(msg, systemImage: "checkmark.circle.fill")
-                        .font(.caption).foregroundStyle(.green)
-                case .failure(let msg):
-                    Label(msg, systemImage: "xmark.circle.fill")
-                        .font(.caption).foregroundStyle(.red)
-                }
+            if !relevantModels.contains(modelBinding.wrappedValue) {
+                Label(
+                    "This bridge does not serve that model — pick one above.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption).foregroundStyle(.orange)
             }
         }
     }
 
-    private func testConnection() async {
-        testState = .testing
+    private var unreachableHelp: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Start your bridge, then press refresh.")
+                .font(.caption)
+            Text(vibeProxyNote)
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Models for this bridge's own vendor. One proxy commonly fronts both subscriptions,
+    /// so the full list would offer Claude models inside the ChatGPT panel.
+    private var relevantModels: [String] {
+        let wantsClaude = defaultModel.lowercased().hasPrefix("claude")
+        let matching = discoveredModels.filter {
+            $0.lowercased().hasPrefix("claude") == wantsClaude
+        }
+        return matching.isEmpty ? discoveredModels : matching
+    }
+
+    // MARK: - Probe
+
+    /// Tries the configured endpoint first, then the ports a bridge is usually on. Whatever
+    /// answers becomes the endpoint, so the user never types one.
+    private func scan() async {
+        probe = .scanning
         discoveredModels = []
 
-        let base = endpointBinding.wrappedValue
+        var candidates: [String] = []
+        let configured = endpointBinding.wrappedValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if !configured.isEmpty { candidates.append(configured) }
+        candidates.append(contentsOf: Self.knownPorts.map { "http://localhost:\($0)/v1" })
 
-        // Try GET /models first
-        if let url = URL(string: "\(base)/models") {
-            do {
-                var req = URLRequest(url: url, timeoutInterval: 5)
-                req.httpMethod = "GET"
-                let (data, resp) = try await URLSession.shared.data(for: req)
-                if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
-                    // Parse models if possible
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let modelArray = json["data"] as? [[String: Any]] {
-                        let ids = modelArray.compactMap { $0["id"] as? String }
-                        await MainActor.run {
-                            discoveredModels = ids
-                            if !ids.isEmpty && modelBinding.wrappedValue.isEmpty {
-                                modelBinding.wrappedValue = ids[0]
-                            }
-                        }
-                    }
-                    await MainActor.run {
-                        testState = .success(discoveredModels.isEmpty ? "Bridge reachable" : "\(discoveredModels.count) model(s) found")
-                    }
-                    return
-                }
-            } catch { }
+        for endpoint in candidates {
+            guard let models = await Self.models(at: endpoint), !models.isEmpty else {
+                continue
+            }
+            endpointBinding.wrappedValue = endpoint
+            discoveredModels = models
+            // Only correct the model when the saved one is not on offer: a working choice
+            // is never overwritten just because a scan happened.
+            if !models.contains(modelBinding.wrappedValue) {
+                modelBinding.wrappedValue = relevantModels.first ?? models[0]
+            }
+            let port = URL(string: endpoint)?.port ?? 0
+            probe = .connected(port: port, models: relevantModels.count)
+            return
         }
+        probe = .unreachable
+    }
 
-        // Fallback: probe with a minimal chat completion
-        if let url = URL(string: "\(base)/chat/completions") {
-            do {
-                var req = URLRequest(url: url, timeoutInterval: 5)
-                req.httpMethod = "POST"
-                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                let body: [String: Any] = [
-                    "model": modelBinding.wrappedValue.isEmpty ? "default" : modelBinding.wrappedValue,
-                    "messages": [["role": "user", "content": "ping"]],
-                    "max_tokens": 1
-                ]
-                req.httpBody = try JSONSerialization.data(withJSONObject: body)
-                let (_, resp) = try await URLSession.shared.data(for: req)
-                if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
-                    await MainActor.run { testState = .success("Bridge reachable") }
-                    return
-                }
-            } catch { }
-        }
-
-        await MainActor.run {
-            testState = .failure("Not reachable — is VibeProxy running?")
-        }
+    private static func models(at endpoint: String) async -> [String]? {
+        guard let url = URL(string: "\(endpoint)/models") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 3)
+        request.httpMethod = "GET"
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let entries = json["data"] as? [[String: Any]]
+        else { return nil }
+        return entries.compactMap { $0["id"] as? String }
     }
 }
 
@@ -4363,6 +4398,7 @@ struct AIProviderRow: View {
         case .googleGemini: return .indigo
         case .openAI:       return .teal
         case .anthropic:    return .orange
+        case .claudeCode:   return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .teal
         case .ollama:       return .green
