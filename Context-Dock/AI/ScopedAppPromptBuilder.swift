@@ -383,14 +383,29 @@ struct ScopeInventory {
             bundleIdentifier: bundleId, appName: appName, query: "", maxResults: 60)
         let leaves = menuItems.filter { $0.isLeaf && !$0.path.isEmpty }
         if !leaves.isEmpty {
+            // Grouped by the menu they live in, a few from each, rather than the first
+            // twenty of one flat list. That list was ordered by when each item was last
+            // seen, and a menu is only read once it has been opened — so History, whose
+            // items are captured on the visit that opens it, sat behind twenty
+            // freshly-scanned rows and looked to the user like an entire menu DoraX could
+            // not see. Every menu is represented now, and none can be crowded out by a
+            // sibling that happens to be larger or more recently read.
+            var byMenu: [(menu: String, paths: [String])] = []
+            var indexByMenu: [String: Int] = [:]
             var seen = Set<String>()
-            var paths: [String] = []
             for item in leaves {
                 let path = item.path.joined(separator: " ▸ ")
                 guard seen.insert(path.lowercased()).inserted else { continue }
-                paths.append(path)
-                if paths.count >= 20 { break }
+                let menu = item.path.first ?? ""
+                if let index = indexByMenu[menu] {
+                    guard byMenu[index].paths.count < 6 else { continue }
+                    byMenu[index].paths.append(path)
+                } else {
+                    indexByMenu[menu] = byMenu.count
+                    byMenu.append((menu: menu, paths: [path]))
+                }
             }
+            let paths = Array(byMenu.flatMap(\.paths).prefix(40))
             groups.append(
                 Group(title: "Menu commands", symbol: "filemenu.and.selection", items: paths))
         }
