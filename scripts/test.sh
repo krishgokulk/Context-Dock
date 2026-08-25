@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Runs the test suite against the same DerivedData every other script uses.
+# Runs the test suite in its own DerivedData tree.
+#
+# Never point this at the runnable app's `.build/XcodeDerivedData`. `xcodebuild test`
+# embeds Context-DockTests.xctest into the already-signed Debug app after its normal
+# signing phase. Reusing the run tree therefore leaves the app signature invalid and
+# macOS revokes privacy grants such as Full Disk Access. Test products must remain
+# physically isolated from the app launched by dev-run.sh.
 #
 # This project believed for a long time that it could not have automated tests: the runner
 # always died with "the test runner exited with code 0 before establishing connection". The
@@ -15,7 +21,8 @@ set -euo pipefail
 # suite nobody runs.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DERIVED_DATA_DIR="$ROOT_DIR/.build/XcodeDerivedData"
+DERIVED_DATA_DIR="$ROOT_DIR/.build/XcodeTestDerivedData"
+mkdir -p "$DERIVED_DATA_DIR"
 
 # Same Finder-detritus self-heal as build-debug.sh; see that script for why.
 find "$ROOT_DIR/Context-Dock" "$ROOT_DIR/Context-DockExtension" "$ROOT_DIR/Base.lproj" \
