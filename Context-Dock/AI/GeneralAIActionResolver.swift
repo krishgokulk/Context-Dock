@@ -794,6 +794,10 @@ final class GeneralAIActionResolver {
             // separate tests. finder.trash is still reachable through delete, remove and
             // empty, and "move to trash" through move.
             "organize", "organise", "copy", "tidy",
+            // messages.compose and mail.createDraft. Neither can send — both open a window
+            // for the person to confirm — but asking for one is still a request to act, and
+            // a request that reads as a question opens nothing at all.
+            "compose", "draft",
         ]
         let words = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
