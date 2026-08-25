@@ -86,3 +86,64 @@ struct AppBundleLinkEvalTests {
         #expect(links.allSatisfy { !$0.lowercased().contains("schemas") })
     }
 }
+
+struct AppDocumentationCrawlEvalTests {
+
+    private let page = """
+        # Tutorini
+        [Features](/features) [Docs](/docs) [Pricing](/pricing) [Privacy](/privacy)
+        [Twitter](https://twitter.com/tutorini) [Deep](/docs/v2/api/internals/threading)
+        [Same page](#features) [App Store](https://apps.apple.com/app/id123)
+        """
+
+    @Test func onlyTheAppsOwnPagesAreFollowed() {
+        // A homepage links to its App Store listing, its Twitter and its payment processor.
+        // Following those turns "read this app's docs" into crawling the open web.
+        let links = AppDocumentationCrawl.documentationLinks(
+            in: page, from: "https://tutorini.app/")
+        #expect(links.allSatisfy { $0.contains("tutorini.app") })
+        #expect(links.allSatisfy { !$0.contains("twitter.com") })
+        #expect(links.allSatisfy { !$0.contains("apps.apple.com") })
+    }
+
+    @Test func documentationIsFollowedAndBoilerplateIsNot() {
+        let links = AppDocumentationCrawl.documentationLinks(
+            in: page, from: "https://tutorini.app/")
+        #expect(links.contains { $0.hasSuffix("/features") })
+        #expect(links.contains { $0.hasSuffix("/docs") })
+        #expect(links.allSatisfy { !$0.contains("/pricing") })
+        #expect(links.allSatisfy { !$0.contains("/privacy") })
+    }
+
+    @Test func theTopOfAManualIsPreferredToItsCorners() {
+        // /docs describes the product; /docs/v2/api/internals/threading describes a detail
+        // nobody asked about, and the budget only stretches to a few pages.
+        let links = AppDocumentationCrawl.documentationLinks(
+            in: page, from: "https://tutorini.app/")
+        let docs = links.firstIndex { $0.hasSuffix("/docs") }
+        let deep = links.firstIndex { $0.contains("internals") }
+        if let docs, let deep { #expect(docs < deep) }
+    }
+
+    @Test func anAnchorOnTheSamePageIsNotASecondPage() {
+        let links = AppDocumentationCrawl.documentationLinks(
+            in: page, from: "https://tutorini.app/")
+        #expect(links.allSatisfy { !$0.contains("#") })
+    }
+
+    @Test func askingWhatAnAppDoesCountsAsAProductQuestion() {
+        // This is the question that kept being answered with a menu list.
+        for query in [
+            "what does Tutorini do", "what can Tutorini do", "what is this app",
+            "tell me about Pearcleaner", "can it clean caches",
+        ] {
+            #expect(AppReferenceIndex.describesTheProduct(query), "\(query)")
+        }
+    }
+
+    @Test func anActionIsNotAProductQuestion() {
+        // "minimize this window" must not trigger a documentation fetch.
+        #expect(!AppReferenceIndex.describesTheProduct("minimize this window"))
+        #expect(!AppReferenceIndex.describesTheProduct("open my downloads folder"))
+    }
+}

@@ -18,7 +18,8 @@ final class TerminalCommandExecutor {
         _ command: String,
         purpose: String,
         modelRequiresApproval: Bool = false,
-        consoleScope: GeneralChatScope? = nil
+        consoleScope: GeneralChatScope? = nil,
+        approvalOrigin: TerminalAIBridge.ApprovalOrigin? = nil
     ) async -> (success: Bool, output: String, exitCode: Int32) {
         let rowID = consoleScope.map {
             ChatConsoleLog.shared.begin(.command, title: command, scope: $0)
@@ -28,7 +29,8 @@ final class TerminalCommandExecutor {
         // know where that thread's work belongs.
         var result = await bridge.processAICommand(
             command, purpose: purpose, modelRequiresApproval: modelRequiresApproval,
-            workingDirectory: ChatWorkingDirectory.resolve(for: consoleScope))
+            workingDirectory: ChatWorkingDirectory.resolve(for: consoleScope),
+            approvalOrigin: approvalOrigin)
         // A command the user stopped mid-flight reports what it managed and says it was
         // stopped. Silently returning partial output as though the command had finished is
         // how a half-completed move gets summarised as a completed one.

@@ -44,8 +44,12 @@ enum ScopedTurnRunner {
         var appName: String
         /// Set for a `cli://` scope: the one executable this chat may run.
         var cliTool: String?
+        /// Explicit ownership prevents an async approval from jumping to another surface.
+        var approvalOrigin: TerminalAIBridge.ApprovalOrigin
         /// What the model is answering about, for the provider's own context builder.
         var userContext: UserContext
+        /// Interpreted before optional readers run; constrains sources and provider tools.
+        var taskPlan: FrontmostAppTaskPlan
     }
 
     static func run(
@@ -67,20 +71,17 @@ enum ScopedTurnRunner {
                 scope: scope.chatScope,
                 bundleId: scope.bundleId,
                 appName: scope.appName,
-                cliTool: scope.cliTool),
+                cliTool: scope.cliTool,
+                approvalOrigin: scope.approvalOrigin),
             onStatus: onStatus)
         let executor = executorBuilder()
 
         // How many rounds this request is worth. A one-line question does not need nine tool
         // iterations, and a chained request cut off at five reports half a job as a finished
         // one.
-        let complexity = TaskComplexityRouter.route(query)
+        let complexity = scope.taskPlan.complexity
         log.notice("turn \(complexity.rawValue, privacy: .public) scope=\(scope.chatScope.storageKey, privacy: .public)")
-        onStatus?("Understanding your request…")
-        onStatus?(
-            scope.cliTool.map { "Working out the right \($0) command…" }
-                ?? (complexity == .direct
-                    ? "Answering…" : "Choosing the best available capability…"))
+        scope.taskPlan.initialProgress.forEach { onStatus?($0) }
 
         // The prompt goes in the system slot and the question goes in the message slot.
         // The dock used to send the whole assembled prompt in *both*, which paid for every
@@ -115,11 +116,12 @@ enum ScopedTurnRunner {
                 conversationHistory: history,
                 commandExecutor: executor,
                 maxIterations: complexity.maxToolIterations,
-                additionalSystemPrompt: [systemPrompt, complexity.instruction]
+                additionalSystemPrompt: [scope.taskPlan.promptRule, systemPrompt, complexity.instruction]
                     .filter { !$0.isEmpty }.joined(separator: "\n\n"),
                 imageAttachments: imageAttachments,
                 chatScope: scope.chatScope,
                 grantedApps: grantedApps,
+                allowedToolNames: scope.taskPlan.allowedToolNames,
                 onStream: onStream,
                 onStatus: onStatus
             )
@@ -147,6 +149,7 @@ enum ScopedTurnRunner {
                 maxIterations: complexity.maxToolIterations,
                 additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
                 chatScope: scope.chatScope, grantedApps: grantedApps,
+                allowedToolNames: scope.taskPlan.allowedToolNames,
                 onStream: onStream)
             {
                 // Kept only if the second look actually did something. A retry that also
@@ -174,7 +177,8 @@ enum ScopedTurnRunner {
                 context: scope.userContext, provider: provider, apiKey: apiKey,
                 conversationHistory: history, commandExecutor: executor,
                 additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-                chatScope: scope.chatScope)
+                chatScope: scope.chatScope,
+                allowedToolNames: scope.taskPlan.allowedToolNames)
             {
                 text = corrected
                 executed += extra
@@ -190,7 +194,8 @@ enum ScopedTurnRunner {
                 context: scope.userContext, provider: provider, apiKey: apiKey,
                 conversationHistory: history, commandExecutor: executor,
                 additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-                chatScope: scope.chatScope)
+                chatScope: scope.chatScope,
+                allowedToolNames: scope.taskPlan.allowedToolNames)
             {
                 text = verified
                 executed += extra

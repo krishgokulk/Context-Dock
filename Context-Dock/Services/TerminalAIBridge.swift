@@ -81,7 +81,17 @@ class TerminalAIBridge: ObservableObject {
     /// requested in the chat window put its "Run command?" card into whatever dock chat
     /// happened to be open — the user watched Finder's conversation fill up with Safari
     /// commands it had never asked for.
-    enum ApprovalOrigin { case dock, window, preview }
+    enum ApprovalOrigin: Equatable { case dock, window, preview }
+
+    static func resolveApprovalOrigin(
+        explicit: ApprovalOrigin?,
+        previewIsKey: Bool,
+        generalChatIsKey: Bool
+    ) -> ApprovalOrigin {
+        if let explicit { return explicit }
+        if previewIsKey { return .preview }
+        return generalChatIsKey ? .window : .dock
+    }
 
     struct PendingCommand: Identifiable {
         let id = UUID()
@@ -143,7 +153,8 @@ class TerminalAIBridge: ObservableObject {
         _ command: String,
         purpose: String,
         modelRequiresApproval: Bool = false,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        approvalOrigin: ApprovalOrigin? = nil
     ) async -> (success: Bool, output: String, exitCode: Int32) {
         // AI placeholder tokens (CURRENT_VIDEO_URL, <url>, PASTE_LINK_HERE…) must never
         // reach the shell. URL-shaped placeholders are substituted with the live page
@@ -216,7 +227,8 @@ class TerminalAIBridge: ObservableObject {
         // bare approval prompt, and it tells the user something true about the command.
         let approvalPurpose = unattendedRejection.map { "\(purpose) — \($0)" } ?? purpose
         let result = await requestApproval(
-            command: command, purpose: approvalPurpose, classification: classification)
+            command: command, purpose: approvalPurpose, classification: classification,
+            origin: approvalOrigin)
 
         switch result {
         case .approved(let approvedCommand):
@@ -235,7 +247,8 @@ class TerminalAIBridge: ObservableObject {
     private func requestApproval(
         command: String,
         purpose: String,
-        classification: TerminalCommandClassifier.CommandClassification
+        classification: TerminalCommandClassifier.CommandClassification,
+        origin explicitOrigin: ApprovalOrigin?
     ) async -> CommandResult {
         await withCheckedContinuation { continuation in
             approvalExpiryTask?.cancel()
@@ -243,13 +256,11 @@ class TerminalAIBridge: ObservableObject {
                 command: command,
                 purpose: purpose,
                 classification: classification,
-                // The surface the user is looking at is the one that asked. Inferred rather
-                // than threaded through every caller: the request arrives from deep inside
-                // an async chain, and the key window is the one fact that is true at the
-                // moment the question needs answering.
-                origin: PreviewController.shared.isKeyWindow
-                    ? .preview
-                    : (GeneralChatWindowController.shared.isKeyWindow ? .window : .dock),
+                origin: Self.resolveApprovalOrigin(
+                    explicit: explicitOrigin,
+                    previewIsKey: PreviewController.shared.isKeyWindow,
+                    generalChatIsKey: GeneralChatWindowController.shared.isKeyWindow
+                ),
                 continuation: continuation
             )
             approvalExpiryTask = Task { [weak self] in

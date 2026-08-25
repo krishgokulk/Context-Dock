@@ -1218,18 +1218,24 @@ class AIProviderService: ObservableObject {
         /// scoped thread that is the thread's app; in General Chat it is whatever the user
         /// granted at the access gate.
         grantedApps: [String: String] = [:],
+        /// A task-planning authority boundary. Nil preserves unscoped General Chat.
+        allowedToolNames: Set<String>? = nil,
         simulateAllTools: Bool = false,
         /// Called as the answer is written, when the provider supports it. Nil keeps the
         /// buffered behaviour — a caller that has nowhere to put a partial answer should not
         /// be handed one.
-        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        /// Observable agent lifecycle events for a live progress checklist.
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
         try AISubscriptionGuard.check(provider)
 
         let resume = TaskRunStore.shared.resolve(message)
         let effectiveMessage = resume.message
-        AgentToolRegistry.shared.prepareTurnBudget(query: effectiveMessage, provider: provider)
+        AgentToolRegistry.shared.prepareTurnBudget(
+            query: effectiveMessage, provider: provider, allowedToolNames: allowedToolNames)
+        onStatus?("Looking through the available app adapters and tools…")
         let guardedCommandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
             command, purpose, approval in
             if let cached = TaskRunStore.shared.cachedSuccessfulCommand(command, from: resume.source) {
@@ -1292,7 +1298,8 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .anthropic:
@@ -1313,7 +1320,8 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .googleGemini:
@@ -1331,7 +1339,8 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .ollama:
@@ -1351,7 +1360,8 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OllamaToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .openAICompatible:
@@ -1375,7 +1385,8 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .kimi:
@@ -1401,7 +1412,8 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream)
+                onStream: onStream,
+                onStatus: onStatus)
 
         case .claudeBridge:
             let settings = AppSettings.shared
@@ -1426,7 +1438,8 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .chatGPTBridge:
@@ -1452,7 +1465,8 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         default:

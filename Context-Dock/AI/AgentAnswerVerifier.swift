@@ -173,17 +173,26 @@ enum AgentAnswerVerifier {
         )
     }
 
-    /// Narrow deterministic contract for requests shaped as "Run X, then/but verify Y".
+    /// Narrow deterministic contract for requests shaped as "Run X, then report/verify Y".
     /// This is intentionally not a general NL-to-shell parser; it only prevents the agent
     /// from skipping an exact command the user explicitly supplied.
     static func explicitlyRequestedCommand(in query: String) -> String? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.lowercased().hasPrefix("run "),
-              trimmed.range(of: "verify", options: .caseInsensitive) != nil else {
+        let lowercased = trimmed.lowercased()
+        let isExplicitReadOnlyCommand = lowercased.hasPrefix("run the read-only command ")
+        let isExecutionAndVerificationContract = lowercased.hasPrefix("run ")
+            && trimmed.range(of: "verify", options: .caseInsensitive) != nil
+        guard isExplicitReadOnlyCommand || isExecutionAndVerificationContract else {
             return nil
         }
-        let afterRun = String(trimmed.dropFirst(4))
-        let separators = [", but verify", ", then verify", " and verify", "; verify"]
+        var afterRun = String(trimmed.dropFirst(4))
+        if afterRun.lowercased().hasPrefix("the read-only command ") {
+            afterRun = String(afterRun.dropFirst("the read-only command ".count))
+        }
+        let separators = [
+            ", but verify", ", then verify", " and verify", "; verify",
+            ", then report", "; then report", ", and report", "; report",
+        ]
         let boundary = separators.compactMap {
             afterRun.range(of: $0, options: .caseInsensitive)?.lowerBound
         }.min()
@@ -252,7 +261,16 @@ enum AgentAnswerVerifier {
               )
         else {
             let status = commandSucceeded ? "succeeded" : "failed"
-            return ("The requested command `\(command)` \(status).", additions)
+            let requestedLines = requestedTrailingLineCount(in: query)
+            let reportedOutput: String
+            if let requestedLines, requestedLines > 0 {
+                let lines = commandOutput.split(separator: "\n", omittingEmptySubsequences: true)
+                reportedOutput = lines.suffix(requestedLines).joined(separator: "\n")
+            } else {
+                reportedOutput = commandOutput
+            }
+            let outputSection = reportedOutput.isEmpty ? "" : "\n\nActual output:\n```\n\(reportedOutput)\n```"
+            return ("The requested command `\(command)` \(status).\(outputSection)", additions)
         }
 
         additions.append(AIProviderService.ExecutedCommand(
@@ -267,6 +285,22 @@ enum AgentAnswerVerifier {
             "The command `\(command)` \(commandStatus). Verification \(verificationStatus): \(result.output)",
             additions
         )
+    }
+
+    private static func requestedTrailingLineCount(in query: String) -> Int? {
+        let words: [String: Int] = [
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        ]
+        let pattern = #"(?i)\b(?:final|last)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+lines?\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                in: query, range: NSRange(query.startIndex..., in: query)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: query)
+        else { return nil }
+        let value = String(query[range]).lowercased()
+        return Int(value) ?? words[value]
     }
 
     private static func explicitVerificationPath(in query: String) -> String? {

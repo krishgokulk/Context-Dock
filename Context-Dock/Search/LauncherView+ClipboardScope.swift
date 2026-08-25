@@ -1273,6 +1273,15 @@ extension LauncherView {
         }
     }
 
+    /// Wall-clock time a plan comes back, so "resets in 3h 10m" can be checked against a
+    /// clock rather than trusted.
+    static func quotaClockText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = Calendar.current.isDateInToday(date)
+            ? "HH:mm" : "EEE HH:mm"
+        return formatter.string(from: date)
+    }
+
     /// Live per-provider rate-limit rows (from API response headers). Shows a hint
     /// row until the first API-key request populates real numbers.
     func aiUsageScopeRows() -> [SharedResultRowModel] {
@@ -1304,18 +1313,38 @@ extension LauncherView {
             )
         }
 
-        guard !usage.isEmpty || !tokenRows.isEmpty else {
+        // A spent subscription is the most urgent thing this scope can say, so it leads.
+        // It is also the only quota fact a bridge ever gives up: the plan reports nothing
+        // while it still has room, and states the reset time at the moment it runs out.
+        usageStore.pruneElapsedQuotas()
+        let quotaRows: [SharedResultRowModel] = usageStore.subscriptionQuotas.map { quota in
+            let plan = quota.planType.map { " (\($0))" } ?? ""
+            let seconds = max(0, Int(quota.resetsAt.timeIntervalSinceNow))
+            let wait = seconds < 60
+                ? "under a minute"
+                : (seconds < 3_600
+                    ? "\(seconds / 60) min"
+                    : "\(seconds / 3_600)h \((seconds % 3_600) / 60)m")
+            return SharedResultRowModel(
+                id: "quota-\(quota.id)",
+                title: "\(quota.providerName)\(plan) — limit reached",
+                subtitle: "Resets in \(wait) · \(Self.quotaClockText(quota.resetsAt))",
+                systemIcon: "exclamationmark.triangle.fill"
+            )
+        }
+
+        guard !usage.isEmpty || !tokenRows.isEmpty || !quotaRows.isEmpty else {
             return [
                 SharedResultRowModel(
                     id: "usage-empty",
                     title: "Usage appears after your next AI request",
                     subtitle: "API-key providers report remaining requests/tokens; "
-                        + "subscription & bridge providers don't expose limits.",
+                        + "subscription bridges report only when a plan runs out.",
                     systemIcon: "gauge.with.dots.needle.bottom.50percent"
                 )
             ]
         }
-        return tokenRows + usage.map { u in
+        return quotaRows + tokenRows + usage.map { u in
             var parts: [String] = []
             if let remaining = u.remainingRequests {
                 let limit = u.limitRequests.map { "/\($0)" } ?? ""

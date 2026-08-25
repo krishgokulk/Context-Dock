@@ -770,7 +770,7 @@ struct ResolveMetadataTool: Tool {
 @available(macOS 26.0, *)
 struct SearchMessagesTool: Tool {
     let name = "search_messages"
-    let description = "Open Messages and search for a contact, keyword, or phrase using the search UI."
+    let description = "Search local Messages read-only without opening or controlling the Messages app."
 
     @Generable
     struct Arguments {
@@ -781,7 +781,13 @@ struct SearchMessagesTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await MessagesAutomation.openSearch(query: arguments.query)
+        guard let rows = MessagesChatDBReader.search(arguments.query) else {
+            return "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened."
+        }
+        guard !rows.isEmpty else {
+            return "No Messages matched \(arguments.query)."
+        }
+        return MessagesChatDBReader.formatted(rows)
     }
 }
 

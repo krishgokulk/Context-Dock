@@ -30,6 +30,8 @@ final class ScopedCommandExecutor {
         /// is refused here as well as in the prompt, because a stale package association
         /// must not be able to run a different binary from inside one tool's thread.
         var cliTool: String?
+        /// The surface that owns any approval raised by this turn.
+        var approvalOrigin: TerminalAIBridge.ApprovalOrigin
     }
 
     /// MCP tools the model actually reached, for the receipt chips. Collected from
@@ -219,7 +221,8 @@ final class ScopedCommandExecutor {
         onStatus?(statusLine(for: command))
         return await TerminalCommandExecutor.shared.run(
             command, purpose: purpose, modelRequiresApproval: modelRequiresApproval,
-            consoleScope: configuration.scope)
+            consoleScope: configuration.scope,
+            approvalOrigin: configuration.approvalOrigin)
     }
 
     /// CLI scopes are an executable boundary, not a general shell.

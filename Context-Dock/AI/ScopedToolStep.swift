@@ -40,4 +40,16 @@ enum ScopedToolStep {
             return "\(spaced.prefix(1).uppercased())\(spaced.dropFirst())…"
         }
     }
+
+    static func completedLabel(for toolName: String) -> String {
+        "\(plainName(for: toolName)) complete"
+    }
+
+    static func failedLabel(for toolName: String) -> String {
+        "\(plainName(for: toolName)) did not complete"
+    }
+
+    private static func plainName(for toolName: String) -> String {
+        label(for: toolName).trimmingCharacters(in: CharacterSet(charactersIn: "…"))
+    }
 }

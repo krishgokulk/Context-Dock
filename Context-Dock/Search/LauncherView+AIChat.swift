@@ -3086,30 +3086,10 @@ extension LauncherView {
             "Sending always needs the user's approval — propose the CMD line, never assume.",
         ]
 
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let wantsRead =
-            q.contains("chat") || q.contains("message") || q.contains("recent")
-            || q.contains("unread") || q.contains("said") || q.contains("conversation")
-            || q.contains("history") || q.contains("who") || q.contains("what")
-        if wantsRead {
-            let result = await TerminalCommandExecutor.shared.run(
-                "\"\(binary)\" chats --limit 12", purpose: "List recent Messages conversations")
-            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            if output.lowercased().contains("permissiondenied")
-                || output.lowercased().contains("authorization denied")
-            {
-                lines.append("")
-                lines.append(
-                    "IMPORTANT: imsg cannot read chat.db — this Mac has not granted the launcher "
-                    + "Full Disk Access. Tell the user: System Settings → Privacy & Security → "
-                    + "Full Disk Access → enable Context-Dock, then relaunch it. Do not claim "
-                    + "Messages is unsupported.")
-            } else if result.success, !output.isEmpty {
-                lines.append("")
-                lines.append("## Live recent conversations (`imsg chats`)")
-                lines.append(String(output.prefix(2_500)))
-            }
-        }
+        // This is inventory, not execution. Older code ran `imsg chats` while assembling
+        // the prompt, before the task planner had chosen a source; that produced a Terminal
+        // card immediately for every Messages question. The typed messages.* capabilities
+        // now perform the exact headless read only after the task asks for it.
         return lines.joined(separator: "\n")
     }
 
@@ -3329,6 +3309,12 @@ extension LauncherView {
     func setL2LoadingStatus(_ status: String?, requestID: UUID) {
         guard l2.activeRequestID == requestID, l2.isLoading else { return }
         l2.loadingStatus = status
+        guard let status else { return }
+        if !l2.routerTrace.contains(where: {
+            $0.caseInsensitiveCompare(status) == .orderedSame
+        }) {
+            l2.routerTrace.append(status)
+        }
     }
 
     /// Draws a cloud answer as it is written, into a bubble the finished answer replaces.
@@ -3599,6 +3585,15 @@ extension LauncherView {
     func dockTraceStep(_ text: String) {
         l2.loadingStatus = text
         l2.routerTrace.append(text)
+    }
+
+    @MainActor
+    func setGeneralAIProgress(_ status: String?) {
+        aiMode.loadingStatus = status
+        guard let status else { return }
+        if aiMode.routerTrace.last?.caseInsensitiveCompare(status) != .orderedSame {
+            aiMode.routerTrace.append(status)
+        }
     }
 
     /// Called when MenuIntentRouter found no menu match — skips menu routing to avoid recursion.
@@ -4021,6 +4016,18 @@ extension LauncherView {
             && lockedBundleId != Bundle.main.bundleIdentifier
         let scopedBundleId = shouldKeepLockedChatScope ? lockedBundleId : resolvedBundleId
         let scopedAppName = shouldKeepLockedChatScope ? lockedAppName : resolvedAppName
+        let initialFinderSelection: [URL] = {
+            let id = scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId
+            return id.caseInsensitiveCompare("com.apple.finder") == .orderedSame
+                ? ContextDetector.shared.getFinderSelectedFiles() : []
+        }()
+        let frontmostTaskPlan = FrontmostAppTaskPlan.make(
+            query: query,
+            bundleId: scopedBundleId.isEmpty ? frontmost.bundleID : scopedBundleId,
+            appName: scopedAppName.isEmpty ? frontmost.name : scopedAppName,
+            hasSelection: liveSelectionForChat() != nil || !initialFinderSelection.isEmpty,
+            hasAttachments: !contextDockChatFiles.isEmpty,
+            priorConversation: l2.chatMessages.suffix(4).map(\.content).joined(separator: "\n"))
         let isExplicitScopedApp =
             dockScope.isExplicitAppScope
             && !scopedBundleId.isEmpty
@@ -4115,11 +4122,7 @@ extension LauncherView {
 
         // Start this turn's trace, and say which app the request is being resolved against.
         l2.routerTrace = []
-        if !scopedAppName.isEmpty {
-            dockTraceStep("Scope: \(scopedAppName)")
-        } else if !frontmost.name.isEmpty {
-            dockTraceStep("Frontmost app: \(frontmost.name)")
-        }
+        frontmostTaskPlan.initialProgress.forEach { dockTraceStep($0) }
 
         // Capability gap: the request needs a CLI this scope cannot reach. Offer the one action
         // that closes it (link it, or install then link) instead of spending a provider call on
@@ -4791,6 +4794,13 @@ extension LauncherView {
         // allowSelectedTextCloudSharing and asks before selected text leaves the Mac, so
         // including it here inherits that consent rather than going around it.
         let submittedContextDockText = contextDockChatCapturedText ?? liveSelectionForChat()
+        let submittedSelectedFiles: [URL] = {
+            if case .filesSelected(let urls) = scopedConversationContext { return urls }
+            return initialFinderSelection
+        }()
+        let displayedTurnFiles = submittedContextDockFiles + submittedSelectedFiles.filter {
+            !submittedContextDockFiles.contains($0)
+        }
         contextDockChatFiles = []
         contextDockChatCapturedText = nil
         // Every path from here either reaches the prompt, where the attachment is read, or
@@ -4803,7 +4813,7 @@ extension LauncherView {
         let userMessage = AIChatMessage(
             role: .user,
             content: query,
-            attachments: submittedContextDockFiles
+            attachments: displayedTurnFiles
         )
         l2.chatMessages.append(userMessage)
         l2.isLoading = true
@@ -5001,6 +5011,10 @@ extension LauncherView {
                 if submittedContextDockFiles.isEmpty, submittedContextDockText == nil,
                     self.isSafariPageLinkReadQuery(query, bundleID: historyBundle)
                 {
+                    await MainActor.run {
+                        self.dockTraceStep("Getting the current Safari page")
+                        self.dockTraceStep("Extracting page links from the local snapshot")
+                    }
                     var pageLinks = await MainActor.run(body: {
                         self.structuredSafariPageLinks() ?? []
                     })
@@ -5027,7 +5041,14 @@ extension LauncherView {
                                     role: .assistant,
                                     content: message,
                                     isError: false,
-                                    trace: ["Checked Context Dock Safari Extension", "No fresh page-link payload"]
+                                    trace: l2.routerTrace + [
+                                        didReadPageLinks
+                                            ? "Analyzed the extracted links; none matched"
+                                            : "No fresh page snapshot was available",
+                                        didReadPageLinks
+                                            ? "Verified that no extracted URL matched the request"
+                                            : "Stopped before analysis because there was no page evidence",
+                                    ]
                                 ))
                         } else {
                             let lower = query.lowercased()
@@ -5041,7 +5062,10 @@ extension LauncherView {
                                         ? "Yes — this page contains \(pageLinks.count) readable link\(pageLinks.count == 1 ? "" : "s")."
                                         : "",
                                     pageLinks: pageLinks,
-                                    trace: ["Read current page links from \(source)"]))
+                                    trace: l2.routerTrace + [
+                                        "Extracted \(pageLinks.count) relevant links via \(source)",
+                                        "Verified the answer against the extracted URLs",
+                                    ]))
                         }
                         finishL2AIRequest(l2RequestID)
                     }
@@ -5094,6 +5118,7 @@ extension LauncherView {
                 if submittedContextDockFiles.isEmpty,
                     submittedContextDockText == nil,
                     !self.isGlobalQueryModeActive,
+                    frontmostTaskPlan.permitsUIAutomation,
                     !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle),
                     await self.offerScopedNativeAppAction(
                         query: query,
@@ -5133,15 +5158,17 @@ extension LauncherView {
                 // Live browser page (URL + text + selection) from the Safari Web
                 // Extension, so every provider can answer "summarize this page",
                 // pass the video URL to yt-dlp, etc. — without a page-reading tool.
-                var browserPageBlock = await MainActor.run {
-                    self.dockTraceStep("Reading the current browser page…")
-                    return self.browserScopeContextBlock(
-                        scopedBundleId: scopedBundleId, query: query)
-                }
+                var browserPageBlock = frontmostTaskPlan.allows(.browserPage)
+                    ? await MainActor.run {
+                        self.dockTraceStep("Reading the current browser page…")
+                        return self.browserScopeContextBlock(
+                            scopedBundleId: scopedBundleId, query: query)
+                    } : ""
                 // A stale native-message bridge must not leave Safari chat reasoning over an
                 // old page. Read the active DOM directly as a recovery path and give the model
                 // one Markdown-shaped snapshot containing both visible text and exact hrefs.
-                if self.isContextDockBrowserBundle(historyBundle),
+                if frontmostTaskPlan.allows(.browserPage),
+                    self.isContextDockBrowserBundle(historyBundle),
                     !SafariBrowserBridge.shared.isFresh,
                     let directBlock = await self.readCurrentSafariPagePromptDirectly(query: query)
                 {
@@ -5177,18 +5204,20 @@ extension LauncherView {
                     query: query, scopeBundleId: scopedBundleId)
                 // What the app is DOING right now — project, branch, changes, running
                 // agents. Without this a scope could only describe its own tool inventory.
-                let workspaceBlock = await self.appWorkspaceContextPrompt(
-                    bundleId: scopedBundleId,
-                    appName: scopedAppName.isEmpty
-                        ? (frontmostName ?? frontmost.name) : scopedAppName,
-                    forceRefresh: sourceDecision.requiresFreshRead)
+                let workspaceBlock = frontmostTaskPlan.allows(.workspace)
+                    ? await self.appWorkspaceContextPrompt(
+                        bundleId: scopedBundleId,
+                        appName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
+                        forceRefresh: sourceDecision.requiresFreshRead) : ""
                 // What the vendor documents about this app, fetched fresh when the question
                 // is about the product rather than the machine.
-                let referenceBlock = await self.appReferenceContextPrompt(
-                    bundleId: scopedBundleId,
-                    appName: scopedAppName.isEmpty
-                        ? (frontmostName ?? frontmost.name) : scopedAppName,
-                    query: query)
+                let referenceBlock = frontmostTaskPlan.allows(.officialReference)
+                    ? await self.appReferenceContextPrompt(
+                        bundleId: scopedBundleId,
+                        appName: scopedAppName.isEmpty
+                            ? (frontmostName ?? frontmost.name) : scopedAppName,
+                        query: query) : ""
                 // The same resolution the window runs: window, document, selection, page and
                 // capability counts as named slots, with the ones that could not be filled
                 // recorded. Context Dock's whole job is knowing what "this" means, so it
@@ -5269,7 +5298,7 @@ extension LauncherView {
                 // answered the same question differently.
                 let activeContextPrompt: String = {
                     var prompt = ScopedPromptAssembler()
-                    prompt.set(.sourceRule, sourceDecision.promptRule)
+                    prompt.set(.sourceRule, frontmostTaskPlan.promptRule + "\n\n" + sourceDecision.promptRule)
                     prompt.append(
                         .sourceRule,
                         BrowserActionAuthor.crossAppProjectGuidance(query))
@@ -5330,7 +5359,9 @@ extension LauncherView {
                             appName: scopedAppName.isEmpty
                                 ? (frontmostName ?? frontmost.name) : scopedAppName,
                             cliTool: cliTool,
-                            userContext: scopedConversationContext),
+                            approvalOrigin: .dock,
+                            userContext: scopedConversationContext,
+                            taskPlan: frontmostTaskPlan),
                         provider: provider,
                         apiKey: apiKey,
                         history: chatHistory,
@@ -7115,9 +7146,10 @@ extension LauncherView {
                             await TerminalCommandExecutor.shared.run(
                                 command, purpose: purpose,
                                 modelRequiresApproval: needsApproval,
-                                consoleScope: .general)
+                                consoleScope: .general,
+                                approvalOrigin: .dock)
                         }
-                    await MainActor.run { aiMode.loadingStatus = "Working…" }
+                    await MainActor.run { setGeneralAIProgress("Understanding your request…") }
                     var (finalResponse, executed) = try await AIProviderService.shared.sendWithTools(
                         query,
                         context: .none,
@@ -7126,7 +7158,10 @@ extension LauncherView {
                         conversationHistory: history,
                         commandExecutor: generalCommandExecutor,
                         maxIterations: complexityRoute.maxToolIterations,
-                        additionalSystemPrompt: toolSystemPrompt + "\n\n" + complexityRoute.instruction
+                        additionalSystemPrompt: toolSystemPrompt + "\n\n" + complexityRoute.instruction,
+                        onStatus: { status in
+                            Task { @MainActor in self.setGeneralAIProgress(status) }
+                        }
                     )
 
                     // Verification. The app knows which tools ran; the model does not get to
@@ -7134,7 +7169,7 @@ extension LauncherView {
                     // executed is corrected against that record, once.
                     if AgentAnswerVerifier.claimsUnperformedWork(
                         answer: finalResponse, executed: executed) {
-                        await MainActor.run { aiMode.loadingStatus = "Checking that actually happened…" }
+                        await MainActor.run { setGeneralAIProgress("Checking that actually happened…") }
                         let correction = AgentAnswerVerifier.correctionPrompt(
                             originalQuery: query, answer: finalResponse, executed: executed)
                         let (corrected, correctionExecuted) =
@@ -7145,7 +7180,10 @@ extension LauncherView {
                                 apiKey: toolAPIKey,
                                 conversationHistory: history,
                                 commandExecutor: generalCommandExecutor,
-                                additionalSystemPrompt: toolSystemPrompt
+                            additionalSystemPrompt: toolSystemPrompt,
+                            onStatus: { status in
+                                Task { @MainActor in self.setGeneralAIProgress(status) }
+                            }
                             )
                         finalResponse = corrected
                         executed += correctionExecuted
@@ -7153,7 +7191,7 @@ extension LauncherView {
                     if AgentAnswerVerifier.claimsUnverifiedWork(
                         answer: finalResponse, executed: executed)
                     {
-                        await MainActor.run { aiMode.loadingStatus = "Verifying the result…" }
+                        await MainActor.run { setGeneralAIProgress("Verifying the result…") }
                         let verification = AgentAnswerVerifier.verificationPrompt(
                             originalQuery: query, answer: finalResponse)
                         let (verified, verificationExecuted) =
@@ -7164,7 +7202,10 @@ extension LauncherView {
                                 apiKey: toolAPIKey,
                                 conversationHistory: history,
                                 commandExecutor: generalCommandExecutor,
-                                additionalSystemPrompt: toolSystemPrompt
+                            additionalSystemPrompt: toolSystemPrompt,
+                            onStatus: { status in
+                                Task { @MainActor in self.setGeneralAIProgress(status) }
+                            }
                             )
                         finalResponse = verified
                         executed += verificationExecuted
