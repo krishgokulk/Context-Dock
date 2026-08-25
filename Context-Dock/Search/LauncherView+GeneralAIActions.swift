@@ -337,9 +337,24 @@ extension LauncherView {
         // saved actions, cached menus, known shortcuts, MCP/API/CLI and accessibility routes.
         // Short-circuiting when one registered tool matched hid better native commands and
         // made user-added adapters behave differently from apps without adapters.
+        // The app the sentence names, if it is not this one. Resolution only — nothing runs
+        // without the consent prompt below. Without it a cross-app request could produce no
+        // capability candidates at all, because the other app's tools were filtered out
+        // while its cached MENUS still matched on a word: "add current page to bookmarks
+        // note" found Notes' `Edit → Add Link…` and never saw notes.append, which is the
+        // thing that actually does this.
+        let namedElsewhere = await MainActor.run {
+            GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+        }
+        var resolutionScope: Set<String> = [bundleId]
+        if let namedElsewhere,
+            namedElsewhere.bundleId.caseInsensitiveCompare(bundleId) != .orderedSame
+        {
+            resolutionScope.insert(namedElsewhere.bundleId)
+        }
         let resolution = await GeneralAIActionResolver.shared.resolve(
             query: query,
-            chatAllowedBundleIds: [bundleId],
+            chatAllowedBundleIds: resolutionScope,
             scopedApp: (appName, bundleId),
             onStep: { [self] step in
                 MainActor.assumeIsolated { dockTraceStep(step) }
@@ -355,12 +370,54 @@ extension LauncherView {
             }(),
             scopedTo: appName)
 
-        guard case .candidates(let candidates) = resolution,
-            let candidate = candidates.first(where: {
-                $0.route == .verifiedMenu || $0.route == .keyboardShortcut
-                    || ($0.route == .adapter && $0.capabilityID != nil)
-            })
-        else {
+        // Preference by ROUTE, not by position in the resolver's list.
+        //
+        // `first(where:)` over a predicate that accepted menus and capabilities equally meant
+        // whichever the ranker happened to put first won — and word overlap puts a menu item
+        // called "Add Link…" above notes.append for a sentence containing "add". So a click
+        // on someone's screen, in an app they had not opened, outranked the tool written to
+        // do exactly this. The order below is the one ChatRouteResolver already documents:
+        // the app's own tools first, structured data next, inspectable commands after that,
+        // and driving the screen last, because it is the only one with a visible cost and
+        // the only one that fails when the app is in the wrong state — which is precisely how
+        // `Edit → Add Link…` failed: disabled unless a note is already open.
+        func preference(_ candidate: DoraXActionCandidate) -> Int {
+            switch candidate.route {
+            case .adapter: return candidate.capabilityID != nil ? 0 : 1
+            case .mcp: return 2
+            case .api: return 3
+            case .cli: return 4
+            case .shortcutRunner: return 5
+            case .automation: return 6
+            case .verifiedMenu: return 7
+            case .keyboardShortcut: return 8
+            case .axFallback, .appLaunch: return 9
+            }
+        }
+        guard case .candidates(let candidates) = resolution else {
+            await MainActor.run { dockTraceStep("No exact native action selected") }
+            return false
+        }
+        var runnable: [DoraXActionCandidate] = []
+        for option in candidates {
+            let isRunnable: Bool
+            switch option.route {
+            case .verifiedMenu, .keyboardShortcut, .mcp, .cli:
+                isRunnable = true
+            case .adapter:
+                isRunnable = option.capabilityID != nil
+            default:
+                isRunnable = false
+            }
+            if isRunnable { runnable.append(option) }
+        }
+        let best = runnable.min { left, right in
+            let leftRank = preference(left)
+            let rightRank = preference(right)
+            if leftRank != rightRank { return leftRank < rightRank }
+            return left.confidence > right.confidence
+        }
+        guard let candidate = best else {
             await MainActor.run { dockTraceStep("No exact native menu action selected") }
             return false
         }
