@@ -162,6 +162,7 @@
 				CAFE00000000000000000003 /* Sources */,
 				CAFE00000000000000000004 /* Frameworks */,
 				CAFE00000000000000000005 /* Resources */,
+				CAFE00000000000000000100 /* Strip Finder detritus before signing */,
 			);
 			buildRules = (
 			);
@@ -183,6 +184,7 @@
 				FD1617D12ECEA5B500620C78 /* Frameworks */,
 				FD1617D22ECEA5B500620C78 /* Resources */,
 				CAFE0000000000000000000A /* Embed App Extensions */,
+				CAFE00000000000000000101 /* Strip Finder detritus before signing */,
 			);
 			buildRules = (
 			);
@@ -221,6 +223,47 @@
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		CAFE00000000000000000100 /* Strip Finder detritus before signing */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Strip Finder detritus before signing";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Finder detritus that codesign refuses.\n#\n# The project uses PBXFileSystemSynchronizedRootGroup, so every file in a target's\n# folder is a member automatically. macOS custom-folder-icon markers (a zero-byte file\n# named Icon followed by a carriage return, with its data in a resource fork) therefore\n# get copied into the bundle, and signing fails with \"resource fork, Finder information,\n# or similar detritus not allowed\". Cleaning the source tree is not enough: the copy\n# happens during the build, after any pre-build sweep has run.\nBUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n[ -d \"$BUNDLE\" ] || exit 0\nfind \"$BUNDLE\" -type f -name Icon -delete 2>/dev/null || true\nfind \"$BUNDLE\" -type f -name \"Icon$(printf '\r')\" -delete 2>/dev/null || true\nxattr -cr \"$BUNDLE\" 2>/dev/null || true\nexit 0";
+		};
+		CAFE00000000000000000101 /* Strip Finder detritus before signing */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Strip Finder detritus before signing";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Finder detritus that codesign refuses.\n#\n# The project uses PBXFileSystemSynchronizedRootGroup, so every file in a target's\n# folder is a member automatically. macOS custom-folder-icon markers (a zero-byte file\n# named Icon followed by a carriage return, with its data in a resource fork) therefore\n# get copied into the bundle, and signing fails with \"resource fork, Finder information,\n# or similar detritus not allowed\". Cleaning the source tree is not enough: the copy\n# happens during the build, after any pre-build sweep has run.\nBUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n[ -d \"$BUNDLE\" ] || exit 0\nfind \"$BUNDLE\" -type f -name Icon -delete 2>/dev/null || true\nfind \"$BUNDLE\" -type f -name \"Icon$(printf '\r')\" -delete 2>/dev/null || true\nxattr -cr \"$BUNDLE\" 2>/dev/null || true\nexit 0";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXProject section */
 		FD1617CC2ECEA5B500620C78 /* Project object */ = {
