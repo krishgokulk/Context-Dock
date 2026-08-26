@@ -611,6 +611,15 @@ final class AIProviderRouter {
                 imageURLs: imageURLs
             )
         }
+        // The subscription is reached by running the CLI the user has already signed in to,
+        // so it takes its own path rather than an adapter with no endpoint to point at.
+        if provider == .claudeCode {
+            return try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: request.text, history: request.history),
+                systemPrompt: contextPrompt + liveContextPrompt + attachmentPrompt,
+                model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
+        }
 
         let configuration = try configuration(for: provider, apiKeyOverride: nil)
         return try await adapter(for: provider).send(
@@ -662,6 +671,13 @@ final class AIProviderRouter {
                 history: conversationHistory, imageURLs: imageURLs
             )
         }
+        if provider == .claudeCode {
+            return try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: message, history: conversationHistory),
+                systemPrompt: contextPrompt + attachmentPrompt,
+                model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
+        }
         let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
         return try await adapter(for: provider).send(
             request: request, contextPrompt: contextPrompt + attachmentPrompt,
@@ -681,7 +697,20 @@ final class AIProviderRouter {
         return adapter(for: provider).capabilities
     }
 
-    private func configuration(
+    /// Providers reached by running something on this Mac rather than by calling an
+    /// endpoint. Every send path must intercept these *before* `configuration(for:)`, which
+    /// has no endpoint to hand them and throws.
+    ///
+    /// `.onDevice` was intercepted in both send paths and `.claudeCode` in neither, so the
+    /// subscription answered from AIProviderService and failed with "Provider does not use an
+    /// HTTP adapter" from the router — the same question working or not depending on which
+    /// surface asked it.
+    static let localProviders: Set<AIProvider> = [.onDevice, .claudeCode]
+
+    /// Internal rather than private so a test can assert every other provider actually has an
+    /// endpoint to call. A provider added without one is otherwise only discovered by a person
+    /// typing into it.
+    func configuration(
         for provider: AIProvider,
         apiKeyOverride: String?
     ) throws -> AIProviderAdapterConfiguration {
