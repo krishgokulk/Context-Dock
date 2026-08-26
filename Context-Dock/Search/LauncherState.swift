@@ -5,6 +5,7 @@
 // Each struct corresponds to one @State var; SwiftUI diffs them like any other value type.
 
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -31,8 +32,36 @@ struct SearchState {
 
 // MARK: - L2
 
+/// The Context Dock chat's conversation, held apart from `L2State` so surfaces other than
+/// LauncherView can render the same turn.
+///
+/// The dock remains the only writer: its pipeline produces these messages and nothing else
+/// appends to them. What this buys is a second *reader* — the corner App Chat shows the
+/// dock's own conversation rather than running a second engine beside it, which is how the
+/// two stay identical instead of merely similar.
+@MainActor
+final class AppChatConversation: ObservableObject {
+    static let shared = AppChatConversation()
+
+    @Published var messages: [AIChatMessage] = []
+    /// The app the live conversation belongs to, for a surface that did not start it.
+    @Published var scopeBundleId: String = ""
+    @Published var scopeAppName: String = ""
+
+    private init() {}
+}
+
 struct L2State {
-    var chatMessages: [AIChatMessage] = []
+    /// Storage moved to `AppChatConversation`; the spelling did not, so the 221 places
+    /// that read and write this keep meaning exactly what they meant.
+    ///
+    /// CAREFUL: a class behind a `@State` struct no longer invalidates the view that owns
+    /// it. `LauncherView` observes `AppChatConversation.shared` for that reason — without
+    /// it the dock's chat stops redrawing, which looks like the model went silent.
+    var chatMessages: [AIChatMessage] {
+        get { AppChatConversation.shared.messages }
+        set { AppChatConversation.shared.messages = newValue }
+    }
     var handledApprovalIds: Set<UUID> = []
     var terminalDismissed: Bool = false
     var activeDockSessionKey: String? = nil

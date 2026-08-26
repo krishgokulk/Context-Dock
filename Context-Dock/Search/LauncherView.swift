@@ -122,6 +122,9 @@ struct LauncherView: View {
     @ObservedObject var miniPlayer = MiniPlayerController.shared
     @StateObject var mediaDockEngine = MediaDockEngine.shared
     @State var l2 = L2State()
+    /// The dock chat's messages live in an object now, so the view has to watch it: a
+    /// mutation through `l2.chatMessages` no longer invalidates this view by itself.
+    @ObservedObject var chatConversation = AppChatConversation.shared
     @ObservedObject var contactManager = ContactSearchManager.shared
     @ObservedObject var systemDataManager = SystemDataSearchManager.shared
     @ObservedObject var terminalBridge = TerminalAIBridge.shared
