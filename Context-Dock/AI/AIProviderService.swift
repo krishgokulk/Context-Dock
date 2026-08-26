@@ -1270,12 +1270,16 @@ class AIProviderService: ObservableObject {
         // supportsNativeTools. Most of them do, and a chat that only says hello should not
         // depend on which of them asked.
         if provider == .claudeCode {
+            // The CLI's own steps go to the same live list DoraX fills for its own turns, so
+            // a subscription turn reads like every other one instead of sitting silent until
+            // it finishes.
             let answer = try await ClaudeCodeCLIService.send(
                 prompt: ClaudeCodeCLIService.promptWithHistory(
                     message: effectiveMessage, history: conversationHistory),
                 systemPrompt: contextPrompt,
                 model: AppSettings.shared.claudeCodeModel.isEmpty
-                    ? nil : AppSettings.shared.claudeCodeModel)
+                    ? nil : AppSettings.shared.claudeCodeModel,
+                onProgress: onStatus.map { report in { step in report(step) } })
             return (answer, [])
         }
 
