@@ -128,7 +128,12 @@ enum ClaudeCodeCLIService {
     ) -> [String] {
         var arguments = ["-p", prompt, "--output-format", "json", "--tools", access.toolList]
         if access.runsTools {
-            // Non-interactive: a permission prompt has nobody to answer it.
+            // Two different things, and passing only the first is why WebFetch kept coming
+            // back "Claude requested permissions to use WebFetch, but you haven't granted it".
+            // `--tools` says which tools exist; `--allowedTools` is the permission allowlist.
+            // `--permission-mode acceptEdits` covers edits and nothing else, so a fetch still
+            // stopped to ask — and `-p` is non-interactive, so there was nobody to ask.
+            arguments.append(contentsOf: ["--allowedTools", access.toolList])
             arguments.append(contentsOf: ["--permission-mode", "acceptEdits"])
             if let workingDirectory {
                 arguments.append(contentsOf: ["--add-dir", workingDirectory.path])

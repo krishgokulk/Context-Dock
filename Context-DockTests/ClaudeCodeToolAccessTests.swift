@@ -25,15 +25,36 @@ struct ClaudeCodeToolAccessTests {
             access: access, workingDirectory: directory)
     }
 
-    /// The value pair the CLI needs to run anything non-interactively. `-p` cannot answer a
-    /// permission prompt, so a tool without acceptEdits stalls the turn rather than failing.
-    @Test func runningToolsRequiresBothTheSetAndThePermissionMode() {
+    /// Three things the CLI needs to run anything non-interactively, and passing two of them
+    /// is not enough. `--tools` says which tools exist; `--allowedTools` pre-approves them;
+    /// `--permission-mode acceptEdits` covers edits specifically. Without the allowlist,
+    /// WebFetch returned "Claude requested permissions to use WebFetch, but you haven't
+    /// granted it" — and `-p` has nobody to grant it.
+    @Test func runningToolsRequiresTheSetTheAllowlistAndThePermissionMode() {
         for access in [ClaudeCodeCLIService.ToolAccess.research, .full] {
             let args = arguments(access)
             #expect(args.contains("--tools"), "\(access.rawValue) must select a tool set")
             #expect(
+                args.contains("--allowedTools"),
+                "\(access.rawValue) would stop to ask permission nobody can grant")
+            #expect(
                 args.contains("--permission-mode") && args.contains("acceptEdits"),
-                "\(access.rawValue) would stall waiting for a permission nobody can grant")
+                "\(access.rawValue) needs edits pre-accepted")
+
+            // The allowlist must cover the whole set, or the tools it misses stall the turn.
+            let allowed = args.firstIndex(of: "--allowedTools").map { args[args.index(after: $0)] }
+            #expect(allowed == access.toolList, "\(access.rawValue) allowlist must match its tools")
+        }
+    }
+
+    /// The one that was actually broken, named so it cannot regress quietly.
+    @Test func webFetchIsPreApprovedWhereverItIsOffered() {
+        for access in [ClaudeCodeCLIService.ToolAccess.research, .full] {
+            let args = arguments(access)
+            let allowed = args.firstIndex(of: "--allowedTools").map { args[args.index(after: $0)] }
+            #expect(
+                allowed?.contains("WebFetch") == true,
+                "\(access.rawValue) offers WebFetch but never pre-approves it")
         }
     }
 
@@ -43,6 +64,7 @@ struct ClaudeCodeToolAccessTests {
         let toolsValue = args.firstIndex(of: "--tools").map { args[args.index(after: $0)] }
         #expect(toolsValue == "", "answer-only must disable every tool")
         #expect(!args.contains("--permission-mode"), "nothing needs permission to answer")
+        #expect(!args.contains("--allowedTools"), "nothing to allow when nothing is offered")
         #expect(!args.contains("--add-dir"), "answering needs no folder")
     }
 
