@@ -32,6 +32,7 @@ struct ClaudeSubscriptionConfigView: View {
                 installHelp
             } else {
                 modelPicker
+                accessPicker
                 verifyRow
             }
         }
@@ -123,6 +124,41 @@ struct ClaudeSubscriptionConfigView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
+        }
+    }
+
+    /// What the CLI is allowed to do on this Mac.
+    ///
+    /// Visible rather than assumed: above "Answer only" the CLI runs its own tools under its
+    /// own permission model, and none of DoraX's approval prompts apply to it. Someone turning
+    /// that on should be able to see that they did.
+    private var accessPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("What Claude may do").font(.subheadline).fontWeight(.medium)
+            Picker("", selection: $settings.claudeCodeToolAccessRaw) {
+                ForEach(ClaudeCodeCLIService.ToolAccess.allCases, id: \.rawValue) { access in
+                    Text(access.title).tag(access.rawValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+
+            Text(settings.claudeCodeToolAccess.detail)
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if settings.claudeCodeToolAccess.runsTools {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: settings.claudeCodeToolAccess == .full
+                        ? "exclamationmark.triangle.fill" : "folder")
+                        .foregroundStyle(settings.claudeCodeToolAccess == .full ? .orange : .secondary)
+                    Text("Working folder: \(ChatWorkingDirectory.resolve(for: nil).path)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

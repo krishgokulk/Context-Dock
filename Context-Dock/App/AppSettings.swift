@@ -1119,6 +1119,17 @@ class AppSettings: ObservableObject {
     /// Model alias handed to the Claude CLI: "opus", "sonnet", "haiku", or empty for the
     /// plan's default. An alias rather than an id, so a retired model cannot strand it.
     @AppStorage("claudeCodeModel") var claudeCodeModel: String = ""
+
+    /// How much of the Claude CLI's own agent DoraX turns on. Stored as a string so a value
+    /// written by a newer build cannot crash an older one — an unknown level reads as the
+    /// safest, not as a crash.
+    @AppStorage("claudeCodeToolAccess") var claudeCodeToolAccessRaw: String =
+        ClaudeCodeCLIService.ToolAccess.full.rawValue
+
+    var claudeCodeToolAccess: ClaudeCodeCLIService.ToolAccess {
+        get { ClaudeCodeCLIService.ToolAccess(rawValue: claudeCodeToolAccessRaw) ?? .answerOnly }
+        set { claudeCodeToolAccessRaw = newValue.rawValue }
+    }
     @AppStorage("claudeBridgeEndpoint") var claudeBridgeEndpoint: String =
         "http://localhost:8317/v1"
     // claude-3-5-sonnet-20241022 was retired in Oct 2025 and 404s on the real API; bridges

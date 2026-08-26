@@ -12,14 +12,25 @@
 // its own login, and `-p` runs it headless with JSON out. DoraX shells out to the binary the
 // user already has. No endpoint, no API key, no port, nothing to keep running.
 //
-// The CLI is itself an agent with file and shell tools. That is emphatically not what a chat
-// provider should be, so every invocation passes `--allowed-tools ""`: DoraX supplies the
-// context and runs the actions, and the model here only answers.
+// The CLI is itself an agent with file and shell tools, and how much of that DoraX hands it is
+// a setting rather than a constant — see ClaudeCodeToolAccess.
+//
+// Worth stating plainly, because it is the one place DoraX gives up its own guarantees: every
+// gate this app has — the approval sheet, AppMenuConsentStore, CapabilityScopeGuard, declared
+// risk levels, receipts, CommandOutcomeVerifier — governs DoraX's *own* capability route. A
+// CLI subprocess holding its own tools answers to none of them, and DoraX cannot write a
+// receipt for work it did not run. Above `.answerOnly`, the CLI's own permission model is the
+// only thing between the model and the disk, which is why the working directory is pinned and
+// the level is visible in Settings rather than assumed.
 
 import Foundation
+import OSLog
 
 @MainActor
 enum ClaudeCodeCLIService {
+
+    private static let log = Logger(
+        subsystem: "com.krishgokul.ContextDock", category: "ClaudeCLI")
 
     enum Failure: LocalizedError {
         case notInstalled
@@ -58,25 +69,107 @@ enum ClaudeCodeCLIService {
 
     static var isInstalled: Bool { binaryPath() != nil }
 
-    /// One question, one answer. No session is carried between calls: DoraX owns the
-    /// conversation and sends the history it wants included, so a hidden second transcript
-    /// inside the CLI would only be able to disagree with it.
-    static func send(
+    /// How much of the CLI's own agent DoraX turns on.
+    ///
+    /// The names are the CLI's built-in tools, passed to `--tools`. `--permission-mode
+    /// acceptEdits` is required alongside them: `-p` is non-interactive, so a tool that stops
+    /// to ask for permission has nobody to ask and the turn stalls.
+    enum ToolAccess: String, CaseIterable, Sendable {
+        /// The model answers and nothing else. DoraX supplies the context and runs the actions.
+        case answerOnly
+        /// Reading and research: it can open files, search a project and fetch pages, but
+        /// changes nothing. The useful half, with no way to damage anything.
+        case research
+        /// Everything, including editing files and running shell commands, inside the working
+        /// directory below. DoraX's approval sheet does not apply to any of it.
+        case full
+
+        var toolList: String {
+            switch self {
+            case .answerOnly: return ""
+            case .research: return "Read,Glob,Grep,WebFetch,WebSearch"
+            case .full: return "Read,Glob,Grep,WebFetch,WebSearch,Edit,Write,Bash"
+            }
+        }
+
+        var runsTools: Bool { self != .answerOnly }
+
+        var title: String {
+            switch self {
+            case .answerOnly: return "Answer only"
+            case .research: return "Read and research"
+            case .full: return "Full — edit files and run commands"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .answerOnly:
+                return "Claude answers questions. DoraX supplies the context and performs every "
+                    + "action itself, through its own approval prompts."
+            case .research:
+                return "Claude can read files, search the project and fetch web pages in the "
+                    + "folder below. It cannot change anything."
+            case .full:
+                return "Claude can edit files and run shell commands in the folder below, using "
+                    + "its own permission model. DoraX's approval prompts do not apply to it."
+            }
+        }
+    }
+
+    /// The exact argument list for one invocation. Pure, so the flags can be asserted without
+    /// running the binary — they were guessed once and silently disabled every tool.
+    static func arguments(
         prompt: String,
         systemPrompt: String?,
-        model: String?
-    ) async throws -> String {
-        guard let binary = binaryPath() else { throw Failure.notInstalled }
-
-        var arguments = ["-p", prompt, "--output-format", "json", "--allowed-tools", ""]
+        model: String?,
+        access: ToolAccess,
+        workingDirectory: URL?
+    ) -> [String] {
+        var arguments = ["-p", prompt, "--output-format", "json", "--tools", access.toolList]
+        if access.runsTools {
+            // Non-interactive: a permission prompt has nobody to answer it.
+            arguments.append(contentsOf: ["--permission-mode", "acceptEdits"])
+            if let workingDirectory {
+                arguments.append(contentsOf: ["--add-dir", workingDirectory.path])
+            }
+        }
         if let systemPrompt, !systemPrompt.isEmpty {
             arguments.append(contentsOf: ["--append-system-prompt", systemPrompt])
         }
         if let model, !model.isEmpty {
             arguments.append(contentsOf: ["--model", model])
         }
+        return arguments
+    }
 
-        let output = try await run(binary: binary, arguments: arguments)
+    /// One question, one answer. No session is carried between calls: DoraX owns the
+    /// conversation and sends the history it wants included, so a hidden second transcript
+    /// inside the CLI would only be able to disagree with it.
+    static func send(
+        prompt: String,
+        systemPrompt: String?,
+        model: String?,
+        access: ToolAccess? = nil,
+        workingDirectory: URL? = nil
+    ) async throws -> String {
+        guard let binary = binaryPath() else { throw Failure.notInstalled }
+
+        let access = access ?? AppSettings.shared.claudeCodeToolAccess
+        // Answering needs no folder, and reading project settings from wherever DoraX happened
+        // to launch would make the answer depend on it. Anything that runs tools gets a real
+        // directory, because "edit the file" has to mean somewhere.
+        let directory: URL? = access.runsTools
+            ? (workingDirectory ?? ChatWorkingDirectory.resolve(for: nil))
+            : nil
+        let arguments = arguments(
+            prompt: prompt, systemPrompt: systemPrompt, model: model,
+            access: access, workingDirectory: directory)
+        log.notice(
+            "claude cli access=\(access.rawValue, privacy: .public) dir=\(directory?.path ?? "-", privacy: .public)")
+
+        let output = try await run(
+            binary: binary, arguments: arguments, workingDirectory: directory)
         guard let payload = decodeFirstObject(in: output) else {
             // The CLI prints its auth complaint as prose, not JSON.
             if output.lowercased().contains("login") || output.lowercased().contains("auth") {
@@ -106,15 +199,18 @@ enum ClaudeCodeCLIService {
 
     // MARK: - Process
 
-    private static func run(binary: String, arguments: [String]) async throws -> String {
+    private static func run(
+        binary: String, arguments: [String], workingDirectory: URL? = nil
+    ) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: binary)
             process.arguments = arguments
-            // Run somewhere neutral. The CLI reads project settings from its working
-            // directory, and a chat answer should not depend on which folder DoraX happened
-            // to be launched from.
-            process.currentDirectoryURL = FileManager.default.temporaryDirectory
+            // Somewhere neutral when it is only answering: the CLI reads project settings from
+            // its working directory, and a chat answer should not depend on which folder DoraX
+            // happened to be launched from. When it holds tools, the folder is the point.
+            process.currentDirectoryURL =
+                workingDirectory ?? FileManager.default.temporaryDirectory
 
             var environment = ProcessInfo.processInfo.environment
             environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
