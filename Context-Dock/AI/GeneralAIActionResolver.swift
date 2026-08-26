@@ -798,6 +798,9 @@ final class GeneralAIActionResolver {
             // for the person to confirm — but asking for one is still a request to act, and
             // a request that reads as a question opens nothing at all.
             "compose", "draft",
+            // capture.area and capture.text. "screenshot" is a whole word here, so "show me my
+            // screenshots" stays the read it is — the word-split match sees "screenshots".
+            "screenshot", "capture",
         ]
         let words = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })

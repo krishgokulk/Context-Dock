@@ -105,3 +105,57 @@ struct SafariAdapterEvalTests {
             "this names the failed source and what to do — retrying it would repeat the same read")
     }
 }
+
+// MARK: - Fetching a URL is not a browser feature
+//
+// read_url fetches over the network and, in its own description, "nothing is opened on screen
+// and no browser is touched". It was gated with read_page, which reads the browser's *open*
+// page — so asking about an app's own website, inside that app, had no tool that could answer
+// and the turn fell back to a Help ▸ Website menu click that needed approval.
+
+@MainActor
+struct WebFetchScopeTests {
+
+    private func plan(_ query: String, bundleId: String) -> FrontmostAppTaskPlan {
+        FrontmostAppTaskPlan.make(query: query, bundleId: bundleId, appName: "App")
+    }
+
+    /// The reported case: a non-browser app, asked about its own site.
+    @Test func anyAppScopeCanFetchAWebsite() {
+        for bundleId in ["com.felixrieseberg.language-model-builder", "com.apple.finder", "com.apple.mail"] {
+            let made = plan("this app website visit", bundleId: bundleId)
+            #expect(
+                made.allowedToolNames.contains("read_url"),
+                "\(bundleId) asked about a website with no tool that can fetch one")
+        }
+    }
+
+    /// A pasted link is the plainest possible request to read one.
+    @Test func aPastedLinkIsEnough() {
+        let made = plan("https://languagemodelbuilder.com", bundleId: "com.apple.finder")
+        #expect(made.allowedToolNames.contains("read_url"))
+    }
+
+    /// read_page stays browser-only. It reads what is on screen, which a non-browser has none of.
+    @Test func readingTheOpenPageStaysABrowserThing() {
+        let elsewhere = plan("summarise this page", bundleId: "com.apple.finder")
+        #expect(!elsewhere.allowedToolNames.contains("read_page"))
+
+        let inBrowser = plan("summarise this page", bundleId: "com.apple.Safari")
+        #expect(inBrowser.allowedToolNames.contains("read_page"))
+        #expect(inBrowser.allowedToolNames.contains("read_url"))
+    }
+
+    /// A question naming no link at all should not be handed a web fetcher.
+    @Test func aQuestionAboutNothingWebbyGetsNoFetcher() {
+        let made = plan("what files are selected?", bundleId: "com.apple.finder")
+        #expect(!made.allowedToolNames.contains("read_url"))
+    }
+
+    /// The vendor-docs path was shut for the same phrasing, so both doors onto the web were
+    /// closed at once — which is why only a menu click was left.
+    @Test func aWebsiteQuestionIsAlsoAReferenceQuestion() {
+        let made = plan("what does this app's website say?", bundleId: "com.apple.finder")
+        #expect(made.allows(.officialReference))
+    }
+}

@@ -58,10 +58,23 @@ struct FrontmostAppTaskPlan: Equatable {
 
         let isBrowser = ScopedAppPromptBuilder.isBrowserBundle(bundleId)
         let pageTerms = ["this page", "current page", "open page", "page is open", "website", "webpage", "active tab", "open tab", "this site", "url", "link on"]
+        // read_page reads the browser's *open* page, so it is browser-only and stays that way.
         let needsPage = isBrowser && pageTerms.contains(where: subjectContext.contains)
+        // read_url is a different tool that happened to be gated with it: it fetches a URL over
+        // the network and, in its own words, "nothing is opened on screen and no browser is
+        // touched". Tying it to whether the frontmost app is a browser meant that asking about
+        // an app's own website — in that app — had no way to be answered, and the turn fell
+        // back to a Help ▸ Website menu click that needed approval.
+        let linkTerms = ["website", "web site", "webpage", "web page", "homepage", "home page",
+                         "http://", "https://", "www.", ".com", "docs", "documentation",
+                         "their site", "official site"]
+        let needsLink = needsPage || linkTerms.contains(where: subjectContext.contains)
         let workspaceTerms = ["project", "repository", "repo", "branch", "commit", "working tree", "uncommitted", "build", "source code", "extensions installed"]
         let needsWorkspace = workspaceTerms.contains(where: subjectContext.contains)
-        let referenceTerms = ["what is this app", "what does this app", "how do i use", "documentation", "docs", "feature", "version", "supports"]
+        // "website", "homepage" and "site" were absent, so a question about an app's own site
+        // did not count as a reference question either — both doors onto the web were shut at
+        // once, which is why only a menu click was left.
+        let referenceTerms = ["what is this app", "what does this app", "how do i use", "documentation", "docs", "feature", "version", "supports", "website", "web site", "homepage", "home page", "official site"]
         let needsReference = referenceTerms.contains(where: subjectContext.contains)
 
         var sources: Set<Source> = [.scopedApp]
@@ -78,7 +91,8 @@ struct FrontmostAppTaskPlan: Equatable {
             tools.formUnion(["get_messages_conversations", "search_messages"])
             if hasAction { tools.insert("compose_message") }
         }
-        if needsPage { tools.formUnion(["read_page", "read_url"]) }
+        if needsPage { tools.insert("read_page") }
+        if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
         if hasAction { tools.formUnion(["run_menu_command", "send_keys", "window_control"]) }
