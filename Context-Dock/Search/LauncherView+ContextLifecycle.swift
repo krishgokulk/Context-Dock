@@ -1109,6 +1109,10 @@ extension LauncherView {
                 note in
                 handleAppChatPromptSubmission(note)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptScopeChanged)) {
+                note in
+                handleAppChatPromptScopeChange(note)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 ClipboardPanelController.shared.show()
             }
@@ -2047,10 +2051,7 @@ extension LauncherView {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         NotificationCenter.default.post(name: .activateContextDock, object: nil)
-        l2.chatDraftAppName = appName
-        l2.chatDraftBundleId = bundleId
-        l2.chatArmed = true
-        l2.chatDismissed = false
+        retargetCornerAppChat(appName: appName, bundleId: bundleId)
 
         guard !query.isEmpty else {
             requestWindowSizeUpdate(reason: .panelChanged, animated: true)
@@ -2061,6 +2062,30 @@ extension LauncherView {
             dismissMediaLayer()
             handleL2QuerySkippingMenuRouter(query)
         }
+    }
+
+    func handleAppChatPromptScopeChange(_ note: Notification) {
+        guard let info = note.userInfo,
+            let bundleId = info["bundleId"] as? String,
+            let appName = info["appName"] as? String
+        else { return }
+        retargetCornerAppChat(appName: appName, bundleId: bundleId)
+    }
+
+    /// The corner and dock are two presentations of this one session. Remove explicit
+    /// stale scopes, then let the existing frontmost-app session resolver persist/load
+    /// the correct app (including Finder's folder-aware key).
+    private func retargetCornerAppChat(appName: String, bundleId: String) {
+        showContextInDock = true
+        globalContextActivation = nil
+        globalInlineAppScope = nil
+        additionalGlobalInlineAppScopes = []
+        l2.targetApp = nil
+        l2.chatDraftAppName = appName
+        l2.chatDraftBundleId = bundleId
+        l2.chatArmed = true
+        l2.chatDismissed = false
+        syncL2DockSession()
     }
 
     func checkClipboardForGlobalContext() {

@@ -74,25 +74,19 @@ struct AppChatPromptPill: View {
 
     // MARK: - Input
 
-    /// Input on top, what the app can do underneath — the list is an answer to "what can
-    /// I ask?", so it reads after the question line, not before it.
+    /// Every state reads upward from one stable composer at the bottom. Suggestions are
+    /// simply the empty transcript: they occupy the same space answers will use later.
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // A conversation reads upward from the field you are typing in, so once there
-            // is one the input sits at the bottom and the answers stack above it.
             if model.phase == .chat {
                 transcript
                 Divider().opacity(0.18)
-                if !model.attachments.isEmpty { attachmentRow }
-                inputRow
-            } else {
-                inputRow
-                if !model.attachments.isEmpty { attachmentRow }
-                if model.phase == .suggesting {
-                    Divider().opacity(0.18)
-                    suggestionList
-                }
+            } else if model.phase == .suggesting {
+                suggestionList
+                Divider().opacity(0.18)
             }
+            if !model.attachments.isEmpty { attachmentRow }
+            inputRow
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
     }

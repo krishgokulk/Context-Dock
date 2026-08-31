@@ -64,15 +64,18 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var capabilitySummary = ""
 
     /// The dock's conversation, not a copy of it.
-    var messages: [AIChatMessage] { AppChatConversation.shared.messages }
-    var isAnswering: Bool { AppChatConversation.shared.isLoading }
-    var liveSteps: [String] { AppChatConversation.shared.liveSteps }
+    var messages: [AIChatMessage] { conversation.messages }
+    var isAnswering: Bool { conversation.isLoading }
+    var liveSteps: [String] { conversation.liveSteps }
     /// Files the question should carry.
     @Published private(set) var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
     @Published private(set) var isPinned = false
 
     private(set) var isStandDownArmed = false
+    private(set) var isPointerInside = false
+    private var hasPresentedConversation = false
+    private let conversation: AppChatConversation
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
 
@@ -80,6 +83,7 @@ final class AppChatPromptModel: ObservableObject {
 
     init(conversation: AppChatConversation? = nil) {
         let source = conversation ?? AppChatConversation.shared
+        self.conversation = source
         conversationObservation = source.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -155,11 +159,44 @@ final class AppChatPromptModel: ObservableObject {
 
     func hoverBegan() {
         guard phase.isVisible else { return }
+        isPointerInside = true
         // Coming back reopens the conversation if there is one.
         if phase == .mini {
-            set(messages.isEmpty ? restingInputPhase : .chat)
+            set(hasPresentedConversation ? .chat : restingInputPhase)
         }
+        cancel()
+    }
+
+    func hoverEnded() {
+        guard phase.isVisible else { return }
+        isPointerInside = false
         touch()
+    }
+
+    /// Follow the live frontmost-app scope while this corner entry point is visible. The
+    /// shared dock handler switches the actual conversation before this chooses which
+    /// presentation to show, so the corner never owns a parallel per-app history.
+    func frontmostAppDidChange(
+        app name: String,
+        bundleID: String,
+        suggestions: [AppChatSuggestion],
+        summary: String
+    ) {
+        guard phase.isVisible, !bundleID.isEmpty, bundleID != appBundleID else { return }
+        query = ""
+        attachments = []
+        appName = name
+        appBundleID = bundleID
+        self.suggestions = suggestions
+        capabilitySummary = summary
+        Self.changeScope(app: name, bundleID: bundleID)
+        hasPresentedConversation = !messages.isEmpty
+        set(hasPresentedConversation ? .chat : restingInputPhase)
+        if isPinned || isPointerInside {
+            cancel()
+        } else {
+            arm(after: Self.idleDwell)
+        }
     }
 
     // MARK: - Standing down
@@ -168,11 +205,7 @@ final class AppChatPromptModel: ObservableObject {
     /// than a generic dot, so the corner still says which app it is about, and it keeps
     /// any half-written question for whoever comes back for it.
     func standDown() {
-        guard !isPinned else { return }
-        // A conversation in progress is not an idle prompt. Nothing shrinks while an
-        // answer is arriving, and a chat that has said something waits for the user to
-        // leave it rather than timing out mid-read.
-        guard !isAnswering, phase != .chat else { return }
+        guard !isPinned, !isPointerInside, !isAnswering else { return }
         switch phase {
         case .prompt, .suggesting, .chat:
             set(.mini)
@@ -187,7 +220,8 @@ final class AppChatPromptModel: ObservableObject {
     /// Switching Space is leaving, and the question was about an app on the screen the
     /// user walked away from.
     func userLeftTheSpace() {
-        dismiss()
+        isPointerInside = false
+        if !isPinned { arm(after: Self.idleDwell) }
     }
 
     func dismiss() {
@@ -197,6 +231,7 @@ final class AppChatPromptModel: ObservableObject {
         capabilitySummary = ""
         attachments = []
         isPinned = false
+        hasPresentedConversation = false
         set(.hidden)
     }
 
@@ -212,6 +247,7 @@ final class AppChatPromptModel: ObservableObject {
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
         query = ""
         attachments = []
+        hasPresentedConversation = true
         set(.chat)
         touch()
         return true
@@ -229,6 +265,13 @@ final class AppChatPromptModel: ObservableObject {
                 "query": query,
                 "attachments": attachments.map(\.path),
             ])
+    }
+
+    private static func changeScope(app: String, bundleID: String) {
+        NotificationCenter.default.post(
+            name: .appChatPromptScopeChanged,
+            object: nil,
+            userInfo: ["appName": app, "bundleId": bundleID])
     }
 
     // MARK: - Timer
@@ -260,4 +303,5 @@ extension Notification.Name {
     /// Corner prompt → Context Dock's app-scoped chat. Carried by notification because the
     /// chat's state lives inside LauncherView and is not reachable from a window.
     static let appChatPromptSubmitted = Notification.Name("appChatPromptSubmitted")
+    static let appChatPromptScopeChanged = Notification.Name("appChatPromptScopeChanged")
 }

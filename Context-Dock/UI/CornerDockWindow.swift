@@ -108,8 +108,9 @@ final class CornerDockController: NSObject {
 
         // One shell, two independent surfaces: it follows both and shows itself whenever
         // either has something to say.
-        // Leaving for another Space is leaving. Following the user there with a card
-        // about the corner they walked away from is an interruption, not a service.
+        // Clipboard and shelf are tied to the Space where they appeared. Frontmost App
+        // Chat is different: its identity is the live app on the active Space, so it
+        // follows the same environment update as the main Context Dock chat.
         NotificationCenter.default.addObserver(
             forName: NSWorkspace.activeSpaceDidChangeNotification,
             object: nil, queue: .main
@@ -118,8 +119,36 @@ final class CornerDockController: NSObject {
                 ClipboardPanelController.shared.model.userLeftTheSpace()
                 DropShelfController.shared.presentation.autoHide()
                 CornerDockController.shared.prompt.userLeftTheSpace()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    guard
+                        let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+                        let bundleID = app.bundleIdentifier,
+                        bundleID != Bundle.main.bundleIdentifier
+                    else { return }
+                    ContextDockEnvironment.shared.frontmostAppDidChange(
+                        name: app.localizedName ?? "", bundleID: bundleID)
+                }
             }
         }
+
+        ContextDockEnvironment.shared.frontmostAppUpdates
+            .sink { [weak self] appInfo in
+                Task { @MainActor in
+                    guard let self, self.prompt.phase.isVisible else { return }
+                    let app = NSWorkspace.shared.runningApplications.first {
+                        $0.bundleIdentifier == appInfo.bundleID && !$0.isTerminated
+                    }
+                    // Let LauncherView consume the same environment event first, then
+                    // switch the shared session and redraw this second presentation.
+                    await Task.yield()
+                    self.prompt.frontmostAppDidChange(
+                        app: appInfo.name,
+                        bundleID: appInfo.bundleID,
+                        suggestions: AppChatSuggestionProvider.suggestions(for: app),
+                        summary: AppChatSuggestionProvider.summary(for: app))
+                }
+            }
+            .store(in: &sinks)
 
         clipboardModel.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -286,6 +315,7 @@ final class CornerDockController: NSObject {
         } else {
             shelf.hoverEnded()
             clipboardModel.hoverEnded()
+            prompt.hoverEnded()
         }
     }
 }

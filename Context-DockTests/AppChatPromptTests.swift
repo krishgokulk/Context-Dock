@@ -156,14 +156,22 @@ struct AppChatPromptTests {
         #expect(model.query.isEmpty)
     }
 
-    @Test func switchingSpaceTakesThePromptWithIt() {
-        let model = AppChatPromptModel()
-        model.summon(app: "Safari")
+    @Test func switchingFrontmostAppKeepsThePromptAndUpdatesItsScope() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
         model.query = "typed but not sent"
 
-        model.userLeftTheSpace()
+        model.frontmostAppDidChange(
+            app: "Code",
+            bundleID: "com.microsoft.VSCode",
+            suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
+            summary: "5 actions")
 
-        #expect(model.phase == .hidden)
+        #expect(model.phase == .suggesting)
+        #expect(model.appName == "Code")
+        #expect(model.appBundleID == "com.microsoft.VSCode")
+        #expect(model.query.isEmpty)
+        #expect(model.suggestions.map(\.title) == ["New Window"])
     }
 
     /// This is the frontmost app chat: the question is asked and answered here.
@@ -285,11 +293,24 @@ struct AppChatControlsTests {
         #expect(model.phase != .hidden)
     }
 
-    /// A conversation is not an untouched prompt: it stays open while the user is reading.
-    @Test func aConversationDoesNotStandDownLikeAnUntouchedPrompt() {
+    /// Conversation history does not make the corner immortal. Leaving it lets the same
+    /// idle lifecycle as the launch suggestions shrink it back to the app icon.
+    @Test func aConversationShrinksAfterThePointerLeaves() {
         let model = opened()
         model.query = "a question"
         _ = model.submit()
+
+        model.hoverEnded()
+        model.standDown()
+
+        #expect(model.phase == .mini)
+    }
+
+    @Test func aConversationStaysOpenWhileThePointerIsInside() {
+        let model = opened()
+        model.query = "a question"
+        _ = model.submit()
+        model.hoverBegan()
 
         model.standDown()
 

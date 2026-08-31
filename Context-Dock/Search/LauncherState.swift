@@ -52,7 +52,7 @@ final class AppChatConversation: ObservableObject {
     @Published var scopeBundleId: String = ""
     @Published var scopeAppName: String = ""
 
-    private init() {}
+    init() {}
 }
 
 struct L2State {
