@@ -304,25 +304,29 @@ struct AppChatPromptPill: View {
 
     // MARK: - Conversation
 
+    /// The dock's own message view, so steps, tool chips, receipts and route choices
+    /// render here exactly as they do in the dock. Reimplementing it would have been the
+    /// same drift this surface was built to avoid.
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(model.messages) { message in
-                        HStack(alignment: .top) {
-                            if message.isFromUser { Spacer(minLength: 40) }
-                            bubble(message)
-                            if !message.isFromUser { Spacer(minLength: 40) }
-                        }
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(model.messages.enumerated()), id: \.element.id) {
+                        index, message in
+                        AIChatMessageView(
+                            message: message,
+                            isStreaming: model.isAnswering && index == model.messages.count - 1,
+                            assistantAvatarImage: appIcon,
+                            liveSteps: model.isAnswering && index == model.messages.count - 1
+                                ? model.liveSteps : []
+                        )
                         .id(message.id)
                     }
-                    if !model.status.isEmpty {
-                        Text(model.status)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary.opacity(0.8))
+                    if model.isAnswering && model.messages.last?.role == .user {
+                        ProgressView().controlSize(.small)
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 10)
             }
             .onChange(of: model.messages.count) { _, _ in
@@ -331,28 +335,6 @@ struct AppChatPromptPill: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    @ViewBuilder
-    private func bubble(_ message: AppChatMessage) -> some View {
-        if message.text.isEmpty {
-            // The answer's placeholder, so the turn reads as underway rather than lost.
-            ProgressView()
-                .controlSize(.small)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-        } else {
-            Text(message.text)
-                .font(.system(size: 12.5))
-                .textSelection(.enabled)
-                .foregroundStyle(message.isFromUser ? .primary : .secondary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    message.isFromUser
-                        ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.06),
-                    in: RoundedRectangle(cornerRadius: 12))
-        }
     }
 
     // MARK: - Shrunken

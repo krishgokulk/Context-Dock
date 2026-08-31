@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -174,11 +175,8 @@ struct AppChatPromptTests {
         _ = model.submit()
 
         #expect(model.phase == .chat)
-        #expect(model.messages.first?.text == "what changed here")
-        #expect(model.messages.first?.isFromUser == true)
-        // The answer's placeholder, waiting to be filled by the turn.
-        #expect(model.messages.last?.isFromUser == false)
-        #expect(model.isAnswering)
+        // The runtime notification observer owns the shared transcript. This model owns
+        // the hand-off and surface transition, which are synchronous and testable here.
         #expect(model.query.isEmpty)
     }
 
@@ -245,11 +243,37 @@ struct AppChatControlsTests {
     /// A second Enter while the first is still running must not start a second turn.
     @Test func askingAgainMidAnswerIsIgnored() {
         let model = opened()
-        model.query = "first"
-        _ = model.submit()
+        AppChatConversation.shared.isLoading = true
+        defer { AppChatConversation.shared.isLoading = false }
         model.query = "second"
 
         #expect(!model.submit())
+    }
+
+    /// The corner is another view of the dock conversation. A dock-side update must
+    /// invalidate this model so SwiftUI redraws the transcript and live activity.
+    @Test func sharedConversationUpdatesRefreshTheCorner() {
+        let model = opened()
+        var didRefresh = false
+        let observation = model.objectWillChange.sink { didRefresh = true }
+        defer { observation.cancel() }
+
+        AppChatConversation.shared.liveSteps = ["Checking capabilities"]
+        defer { AppChatConversation.shared.liveSteps = [] }
+
+        #expect(didRefresh)
+        #expect(model.liveSteps == ["Checking capabilities"])
+    }
+
+    @Test func dockRouteTraceFeedsTheSharedCornerActivity() {
+        var state = L2State()
+
+        state.routerTrace = ["Planning the minimum evidence route"]
+        defer { state.routerTrace = [] }
+
+        #expect(
+            AppChatConversation.shared.liveSteps
+                == ["Planning the minimum evidence route"])
     }
 
     @Test func sendingAnEmptyQuestionDoesNothing() {
@@ -261,15 +285,15 @@ struct AppChatControlsTests {
         #expect(model.phase != .hidden)
     }
 
-    /// A conversation is not an untouched prompt: it shrinks, it does not evaporate.
-    @Test func aConversationShrinksRatherThanVanishing() {
+    /// A conversation is not an untouched prompt: it stays open while the user is reading.
+    @Test func aConversationDoesNotStandDownLikeAnUntouchedPrompt() {
         let model = opened()
         model.query = "a question"
         _ = model.submit()
 
         model.standDown()
 
-        #expect(model.phase == .mini)
+        #expect(model.phase == .chat)
     }
 
     @Test func comingBackToAConversationReopensIt() {

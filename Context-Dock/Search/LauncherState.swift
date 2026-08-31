@@ -44,6 +44,10 @@ final class AppChatConversation: ObservableObject {
     static let shared = AppChatConversation()
 
     @Published var messages: [AIChatMessage] = []
+    /// True while the dock's pipeline is running a turn.
+    @Published var isLoading = false
+    /// Steps for the turn still running, shown above the answer as it arrives.
+    @Published var liveSteps: [String] = []
     /// The app the live conversation belongs to, for a surface that did not start it.
     @Published var scopeBundleId: String = ""
     @Published var scopeAppName: String = ""
@@ -65,14 +69,21 @@ struct L2State {
     var handledApprovalIds: Set<UUID> = []
     var terminalDismissed: Bool = false
     var activeDockSessionKey: String? = nil
-    var isLoading: Bool = false
+    /// Shared with the conversation for the same reason as `chatMessages`: a second
+    /// surface has to know a turn is in flight.
+    var isLoading: Bool {
+        get { AppChatConversation.shared.isLoading }
+        set { AppChatConversation.shared.isLoading = newValue }
+    }
     /// Truthful, user-visible orchestration activity for Context Dock chat.
     /// This reports app/tool work, never private model reasoning.
     var loadingStatus: String? = nil
     /// Every `loadingStatus` line this turn, kept so the finished answer carries the same
     /// "N steps" disclosure Selection Scope shows. `loadingStatus` is a single live line and
     /// is overwritten by the next stage; this is the history of what was actually done.
-    var routerTrace: [String] = []
+    var routerTrace: [String] = [] {
+        didSet { AppChatConversation.shared.liveSteps = routerTrace }
+    }
     var currentTask: Task<Void, Never>? = nil
     var activeRequestID: UUID? = nil
     var contextExtensions: [ExtensionDiscoveryResult] = []

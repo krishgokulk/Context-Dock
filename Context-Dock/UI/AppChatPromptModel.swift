@@ -4,22 +4,16 @@
 // Ask the frontmost app something without leaving it: a hotkey puts an input field in the
 // corner shell, alongside the clipboard and the shelf.
 //
-// This is the frontmost app chat. It answers here.
+// This is the frontmost app chat. It answers here, and it is the dock's chat — not a
+// second one that resembles it.
 //
-// The engine is not its own: turns go through `AppScopedChatService.send`, the same call
-// the other chat surfaces use, so grounding, tool routing and command approval behave
-// identically — a different window is not a reason to build a second brain or lower a
-// gate. What belongs to this surface is only how the conversation is shown.
+// The turn runs through Context Dock's own pipeline and the answer lands in
+// `AppChatConversation`, which the dock writes and this reads. Nothing about routing,
+// grounding, or approval is reimplemented here, so the two cannot drift: they are the
+// same conversation shown in two places.
 
 import Combine
 import Foundation
-
-/// One turn in the conversation.
-struct AppChatMessage: Identifiable, Equatable {
-    let id = UUID()
-    var text: String
-    let isFromUser: Bool
-}
 
 /// One thing the frontmost app can do, offered before the user has typed anything.
 struct AppChatSuggestion: Identifiable, Equatable {
@@ -69,11 +63,10 @@ final class AppChatPromptModel: ObservableObject {
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
-    /// The conversation so far.
-    @Published private(set) var messages: [AppChatMessage] = []
-    /// What the turn is doing right now, in words.
-    @Published private(set) var status = ""
-    @Published private(set) var isAnswering = false
+    /// The dock's conversation, not a copy of it.
+    var messages: [AIChatMessage] { AppChatConversation.shared.messages }
+    var isAnswering: Bool { AppChatConversation.shared.isLoading }
+    var liveSteps: [String] { AppChatConversation.shared.liveSteps }
     /// Files the question should carry.
     @Published private(set) var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
@@ -81,8 +74,16 @@ final class AppChatPromptModel: ObservableObject {
 
     private(set) var isStandDownArmed = false
     private var standDownTask: Task<Void, Never>?
+    private var conversationObservation: AnyCancellable?
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
+
+    init(conversation: AppChatConversation? = nil) {
+        let source = conversation ?? AppChatConversation.shared
+        conversationObservation = source.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
 
     // MARK: - Opening
 
@@ -168,6 +169,10 @@ final class AppChatPromptModel: ObservableObject {
     /// any half-written question for whoever comes back for it.
     func standDown() {
         guard !isPinned else { return }
+        // A conversation in progress is not an idle prompt. Nothing shrinks while an
+        // answer is arriving, and a chat that has said something waits for the user to
+        // leave it rather than timing out mid-read.
+        guard !isAnswering, phase != .chat else { return }
         switch phase {
         case .prompt, .suggesting, .chat:
             set(.mini)
@@ -191,66 +196,25 @@ final class AppChatPromptModel: ObservableObject {
         suggestions = []
         capabilitySummary = ""
         attachments = []
-        messages = []
-        status = ""
         isPinned = false
         set(.hidden)
     }
 
     // MARK: - Sending
 
-    /// Asks, and answers here. The turn runs through the shared service, so this surface
-    /// owns the presentation and nothing else.
+    /// Asks. The turn runs on Context Dock's pipeline — the same code the dock's own
+    /// chat uses — and the answer arrives in the shared conversation this renders.
     @discardableResult
     func submit() -> Bool {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAnswering else { return false }
-        let files = attachments
-
-        messages.append(AppChatMessage(text: question, isFromUser: true))
-        messages.append(AppChatMessage(text: "", isFromUser: false))
+        Self.handOff(
+            app: appName, bundleID: appBundleID, query: question, attachments: attachments)
         query = ""
         attachments = []
-        isAnswering = true
-        status = ""
         set(.chat)
         touch()
-
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let answer = try await AppScopedChatService.send(
-                    scope: .app(bundleId: self.appBundleID),
-                    appName: self.appName,
-                    query: question,
-                    history: self.historyForService(),
-                    attachments: files,
-                    onStream: nil,
-                    onStatus: { [weak self] line in
-                        self?.status = line
-                    })
-                self.finish(with: answer.text)
-            } catch {
-                self.finish(with: "That didn't go through: \(error.localizedDescription)")
-            }
-        }
         return true
-    }
-
-    private func finish(with text: String) {
-        isAnswering = false
-        status = ""
-        if let index = messages.lastIndex(where: { !$0.isFromUser }) {
-            messages[index].text = text
-        }
-        touch()
-    }
-
-    /// Everything already said, in the shape the service expects.
-    private func historyForService() -> [ChatMessage] {
-        messages
-            .filter { !$0.text.isEmpty }
-            .map { ChatMessage(role: $0.isFromUser ? .user : .assistant, content: $0.text) }
     }
 
     private static func handOff(
