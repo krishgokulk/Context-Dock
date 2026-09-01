@@ -181,6 +181,9 @@ final class CornerDockController: NSObject {
         chatPresentation.$isVisible.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
+        chatPresentation.generalChat.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.refresh() }
+        }.store(in: &sinks)
     }
 
     private func position() {
@@ -238,7 +241,7 @@ final class CornerDockController: NSObject {
 
     private var promptSize: CGSize {
         chatPresentation.mode == .general
-            ? CornerGeneralChatMetrics.size
+            ? CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
             : AppChatPromptMetrics.size(for: prompt.phase, suggestions: prompt.suggestions.count)
     }
 

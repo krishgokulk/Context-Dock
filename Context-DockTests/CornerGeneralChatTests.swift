@@ -5,6 +5,30 @@ import Testing
 
 @MainActor
 struct CornerGeneralChatTests {
+    @Test func emptyChatUsesCompactComposerHeight() {
+        #expect(CornerGeneralChatMetrics.height(
+            messageCount: 0, isSending: false,
+            hasAttachments: false, slashMatchCount: 0) == 72)
+    }
+
+    @Test func resultsExpandAndRemainCapped() {
+        let oneResult = CornerGeneralChatMetrics.height(
+            messageCount: 1, isSending: false,
+            hasAttachments: false, slashMatchCount: 0)
+        let longThread = CornerGeneralChatMetrics.height(
+            messageCount: 100, isSending: false,
+            hasAttachments: false, slashMatchCount: 0)
+
+        #expect(oneResult > 72)
+        #expect(longThread == 620)
+    }
+
+    @Test func slashMatchesGrowOnlyEnoughForPicker() {
+        #expect(CornerGeneralChatMetrics.height(
+            messageCount: 0, isSending: false,
+            hasAttachments: false, slashMatchCount: 3) == 118)
+    }
+
     @Test func snapshotUsesTheModelsLiveState() {
         let model = GeneralChatWindowModel()
         model.input = "/terminal"

@@ -21,7 +21,34 @@ struct CornerGeneralChatSnapshot {
 }
 
 enum CornerGeneralChatMetrics {
-    static let size = CGSize(width: CornerDockLayout.cardWidth, height: 620)
+    static let compactHeight: CGFloat = 72
+    static let maximumHeight: CGFloat = 620
+
+    static func height(
+        messageCount: Int,
+        isSending: Bool,
+        hasAttachments: Bool,
+        slashMatchCount: Int
+    ) -> CGFloat {
+        if messageCount > 0 || isSending {
+            return min(maximumHeight, 220 + CGFloat(min(messageCount, 5)) * 90)
+        }
+        var result = compactHeight
+        if slashMatchCount > 0 { result += 46 }
+        if hasAttachments { result += 34 }
+        return result
+    }
+
+    @MainActor
+    static func size(for model: GeneralChatWindowModel) -> CGSize {
+        CGSize(
+            width: CornerDockLayout.cardWidth,
+            height: height(
+                messageCount: model.messages.count,
+                isSending: model.isSending,
+                hasAttachments: !model.attachments.isEmpty,
+                slashMatchCount: ChatSlashAppPicker.matches(for: model.input).count))
+    }
 }
 
 struct CornerGeneralChatView: View {
@@ -30,25 +57,30 @@ struct CornerGeneralChatView: View {
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @FocusState private var composerFocused: Bool
 
+    private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
+    private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
+
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.18)
-            transcript
-            if let request = approvals.pending(for: .chatWindow) {
-                ApprovalCard(request: request)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 6)
+            if showsTranscript {
+                header
+                Divider().opacity(0.18)
+                transcript
+                if let request = approvals.pending(for: .chatWindow) {
+                    ApprovalCard(request: request)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                }
             }
             composer
         }
-        .frame(width: CornerGeneralChatMetrics.size.width,
-               height: CornerGeneralChatMetrics.size.height)
+        .frame(width: size.width, height: size.height)
         .background(GlassBackground(cornerRadius: 22, isDark: true))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         .onChange(of: keyboardState.focusRequestToken) { _, _ in composerFocused = true }
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: size.height)
     }
 
     private var header: some View {
@@ -74,17 +106,6 @@ struct CornerGeneralChatView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    if model.messages.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("General AI Chat")
-                                .font(.system(size: 18, weight: .semibold))
-                            Text("Ask anything, or type / to work with an app.")
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.top, 12)
-                    }
                     ForEach(model.messages) { message in
                         AIChatMessageView(
                             message: message,
