@@ -61,7 +61,8 @@ final class CornerDockController: NSObject {
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
     private var shelf: DropShelfPresentation { DropShelfController.shared.presentation }
-    let prompt = AppChatPromptModel()
+    let chatPresentation = CornerChatPresentation.shared
+    var prompt: AppChatPromptModel { chatPresentation.appChat }
 
     var window: NSPanel? { panel }
 
