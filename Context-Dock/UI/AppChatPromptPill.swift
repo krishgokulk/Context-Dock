@@ -41,6 +41,7 @@ enum AppChatPromptMetrics {
 
 struct AppChatPromptPill: View {
     @ObservedObject var model: AppChatPromptModel
+    @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
 
@@ -69,6 +70,9 @@ struct AppChatPromptPill: View {
         .onHover { pointerInside = $0 }
         .onChange(of: model.phase) { _, phase in
             fieldFocused = phase.showsInput
+        }
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in
+            fieldFocused = true
         }
     }
 
@@ -116,6 +120,9 @@ struct AppChatPromptPill: View {
                         model.dismiss()
                         return .handled
                     }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        CornerDockController.shared.requestComposerFocus()
+                    })
             }
 
             // Controls belong to the pointer: at rest this row is one quiet line.

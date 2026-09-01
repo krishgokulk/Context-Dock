@@ -62,6 +62,7 @@ final class CornerDockController: NSObject {
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
     private var shelf: DropShelfPresentation { DropShelfController.shared.presentation }
     let chatPresentation = CornerChatPresentation.shared
+    let keyboardState = CornerDockKeyboardState()
     var prompt: AppChatPromptModel { chatPresentation.appChat }
 
     var window: NSPanel? { panel }
@@ -164,7 +165,7 @@ final class CornerDockController: NSObject {
                 // ambient pills it takes focus the moment it appears.
                 if phase.showsInput {
                     self?.armKeyboard()
-                } else if phase == .hidden {
+                } else {
                     self?.disarmKeyboard()
                 }
             }
@@ -251,8 +252,15 @@ final class CornerDockController: NSObject {
         panel.makeKeyAndOrderFront(nil)
     }
 
+    func requestComposerFocus() {
+        ensurePanel()
+        armKeyboard()
+        keyboardState.composerInteracted()
+    }
+
     func disarmKeyboard() {
         panel?.styleMask = [.borderless, .nonactivatingPanel]
+        keyboardState.stoodDown()
     }
 
     // MARK: - Hover
