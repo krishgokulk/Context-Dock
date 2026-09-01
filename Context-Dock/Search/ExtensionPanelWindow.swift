@@ -535,15 +535,6 @@ struct AIComposerBar: View {
     /// the same affordance the dock's chips use.
     @State private var hoveredAppName: String?
 
-    /// Text after a leading "/", or nil when this isn't an app filter. A space ends
-    /// it — "/rem" filters, "/rem what is due" is a sentence the user kept typing.
-    private var slashFilter: String? {
-        guard text.hasPrefix("/") else { return nil }
-        let rest = String(text.dropFirst())
-        guard !rest.contains(" ") else { return nil }
-        return rest.lowercased()
-    }
-
     /// Apps matching the "/" filter — running first, prefix matches before
     /// substring ones, so the leftmost icon is what Return will take.
     ///
@@ -551,17 +542,21 @@ struct AIComposerBar: View {
     /// catalogue directly was why "/finder" matched nothing here while it worked in the
     /// dock: the catalogue does not scan /System/Library/CoreServices.
     private var slashApps: [ChatAppEntry] {
-        guard let filter = slashFilter else { return [] }
-        return ChatAppDirectory.matching(filter)
+        ChatSlashAppPicker.matches(for: text)
     }
 
-    private func pickSlashApp(_ name: String) {
-        onAttachApp(name)
+    private func pickSlashApp(_ app: ChatAppEntry) {
+        onAttachApp(app.name)
         text = ""
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
+            if !slashApps.isEmpty {
+                ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
+            }
+
+            HStack(spacing: 8) {
             // Provider chip: switching model is part of asking, so it lives in the bar.
             Menu {
                 ForEach(AIProvider.allCases) { provider in
@@ -605,52 +600,11 @@ struct AIComposerBar: View {
                     // "/rem" + Return means "work with that app", not "ask about the
                     // string /rem".
                     if let first = slashApps.first {
-                        pickSlashApp(first.name)
+                        pickSlashApp(first)
                         return
                     }
                     onSubmit()
                 }
-
-            // The "/" matches live in the bar itself, narrowing as you type, rather
-            // than in a popover the typing cannot reach.
-            if !slashApps.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(slashApps) { app in
-                        Button { pickSlashApp(app.name) } label: {
-                            Group {
-                                if let icon = app.icon {
-                                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
-                                } else {
-                                    Image(systemName: "app.dashed")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(width: 17, height: 17)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .padding(2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(
-                                        app.id == slashApps.first?.id
-                                            ? Color.accentColor.opacity(0.28) : Color.clear
-                                    )
-                            )
-                            .overlay(alignment: .bottomTrailing) {
-                                if app.isRunning {
-                                    Circle().fill(Color.green).frame(width: 5, height: 5)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(app.isRunning ? "\(app.name) — running" : app.name)
-                    }
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.accentColor.opacity(0.12), in: Capsule())
-            }
 
             if let extraAttachMenu {
                 Menu {
@@ -757,12 +711,13 @@ struct AIComposerBar: View {
             if isSending {
                 ProgressView().controlSize(.small)
             }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
+            .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.primary.opacity(0.06), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
         .acceptsPastedImages { urls in onPasteImages?(urls) }
     }
 }
