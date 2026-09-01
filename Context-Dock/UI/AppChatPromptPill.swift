@@ -97,7 +97,7 @@ struct AppChatPromptPill: View {
 
     private var inputRow: some View {
         HStack(spacing: 10) {
-            if model.appBundleID.isEmpty || model.phase == .prompt {
+            if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)

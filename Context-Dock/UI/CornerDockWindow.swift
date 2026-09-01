@@ -304,6 +304,21 @@ final class CornerDockController: NSObject {
         {
             hoverMonitors.append(swipe)
         }
+        if let keys = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown],
+            handler: { [weak self] event in self?.handleChatNavigationKey(event) ?? event })
+        {
+            hoverMonitors.append(keys)
+        }
+    }
+
+    private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
+        guard let panel, event.window === panel,
+              event.keyCode == 123,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              chatPresentation.handleLeftArrow(draft: prompt.query)
+        else { return event }
+        return nil
     }
 
     private func handleChatSwipe(_ event: NSEvent) -> NSEvent? {
