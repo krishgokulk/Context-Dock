@@ -38,6 +38,9 @@ AppIcon.icon/
 # graphify local knowledge graph — regenerable, not committed (run `graphify update .`).
 graphify-out/
 
+# Agent-created isolated feature worktrees.
+.worktrees/
+
 # macOS/Google Drive custom folder-icon artifacts (one of these broke `xcodebuild test`)
 Icon?
 
