@@ -45,4 +45,32 @@ struct CornerChatPresentationTests {
         #expect(app.query == "app draft")
         #expect(general.input == "general draft")
     }
+
+    @Test func emptyLeftArrowEntersGeneralButTextKeepsCursorOwnership() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.showFrontmostApp(target: code)
+
+        #expect(subject.handleLeftArrow(draft: "") == true)
+        #expect(subject.mode == .general)
+
+        subject.showFrontmostApp(target: code)
+        #expect(subject.handleLeftArrow(draft: "editing") == false)
+        #expect(subject.mode == .frontmostApp)
+    }
+
+    @Test func horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.showFrontmostApp(target: code)
+
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == false)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.mode == .general)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.mode == .frontmostApp)
+        #expect(subject.appChat.appBundleID == code.bundleID)
+    }
 }

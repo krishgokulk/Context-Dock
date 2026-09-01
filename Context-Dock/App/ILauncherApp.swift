@@ -1821,13 +1821,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        let target = NSWorkspace.shared.frontmostApplication
-        CornerDockController.shared.activate()
-        CornerDockController.shared.prompt.summon(
-            app: target?.localizedName ?? "",
+        // Capture the user-facing app before the corner panel activates Context-Dock.
+        // If the panel is already key, this helper remembers the app behind it instead
+        // of accidentally turning the next cycle into "Chat with Context-Dock".
+        let target = menuBarOwningUserFacingApplication()
+            ?? NSWorkspace.shared.frontmostApplication
+        let chatTarget = CornerChatTarget(
+            name: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
             summary: AppChatSuggestionProvider.summary(for: target))
+        CornerDockController.shared.activate()
+        CornerChatPresentation.shared.cycle(target: chatTarget)
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.

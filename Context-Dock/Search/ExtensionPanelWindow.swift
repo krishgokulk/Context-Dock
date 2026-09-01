@@ -528,6 +528,8 @@ struct AIComposerBar: View {
     var onRemoveApp: ((String) -> Void)? = nil
     /// Images pasted with ⌘V. Nil leaves paste as text-only on that surface.
     var onPasteImages: (([URL]) -> Void)? = nil
+    /// Empty-field layer navigation. Nil on composers that do not participate.
+    var onEmptyLeftArrow: (() -> Bool)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -604,6 +606,12 @@ struct AIComposerBar: View {
                         return
                     }
                     onSubmit()
+                }
+                .onKeyPress(.leftArrow) {
+                    guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          onEmptyLeftArrow?() == true
+                    else { return .ignored }
+                    return .handled
                 }
 
             if let extraAttachMenu {

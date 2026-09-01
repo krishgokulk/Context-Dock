@@ -20,7 +20,7 @@ enum CornerDockLayout {
     static let cardWidth: CGFloat = 372
     /// The tallest single surface the shell holds: the clipboard card and the App Chat
     /// prompt with a full suggestion list are both about this.
-    static let cardHeight: CGFloat = 404
+    static let cardHeight: CGFloat = 620
     static let pillHeight: CGFloat = 56
 
     /// Big enough for the worst case: one surface fully expanded with the other's pill

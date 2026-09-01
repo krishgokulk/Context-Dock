@@ -57,6 +57,8 @@ final class CornerDockController: NSObject {
     private var panel: CornerDockPanel?
     private var hostView: CornerDockHostView?
     private var hoverMonitors: [Any] = []
+    private var accumulatedChatSwipeX: CGFloat = 0
+    private var accumulatedChatSwipeY: CGFloat = 0
     private var sinks: Set<AnyCancellable> = []
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
@@ -170,6 +172,15 @@ final class CornerDockController: NSObject {
                 }
             }
         }.store(in: &sinks)
+        chatPresentation.$mode.sink { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+                self?.requestComposerFocus()
+            }
+        }.store(in: &sinks)
+        chatPresentation.$isVisible.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
     }
 
     private func position() {
@@ -222,11 +233,13 @@ final class CornerDockController: NSObject {
                 ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            prompt: prompt.phase.isVisible ? promptSize : nil)
+            prompt: chatPresentation.isVisible ? promptSize : nil)
     }
 
     private var promptSize: CGSize {
-        AppChatPromptMetrics.size(for: prompt.phase, suggestions: prompt.suggestions.count)
+        chatPresentation.mode == .general
+            ? CornerGeneralChatMetrics.size
+            : AppChatPromptMetrics.size(for: prompt.phase, suggestions: prompt.suggestions.count)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -282,6 +295,42 @@ final class CornerDockController: NSObject {
         {
             hoverMonitors.append(local)
         }
+        if let swipe = NSEvent.addLocalMonitorForEvents(
+            matching: [.scrollWheel],
+            handler: { [weak self] event in self?.handleChatSwipe(event) ?? event })
+        {
+            hoverMonitors.append(swipe)
+        }
+    }
+
+    private func handleChatSwipe(_ event: NSEvent) -> NSEvent? {
+        guard let panel, event.window === panel,
+              let promptRect = currentSlots().prompt,
+              promptRect.contains(event.locationInWindow)
+        else { return event }
+
+        if event.phase == .began {
+            accumulatedChatSwipeX = 0
+            accumulatedChatSwipeY = 0
+        }
+        if event.phase == .began || event.phase == .changed
+            || event.momentumPhase == .began || event.momentumPhase == .changed
+        {
+            accumulatedChatSwipeX += event.scrollingDeltaX
+            accumulatedChatSwipeY += event.scrollingDeltaY
+        }
+        guard event.phase == .ended || event.momentumPhase == .ended else { return event }
+        defer {
+            accumulatedChatSwipeX = 0
+            accumulatedChatSwipeY = 0
+        }
+        guard abs(accumulatedChatSwipeX) > abs(accumulatedChatSwipeY) * 1.8 else {
+            return event
+        }
+        let draft = chatPresentation.mode == .general
+            ? chatPresentation.generalChat.input : prompt.query
+        return chatPresentation.handleHorizontalSwipe(
+            deltaX: accumulatedChatSwipeX, draft: draft) ? nil : event
     }
 
     private func stopHoverWatch() {
@@ -336,6 +385,7 @@ struct CornerDockSurface: View {
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
     @ObservedObject private var prompt = CornerDockController.shared.prompt
+    @ObservedObject private var chatPresentation = CornerDockController.shared.chatPresentation
 
     var body: some View {
         VStack(alignment: .trailing, spacing: CornerDockLayout.gap) {
@@ -345,8 +395,12 @@ struct CornerDockSurface: View {
             if clipboardModel.phase.isVisible {
                 ClipboardDockPill(model: clipboardModel)
             }
-            if prompt.phase.isVisible {
-                AppChatPromptPill(model: prompt)
+            if chatPresentation.isVisible {
+                if chatPresentation.mode == .general {
+                    CornerGeneralChatView(model: chatPresentation.generalChat)
+                } else {
+                    AppChatPromptPill(model: prompt)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -359,5 +413,7 @@ struct CornerDockSurface: View {
             value: clipboardModel.phase.isVisible)
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
     }
 }

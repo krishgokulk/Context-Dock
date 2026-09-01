@@ -120,6 +120,10 @@ struct AppChatPromptPill: View {
                         model.dismiss()
                         return .handled
                     }
+                    .onKeyPress(.leftArrow) {
+                        CornerDockController.shared.chatPresentation
+                            .handleLeftArrow(draft: model.query) ? .handled : .ignored
+                    }
                     .simultaneousGesture(TapGesture().onEnded {
                         CornerDockController.shared.requestComposerFocus()
                     })

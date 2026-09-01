@@ -37,6 +37,7 @@ final class CornerChatPresentation: ObservableObject {
 
     @Published private(set) var mode: CornerChatMode = .frontmostApp
     @Published private(set) var isVisible = false
+    private var latestTarget: CornerChatTarget?
 
     let appChat: AppChatPromptModel
     let generalChat: GeneralChatWindowModel
@@ -50,6 +51,7 @@ final class CornerChatPresentation: ObservableObject {
     }
 
     func cycle(target: CornerChatTarget) {
+        latestTarget = target
         if !isVisible {
             showFrontmostApp(target: target)
         } else if mode == .frontmostApp {
@@ -61,6 +63,7 @@ final class CornerChatPresentation: ObservableObject {
     }
 
     func showFrontmostApp(target: CornerChatTarget) {
+        latestTarget = target
         mode = .frontmostApp
         isVisible = true
         appChat.summon(
@@ -68,6 +71,36 @@ final class CornerChatPresentation: ObservableObject {
             bundleID: target.bundleID,
             suggestions: target.suggestions,
             summary: target.summary)
+    }
+
+    @discardableResult
+    func handleLeftArrow(draft: String) -> Bool {
+        guard mode == .frontmostApp,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        showGeneral()
+        return true
+    }
+
+    @discardableResult
+    func handleHorizontalSwipe(deltaX: CGFloat, draft: String) -> Bool {
+        guard abs(deltaX) > 70,
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        if mode == .general {
+            guard let latestTarget else { return false }
+            showFrontmostApp(target: latestTarget)
+            return true
+        }
+        guard deltaX > 0 else { return false }
+        showGeneral()
+        return true
+    }
+
+    private func showGeneral() {
+        mode = .general
+        isVisible = true
+        generalChat.reloadFromStore()
     }
 
     func dismiss() {
