@@ -11,6 +11,20 @@ struct CornerGeneralChatTests {
             hasAttachments: false, slashMatchCount: 0) == 72)
     }
 
+    @Test func freshGeneralChatShowsStartersThenTypingCollapsesToComposer() {
+        let starters = CornerGeneralChatMetrics.height(
+            messageCount: 0, isSending: false,
+            hasAttachments: false, slashMatchCount: 0,
+            showsStarter: true)
+        let typing = CornerGeneralChatMetrics.height(
+            messageCount: 0, isSending: false,
+            hasAttachments: false, slashMatchCount: 0,
+            showsStarter: false)
+
+        #expect(starters == 350)
+        #expect(typing == 72)
+    }
+
     @Test func resultsExpandAndRemainCapped() {
         let oneResult = CornerGeneralChatMetrics.height(
             messageCount: 1, isSending: false,

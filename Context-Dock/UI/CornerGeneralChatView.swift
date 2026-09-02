@@ -28,11 +28,13 @@ enum CornerGeneralChatMetrics {
         messageCount: Int,
         isSending: Bool,
         hasAttachments: Bool,
-        slashMatchCount: Int
+        slashMatchCount: Int,
+        showsStarter: Bool = false
     ) -> CGFloat {
         if messageCount > 0 || isSending {
             return min(maximumHeight, 220 + CGFloat(min(messageCount, 5)) * 90)
         }
+        if showsStarter { return 350 }
         var result = compactHeight
         if slashMatchCount > 0 { result += 46 }
         if hasAttachments { result += 34 }
@@ -41,13 +43,20 @@ enum CornerGeneralChatMetrics {
 
     @MainActor
     static func size(for model: GeneralChatWindowModel) -> CGSize {
-        CGSize(
+        let slashMatches = ChatSlashAppPicker.matches(for: model.input)
+        let showsStarter = model.activeScope == .general
+            && model.messages.isEmpty
+            && !model.isSending
+            && model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && model.attachments.isEmpty
+        return CGSize(
             width: CornerDockLayout.cardWidth,
             height: height(
                 messageCount: model.messages.count,
                 isSending: model.isSending,
                 hasAttachments: !model.attachments.isEmpty,
-                slashMatchCount: ChatSlashAppPicker.matches(for: model.input).count))
+                slashMatchCount: slashMatches.count,
+                showsStarter: showsStarter))
     }
 }
 
@@ -59,6 +68,13 @@ struct CornerGeneralChatView: View {
 
     private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
+    private var showsStarter: Bool {
+        model.activeScope == .general
+            && model.messages.isEmpty
+            && !model.isSending
+            && model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && model.attachments.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -71,6 +87,12 @@ struct CornerGeneralChatView: View {
                         .padding(.horizontal, 12)
                         .padding(.bottom, 6)
                 }
+            } else if showsStarter {
+                GeneralChatStartView { prompt in
+                    model.input = prompt
+                    model.send()
+                }
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             composer
         }
@@ -81,6 +103,7 @@ struct CornerGeneralChatView: View {
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         .onChange(of: keyboardState.focusRequestToken) { _, _ in composerFocused = true }
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: size.height)
+        .animation(.easeOut(duration: 0.18), value: showsStarter)
     }
 
     private var header: some View {

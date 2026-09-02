@@ -55,8 +55,7 @@ final class CornerChatPresentation: ObservableObject {
         if !isVisible {
             showFrontmostApp(target: target)
         } else if mode == .frontmostApp {
-            mode = .general
-            generalChat.reloadFromStore()
+            showGeneral()
         } else {
             showFrontmostApp(target: target)
         }
@@ -101,6 +100,7 @@ final class CornerChatPresentation: ObservableObject {
         mode = .general
         isVisible = true
         generalChat.reloadFromStore()
+        generalChat.openSession(.general, title: "General Chat")
     }
 
     func dismiss() {
