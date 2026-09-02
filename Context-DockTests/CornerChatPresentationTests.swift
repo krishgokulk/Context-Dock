@@ -12,7 +12,7 @@ struct CornerChatPresentationTests {
             summary: "5 actions")
     }
 
-    @Test func hotkeyCyclesHiddenToAppToGeneralToApp() {
+    @Test func hotkeyAlwaysSummonsFrontmostAppChat() {
         let app = AppChatPromptModel(conversation: AppChatConversation())
         let general = GeneralChatWindowModel()
         let subject = CornerChatPresentation(appChat: app, generalChat: general)
@@ -21,10 +21,6 @@ struct CornerChatPresentationTests {
         #expect(subject.mode == .frontmostApp)
         #expect(subject.isVisible)
         #expect(app.appBundleID == "com.microsoft.VSCode")
-
-        subject.cycle(target: code)
-        #expect(subject.mode == .general)
-        #expect(subject.isVisible)
 
         subject.cycle(target: code)
         #expect(subject.mode == .frontmostApp)
@@ -38,7 +34,7 @@ struct CornerChatPresentationTests {
 
         subject.cycle(target: code)
         app.query = "app draft"
-        subject.cycle(target: code)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         general.input = "general draft"
         subject.cycle(target: code)
 
@@ -69,8 +65,47 @@ struct CornerChatPresentationTests {
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == false)
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(subject.mode == .general)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == false)
+        #expect(subject.mode == .general)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.mode == .frontmostApp)
         #expect(subject.appChat.appBundleID == code.bundleID)
+    }
+
+    @Test func generalChatShrinksThenHidesAndHoverRestoresIt() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.showFrontmostApp(target: code)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
+
+        subject.standDown()
+        #expect(subject.generalPhase == .mini)
+        #expect(subject.isVisible)
+
+        subject.hoverBegan()
+        #expect(subject.generalPhase == .expanded)
+
+        subject.hoverEnded()
+        subject.standDown()
+        subject.standDown()
+        #expect(!subject.isVisible)
+    }
+
+    @Test func pinAndComposerFocusProtectGeneralChatFromIdleShrink() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.showFrontmostApp(target: code)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
+
+        subject.toggleGeneralPin()
+        subject.standDown()
+        #expect(subject.generalPhase == .expanded)
+
+        subject.toggleGeneralPin()
+        subject.setGeneralComposerFocused(true)
+        subject.standDown()
+        #expect(subject.generalPhase == .expanded)
     }
 }

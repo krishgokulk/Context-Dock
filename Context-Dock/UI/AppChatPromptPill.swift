@@ -50,9 +50,16 @@ struct AppChatPromptPill: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            miniContent.opacity(model.phase == .mini ? 1 : 0)
-            inputStack.opacity(model.phase.showsInput ? 1 : 0)
+        Group {
+            if model.phase == .mini {
+                miniContent
+                    .transition(.opacity.combined(with: .scale(scale: 0.86)))
+            } else {
+                inputStack
+                    .transition(
+                        .opacity.combined(
+                            with: .scale(scale: 0.96, anchor: .bottomTrailing)))
+            }
         }
         .frame(width: size.width, height: size.height, alignment: .bottomLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

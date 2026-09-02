@@ -240,9 +240,13 @@ final class CornerDockController: NSObject {
     }
 
     private var promptSize: CGSize {
-        chatPresentation.mode == .general
-            ? CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
-            : AppChatPromptMetrics.size(for: prompt.phase, suggestions: prompt.suggestions.count)
+        if chatPresentation.mode == .general {
+            return chatPresentation.generalPhase == .mini
+                ? AppChatPromptMetrics.miniSize
+                : CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
+        }
+        return AppChatPromptMetrics.size(
+            for: prompt.phase, suggestions: prompt.suggestions.count)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -271,6 +275,7 @@ final class CornerDockController: NSObject {
     func requestComposerFocus() {
         ensurePanel()
         armKeyboard()
+        chatPresentation.composerInteracted()
         keyboardState.composerInteracted()
     }
 
@@ -381,7 +386,7 @@ final class CornerDockController: NSObject {
         if overPrompt {
             shelf.hoverEnded()
             clipboardModel.hoverEnded()
-            prompt.hoverBegan()
+            chatPresentation.hoverBegan()
         } else if overShelf {
             clipboardModel.hoverEnded()
             shelf.hoverBegan()
@@ -391,7 +396,7 @@ final class CornerDockController: NSObject {
         } else {
             shelf.hoverEnded()
             clipboardModel.hoverEnded()
-            prompt.hoverEnded()
+            chatPresentation.hoverEnded()
         }
     }
 }
@@ -415,7 +420,11 @@ struct CornerDockSurface: View {
             }
             if chatPresentation.isVisible {
                 if chatPresentation.mode == .general {
-                    CornerGeneralChatView(model: chatPresentation.generalChat)
+                    if chatPresentation.generalPhase == .mini {
+                        CornerGeneralChatMini()
+                    } else {
+                        CornerGeneralChatView(model: chatPresentation.generalChat)
+                    }
                 } else {
                     AppChatPromptPill(model: prompt)
                 }
@@ -433,5 +442,8 @@ struct CornerDockSurface: View {
             .spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84),
+            value: chatPresentation.generalPhase)
     }
 }

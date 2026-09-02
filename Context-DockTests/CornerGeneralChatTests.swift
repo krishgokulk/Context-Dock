@@ -5,6 +5,16 @@ import Testing
 
 @MainActor
 struct CornerGeneralChatTests {
+    @Test func removingTheActiveAppReturnsToUnscopedGeneralChat() {
+        let model = GeneralChatWindowModel()
+        model.openSession(.app(bundleId: "com.apple.Safari"), title: "Safari")
+
+        model.removeApp("Safari")
+
+        #expect(model.activeScope == .general)
+        #expect(model.scopeAppNames.isEmpty)
+    }
+
     @Test func emptyChatUsesCompactComposerHeight() {
         #expect(CornerGeneralChatMetrics.height(
             messageCount: 0, isSending: false,

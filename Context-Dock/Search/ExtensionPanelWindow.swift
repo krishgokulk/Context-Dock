@@ -533,6 +533,9 @@ struct AIComposerBar: View {
     /// Corner panels cannot safely host an NSPopover child window. On those surfaces
     /// the app button enters the same inline "/" picker used while typing.
     var usesInlineAppPicker: Bool = false
+    /// Corner-only keep-open affordance. Nil on surfaces whose lifecycle is external.
+    var isPinned: Bool = false
+    var onTogglePin: (() -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -723,6 +726,17 @@ struct AIComposerBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Clear this conversation")
+            }
+
+            if let onTogglePin {
+                Button(action: onTogglePin) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 13))
+                        .foregroundStyle(isPinned ? Color.accentColor : .secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Keep this open")
             }
 
             if isSending {

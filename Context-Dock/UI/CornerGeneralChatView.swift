@@ -102,6 +102,9 @@ struct CornerGeneralChatView: View {
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         .onChange(of: keyboardState.focusRequestToken) { _, _ in composerFocused = true }
+        .onChange(of: model.input) { _, _ in
+            CornerDockController.shared.chatPresentation.composerInteracted()
+        }
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: size.height)
         .animation(.easeOut(duration: 0.18), value: showsStarter)
     }
@@ -200,12 +203,37 @@ struct CornerGeneralChatView: View {
                     })
                 },
                 onEmptyLeftArrow: { false },
-                usesInlineAppPicker: true)
+                usesInlineAppPicker: true,
+                isPinned: CornerDockController.shared.chatPresentation.isGeneralPinned,
+                onTogglePin: {
+                    CornerDockController.shared.chatPresentation.toggleGeneralPin()
+                })
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()
                 })
         }
         .padding(12)
+        .onChange(of: composerFocused) { _, focused in
+            CornerDockController.shared.chatPresentation.setGeneralComposerFocused(focused)
+        }
+    }
+}
+
+struct CornerGeneralChatMini: View {
+    var body: some View {
+        HStack(spacing: 7) {
+            AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 20)
+            Text("AI")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(
+            width: AppChatPromptMetrics.miniSize.width,
+            height: AppChatPromptMetrics.miniSize.height)
+        .background(GlassBackground(cornerRadius: 22, isDark: true))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
+        .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
     }
 }
