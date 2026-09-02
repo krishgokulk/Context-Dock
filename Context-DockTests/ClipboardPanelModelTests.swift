@@ -482,3 +482,56 @@ struct ClipboardBurstTests {
         #expect(model.burstCount == 1)
     }
 }
+
+// MARK: - Dragging a clip out
+
+@MainActor
+struct ClipboardDragTests {
+    private func model() -> ClipboardPanelModel {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipboard-\(UUID().uuidString).json")
+        return ClipboardPanelModel(storeURL: url)
+    }
+
+    /// A file clip drags as the file itself, so dropping it in Finder moves the real thing
+    /// rather than a path written out as text.
+    @Test func aFileClipDragsAsItsFile() {
+        let entry = LauncherView.ClipboardEntry(
+            text: "/tmp/report.pdf", timestamp: Date(), filePaths: ["/tmp/report.pdf"])
+
+        #expect(
+            model().dragPayload(for: entry) == .file(URL(fileURLWithPath: "/tmp/report.pdf")))
+    }
+
+    @Test func anImageClipDragsAsItsStoredBlob() {
+        let entry = LauncherView.ClipboardEntry(
+            text: "", timestamp: Date(), imageFileName: "clip-9.png")
+
+        #expect(
+            model().dragPayload(for: entry) == .file(ClipboardImageStore.url(for: "clip-9.png")))
+    }
+
+    @Test func aTextClipDragsAsText() {
+        let entry = LauncherView.ClipboardEntry(text: "some prose", timestamp: Date())
+
+        #expect(model().dragPayload(for: entry) == .text("some prose"))
+    }
+
+    /// A clip holding neither text nor a file has nothing to hand over; offering an empty
+    /// drag would look like a broken drop rather than nothing to drag.
+    @Test func anEmptyClipHasNothingToDrag() {
+        let entry = LauncherView.ClipboardEntry(text: "   ", timestamp: Date())
+
+        #expect(model().dragPayload(for: entry) == nil)
+    }
+
+    /// Files win over the text mirror: a Finder copy puts the path on the pasteboard as
+    /// text too, and dragging that text into a document would paste a path.
+    @Test func aFileClipIsNotDraggedAsItsOwnPath() {
+        let entry = LauncherView.ClipboardEntry(
+            text: "/tmp/a.png", timestamp: Date(), filePaths: ["/tmp/a.png"],
+            imageFileName: "clip-1.png")
+
+        #expect(model().dragPayload(for: entry) == .file(URL(fileURLWithPath: "/tmp/a.png")))
+    }
+}

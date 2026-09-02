@@ -51,6 +51,7 @@ final class ClipboardPanelController: NSObject {
     private var returnApplication: NSRunningApplication?
     private var outsideClickMonitor: Any?
     private var isSuppressed = false
+    private var keyMonitor: Any?
     /// True only for the hotkey path, which is allowed to take focus. A copy-triggered
     /// pill must never pull the user out of what they are typing in.
     private var didTakeFocus = false
@@ -187,8 +188,10 @@ final class ClipboardPanelController: NSObject {
         CornerDockController.shared.refresh()
         if phase.isVisible {
             startOutsideClickWatch()
+            startKeyWatch()
         } else {
             stopOutsideClickWatch()
+            stopKeyWatch()
             CornerDockController.shared.disarmKeyboard()
             if didTakeFocus {
                 didTakeFocus = false
@@ -200,6 +203,45 @@ final class ClipboardPanelController: NSObject {
     /// An armed card is dismissed by a click anywhere else. App-active state cannot be
     /// used for this: activating an accessory app whose only window is a floating panel
     /// bounces active straight back, so `didResignActive` fires immediately after arming.
+    /// Arrow keys used to rely on SwiftUI focus, which the hotkey path could never win:
+    /// the card is armed before the view exists, so the `onChange` that grants focus never
+    /// fires and `onKeyPress` receives nothing. A local monitor answers for the whole
+    /// window instead, and only while the card actually holds the keyboard.
+    private func startKeyWatch() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self, self.model.isKeyboardArmed, self.model.phase == .expanded else {
+                return event
+            }
+            switch event.keyCode {
+            case 125:  // down
+                self.model.moveEntry(1)
+            case 126:  // up
+                self.model.moveEntry(-1)
+            case 124:  // right
+                self.model.cycleSource(1)
+            case 123:  // left
+                self.model.cycleSource(-1)
+            case 49:  // space
+                self.preview()
+            case 36:  // return
+                guard let focused = self.model.focusedEntry else { return event }
+                self.paste(focused)
+            case 53:  // escape
+                self.model.dismiss()
+            default:
+                return event
+            }
+            return nil
+        }
+    }
+
+    private func stopKeyWatch() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+    }
+
     private func startOutsideClickWatch() {
         guard outsideClickMonitor == nil,
             let panel = CornerDockController.shared.window
@@ -425,6 +467,20 @@ final class ClipboardPanelModel: ObservableObject {
         isKeyboardArmed = true
         phase = .expanded
         armStandDown(after: Self.armedDwell)
+    }
+
+    /// What a row hands over when it is dragged out. Files win over the text mirror: a
+    /// Finder copy also writes its path onto the pasteboard as text, and dragging that
+    /// text into a document would paste a path instead of the file.
+    func dragPayload(for entry: LauncherView.ClipboardEntry) -> ClipboardPreviewTarget? {
+        if let path = entry.filePaths.first {
+            return .file(URL(fileURLWithPath: path))
+        }
+        if let fileName = entry.imageFileName {
+            return .file(ClipboardImageStore.url(for: fileName))
+        }
+        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : .text(entry.text)
     }
 
     /// What Space should open for the row the user is on, or for the newest clip when
@@ -787,6 +843,17 @@ struct ClipboardDockPill: View {
                 in: RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        // Dragging a clip out is a read: it stays in the history.
+        .onDrag {
+            switch model.dragPayload(for: entry) {
+            case .file(let url):
+                return NSItemProvider(contentsOf: url) ?? NSItemProvider()
+            case .text(let text):
+                return NSItemProvider(object: text as NSString)
+            case nil:
+                return NSItemProvider()
+            }
+        }
     }
 
     private var filterRow: some View {
