@@ -517,6 +517,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ?? resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication)
     }
 
+    /// Chooses a corner App Chat target without ever falling back to Context-Dock itself.
+    /// The panel may already be key when a repeated hotkey arrives, so the remembered
+    /// external app outranks the raw frontmost process.
+    static func appChatTargetApplication(
+        menuBarOwner: NSRunningApplication?,
+        remembered: NSRunningApplication?,
+        rawFrontmost: NSRunningApplication?,
+        ownBundleID: String
+    ) -> NSRunningApplication? {
+        [menuBarOwner, remembered, rawFrontmost]
+            .compactMap { $0 }
+            .first {
+                !$0.isTerminated
+                    && !($0.bundleIdentifier ?? "").isEmpty
+                    && $0.bundleIdentifier != ownBundleID
+            }
+    }
+
     private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
         guard let app, !app.isTerminated else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
@@ -1824,8 +1842,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Capture the user-facing app before the corner panel activates Context-Dock.
         // If the panel is already key, this helper remembers the app behind it instead
         // of accidentally turning the next cycle into "Chat with Context-Dock".
-        let target = menuBarOwningUserFacingApplication()
-            ?? NSWorkspace.shared.frontmostApplication
+        let target = Self.appChatTargetApplication(
+            menuBarOwner: menuBarOwningUserFacingApplication(),
+            remembered: previousFrontmostApp,
+            rawFrontmost: NSWorkspace.shared.frontmostApplication,
+            ownBundleID: Bundle.main.bundleIdentifier ?? "")
         let chatTarget = CornerChatTarget(
             name: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
