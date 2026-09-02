@@ -199,7 +199,8 @@ struct CornerGeneralChatView: View {
                         !model.attachments.contains($0)
                     })
                 },
-                onEmptyLeftArrow: { false })
+                onEmptyLeftArrow: { false },
+                usesInlineAppPicker: true)
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()

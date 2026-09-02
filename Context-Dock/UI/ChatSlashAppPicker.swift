@@ -2,6 +2,11 @@ import SwiftUI
 
 @MainActor
 enum ChatSlashAppPicker {
+    static func openInline(text: inout String) {
+        guard !text.hasPrefix("/") else { return }
+        text = "/"
+    }
+
     static func matches(for text: String) -> [ChatAppEntry] {
         guard text.hasPrefix("/") else { return [] }
         let filter = String(text.dropFirst())

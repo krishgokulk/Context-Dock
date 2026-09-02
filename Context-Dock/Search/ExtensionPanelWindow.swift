@@ -530,6 +530,9 @@ struct AIComposerBar: View {
     var onPasteImages: (([URL]) -> Void)? = nil
     /// Empty-field layer navigation. Nil on composers that do not participate.
     var onEmptyLeftArrow: (() -> Bool)? = nil
+    /// Corner panels cannot safely host an NSPopover child window. On those surfaces
+    /// the app button enters the same inline "/" picker used while typing.
+    var usesInlineAppPicker: Bool = false
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -691,7 +694,13 @@ struct AIComposerBar: View {
                 .background(Color.accentColor.opacity(0.16), in: Capsule())
             }
 
-            Button { showAppPicker = true } label: {
+            Button {
+                if usesInlineAppPicker {
+                    ChatSlashAppPicker.openInline(text: &text)
+                } else {
+                    showAppPicker = true
+                }
+            } label: {
                 Image(systemName: "app.dashed")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)

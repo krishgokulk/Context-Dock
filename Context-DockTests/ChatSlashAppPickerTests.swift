@@ -16,4 +16,14 @@ struct ChatSlashAppPickerTests {
     @Test func plainTextDoesNotFilterApps() {
         #expect(ChatSlashAppPicker.matches(for: "terminal").isEmpty)
     }
+
+    @Test func inlinePickerEntersSlashFilteringWithoutDiscardingExistingQuery() {
+        var empty = ""
+        ChatSlashAppPicker.openInline(text: &empty)
+        #expect(empty == "/")
+
+        var existing = "/term"
+        ChatSlashAppPicker.openInline(text: &existing)
+        #expect(existing == "/term")
+    }
 }
