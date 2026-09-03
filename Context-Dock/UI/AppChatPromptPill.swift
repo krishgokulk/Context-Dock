@@ -19,17 +19,36 @@ enum AppChatPromptMetrics {
     static let summaryHeight: CGFloat = 30
     /// Just the app's icon.
     static let miniSize = CGSize(width: 52, height: 44)
-    /// The conversation. Fixed, because the shell never resizes — the transcript scrolls.
+    /// The conversation, with nothing in it yet: header, one exchange's worth of room, and
+    /// the composer.
     static let chatHeight: CGFloat = 340
 
-    static func size(for phase: AppChatPromptPhase, suggestions: Int) -> CGSize {
+    /// How much a card grows per message, and how far it may grow.
+    ///
+    /// Both read from General's numbers rather than copying them. App mode was pinned at
+    /// 340 while General grew to 620, so the same conversation was given half the room
+    /// depending on which scope it was in — and the switch between the two modes looked
+    /// like the window had changed rather than the subject.
+    static var perMessageHeight: CGFloat { CornerGeneralChatMetrics.perMessageHeight }
+    static var maximumChatHeight: CGFloat { CornerGeneralChatMetrics.maximumHeight }
+
+    /// A pure function of model state, deliberately: the corner draws this frame and
+    /// hit-tests the same number, so a height measured from content would leave the two
+    /// disagreeing. Message count is state; message height is not.
+    static func chatHeight(messages: Int) -> CGFloat {
+        min(maximumChatHeight, chatHeight + CGFloat(min(messages, 5)) * perMessageHeight)
+    }
+
+    static func size(for phase: AppChatPromptPhase, suggestions: Int, messages: Int = 0)
+        -> CGSize
+    {
         switch phase {
         case .hidden, .mini:
             return miniSize
         case .prompt:
             return CGSize(width: width, height: inputHeight)
         case .chat:
-            return CGSize(width: width, height: chatHeight)
+            return CGSize(width: width, height: chatHeight(messages: messages))
         case .suggesting:
             let rows = CGFloat(min(suggestions, 5))
             return CGSize(
@@ -46,7 +65,10 @@ struct AppChatPromptPill: View {
     @State private var pointerInside = false
 
     private var size: CGSize {
-        AppChatPromptMetrics.size(for: model.phase, suggestions: model.suggestions.count)
+        AppChatPromptMetrics.size(
+            for: model.phase,
+            suggestions: model.suggestions.count,
+            messages: model.messages.count)
     }
 
     var body: some View {

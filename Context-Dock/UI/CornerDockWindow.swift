@@ -184,6 +184,14 @@ final class CornerDockController: NSObject {
         chatPresentation.generalChat.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.refresh() }
         }.store(in: &sinks)
+        // App mode's card grows with its transcript, and those messages live on the dock's
+        // conversation rather than on the prompt — so watching `$phase` alone left the card
+        // taller than the rect the mouse was tested against. Deferred a turn because
+        // `objectWillChange` fires before the change lands; `refresh` returns immediately
+        // when the geometry is unchanged, which is most of the time.
+        prompt.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.refresh() }
+        }.store(in: &sinks)
     }
 
     private func position() {
@@ -206,8 +214,15 @@ final class CornerDockController: NSObject {
     func refresh() {
         guard let panel, let hostView else { return }
         let slots = currentSlots()
-        hostView.interactiveRects = [slots.shelf, slots.clipboard, slots.prompt]
-            .compactMap { $0 }
+        let rects = [slots.shelf, slots.clipboard, slots.prompt].compactMap { $0 }
+
+        // Nothing moved, nothing to do. The models this follows republish on every
+        // keystroke — the draft is `@Published` — and without this the corner recomputed
+        // its geometry on each one for a card whose size had not changed.
+        if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
+            return
+        }
+        hostView.interactiveRects = rects
 
         let shouldShow = slots.shelf != nil || slots.clipboard != nil || slots.prompt != nil
         if shouldShow {
@@ -246,7 +261,9 @@ final class CornerDockController: NSObject {
                 : CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
         }
         return AppChatPromptMetrics.size(
-            for: prompt.phase, suggestions: prompt.suggestions.count)
+            for: prompt.phase,
+            suggestions: prompt.suggestions.count,
+            messages: prompt.messages.count)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.

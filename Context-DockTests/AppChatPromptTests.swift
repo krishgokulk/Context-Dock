@@ -145,6 +145,30 @@ struct AppChatPromptTests {
         #expect(model.phase == .suggesting)
     }
 
+    /// The two modes are one surface. App mode was pinned at 340 while General grew to 620,
+    /// so the same conversation got half the room depending on which scope it was in.
+    @Test func bothModesGrowAtTheSameRateToTheSameCeiling() {
+        func app(_ messages: Int) -> CGFloat {
+            AppChatPromptMetrics.size(for: .chat, suggestions: 0, messages: messages).height
+        }
+        func general(_ messages: Int) -> CGFloat {
+            CornerGeneralChatMetrics.height(
+                messageCount: messages, isSending: false,
+                hasAttachments: false, slashMatchCount: 0)
+        }
+
+        #expect(app(2) - app(1) == general(2) - general(1))
+        #expect(app(50) == general(50))
+        #expect(app(50) == CornerGeneralChatMetrics.maximumHeight)
+    }
+
+    /// An empty conversation still opens at a readable size rather than at the composer.
+    @Test func aChatWithNoMessagesKeepsItsOpeningHeight() {
+        #expect(
+            AppChatPromptMetrics.size(for: .chat, suggestions: 0, messages: 0).height
+                == AppChatPromptMetrics.chatHeight)
+    }
+
     /// The dock's pipeline writes that transcript, so the corner asks rather than clearing
     /// it behind the dock's back.
     @Test func startingOverAsksTheDockRatherThanClearingItself() {

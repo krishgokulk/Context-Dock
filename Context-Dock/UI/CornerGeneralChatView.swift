@@ -30,6 +30,12 @@ enum CornerGeneralChatMetrics {
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
     static var compactHeight: CGFloat { composerRowHeight }
     static let maximumHeight: CGFloat = 620
+    /// What one exchange is worth. Named because App mode reads it too: the two modes are
+    /// one surface and have to grow at the same rate, or the same conversation gets more
+    /// room in one scope than the other.
+    static let perMessageHeight: CGFloat = 90
+    /// The transcript's own room before any messages are counted.
+    static let transcriptBaseHeight: CGFloat = 220
 
     static func height(
         messageCount: Int,
@@ -41,7 +47,9 @@ enum CornerGeneralChatMetrics {
         starterHasConnections: Bool = false
     ) -> CGFloat {
         if messageCount > 0 || isSending {
-            return min(maximumHeight, 220 + CGFloat(min(messageCount, 5)) * 90)
+            return min(
+                maximumHeight,
+                transcriptBaseHeight + CGFloat(min(messageCount, 5)) * perMessageHeight)
         }
         if showsStarter {
             // Measured from the start screen's own numbers rather than guessed. A flat 350
