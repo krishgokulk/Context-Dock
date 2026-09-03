@@ -530,12 +530,30 @@ struct AIComposerBar: View {
     var onPasteImages: (([URL]) -> Void)? = nil
     /// Empty-field layer navigation. Nil on composers that do not participate.
     var onEmptyLeftArrow: (() -> Bool)? = nil
+    /// ↑/↓ while a picker is open above the field. Returning true means the surface moved
+    /// its own selection and the field should not treat the key as text navigation.
+    var onMoveSelection: ((Int) -> Bool)? = nil
+    /// Return, when the surface owns the picker and knows which row is selected. Takes
+    /// precedence over this bar's own "first match wins" rule.
+    var onCommitSelection: (() -> Bool)? = nil
     /// Corner panels cannot safely host an NSPopover child window. On those surfaces
     /// the app button enters the same inline "/" picker used while typing.
     var usesInlineAppPicker: Bool = false
     /// Corner-only keep-open affordance. Nil on surfaces whose lifecycle is external.
     var isPinned: Bool = false
     var onTogglePin: (() -> Void)? = nil
+    /// Whether the bar shows its own `/` matches.
+    ///
+    /// Off in the corner, which stacks them as a list above the composer and has to know
+    /// their height in advance — a strip the bar grew on its own would push itself out
+    /// through the top of a card already sized for one row.
+    var rendersSlashMatches: Bool = true
+    /// Whether the bar draws its own capsule.
+    ///
+    /// Off in the corner, where the pill is already a bordered card: a capsule inside it
+    /// is a second border and a second set of insets, which is what made General mode read
+    /// as taller and looser than App mode when the two show the same single row.
+    var drawsChrome: Bool = true
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -560,7 +578,7 @@ struct AIComposerBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            if !slashApps.isEmpty {
+            if rendersSlashMatches, !slashApps.isEmpty {
                 ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
             }
 
@@ -605,6 +623,9 @@ struct AIComposerBar: View {
                 .font(.system(size: 12))
                 .lineLimit(1...5)
                 .onSubmit {
+                    // A surface drawing its own picker knows which row is highlighted;
+                    // this bar only knows the order it handed over.
+                    if onCommitSelection?() == true { return }
                     // "/rem" + Return means "work with that app", not "ask about the
                     // string /rem".
                     if let first = slashApps.first {
@@ -618,6 +639,12 @@ struct AIComposerBar: View {
                           onEmptyLeftArrow?() == true
                     else { return .ignored }
                     return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    onMoveSelection?(-1) == true ? .handled : .ignored
+                }
+                .onKeyPress(.downArrow) {
+                    onMoveSelection?(1) == true ? .handled : .ignored
                 }
 
             if let extraAttachMenu {
@@ -744,10 +771,17 @@ struct AIComposerBar: View {
             }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(Color.primary.opacity(0.06), in: Capsule())
-            .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
-            .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+            .padding(.vertical, drawsChrome ? 10 : 0)
+            .background {
+                if drawsChrome {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.06))
+                        .overlay(
+                            Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+                }
+            }
         }
         .acceptsPastedImages { urls in onPasteImages?(urls) }
     }

@@ -26,6 +26,12 @@ struct GeneralChatStartView: View {
     /// than a command the window ran on their behalf.
     let onPick: (String) -> Void
 
+    /// The corner runs the same screen in a third of the width. Window type sizes there
+    /// left no room for the two labels on the connections row, and SwiftUI resolved that
+    /// by wrapping them mid-word — "Connect ed", "Manag e" — rather than by dropping an
+    /// icon. Compact changes the measurements; it does not change what the screen says.
+    var compact = false
+
     @ObservedObject private var adapterManager = AppAdapterManager.shared
 
     private var connected: [AppAdapter] {
@@ -36,7 +42,7 @@ struct GeneralChatStartView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: Metrics.blockSpacing(compact)) {
                 header
 
                 if connected.isEmpty {
@@ -46,28 +52,69 @@ struct GeneralChatStartView: View {
                     connections
                 }
             }
-            .frame(maxWidth: 520)
+            .frame(maxWidth: compact ? .infinity : 520)
 
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 28)
+        .padding(.horizontal, Metrics.horizontalPadding(compact))
+        .padding(.vertical, compact ? Metrics.outerVertical : 0)
+    }
+
+    // MARK: - Measurements
+
+    /// One set of numbers, read by the view that draws the screen and by the corner that
+    /// has to know how tall it will be before it draws. Two sets is how a fixed 350-point
+    /// card came to hold 234 points of content.
+    enum Metrics {
+        static let outerVertical: CGFloat = 12
+        static let compactHeaderHeight: CGFloat = 40
+        static let compactRowHeight: CGFloat = 42
+        static let compactConnectionsHeight: CGFloat = 20
+        static let dividerHeight: CGFloat = 1
+        static let maxStarters = 3
+
+        static func blockSpacing(_ compact: Bool) -> CGFloat { compact ? 12 : 20 }
+        static func horizontalPadding(_ compact: Bool) -> CGFloat { compact ? 14 : 28 }
+        static func titleSize(_ compact: Bool) -> CGFloat { compact ? 15 : 22 }
+        static func rowVerticalPadding(_ compact: Bool) -> CGFloat { compact ? 7 : 10 }
+        /// Five is what fits beside both labels at the corner's width without either of
+        /// them giving up a character.
+        static func maxIcons(_ compact: Bool) -> Int { compact ? 5 : 8 }
+
+        /// What the compact screen will measure, given what it has to show.
+        static func compactHeight(starters: Int, hasConnections: Bool) -> CGFloat {
+            let rows = CGFloat(min(starters, maxStarters))
+            guard rows > 0 else {
+                return outerVertical * 2 + compactHeaderHeight
+            }
+            let list = rows * compactRowHeight + max(rows - 1, 0) * dividerHeight
+            var height = outerVertical * 2 + compactHeaderHeight + blockSpacing(true) + list
+            if hasConnections {
+                height += blockSpacing(true) + compactConnectionsHeight
+            }
+            return height
+        }
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: compact ? 2 : 4) {
             Text("What are we working on?")
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: Metrics.titleSize(compact), weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
             Text(
                 connected.isEmpty
                     ? "Connect an app and this chat can read and act on it."
                     : "Ask anything, or start with one of these."
             )
-            .font(.system(size: 12.5))
+            .font(.system(size: compact ? 11.5 : 12.5))
             .foregroundStyle(.secondary)
+            .lineLimit(compact ? 1 : 2)
         }
+        .frame(height: compact ? Metrics.compactHeaderHeight : nil, alignment: .topLeading)
     }
 
     // MARK: - Suggestions
@@ -78,30 +125,33 @@ struct GeneralChatStartView: View {
     /// Safari's adapter is on, so the suggestion and the capability can never disagree.
     private var suggestions: some View {
         VStack(spacing: 0) {
-            ForEach(Array(starters.prefix(3)), id: \.prompt) { starter in
+            ForEach(Array(shownStarters), id: \.prompt) { starter in
                 Button {
                     onPick(starter.prompt)
                 } label: {
                     HStack(spacing: 10) {
                         appIcon(for: starter.bundleId)
-                            .frame(width: 18, height: 18)
+                            .frame(width: compact ? 17 : 18, height: compact ? 17 : 18)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(starter.title)
                                 .font(.system(size: 12.5, weight: .medium))
                                 .foregroundStyle(.primary)
+                                .lineLimit(1)
                             Text(starter.subtitle)
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                                .lineLimit(1)
                         }
                         Spacer(minLength: 0)
                     }
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, Metrics.rowVerticalPadding(compact))
+                    .frame(height: compact ? Metrics.compactRowHeight : nil)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
-                if starter.prompt != starters.prefix(3).last?.prompt {
+                if starter.prompt != shownStarters.last?.prompt {
                     Divider().opacity(0.5)
                 }
             }
@@ -186,27 +236,51 @@ struct GeneralChatStartView: View {
     /// The capability block already tells the model all of this on every question; showing
     /// it here means the user and the model finally know the same thing.
     private var connections: some View {
+        // Both labels are fixed and the icons are what yields. Without this the row is
+        // three flexible things competing for one width, and SwiftUI takes the space out
+        // of the text: at the corner's width that reads "Connect ed … Manag e".
         HStack(spacing: 8) {
             Text("Connected")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
-            ForEach(connected.sorted { rank($0) < rank($1) }.prefix(8), id: \.bundleId) {
-                adapter in
-                appIcon(for: adapter.bundleId)
-                    .frame(width: 16, height: 16)
-                    .help(adapter.appName)
+                .lineLimit(1)
+                .fixedSize()
+
+            HStack(spacing: 6) {
+                ForEach(shownConnections, id: \.bundleId) { adapter in
+                    appIcon(for: adapter.bundleId)
+                        .frame(width: 16, height: 16)
+                        .help(adapter.appName)
+                }
+                if connected.count > shownConnections.count {
+                    Text("+\(connected.count - shownConnections.count)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
             }
-            if connected.count > 8 {
-                Text("+\(connected.count - 8)")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.tertiary)
-            }
-            Spacer(minLength: 0)
+            .layoutPriority(-1)
+            .clipped()
+
+            Spacer(minLength: 4)
+
             Button("Manage") { openAdapterSettings() }
                 .font(.system(size: 11))
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
         }
+        .frame(height: compact ? Metrics.compactConnectionsHeight : nil)
+    }
+
+    private var shownStarters: [Starter] {
+        Array(starters.prefix(Metrics.maxStarters))
+    }
+
+    private var shownConnections: [AppAdapter] {
+        Array(connected.sorted { rank($0) < rank($1) }.prefix(Metrics.maxIcons(compact)))
     }
 
     /// The screen for someone who has connected nothing. Saying so plainly, with the one

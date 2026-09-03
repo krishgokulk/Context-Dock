@@ -50,16 +50,25 @@ struct AppChatPromptPill: View {
     }
 
     var body: some View {
-        Group {
-            if model.phase == .mini {
-                miniContent
-                    .transition(.opacity.combined(with: .scale(scale: 0.86)))
-            } else {
-                inputStack
-                    .transition(
-                        .opacity.combined(
-                            with: .scale(scale: 0.96, anchor: .bottomTrailing)))
-            }
+        // Both layers stay mounted and cross-fade. Swapping them with a transition looked
+        // right in isolation and wrong in the shell: the 372-point input stack is still
+        // laid out at full width while the frame shrinks to the 52-point badge, and the
+        // clip outside this frame cuts it off mid-word — the badge showed an app icon and
+        // the first letter of its name, over the outgoing card's glass.
+        //
+        // The wide layer is also faded out faster than the frame collapses, so it is
+        // already invisible by the time the pill is narrow enough to slice it.
+        ZStack(alignment: .bottomLeading) {
+            inputStack
+                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                .opacity(model.phase.showsInput ? 1 : 0)
+                .allowsHitTesting(model.phase.showsInput)
+                .animation(.easeOut(duration: 0.11), value: model.phase)
+
+            miniContent
+                .opacity(model.phase == .mini ? 1 : 0)
+                .allowsHitTesting(model.phase == .mini)
+                .animation(.easeIn(duration: 0.16).delay(0.06), value: model.phase)
         }
         .frame(width: size.width, height: size.height, alignment: .bottomLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
