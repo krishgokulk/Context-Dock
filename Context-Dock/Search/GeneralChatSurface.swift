@@ -35,6 +35,8 @@ struct GeneralChatSurface: View {
             content
         }
         .id("general-chat-surface")
+        .doraxInspect(.generalChat.thread)
+        .doraxInspectionRoot()
     }
 }
 

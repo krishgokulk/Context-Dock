@@ -438,6 +438,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var captureScreenshotHotKeyRef: EventHotKeyRef?
     var selectionScopeHotKeyRef: EventHotKeyRef?
     var captureHotkeyEventHandlerRef: EventHandlerRef?
+    #if DEBUG
+    var inspectorHotKeyRef: EventHotKeyRef?
+    var inspectorEventHandlerRef: EventHandlerRef?
+    #endif
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
     var suppressHideOnResignUntil: Date = .distantPast
@@ -652,6 +656,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerAppChatHotkey()
         registerChatWindowHotkey()
         registerCaptureHotkeys()
+        #if DEBUG
+        registerInspectorHotkey()
+        #endif
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
@@ -1815,6 +1822,71 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotKeyID, GetApplicationEventTarget(), 0, &appChatHotKeyRef)
     }
 
+    #if DEBUG
+    /// Developer Inspector toggle. DEBUG only, fixed, and absent from hotkey settings — this is
+    /// developer infrastructure, not a product hotkey a user can rebind or stumble into.
+    ///
+    /// Registration fails closed: if `⌥⌘I` is already taken, Inspect Mode is simply unavailable
+    /// for this launch. Displacing whatever holds it would be a developer tool silently
+    /// breaking someone's real shortcut.
+    func registerInspectorHotkey() {
+        if let ref = inspectorEventHandlerRef {
+            RemoveEventHandler(ref)
+            inspectorEventHandlerRef = nil
+        }
+        if let ref = inspectorHotKeyRef {
+            UnregisterEventHotKey(ref)
+            inspectorHotKeyRef = nil
+        }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6469), id: 77)  // 'ILdi'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_6469),
+                receivedID.id == 77
+            else { return OSStatus(eventNotHandledErr) }
+            guard userData?.assumingMemoryBound(to: AppDelegate.self).pointee != nil else {
+                return OSStatus(eventNotHandledErr)
+            }
+            InspectorSessionController.shared.toggle()
+            return noErr
+        }
+        var selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        inspectorEventHandlerRef = handlerRef
+
+        // 34 is `I`; the modifiers are Option + Command.
+        let status = RegisterEventHotKey(
+            34, UInt32(optionKey | cmdKey), hotKeyID, GetApplicationEventTarget(), 0,
+            &inspectorHotKeyRef)
+        if status != noErr {
+            NSLog("[Inspector] ⌥⌘I unavailable (RegisterEventHotKey status \(status))")
+            inspectorHotKeyRef = nil
+        }
+    }
+
+    func unregisterInspectorHotkey() {
+        InspectorSessionController.shared.disable()
+        if let ref = inspectorEventHandlerRef {
+            RemoveEventHandler(ref)
+            inspectorEventHandlerRef = nil
+        }
+        if let ref = inspectorHotKeyRef {
+            UnregisterEventHotKey(ref)
+            inspectorHotKeyRef = nil
+        }
+    }
+    #endif
+
     /// The prompt is about the app the user is looking at, so the app is captured here —
     /// before opening the prompt makes Context-Dock frontmost.
     func activateAppChatPrompt() {
@@ -1869,6 +1941,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         RegisterEventHotKey(
             settings.quickNoteHotkeyKeyCode, settings.quickNoteHotkeyModifiers,
             hotKeyID, GetApplicationEventTarget(), 0, &quickNoteHotKeyRef)
+    }
+
+    /// The general chat hotkey opens the same corner pill the app chat hotkey does —
+    /// compact input bar first, expanding through the same phases as the user types —
+    /// instead of the full window appearing at once. The window itself stays one expand
+    /// control away (the pill's ⤡ button) and keeps the very conversation, because both
+    /// read GeneralChatWindowModel.
+    func activateGeneralChatPrompt() {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        CornerDockController.shared.activate()
+        CornerDockController.shared.prompt.summonGeneral()
     }
 
     /// Global hotkey → open the full-window General Chat surface.
@@ -2995,6 +3080,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Unregister hotkeys and cleanup
         unregisterGlobalHotkey()
+        #if DEBUG
+        unregisterInspectorHotkey()
+        #endif
 
         // Remove notification observers
         NotificationCenter.default.removeObserver(self)
