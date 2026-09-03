@@ -15,6 +15,12 @@ Corner AI Chat is not another launcher. It contains AI modes only. Ordinary appl
 search, menu results, Global Context results, and extension search remain in their existing
 surfaces unless an AI mode deliberately invokes them as tools.
 
+The corner is Context-Dock's everyday assistant presence, not merely a reduced copy of the
+main window. It occupies one stable place at the right corner, transforms continuously from
+composer to working card to result workspace, and then stands down when the interaction is
+over. The main window remains the control centre; the corner is where the assistant is
+summoned for immediate work.
+
 This design supersedes the presentation and lifecycle portions of
 `2026-08-31-corner-dual-chat-design.md`. It preserves that document's central boundary:
 Frontmost App Chat and General Chat share a shell but remain separate product modes with
@@ -49,6 +55,26 @@ Mode adapters supply identity, draft, messages, suggestions, progress, approvals
 and submission callbacks. The shell never changes the authority of a mode and never copies
 its conversation into corner-only storage.
 
+### Visual character
+
+The shell should feel calm, capable, and native rather than like launcher results placed in
+a floating rectangle:
+
+- preserve spatial continuity as the icon becomes the composer and the composer grows into
+  a working card;
+- use one quiet glass field with restrained depth instead of nested outlines and competing
+  pills;
+- reveal secondary controls on hover or when their function becomes relevant;
+- keep conversation and current work visually dominant, with controls subordinate;
+- render approvals, files, app access, tool receipts, and other structured results as clear
+  cards within the conversation;
+- use consistent spacing, typography, corner radii, motion, and icon scale in every mode;
+- respect Reduce Motion, Increase Contrast, keyboard navigation, VoiceOver labels, and
+  minimum pointer target sizes.
+
+App and tool relationships may be visualised inside relevant results, but decorative
+integration graphics must never replace explicit scope, permission, or execution status.
+
 ### Stable mode identity
 
 The leading composer identity always names what the user is addressing:
@@ -82,6 +108,12 @@ Mode models may report whether work is active, but may not independently hide or
 window. This removes the current split-brain failure where App Chat becomes `.hidden` while
 `CornerChatPresentation.isVisible` remains true, causing the full input row to be clipped
 inside a 52 by 44 pill.
+
+The mini icon is temporary, not permanently resident. An unpinned, inactive assistant first
+shrinks to the icon so an accidental pointer departure is recoverable, then disappears
+completely after the mini dwell. Once hidden, only the configured hotkey or another explicit
+Corner AI Chat invocation restores it. Pinning is the user's explicit request to keep it
+present.
 
 ### Stand-down protection
 
