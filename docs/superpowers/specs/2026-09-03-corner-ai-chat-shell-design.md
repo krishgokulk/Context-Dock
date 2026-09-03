@@ -264,6 +264,19 @@ The repair should converge, not add another compatibility layer:
 Do not merge General Chat and Context Dock Chat, move routing into the view, or create a new
 conversation store.
 
+### Delivery order
+
+Ship functional reliability before the final visual redesign. The first implementation
+milestone may change layout only where required to prevent clipping, preserve focus, expose
+progress or approvals, maintain usable scrolling, and make compact/expanded/mini/hidden
+transitions truthful. It should retain the current visual language wherever appearance does
+not obstruct use.
+
+After every functional path below is verified in the running app, a separate visual-polish
+milestone may refine materials, shadows, typography, spacing, mode transitions, and richer
+structured-result presentation. That later work must not compensate for unresolved state or
+pipeline defects with visual effects.
+
 ## Verification
 
 ### Automated
