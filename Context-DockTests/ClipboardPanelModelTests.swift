@@ -70,6 +70,37 @@ struct ClipboardPanelModelTests {
         #expect(model.visibleEntries.count == 2)
     }
 
+    /// Building a selection without the mouse. The walk has to take the row it started on
+    /// as well, or ⌘↓ from a resting list picks the second clip and skips the first.
+    @Test func arrowingWithAModifierPicksTheRowsItWalksThrough() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+            entry("three", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+        model.focusedEntryIndex = 0
+
+        model.moveEntry(1, selecting: true)
+        model.moveEntry(1, selecting: true)
+
+        #expect(model.actionableEntries().map(\.text) == ["one", "two", "three"])
+    }
+
+    /// A bare arrow still only moves, because Return pastes whatever the focus is on.
+    @Test func arrowingWithoutAModifierSelectsNothing() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+
+        model.moveEntry(1)
+
+        #expect(model.selectedIDs.isEmpty)
+        #expect(model.focusedEntryIndex == 0)
+    }
+
     /// Searching a clip you cannot read as text: the app it came from is part of the query,
     /// which is what makes "safari" find a screenshot.
     @Test func searchReachesTheSourceAppNotJustTheText() {

@@ -453,7 +453,12 @@ final class ClipboardPanelModel: ObservableObject {
         armStandDown(after: Self.armedDwell)
     }
 
-    func moveEntry(_ direction: Int) {
+    /// Move the focus, and optionally take the row it lands on with it.
+    ///
+    /// `select` is ⌘ or ⇧ held: walking the list while picking is the only way to build a
+    /// selection without the mouse, and the arrows on their own must keep meaning "move",
+    /// because that is what Return then pastes.
+    func moveEntry(_ direction: Int, selecting select: Bool = false) {
         noteInteraction()
         let count = visibleEntries.count
         guard count > 0 else {
@@ -461,7 +466,22 @@ final class ClipboardPanelModel: ObservableObject {
             return
         }
         let current = focusedEntryIndex ?? (direction >= 0 ? -1 : count)
-        focusedEntryIndex = min(max(current + direction, 0), count - 1)
+        let next = min(max(current + direction, 0), count - 1)
+        focusedEntryIndex = next
+
+        guard select, visibleEntries.indices.contains(next) else { return }
+        let entry = visibleEntries[next]
+        // The row the walk started from belongs to the selection too, or ⌘↓ from a resting
+        // list would pick the second clip and silently skip the first.
+        if selectedIDs.isEmpty, visibleEntries.indices.contains(current) {
+            let origin = visibleEntries[current]
+            selectedIDs.insert(origin.id)
+            pickOrder.append(origin.id)
+            selectionAnchor = origin.id
+        }
+        guard !selectedIDs.contains(entry.id) else { return }
+        selectedIDs.insert(entry.id)
+        pickOrder.append(entry.id)
     }
 
     var focusedEntry: LauncherView.ClipboardEntry? {
@@ -730,12 +750,12 @@ struct ClipboardDockPill: View {
             ClipboardPanelController.shared.copy(entries)
             return .handled
         }
-        .onKeyPress(.downArrow) {
-            model.moveEntry(1)
-            return .handled
-        }
-        .onKeyPress(.upArrow) {
-            model.moveEntry(-1)
+        // Modifier-aware, because the plain-key form of `onKeyPress` never sees which keys
+        // were held — so ⌘↓ was arriving here as a bare ↓ and only ever moved the focus.
+        .onKeyPress(keys: [.downArrow, .upArrow]) { press in
+            let direction = press.key == .downArrow ? 1 : -1
+            let selecting = !press.modifiers.isDisjoint(with: [.command, .shift])
+            model.moveEntry(direction, selecting: selecting)
             return .handled
         }
         .onKeyPress(.leftArrow) {

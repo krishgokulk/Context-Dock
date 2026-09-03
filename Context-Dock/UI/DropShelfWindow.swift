@@ -38,8 +38,22 @@ enum DropShelfMetrics {
         phase == .expanded ? expandedSize : collapsedSize
     }
 
+    /// What counts as a drag worth showing the shelf for.
+    ///
+    /// `.string` alone missed most text dragged out of other apps: a Pages or Safari
+    /// selection is offered as RTF or HTML and only *also* as plain text, and an app that
+    /// promises rich text first never matched, so the shelf stayed hidden for exactly the
+    /// drags it exists to catch. Images dragged from a browser are the same story in TIFF
+    /// and PNG.
     static var acceptedTypes: [NSPasteboard.PasteboardType] {
-        [.fileURL, .URL, .string]
+        [
+            .fileURL, .URL, .string,
+            .rtf, .rtfd, .html,
+            .tiff, .png,
+            .init("public.text"),
+            .init("public.utf8-plain-text"),
+            .init("public.image"),
+        ]
     }
 }
 
