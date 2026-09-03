@@ -565,6 +565,8 @@ struct ClipboardDockPill: View {
     /// `onKeyPress` only delivers to a focused view, so a key window is not enough on its
     /// own — the card has to actually hold SwiftUI focus once it is armed.
     @FocusState private var cardFocused: Bool
+    @FocusState private var searchFocused: Bool
+    @State private var searchHovered = false
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private var expanded: Bool { model.phase == .expanded }
@@ -638,6 +640,19 @@ struct ClipboardDockPill: View {
         .onKeyPress(.return) {
             guard let entry = model.focusedEntry else { return .ignored }
             ClipboardPanelController.shared.paste(entry)
+            return .handled
+        }
+        // Typing is searching. The arrows, Space and Return above keep their jobs; anything
+        // that would put a character on screen opens the field and goes into it, so finding
+        // a clip never starts with hunting for a control.
+        .onKeyPress(phases: .down) { press in
+            guard !searchFocused,
+                press.modifiers.isDisjoint(with: [.command, .control, .option]),
+                let character = press.characters.first,
+                character.isLetter || character.isNumber
+            else { return .ignored }
+            model.query.append(character)
+            searchFocused = true
             return .handled
         }
     }
@@ -789,16 +804,82 @@ struct ClipboardDockPill: View {
         .buttonStyle(.plain)
     }
 
+    /// Search leads the row, then the app chips.
+    ///
+    /// The model has always filtered on a query — text, OCR text, file names, source app —
+    /// and nothing ever set it. The glyph is the smallest thing that can: it widens into a
+    /// field under the pointer, on a click, or the moment a printable key is typed, and
+    /// gives the width back when it is empty and unfocused, so at rest the row is chips.
     private var filterRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(model.sources) { source in
-                    filterPill(source)
+        HStack(spacing: 6) {
+            searchField
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(model.sources) { source in
+                        filterPill(source)
+                    }
+                }
+                .padding(.trailing, 12)
+            }
+        }
+        .padding(.leading, 12)
+        .frame(height: 46)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: searchExpanded)
+    }
+
+    private var searchExpanded: Bool {
+        searchHovered || searchFocused || !model.query.isEmpty
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(searchExpanded ? .primary : .secondary)
+
+            if searchExpanded {
+                TextField("Search clips", text: $model.query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .focused($searchFocused)
+                    .frame(width: 116)
+                    .onKeyPress(.escape) {
+                        // Clear first, close second: one Escape should not throw away the
+                        // panel and the query together.
+                        if model.query.isEmpty {
+                            searchFocused = false
+                            return .handled
+                        }
+                        model.query = ""
+                        return .handled
+                    }
+
+                if !model.query.isEmpty {
+                    Button { model.query = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear search")
                 }
             }
-            .padding(.horizontal, 12)
         }
-        .frame(height: 46)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            searchExpanded ? Color.primary.opacity(0.09) : Color.primary.opacity(0.05),
+            in: Capsule()
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.1))
+        )
+        .contentShape(Capsule())
+        .onHover { searchHovered = $0 }
+        .onTapGesture { searchFocused = true }
+        .help("Search clips")
     }
 
     private func filterPill(_ source: ClipboardPanelModel.SourceChoice) -> some View {

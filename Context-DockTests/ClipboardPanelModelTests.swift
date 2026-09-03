@@ -53,6 +53,37 @@ struct ClipboardPanelModelTests {
 
         #expect(model.visibleEntries.map(\.text) == ["project beta"])
     }
+
+    /// The field can be emptied as easily as it is filled, and doing so must give the whole
+    /// list back rather than leaving the panel looking empty.
+    @Test func clearingTheSearchRestoresEverythingInScope() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("project alpha", app: "Finder", bundleID: "com.apple.finder"),
+            entry("notes", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+
+        model.query = "project"
+        #expect(model.visibleEntries.count == 1)
+
+        model.query = ""
+        #expect(model.visibleEntries.count == 2)
+    }
+
+    /// Searching a clip you cannot read as text: the app it came from is part of the query,
+    /// which is what makes "safari" find a screenshot.
+    @Test func searchReachesTheSourceAppNotJustTheText() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("", app: "Safari", bundleID: "com.apple.Safari"),
+            entry("notes", app: "Code", bundleID: "com.microsoft.VSCode"),
+        ]
+
+        model.query = "safari"
+
+        #expect(model.visibleEntries.count == 1)
+        #expect(model.visibleEntries.first?.sourceAppName == "Safari")
+    }
 }
 
 // MARK: - Pill phase machine
