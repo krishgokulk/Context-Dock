@@ -324,6 +324,27 @@ final class ClipboardPanelModel: ObservableObject {
         selectionAnchor = nil
     }
 
+    /// Delete the clips an action would apply to.
+    ///
+    /// The history file has one writer — the dock, which also owns the image blobs beside
+    /// it — so this asks rather than rewriting it from here. The rows go immediately so the
+    /// list answers the key press; the dock's own prune is what makes it durable.
+    func removeActionableEntries(fallback entry: LauncherView.ClipboardEntry? = nil) {
+        let doomed = actionableEntries(fallback: entry)
+        guard !doomed.isEmpty else { return }
+        let ids = Set(doomed.map(\.id))
+        entries.removeAll { ids.contains($0.id) }
+        clearSelection()
+        if let focusedEntryIndex, !visibleEntries.indices.contains(focusedEntryIndex) {
+            self.focusedEntryIndex = visibleEntries.isEmpty ? nil : visibleEntries.count - 1
+        }
+        NotificationCenter.default.post(
+            name: .clipboardEntriesRemovalRequested,
+            object: nil,
+            userInfo: ["ids": ids.map(\.uuidString)])
+        noteInteraction()
+    }
+
     let storeURL: URL
 
     init(storeURL: URL? = nil) {
@@ -470,18 +491,20 @@ final class ClipboardPanelModel: ObservableObject {
         focusedEntryIndex = next
 
         guard select, visibleEntries.indices.contains(next) else { return }
-        let entry = visibleEntries[next]
-        // The row the walk started from belongs to the selection too, or ⌘↓ from a resting
-        // list would pick the second clip and silently skip the first.
-        if selectedIDs.isEmpty, visibleEntries.indices.contains(current) {
-            let origin = visibleEntries[current]
-            selectedIDs.insert(origin.id)
-            pickOrder.append(origin.id)
-            selectionAnchor = origin.id
+
+        // An anchor and a cursor, not a growing pile. Adding on every press meant reversing
+        // could only ever select more: ⌘↓ ⌘↓ ⌘↑ left three rows picked when the user was
+        // plainly taking one back. The selection is the span between where the walk started
+        // and where it is now, so moving toward the anchor shrinks it.
+        if selectionAnchor == nil || selectedIDs.isEmpty {
+            let originIndex = visibleEntries.indices.contains(current) ? current : next
+            selectionAnchor = visibleEntries[originIndex].id
         }
-        guard !selectedIDs.contains(entry.id) else { return }
-        selectedIDs.insert(entry.id)
-        pickOrder.append(entry.id)
+        let range = ClipboardScopeService.rangeSelection(
+            in: visibleEntries, from: selectionAnchor, to: visibleEntries[next].id)
+        selectedIDs = range
+        // A span has no pick order of its own; list order is the honest answer.
+        pickOrder = visibleEntries.map(\.id).filter { range.contains($0) }
     }
 
     var focusedEntry: LauncherView.ClipboardEntry? {
@@ -750,6 +773,13 @@ struct ClipboardDockPill: View {
             ClipboardPanelController.shared.copy(entries)
             return .handled
         }
+        // There was no way to drop a clip from here at all: the list could be searched,
+        // selected and pasted, and never pruned.
+        .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+            guard !model.actionableEntries().isEmpty else { return .ignored }
+            model.removeActionableEntries()
+            return .handled
+        }
         // Modifier-aware, because the plain-key form of `onKeyPress` never sees which keys
         // were held — so ⌘↓ was arriving here as a bare ↓ and only ever moved the focus.
         .onKeyPress(keys: [.downArrow, .upArrow]) { press in
@@ -975,6 +1005,10 @@ struct ClipboardDockPill: View {
                 model.selectEntry(entry, extend: false, toggle: true)
             }
             Button("Select All") { model.selectAllVisible() }
+            Divider()
+            Button("Remove", role: .destructive) {
+                model.removeActionableEntries(fallback: entry)
+            }
         }
     }
 
@@ -1179,4 +1213,12 @@ struct ClipboardDockPill: View {
         else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
     }
+}
+
+extension Notification.Name {
+    /// Corner panel → the dock, asking it to drop these clips from the history both of
+    /// them read. The corner does not rewrite that file: the dock owns it and the image
+    /// blobs stored beside it, and two writers would race over both.
+    static let clipboardEntriesRemovalRequested = Notification.Name(
+        "clipboardEntriesRemovalRequested")
 }

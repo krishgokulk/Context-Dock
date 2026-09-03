@@ -1116,6 +1116,11 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .appChatPromptNewChat)) { _ in
                 handleAppChatPromptNewChat()
             }
+            .onReceive(
+                NotificationCenter.default.publisher(for: .clipboardEntriesRemovalRequested)
+            ) { note in
+                handleClipboardEntriesRemovalRequest(note)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 ClipboardPanelController.shared.show()
             }
@@ -2067,6 +2072,27 @@ extension LauncherView {
         }
         dismissMediaLayer()
         handleL2QuerySkippingMenuRouter(query)
+    }
+
+    /// The corner asked to drop clips. It reads the same history this writes, and the image
+    /// blobs live beside that file, so removal happens here where both are owned.
+    func handleClipboardEntriesRemovalRequest(_ note: Notification) {
+        guard let raw = note.userInfo?["ids"] as? [String] else { return }
+        let ids = Set(raw.compactMap(UUID.init(uuidString:)))
+        guard !ids.isEmpty else { return }
+
+        let doomed = clipboardHistory.filter { ids.contains($0.id) }
+        guard !doomed.isEmpty else { return }
+        clipboardHistory.removeAll { ids.contains($0.id) }
+        ClipboardImageStore.delete(fileNames: doomed.compactMap(\.imageFileName))
+        for id in ids {
+            selectedClipboardEntryIDs.remove(id)
+            expandedClipboardEntryIDs.remove(id)
+        }
+        clipboardSelectionOrder.removeAll { ids.contains($0) }
+        savePersistedClipboardHistory()
+        syncVisibleClipboardStateAfterPrune()
+        refreshCompactScopeResults(resetSelection: false)
     }
 
     /// The corner asked to start over. It shows the dock's conversation rather than one of

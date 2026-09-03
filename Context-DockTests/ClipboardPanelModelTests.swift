@@ -87,6 +87,52 @@ struct ClipboardPanelModelTests {
         #expect(model.actionableEntries().map(\.text) == ["one", "two", "three"])
     }
 
+    /// Reversing takes rows back. Adding on every press meant ⌘↓ ⌘↓ ⌘↑ left three picked
+    /// when the user was plainly giving one up — the selection is the span between the
+    /// anchor and the cursor, so moving toward the anchor shrinks it.
+    @Test func arrowingBackTheOtherWayDeselects() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+            entry("three", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+        model.focusedEntryIndex = 0
+
+        model.moveEntry(1, selecting: true)
+        model.moveEntry(1, selecting: true)
+        #expect(model.actionableEntries().count == 3)
+
+        model.moveEntry(-1, selecting: true)
+        #expect(model.actionableEntries().map(\.text) == ["one", "two"])
+
+        model.moveEntry(-1, selecting: true)
+        #expect(model.actionableEntries().map(\.text) == ["one"])
+    }
+
+    /// Removal goes through the dock, which owns the history file and the image blobs, but
+    /// the rows have to leave immediately or the key press looks ignored.
+    @Test func removingTakesTheRowsOutAndAsksTheDockToPersistIt() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+        model.selectEntry(model.visibleEntries[0], extend: false, toggle: false)
+
+        var asked = false
+        let observation = NotificationCenter.default
+            .publisher(for: .clipboardEntriesRemovalRequested)
+            .sink { _ in asked = true }
+        defer { observation.cancel() }
+
+        model.removeActionableEntries()
+
+        #expect(asked)
+        #expect(model.visibleEntries.map(\.text) == ["two"])
+        #expect(model.selectedIDs.isEmpty)
+    }
+
     /// A bare arrow still only moves, because Return pastes whatever the focus is on.
     @Test func arrowingWithoutAModifierSelectsNothing() {
         let model = ClipboardPanelModel()
