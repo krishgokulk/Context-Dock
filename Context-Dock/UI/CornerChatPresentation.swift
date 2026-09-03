@@ -48,6 +48,7 @@ final class CornerChatPresentation: ObservableObject {
     private var generalStandDownTask: Task<Void, Never>?
     private var isGeneralPointerInside = false
     private var isGeneralComposerFocused = false
+    private var sinks: Set<AnyCancellable> = []
 
     let appChat: AppChatPromptModel
     let generalChat: GeneralChatWindowModel
@@ -58,11 +59,39 @@ final class CornerChatPresentation: ObservableObject {
     ) {
         self.appChat = appChat ?? AppChatPromptModel()
         self.generalChat = generalChat ?? .shared
+
+        // App mode runs its own clock: the pill shrinks to the badge and then hides itself.
+        // This object was never told, so `isVisible` stayed true for a pill that had gone —
+        // and the shell kept drawing an empty card in the corner, sized for a badge that
+        // was no longer in it, still answering the mouse. Follow the pill out.
+        self.appChat.$phase
+            .sink { [weak self] phase in
+                guard let self, self.mode == .frontmostApp, phase == .hidden else { return }
+                self.isVisible = false
+            }
+            .store(in: &sinks)
     }
 
+    /// The corner hotkey, pressed again.
+    ///
+    /// It only ever summoned, so the key that opened the corner could not close it and the
+    /// only way out was to wait for the idle clock. Pressing it while the chat is up puts
+    /// it away; pressing it while the chat has already shrunk to its badge brings it back,
+    /// because a badge is the surface on its way out rather than the surface.
     func cycle(target: CornerChatTarget) {
         latestTarget = target
+        if isVisible, isShowingSomethingToDismiss {
+            dismiss()
+            return
+        }
         showFrontmostApp(target: target)
+    }
+
+    private var isShowingSomethingToDismiss: Bool {
+        switch mode {
+        case .general: return generalPhase == .expanded
+        case .frontmostApp: return appChat.phase.showsInput
+        }
     }
 
     func showFrontmostApp(target: CornerChatTarget) {

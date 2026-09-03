@@ -12,19 +12,20 @@ struct CornerChatPresentationTests {
             summary: "5 actions")
     }
 
-    @Test func hotkeyAlwaysSummonsFrontmostAppChat() {
+    private var safari: CornerChatTarget {
+        CornerChatTarget(name: "Safari", bundleID: "com.apple.Safari")
+    }
+
+    @Test func theHotkeySummonsFrontmostAppChat() {
         let app = AppChatPromptModel(conversation: AppChatConversation())
         let general = GeneralChatWindowModel()
         let subject = CornerChatPresentation(appChat: app, generalChat: general)
 
         subject.cycle(target: code)
+
         #expect(subject.mode == .frontmostApp)
         #expect(subject.isVisible)
         #expect(app.appBundleID == "com.microsoft.VSCode")
-
-        subject.cycle(target: code)
-        #expect(subject.mode == .frontmostApp)
-        #expect(subject.isVisible)
     }
 
     @Test func switchingModesPreservesIndependentDrafts() {
@@ -36,10 +37,60 @@ struct CornerChatPresentationTests {
         app.query = "app draft"
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         general.input = "general draft"
-        subject.cycle(target: code)
+        // Swiping back, not the hotkey: the hotkey puts the corner away now.
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
 
+        #expect(subject.mode == .frontmostApp)
         #expect(app.query == "app draft")
         #expect(general.input == "general draft")
+    }
+
+    /// The key that opens the corner has to close it. Without this the only way out was to
+    /// stop touching it and wait for the idle clock to run down.
+    @Test func theHotkeyPutsAnOpenCornerAway() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(
+            appChat: app, generalChat: GeneralChatWindowModel())
+
+        subject.cycle(target: code)
+        #expect(subject.isVisible)
+
+        subject.cycle(target: code)
+
+        #expect(!subject.isVisible)
+        #expect(app.phase == .hidden)
+    }
+
+    /// A badge is the surface on its way out, not the surface. Pressing the hotkey at that
+    /// point means "come back", and it comes back pointed at whatever is in front now.
+    @Test func theHotkeyBringsBackAShrunkenCorner() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(
+            appChat: app, generalChat: GeneralChatWindowModel())
+        subject.cycle(target: code)
+        app.standDown()
+        #expect(app.phase == .mini)
+
+        subject.cycle(target: safari)
+
+        #expect(subject.isVisible)
+        #expect(app.phase.showsInput)
+        #expect(app.appBundleID == "com.apple.Safari")
+    }
+
+    /// The bug behind the empty card stuck in the corner: App mode runs its own clock, and
+    /// when the pill hid itself nothing told the shell, which went on drawing a card sized
+    /// for a badge that had gone — and going on answering the mouse there.
+    @Test func thePillHidingItselfTakesTheShellWithIt() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(
+            appChat: app, generalChat: GeneralChatWindowModel())
+        subject.cycle(target: code)
+        #expect(subject.isVisible)
+
+        app.dismiss()
+
+        #expect(!subject.isVisible)
     }
 
     @Test func emptyLeftArrowEntersGeneralButTextKeepsCursorOwnership() {
