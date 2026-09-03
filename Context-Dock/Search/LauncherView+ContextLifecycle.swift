@@ -2106,6 +2106,12 @@ extension LauncherView {
         l2.chatArmed = true
         l2.chatDismissed = false
         syncL2DockSession()
+        // Opening the dock is what used to start context tracking for the target app, so a
+        // corner-only session had no live Finder selection to hand its turn: `showContextInDock`
+        // was false, and `handleSelectionChange` returns on that guard. Retargeting turns it
+        // on above, so read the selection now rather than waiting for the next AX event —
+        // otherwise the first question about a folder is asked with nothing selected.
+        refreshLiveSelectionIntoDockContext()
     }
 
     func checkClipboardForGlobalContext() {

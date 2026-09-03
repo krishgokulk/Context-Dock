@@ -104,6 +104,14 @@ final class CornerChatPresentation: ObservableObject {
             bundleID: target.bundleID,
             suggestions: target.suggestions,
             summary: target.summary)
+        // Tell the dock what this corner session is about the moment it opens, not when the
+        // first question is asked. The dock is what tracks the target app's live selection
+        // and folder, and it only does so for a scope it has been given — so a corner
+        // session that announced itself late asked its first Finder question blind.
+        NotificationCenter.default.post(
+            name: .appChatPromptScopeChanged,
+            object: nil,
+            userInfo: ["appName": target.name, "bundleId": target.bundleID])
     }
 
     @discardableResult
