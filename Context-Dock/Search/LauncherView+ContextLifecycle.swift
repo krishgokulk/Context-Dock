@@ -1113,6 +1113,9 @@ extension LauncherView {
                 note in
                 handleAppChatPromptScopeChange(note)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptNewChat)) { _ in
+                handleAppChatPromptNewChat()
+            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 ClipboardPanelController.shared.show()
             }
@@ -2050,17 +2053,34 @@ extension LauncherView {
         let query = (info["query"] as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        NotificationCenter.default.post(name: .activateContextDock, object: nil)
+        // Asking in the corner used to open the Context Dock over whatever the user was
+        // working in, and then wait 120 ms for it to finish appearing before the question
+        // landed. The pipeline never needed that: the launcher view is built once at
+        // startup and only ordered out when hidden, so it and its handlers are alive to run
+        // the turn whether or not anyone can see them. The corner is a second presentation
+        // of this conversation, not a shortcut to the dock.
         retargetCornerAppChat(appName: appName, bundleId: bundleId)
 
         guard !query.isEmpty else {
             requestWindowSizeUpdate(reason: .panelChanged, animated: true)
             return
         }
-        // Let the dock finish opening before the question lands in it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            dismissMediaLayer()
-            handleL2QuerySkippingMenuRouter(query)
+        dismissMediaLayer()
+        handleL2QuerySkippingMenuRouter(query)
+    }
+
+    /// The corner asked to start over. It shows the dock's conversation rather than one of
+    /// its own, so the dock is what empties it.
+    func handleAppChatPromptNewChat() {
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        l2.handledApprovalIds = []
+        l2.chatMessages = []
+        AppChatConversation.shared.liveSteps = []
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.beginSession(for: key)
         }
     }
 

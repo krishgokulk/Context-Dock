@@ -99,6 +99,8 @@ struct AppChatPromptPill: View {
     private var inputStack: some View {
         VStack(alignment: .leading, spacing: 0) {
             if model.phase == .chat {
+                header
+                Divider().opacity(0.18)
                 transcript
                 Divider().opacity(0.18)
             } else if model.phase == .suggesting {
@@ -109,6 +111,58 @@ struct AppChatPromptPill: View {
             inputRow
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
+    }
+
+    /// Who the chat is with, and what to do with the chat itself — the same shape General
+    /// mode uses, so switching scope changes the subject rather than the furniture.
+    private var header: some View {
+        HStack(spacing: 8) {
+            if let icon = appIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+            Text(model.appName.isEmpty ? "This app" : model.appName)
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+            Text("App Chat")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+
+            Spacer(minLength: 6)
+
+            Button { model.openInDock() } label: {
+                headerGlyph("arrow.up.left.and.arrow.down.right")
+            }
+            .buttonStyle(.plain)
+            .help("Open this conversation in the dock")
+
+            Button { model.newConversation() } label: {
+                headerGlyph("trash")
+            }
+            .buttonStyle(.plain)
+            .help("Clear this conversation")
+
+            Button { model.togglePin() } label: {
+                headerGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
+            }
+            .buttonStyle(.plain)
+            .help(model.isPinned ? "Unpin" : "Keep this open")
+        }
+        .padding(.horizontal, 15)
+        .frame(height: 48)
+    }
+
+    private func headerGlyph(_ symbol: String, tinted: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(tinted ? Color.accentColor : .secondary)
+            .frame(width: 26, height: 26)
+            .background(tinted ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle())
+            .contentShape(Rectangle())
     }
 
     private var inputRow: some View {
@@ -145,8 +199,10 @@ struct AppChatPromptPill: View {
                     })
             }
 
-            // Controls belong to the pointer: at rest this row is one quiet line.
-            if pointerInside {
+            // Controls belong to the pointer while this row is the whole surface. Once a
+            // conversation exists the header carries them, and drawing them twice six
+            // points apart is two buttons for one job.
+            if pointerInside, model.phase != .chat {
                 trailingControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if !model.appBundleID.isEmpty, model.phase == .prompt, let icon = appIcon {
@@ -343,8 +399,11 @@ struct AppChatPromptPill: View {
                         )
                         .id(message.id)
                     }
+                    // The dock draws its activity timeline over exactly this data; the
+                    // corner drew a bare spinner over it. A spinner is the app declining
+                    // to say what it is doing while it holds the user's question.
                     if model.isAnswering && model.messages.last?.role == .user {
-                        ProgressView().controlSize(.small)
+                        LiveAgentProgressView(steps: waitingSteps)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -356,6 +415,19 @@ struct AppChatPromptPill: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// What to show between sending and the first token.
+    ///
+    /// The steps are the truth when there are any. Before the first one arrives there is
+    /// still something honest to say — which app the question went to — and saying it beats
+    /// a spinner, which tells the user only that the app is busy with something.
+    private var waitingSteps: [String] {
+        let steps = model.liveSteps.filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard steps.isEmpty else { return steps }
+        return ["Reading \(model.appName.isEmpty ? "this app" : model.appName)…"]
     }
 
     // MARK: - Shrunken

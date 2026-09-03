@@ -131,6 +131,20 @@ final class AppChatPromptModel: ObservableObject {
         dismiss()
     }
 
+    /// Start the app-scoped conversation over.
+    ///
+    /// `AppChatConversation` has one writer and this is not it: the dock's pipeline produces
+    /// those messages, so clearing them is a request to the dock rather than something the
+    /// corner does behind its back.
+    func newConversation() {
+        NotificationCenter.default.post(name: .appChatPromptNewChat, object: nil)
+        query = ""
+        attachments = []
+        hasPresentedConversation = false
+        set(restingInputPhase)
+        touch()
+    }
+
     func attach(_ url: URL) {
         guard !attachments.contains(url) else { return }
         attachments.append(url)
@@ -304,4 +318,7 @@ extension Notification.Name {
     /// chat's state lives inside LauncherView and is not reachable from a window.
     static let appChatPromptSubmitted = Notification.Name("appChatPromptSubmitted")
     static let appChatPromptScopeChanged = Notification.Name("appChatPromptScopeChanged")
+    /// Corner prompt → the dock, asking it to empty the app-scoped transcript both of them
+    /// are showing. The corner does not clear it itself: that conversation has one writer.
+    static let appChatPromptNewChat = Notification.Name("appChatPromptNewChat")
 }

@@ -145,6 +145,26 @@ struct AppChatPromptTests {
         #expect(model.phase == .suggesting)
     }
 
+    /// The dock's pipeline writes that transcript, so the corner asks rather than clearing
+    /// it behind the dock's back.
+    @Test func startingOverAsksTheDockRatherThanClearingItself() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.query = "half a question"
+
+        var asked = false
+        let observation = NotificationCenter.default
+            .publisher(for: .appChatPromptNewChat)
+            .sink { _ in asked = true }
+        defer { observation.cancel() }
+
+        model.newConversation()
+
+        #expect(asked)
+        #expect(model.query.isEmpty)
+        #expect(model.phase.showsInput)
+    }
+
     @Test func dismissingClearsTheQuestion() {
         let model = AppChatPromptModel()
         model.summon(app: "Safari")
