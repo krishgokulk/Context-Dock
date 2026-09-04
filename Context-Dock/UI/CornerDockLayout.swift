@@ -26,11 +26,15 @@ enum CornerDockLayout {
     /// Big enough for the worst case: one surface fully expanded with the other's pill
     /// stacked above it. The window never resizes — the morph happens inside it — so this
     /// is sized once for the largest thing it will ever hold.
+    /// The clip preview that stacks above the clipboard while a clip is being looked at.
+    static let previewHeight: CGFloat = 232
+
     static var panelSize: CGSize {
-        // Worst case: one surface fully expanded with both other pills stacked above it.
+        // Worst case: one surface fully expanded, the preview above it, and both other
+        // pills stacked above that.
         CGSize(
             width: cardWidth + pad * 2,
-            height: cardHeight + (gap + pillHeight) * 2 + pad * 2)
+            height: cardHeight + previewHeight + gap + (gap + pillHeight) * 2 + pad * 2)
     }
 
     /// Rects in the panel's coordinates, origin bottom-left. A nil size means that
@@ -39,9 +43,12 @@ enum CornerDockLayout {
     /// Stacked bottom-up in the order they are passed, each dropping out of the stack
     /// when it has nothing to show. The prompt takes the corner when it is open: it is the
     /// one the user just asked for by name.
+    /// The clip being looked at sits directly above the list it was chosen from, so the
+    /// preview and the row it belongs to are next to each other.
     static func slots(
-        shelf: CGSize? = nil, clipboard: CGSize? = nil, prompt: CGSize? = nil
-    ) -> (shelf: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
+        shelf: CGSize? = nil, preview: CGSize? = nil, clipboard: CGSize? = nil,
+        prompt: CGSize? = nil
+    ) -> (shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
         let rightEdge = panelSize.width - pad
         var baseline = pad
 
@@ -55,7 +62,8 @@ enum CornerDockLayout {
 
         let promptRect = place(prompt)
         let clipboardRect = place(clipboard)
+        let previewRect = place(preview)
         let shelfRect = place(shelf)
-        return (shelfRect, clipboardRect, promptRect)
+        return (shelfRect, previewRect, clipboardRect, promptRect)
     }
 }

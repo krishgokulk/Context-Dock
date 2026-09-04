@@ -151,6 +151,12 @@ final class CornerChatPresentation: ObservableObject {
         return true
     }
 
+    /// A question asked from the clip preview: General is already answering it, so the
+    /// corner has to be showing General rather than whatever it was showing before.
+    func showGeneralFromPreview() {
+        showGeneral()
+    }
+
     private func showGeneral() {
         mode = .general
         isVisible = true

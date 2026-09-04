@@ -157,6 +157,12 @@ final class CornerDockController: NSObject {
         clipboardModel.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
+        // The preview card appears and disappears with the walk through the list, so the
+        // stack has to be measured again when the focus moves — otherwise the card is drawn
+        // in a slot nothing reserved and the rect below it is wrong for every row.
+        clipboardModel.$focusedEntryIndex.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
         shelf.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
@@ -214,7 +220,8 @@ final class CornerDockController: NSObject {
     func refresh() {
         guard let panel, let hostView else { return }
         let slots = currentSlots()
-        let rects = [slots.shelf, slots.clipboard, slots.prompt].compactMap { $0 }
+        let rects = [slots.shelf, slots.preview, slots.clipboard, slots.prompt]
+            .compactMap { $0 }
 
         // Nothing moved, nothing to do. The models this follows republish on every
         // keystroke — the draft is `@Published` — and without this the corner recomputed
@@ -224,7 +231,7 @@ final class CornerDockController: NSObject {
         }
         hostView.interactiveRects = rects
 
-        let shouldShow = slots.shelf != nil || slots.clipboard != nil || slots.prompt != nil
+        let shouldShow = !rects.isEmpty
         if shouldShow {
             if !panel.isVisible {
                 position()
@@ -245,13 +252,22 @@ final class CornerDockController: NSObject {
 
     /// Sizes come from each surface's own phase; the placement comes from the shared
     /// layout, so what is drawn and what is hit-tested cannot drift apart.
-    private func currentSlots() -> (shelf: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
+    private func currentSlots()
+        -> (shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, prompt: CGRect?)
+    {
         CornerDockLayout.slots(
             shelf: shelf.phase.isVisible
                 ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
+            preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             prompt: chatPresentation.isVisible ? promptSize : nil)
+    }
+
+    /// The preview belongs to an open, expanded card with a clip actually chosen — not to a
+    /// pill that happens to be on screen.
+    var showsClipPreview: Bool {
+        clipboardModel.phase == .expanded && clipboardModel.focusedEntry != nil
     }
 
     private var promptSize: CGSize {
@@ -334,10 +350,18 @@ final class CornerDockController: NSObject {
         }
     }
 
+    /// Left arrow, but only when the chat is the surface the key was meant for.
+    ///
+    /// This is a monitor over the whole corner panel, and it used to ask nothing except
+    /// which key was pressed — so arrowing through the clipboard's own list opened General
+    /// chat, because the clipboard and the chat share this window.
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
         guard let panel, event.window === panel,
               event.keyCode == 123,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              chatPresentation.isVisible,
+              prompt.phase.showsInput,
+              !ClipboardPanelController.shared.model.isKeyboardArmed,
               chatPresentation.handleLeftArrow(draft: prompt.query)
         else { return event }
         return nil
@@ -431,6 +455,17 @@ struct CornerDockSurface: View {
         VStack(alignment: .trailing, spacing: CornerDockLayout.gap) {
             if shelf.phase.isVisible {
                 DropShelfPill(presentation: shelf, store: shelfStore)
+            }
+            if CornerDockController.shared.showsClipPreview,
+                let focused = clipboardModel.focusedEntry
+            {
+                ClipboardPreviewCard(
+                    model: clipboardModel,
+                    entry: focused,
+                    isPinned: clipboardModel.isPreviewPinned,
+                    onTogglePin: { clipboardModel.togglePreviewPin() }
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if clipboardModel.phase.isVisible {
                 ClipboardDockPill(model: clipboardModel)
