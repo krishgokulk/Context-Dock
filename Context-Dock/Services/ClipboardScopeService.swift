@@ -208,6 +208,24 @@ enum ClipboardScopeService {
         entries.compactMap { dragProvider(for: $0) }
     }
 
+    /// A real file per clip, which is what a drag into Finder has to hand over. Images and
+    /// text have no file of their own until one is written, and that write happens here —
+    /// at the moment of the drag, not when the row was drawn.
+    static func fileURLs(for entries: [Entry]) -> [URL] {
+        entries.compactMap { entry in
+            if let path = entry.filePaths.first {
+                let url = URL(fileURLWithPath: path)
+                return FileManager.default.fileExists(atPath: url.path) ? url : nil
+            }
+            if let data = imageData(for: entry) {
+                return temporaryDragFile(data: data, fileExtension: "png")
+            }
+            let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, let data = text.data(using: .utf8) else { return nil }
+            return temporaryDragFile(data: data, fileExtension: "txt")
+        }
+    }
+
     static func temporaryDragFile(data: Data, fileExtension: String) -> URL? {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("ContextDockClipboardDrag", isDirectory: true)

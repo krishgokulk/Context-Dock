@@ -87,6 +87,19 @@ final class CornerChatPresentation: ObservableObject {
         showFrontmostApp(target: target)
     }
 
+    /// A conversation is on screen in the corner — not a resting composer, not a badge.
+    /// What decides whether an approval raised by a corner turn is drawn here.
+    var isShowingConversation: Bool {
+        guard isVisible else { return false }
+        switch mode {
+        case .general:
+            return generalPhase == .expanded
+                && (!generalChat.messages.isEmpty || generalChat.isSending)
+        case .frontmostApp:
+            return appChat.phase == .chat
+        }
+    }
+
     private var isShowingSomethingToDismiss: Bool {
         switch mode {
         case .general: return generalPhase == .expanded

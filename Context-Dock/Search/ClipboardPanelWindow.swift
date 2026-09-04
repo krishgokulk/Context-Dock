@@ -957,19 +957,23 @@ struct ClipboardDockPill: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// A modifier means "pick this", a plain click still means "paste this" — the fast path
+    /// stays one click.
+    private func activateRow(_ entry: LauncherView.ClipboardEntry, index: Int) {
+        model.focusedEntryIndex = index
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) || flags.contains(.shift) {
+            model.selectEntry(
+                entry, extend: flags.contains(.shift), toggle: flags.contains(.command))
+        } else {
+            ClipboardPanelController.shared.paste(entry)
+        }
+    }
+
     private func row(_ entry: LauncherView.ClipboardEntry, index: Int) -> some View {
         let selected = model.isSelected(entry)
         return Button {
-            model.focusedEntryIndex = index
-            // A modifier means "pick this", a plain click still means "paste this" — the
-            // fast path stays one click.
-            let flags = NSEvent.modifierFlags
-            if flags.contains(.command) || flags.contains(.shift) {
-                model.selectEntry(
-                    entry, extend: flags.contains(.shift), toggle: flags.contains(.command))
-            } else {
-                ClipboardPanelController.shared.paste(entry)
-            }
+            activateRow(entry, index: index)
         } label: {
             HStack(spacing: 10) {
                 thumbnail(entry, size: CGSize(width: 34, height: 26))
@@ -1008,13 +1012,20 @@ struct ClipboardDockPill: View {
         .buttonStyle(.plain)
         // Dragging a selected row drags the whole selection; dragging an unselected one
         // drags just it, without disturbing what was picked.
-        .onDrag {
-            let dragged = selected ? model.actionableEntries() : [entry]
-            ClipboardPanelController.shared.beginDrag(dragged)
-            return ClipboardScopeService.dragProvider(for: dragged.first ?? entry)
-                ?? NSItemProvider()
-        } preview: {
-            dragPreview(for: selected ? model.actionableEntries() : [entry])
+        // `.onDrag` hands over exactly one `NSItemProvider` and has no multi-item form, so
+        // a four-clip selection dragged to Finder arrived as one file. This starts a real
+        // AppKit dragging session instead, and forwards a press that never travelled as the
+        // click it was.
+        .overlay {
+            MultiItemDragSource(
+                urls: {
+                    let dragged = model.isSelected(entry)
+                        ? model.actionableEntries() : [entry]
+                    ClipboardPanelController.shared.beginDrag(dragged)
+                    return ClipboardScopeService.fileURLs(for: dragged)
+                },
+                onClick: { activateRow(entry, index: index) }
+            )
         }
         .contextMenu {
             Button("Copy") { ClipboardPanelController.shared.copy(model.actionableEntries(fallback: entry)) }

@@ -120,7 +120,10 @@ struct CornerGeneralChatView: View {
                 header
                 Divider().opacity(0.18)
                 transcript
-                if let request = approvals.pending(for: .chatWindow) {
+                // `.chatWindow` is non-nil only while the General Chat *window* is frontmost,
+                // so in the corner this card never appeared and a question raised by a
+                // corner turn had nowhere to be answered.
+                if let request = approvals.pending(for: .corner) {
                     ApprovalCard(request: request)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 6)

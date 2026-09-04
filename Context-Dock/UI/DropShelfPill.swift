@@ -150,19 +150,24 @@ struct DropShelfPill: View {
         // Dragging out is a read: the items stay on the shelf. A selected row drags the
         // whole selection — dragging four files out one at a time is the slow way to do
         // the only thing this surface is for.
-        .onDrag {
-            let dragged = presentation.isSelected(item)
-                ? presentation.actionableItems(in: store.items, fallback: item)
-                : [item]
-            DropShelfController.shared.beginDrag()
-            let providers = dragged.compactMap {
-                NSItemProvider(contentsOf: store.url(for: $0))
-            }
-            return providers.first ?? NSItemProvider()
-        } preview: {
-            dragPreview(for: presentation.isSelected(item)
-                ? presentation.actionableItems(in: store.items, fallback: item)
-                : [item])
+        // One `NSItemProvider` is all `.onDrag` can carry, so the selection past the first
+        // item was being dropped. A real dragging session carries all of them.
+        .overlay {
+            MultiItemDragSource(
+                urls: {
+                    let dragged = presentation.isSelected(item)
+                        ? presentation.actionableItems(in: store.items, fallback: item)
+                        : [item]
+                    DropShelfController.shared.beginDrag()
+                    return dragged.map { store.url(for: $0) }
+                },
+                onClick: {
+                    let flags = NSEvent.modifierFlags
+                    presentation.select(
+                        item, in: store.items,
+                        extend: flags.contains(.shift), toggle: flags.contains(.command))
+                }
+            )
         }
         .contextMenu {
             Button("Reveal in Finder") { DropShelfController.shared.reveal(item) }

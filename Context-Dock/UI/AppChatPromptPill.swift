@@ -64,6 +64,7 @@ enum AppChatPromptMetrics {
 struct AppChatPromptPill: View {
     @ObservedObject var model: AppChatPromptModel
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
+    @ObservedObject private var approvals = ApprovalCenter.shared
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
 
@@ -127,6 +128,11 @@ struct AppChatPromptPill: View {
                 header
                 Divider().opacity(0.18)
                 transcript
+                // A turn asked from here can need a yes. Without this the question was
+                // drawn on the dock behind the corner, or on nothing at all.
+                if let request = approvals.pending(for: .corner) {
+                    ApprovalCard(request: request)
+                }
                 Divider().opacity(0.18)
             } else if model.phase == .suggesting {
                 suggestionList
