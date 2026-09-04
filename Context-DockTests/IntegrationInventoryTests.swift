@@ -35,6 +35,22 @@ struct IntegrationInventoryTests {
         #expect(!result.global.cliTools.contains { $0.command == "fmt" })
     }
 
+    /// A tool can be both pinned globally and linked to an app. Global scope is not a claim
+    /// on the tool, so being global must not hide it from the app that links it.
+    @Test func globallyScopedToolStillAppearsUnderTheAppThatLinksIt() throws {
+        let bundleID = "com.example.editor"
+        let package = TerminalPackage.fixture(command: "handbrakecli", bundleIDs: [bundleID])
+        let inventory = IntegrationInventoryBuilder.build(from: .fixture(
+            adapters: [.fixture(bundleID: bundleID)],
+            packages: [package],
+            globalPackageIDs: [package.id]))
+
+        let app = try #require(inventory.apps.first)
+        #expect(app.cliTools.map(\.command) == ["handbrakecli"])
+        #expect(app.counts.cliTools == 1)
+        #expect(inventory.global.cliTools.map(\.command) == ["handbrakecli"])
+    }
+
     @Test func actionsPreserveExecutionSurfaceGroups() throws {
         let adapter = AppAdapter.fixture(
             bundleID: "com.example.editor",

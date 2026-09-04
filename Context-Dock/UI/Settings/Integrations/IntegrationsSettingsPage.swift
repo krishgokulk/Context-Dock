@@ -145,9 +145,18 @@ struct IntegrationsSettingsPage: View {
         _ = commandsObserver.revision
 
         let packages = packageManager.packages
+        // `isUserAddedGlobalScope` answers "did the user add this tool deliberately", which
+        // is true of a tool wired into one app as well. Global here means the narrower thing:
+        // granted to every scope — pinned, or attached to a CLI identity rather than an app.
         let globalPackageIDs = Set(
             packages
                 .filter(packageManager.isUserAddedGlobalScope)
+                .filter { package in
+                    let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if settings.isCLIToolPinned(command) { return true }
+                    let cliScopeIDs = Set(["cli://\(command)", "cli_\(command)", command])
+                    return package.contextAppBundleIds.contains { cliScopeIDs.contains($0) }
+                }
                 .map(\.id))
 
         return IntegrationInventoryBuilder.build(from: IntegrationInventorySnapshot(

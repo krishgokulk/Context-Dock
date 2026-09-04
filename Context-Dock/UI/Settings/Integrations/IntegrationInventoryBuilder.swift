@@ -5,8 +5,7 @@ enum IntegrationInventoryBuilder {
         let adaptersByBundleID = adaptersByBundleID(snapshot.adapters)
         let appBundleIDs = appBundleIDs(
             adapters: adaptersByBundleID,
-            packages: snapshot.packages,
-            globalPackageIDs: snapshot.globalPackageIDs)
+            packages: snapshot.packages)
 
         // Ordered by the name the user reads, not by bundle ID: an alphabetical list of
         // reverse-DNS strings looks shuffled to anyone scanning for an app.
@@ -81,10 +80,10 @@ enum IntegrationInventoryBuilder {
         let browserActions = visibleActions.filter { $0.type == .pageJS }
         let shortcuts = visibleActions.filter { $0.type == .shortcut }
         let skills = snapshot.skills.filter { $0.adapterBundleId == bundleID }
+        // Linked to this app is the whole test. Global scope is a separate grant, not a
+        // claim on the tool, so a tool that is also pinned globally still belongs here.
         let cliTools = snapshot.packages.filter {
-            $0.isEnabled
-                && !snapshot.globalPackageIDs.contains($0.id)
-                && $0.contextAppBundleIds.contains(bundleID)
+            $0.isEnabled && $0.contextAppBundleIds.contains(bundleID)
         }
         let mcpServers = snapshot.mcpServers.filter { $0.bundleIds.contains(bundleID) }
         let apiConnections = snapshot.apiConnections.filter { $0.adapterBundleId == bundleID }
@@ -130,11 +129,10 @@ enum IntegrationInventoryBuilder {
 
     private static func appBundleIDs(
         adapters: [String: AppAdapter],
-        packages: [TerminalPackage],
-        globalPackageIDs: Set<UUID>
+        packages: [TerminalPackage]
     ) -> [String] {
         let linkedPackageBundleIDs = packages
-            .filter { $0.isEnabled && !globalPackageIDs.contains($0.id) }
+            .filter(\.isEnabled)
             .flatMap { package in
                 package.contextAppBundleIds.filter { isAppBundleID($0, for: package) }
             }
