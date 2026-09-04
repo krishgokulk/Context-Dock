@@ -96,6 +96,60 @@ struct IntegrationInventoryTests {
         #expect(inventory.apps[1].health == .healthy)
     }
 
+    @Test func resourcesCountIndependentlyAndSkillsAreNonExecutable() throws {
+        let bundleID = "com.example.app"
+        let app = try #require(
+            IntegrationInventoryBuilder.build(from: .fixture(
+                adapters: [.fixture(bundleID: bundleID)],
+                skills: [.fixture(bundleID: bundleID, name: "Guide")],
+                packages: [.fixture(command: "codex", bundleIDs: [bundleID])],
+                mcpServers: [.fixture(name: "Files", bundleIDs: [bundleID])],
+                apiConnections: [.fixture(bundleID: bundleID, name: "Service")]
+            )).apps.first)
+
+        #expect(app.counts.skills == 1)
+        #expect(app.counts.cliTools == 1)
+        #expect(app.counts.mcpServers == 1)
+        #expect(app.counts.apiConnections == 1)
+        #expect(app.skills.allSatisfy { !$0.grantsExecutionAuthority })
+    }
+
+    /// Removing an integration deletes the adapter and drops its CLI links; the skills,
+    /// MCP servers, and API connections in other stores are left where they are. The
+    /// confirmation has to say that, or it promises a cleanup that never happens.
+    @Test func removalPreviewSeparatesDeletedRecordsFromRetainedOnes() throws {
+        let bundleID = "com.example.editor"
+        let otherBundleID = "com.example.other"
+        let inventory = IntegrationInventoryBuilder.build(from: .fixture(
+            adapters: [
+                .fixture(
+                    bundleID: bundleID,
+                    actions: [
+                        .fixture(name: "Format"),
+                        .fixture(name: "Read Page", type: .pageJS),
+                        .fixture(name: "Export", type: .shortcut)
+                    ]),
+                .fixture(bundleID: otherBundleID, appName: "Other")
+            ],
+            skills: [.fixture(bundleID: bundleID, name: "Guide")],
+            packages: [
+                .fixture(command: "shared", bundleIDs: [bundleID, otherBundleID]),
+                .fixture(command: "solo", bundleIDs: [bundleID])
+            ],
+            mcpServers: [.fixture(name: "Docs", bundleIDs: [bundleID])],
+            apiConnections: [.fixture(bundleID: bundleID, name: "Service")]))
+
+        let app = try #require(inventory.apps.first { $0.bundleID == bundleID })
+        let preview = IntegrationInventoryBuilder.removalPreview(for: app)
+
+        #expect(preview.removedActionCount == 3)
+        #expect(preview.unlinkedCLIToolCount == 2)
+        #expect(preview.retainedSkillCount == 1)
+        #expect(preview.retainedMCPCount == 1)
+        #expect(preview.retainedAPIConnectionCount == 1)
+        #expect(preview.retainedSharedResourceNames == ["shared"])
+    }
+
     @Test func searchMatchesNameBundleIDCapabilityAndType() {
         let inventory = IntegrationInventory.fixture()
 

@@ -112,9 +112,29 @@ struct GlobalIntegrationSummary {
     let mcpServers: [MCPServerConfig]
 }
 
+/// The reader already carries a stable `id`; this only lets it drive a `ForEach` without
+/// restating that identity at every call site.
+extension AdapterContextReader: Identifiable {}
+
 extension AdapterSkill {
     /// Skills provide steering text to scoped chat; they are not executable authority.
     var grantsExecutionAuthority: Bool { false }
+}
+
+/// What removing an integration actually does.
+///
+/// Removal deletes the adapter — its actions go with it — and drops this app's CLI links.
+/// Skills, MCP servers, and API connections live in their own stores and are left alone, so
+/// they are counted separately: a confirmation that implied it cleaned up Keychain-backed
+/// API connections would be describing work nobody performs.
+struct IntegrationRemovalPreview: Equatable {
+    let removedActionCount: Int
+    let unlinkedCLIToolCount: Int
+    let retainedSkillCount: Int
+    let retainedMCPCount: Int
+    let retainedAPIConnectionCount: Int
+    /// CLI tools that stay linked to another app or to Global after this one is unlinked.
+    let retainedSharedResourceNames: [String]
 }
 
 /// The workspace's own navigation state.

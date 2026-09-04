@@ -1837,31 +1837,10 @@ struct AutomationSettingsView: View {
     }
 
     private func removeAppActionAdapter(_ bundleId: String) async {
-        await adapterMgr.deleteAdapter(bundleId: bundleId)
+        // The sequence itself lives in IntegrationRemovalService so this page and the
+        // Integrations workspace remove an integration the same way.
+        await IntegrationRemovalService.removeAppIntegration(bundleId: bundleId)
         await MainActor.run {
-            settings.customAppEntries.removeAll {
-                $0.key == bundleId || $0.appPath == bundleId
-            }
-            settings.appToolExtensions.removeAll { $0.appKey == bundleId }
-            for package in pkgMgr.packages where package.contextAppBundleIds.contains(bundleId) {
-                var updated = package
-                updated.contextAppBundleIds.removeAll { $0 == bundleId }
-                pkgMgr.updatePackage(updated)
-            }
-            if bundleId.hasPrefix("cli://") {
-                let command = String(bundleId.dropFirst("cli://".count))
-                settings.unpinCLITool(command)
-                settings.customAppEntries.removeAll {
-                    $0.key == "cli_\(command)" || $0.appPath == "cli://\(command)"
-                }
-                if let package = pkgMgr.packages.first(where: { $0.command == command }) {
-                    var updated = package
-                    updated.contextAppBundleIds.removeAll {
-                        $0 == bundleId || $0 == "cli_\(command)"
-                    }
-                    pkgMgr.updatePackage(updated)
-                }
-            }
             selectedAdapterID = nil
             selectedAdapterActionID = nil
         }

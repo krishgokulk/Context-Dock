@@ -134,30 +134,10 @@ struct AppIntegrationDetailView: View {
                     showActionEditor = true
                 },
                 onRemove: { action in pendingRemoval = action })
-        case .resources, .access:
-            IntegrationSectionPlaceholder(tab: selectedTab, appName: summary.appName)
+        case .resources:
+            AppIntegrationResourcesView(summary: summary)
+        case .access:
+            AppIntegrationAccessView(summary: summary)
         }
-    }
-}
-
-/// Stands in for a section that has not been moved across yet, so the tab bar never lies
-/// about how many sections exist.
-struct IntegrationSectionPlaceholder: View {
-    let tab: IntegrationDetailTab
-    let appName: String
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: tab == .resources ? "wrench.and.screwdriver" : "lock.shield")
-                .font(.system(size: 24))
-                .foregroundStyle(.tertiary)
-            Text("\(tab.title) for \(appName)")
-                .font(.system(size: 13, weight: .medium))
-            Text("Still managed on the App Adapters page.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(24)
     }
 }

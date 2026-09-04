@@ -39,6 +39,25 @@ enum IntegrationInventoryBuilder {
                     by: \.name)))
     }
 
+    /// Resolves what removal will and will not touch, before the confirmation is shown.
+    static func removalPreview(for app: AppIntegrationSummary) -> IntegrationRemovalPreview {
+        let sharedTools = app.cliTools
+            .filter { package in
+                package.contextAppBundleIds.contains { $0 != app.bundleID }
+            }
+            .map(\.command)
+
+        return IntegrationRemovalPreview(
+            removedActionCount: app.appActions.count
+                + app.browserActions.count
+                + app.shortcuts.count,
+            unlinkedCLIToolCount: app.cliTools.count,
+            retainedSkillCount: app.skills.count,
+            retainedMCPCount: app.mcpServers.count,
+            retainedAPIConnectionCount: app.apiConnections.count,
+            retainedSharedResourceNames: sharedTools.sorted(by: compare))
+    }
+
     static func filter(_ apps: [AppIntegrationSummary], query: String) -> [AppIntegrationSummary] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return apps }
