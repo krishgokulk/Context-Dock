@@ -132,7 +132,8 @@ final class DropShelfController: NSObject {
     let store = DropShelfStore.shared
     let presentation = DropShelfPresentation()
 
-    private var edgePanel: NSPanel?
+    private var edgePanels: [NSPanel] = []
+    private var screenSink: AnyCancellable?
     private var storeSink: AnyCancellable?
     /// The strip and the pill overlap; a drag crossing from one to the other fires an exit
     /// on the first before the enter on the second. Ending the drag on the next runloop
@@ -205,9 +206,34 @@ final class DropShelfController: NSObject {
 
     // MARK: Windows
 
+    /// One spotter per screen, rebuilt when the screens change.
+    ///
+    /// There used to be exactly one, on `NSScreen.main`, created once at launch. Drag a
+    /// file on any other display and nothing was watching, so the shelf never appeared —
+    /// and plugging in or unplugging a monitor left the single strip measuring a screen
+    /// that had moved or gone.
     private func ensurePanels() {
-        guard edgePanel == nil else { return }
-        guard let screen = NSScreen.main else { return }
+        guard edgePanels.isEmpty else { return }
+        for screen in NSScreen.screens {
+            makeEdgePanel(on: screen)
+        }
+        screenSink = NotificationCenter.default.publisher(
+            for: NSApplication.didChangeScreenParametersNotification
+        )
+        .sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuildEdgePanels() }
+        }
+    }
+
+    private func rebuildEdgePanels() {
+        edgePanels.forEach { $0.orderOut(nil) }
+        edgePanels.removeAll()
+        for screen in NSScreen.screens {
+            makeEdgePanel(on: screen)
+        }
+    }
+
+    private func makeEdgePanel(on screen: NSScreen) {
         let visible = screen.visibleFrame
 
         let edge = NSPanel(
@@ -230,7 +256,7 @@ final class DropShelfController: NSObject {
         edgeView.controller = self
         edge.contentView = edgeView
         edge.orderFrontRegardless()
-        edgePanel = edge
+        edgePanels.append(edge)
 
         // The pill itself lives in the shared corner shell, not in a window of its own.
         CornerDockController.shared.activate()

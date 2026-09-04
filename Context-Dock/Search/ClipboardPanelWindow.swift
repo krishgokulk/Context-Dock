@@ -701,6 +701,8 @@ struct ClipboardDockPill: View {
     @FocusState private var cardFocused: Bool
     @FocusState private var searchFocused: Bool
     @State private var searchHovered = false
+    /// ⌘P: the preview stays open and follows the walk through the list.
+    @State private var previewPinned = false
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private var expanded: Bool { model.phase == .expanded }
@@ -779,6 +781,29 @@ struct ClipboardDockPill: View {
             guard !model.actionableEntries().isEmpty else { return .ignored }
             model.removeActionableEntries()
             return .handled
+        }
+        // Space previews the clip you are on and closes when you move. ⌘P pins that
+        // preview open, so walking the list becomes a way to look through the clips
+        // rather than a sequence of open-and-close.
+        .onKeyPress(keys: ["p"]) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            previewPinned.toggle()
+            if previewPinned {
+                ClipboardPanelController.shared.preview()
+            } else {
+                PreviewController.shared.close()
+            }
+            return .handled
+        }
+        .onChange(of: model.focusedEntryIndex) { _, _ in
+            guard previewPinned else { return }
+            ClipboardPanelController.shared.preview()
+        }
+        .onChange(of: model.phase) { _, phase in
+            // A pinned preview belongs to an open card. Leaving takes it with you.
+            guard !phase.isVisible, previewPinned else { return }
+            previewPinned = false
+            PreviewController.shared.close()
         }
         // Modifier-aware, because the plain-key form of `onKeyPress` never sees which keys
         // were held — so ⌘↓ was arriving here as a bare ↓ and only ever moved the focus.

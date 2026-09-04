@@ -19,6 +19,9 @@ enum AppChatPromptMetrics {
     static let summaryHeight: CGFloat = 30
     /// Just the app's icon.
     static let miniSize = CGSize(width: 52, height: 44)
+    /// Attached files, as chips with a thumbnail — taller than the old bare capsules, and
+    /// shared with General so one attachment is the same object in both modes.
+    static let attachmentRowHeight: CGFloat = 46
     /// The conversation, with nothing in it yet: header, one exchange's worth of room, and
     /// the composer.
     static let chatHeight: CGFloat = 340
@@ -398,29 +401,12 @@ struct AppChatPromptPill: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
                 ForEach(model.attachments, id: \.self) { url in
-                    HStack(spacing: 5) {
-                        Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                            .resizable().frame(width: 13, height: 13)
-                        Text(url.lastPathComponent)
-                            .font(.system(size: 11))
-                            .lineLimit(1)
-                        Button {
-                            model.detach(url)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.08), in: Capsule())
+                    ChatAttachmentChip(url: url) { model.detach(url) }
                 }
             }
             .padding(.horizontal, 14)
         }
-        .frame(height: 34)
+        .frame(height: AppChatPromptMetrics.attachmentRowHeight)
     }
 
     // MARK: - Suggestions

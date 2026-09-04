@@ -25,7 +25,7 @@ enum CornerGeneralChatMetrics {
     /// are one surface: a General composer that stands taller than the App one makes the
     /// switch between them look like the window changed rather than the scope.
     static var composerRowHeight: CGFloat { AppChatPromptMetrics.inputHeight }
-    static let attachmentRowHeight: CGFloat = 34
+    static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentRowHeight }
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
     static var compactHeight: CGFloat { composerRowHeight }
@@ -323,10 +323,9 @@ struct CornerGeneralChatView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(model.attachments, id: \.self) { url in
-                            Text(url.lastPathComponent)
-                                .font(.system(size: 11))
-                                .padding(.horizontal, 8).padding(.vertical, 4)
-                                .background(.thinMaterial, in: Capsule())
+                            ChatAttachmentChip(url: url) {
+                                model.attachments.removeAll { $0 == url }
+                            }
                         }
                     }
                     .padding(.horizontal, 14)
