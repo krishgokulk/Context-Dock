@@ -62,27 +62,31 @@ struct ChangeVocabularyContractTests {
     ///
     /// These are mechanisms rather than requests. A person does not type "appadapter.run" or
     /// "mcp.call" — the model picks them once it has decided what to do, so no verb routes to
-    /// them and none should. The global commands are reached from the command palette and by
-    /// name ("shut down", "empty trash"), which the verb list already covers through its own
-    /// words rather than through a capability id.
+    /// them and none should.
     ///
     /// Listed explicitly so the contract still bites: a capability added later is neither
     /// phrased nor excused, and fails until somebody decides which it is.
     private static let dispatchedWithoutPhrasing: Set<String> = [
         // Mechanisms: chosen by the model, not asked for.
         "appadapter.run", "mcp.call", "menu.execute", "extension.run", "finder.directAction",
-        // Reached by their own name from the palette, not through the change vocabulary.
-        "globalcmd.appearance", "globalcmd.bluetooth", "globalcmd.currency-converter",
-        "globalcmd.empty-trash", "globalcmd.keep-awake", "globalcmd.open-social",
-        "globalcmd.restart", "globalcmd.scratch-notes", "globalcmd.screenshots",
-        "globalcmd.shut-down", "globalcmd.sleep", "globalcmd.test", "globalcmd.volume",
-        "globalcmd.wi-fi",
         // Adapters without an eval pass yet. Each is a row waiting to be written, and the
         // reason this set is a list rather than a wildcard.
         "calendar.create", "calendar.delete", "calendar.update", "contacts.create",
         "notes.delete", "notes.export", "system.captureScreenshot", "terminal.runCommand",
         "window.arrange",
     ]
+
+    /// Global commands are excused as a class, not one id at a time.
+    ///
+    /// They are reached from the palette by their own name — "shut down", "empty trash" —
+    /// which the verb list already covers through its own words rather than through a
+    /// capability id. The excuse is a property of how every global command is dispatched, so
+    /// naming the built-in ones individually only looked stricter: any command the *user*
+    /// writes registers `globalcmd.<its name>`, which no hand-written table can contain, and
+    /// failed this contract on their machine for doing nothing wrong.
+    private static func isGlobalCommand(_ id: String) -> Bool {
+        id.hasPrefix(GlobalCommandCapabilities.idPrefix)
+    }
 
     /// The contract. A capability that requires approval is one that changes something, and a
     /// change nobody can ask for is a capability that will never run.
@@ -94,6 +98,7 @@ struct ChangeVocabularyContractTests {
         for capability in CapabilityRegistry.shared.all
         where capability.riskLevel.requiresApproval {
             if Self.dispatchedWithoutPhrasing.contains(capability.id) { continue }
+            if Self.isGlobalCommand(capability.id) { continue }
             guard let asked = Self.phrasing[capability.id] else {
                 unlisted.append(capability.id)
                 continue
