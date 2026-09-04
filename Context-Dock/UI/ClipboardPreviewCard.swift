@@ -1,31 +1,25 @@
 // ClipboardPreviewCard.swift
 // Context-Dock
 //
-// The clip you are standing on, above the list you are walking through, with a field to ask
-// about it.
+// The clip you are standing on, above the list you are walking through.
 //
 // Arrowing a history of "Image, Image, Image" tells the user nothing, and the answer is not
-// a bigger row: it is the clip itself, shown while the list stays where it is. The composer
-// is here because looking at a clip and wanting something done with it are the same moment —
-// the question goes to General chat with the clip attached, so there is no second pipeline.
+// a bigger row: it is the clip itself, shown while the list stays where it is.
+//
+// It is a preview and nothing else. A composer lived here briefly and was wrong: a question
+// asked from a card this size has nowhere to put the answer, and asking about a clip is what
+// the expanded preview is for. The controls here are the ones that act on the file — open
+// it, share it, open it properly, keep it on screen.
 
 import AppKit
 import SwiftUI
 
 enum ClipboardPreviewMetrics {
-    static let composerHeight: CGFloat = 44
     static let headerHeight: CGFloat = 38
-    /// Room for the reply, once one has been asked for. The card grows rather than sending
-    /// the user somewhere else to read it.
-    static let answerHeight: CGFloat = 148
 
-    static func size(showsAnswer: Bool) -> CGSize {
-        CGSize(
-            width: CornerDockLayout.cardWidth,
-            height: CornerDockLayout.previewHeight + (showsAnswer ? answerHeight : 0))
+    static var size: CGSize {
+        CGSize(width: CornerDockLayout.cardWidth, height: CornerDockLayout.previewHeight)
     }
-
-    static var size: CGSize { size(showsAnswer: false) }
 }
 
 struct ClipboardPreviewCard: View {
@@ -34,28 +28,14 @@ struct ClipboardPreviewCard: View {
     var isPinned: Bool
     var onTogglePin: () -> Void
 
-    @State private var draft = ""
-    @FocusState private var fieldFocused: Bool
-
-    @ObservedObject private var general = GeneralChatWindowModel.shared
-
-    private var showsAnswer: Bool { model.previewConversationActive }
-
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.18)
             body(for: entry)
-            if showsAnswer {
-                Divider().opacity(0.18)
-                answer
-            }
-            Divider().opacity(0.18)
-            composer
         }
-        .frame(
-            width: ClipboardPreviewMetrics.size(showsAnswer: showsAnswer).width,
-            height: ClipboardPreviewMetrics.size(showsAnswer: showsAnswer).height)
+        .frame(width: ClipboardPreviewMetrics.size.width,
+               height: ClipboardPreviewMetrics.size.height)
         .background(GlassBackground(cornerRadius: 22, isDark: true))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
@@ -66,7 +46,7 @@ struct ClipboardPreviewCard: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             if !entry.sourceBundleId.isEmpty, let icon = appIcon(entry.sourceBundleId) {
                 Image(nsImage: icon)
                     .resizable()
@@ -84,13 +64,18 @@ struct ClipboardPreviewCard: View {
 
             Spacer(minLength: 6)
 
+            openWithMenu
+            shareControl
+
             Button {
+                // Expanding is where a conversation about this clip happens: that window
+                // has the room for a transcript, and this card does not.
                 ClipboardPanelController.shared.preview()
             } label: {
                 glyph("arrow.up.left.and.arrow.down.right")
             }
             .buttonStyle(.plain)
-            .help("Open in the preview window")
+            .help("Open the full preview")
 
             Button(action: onTogglePin) {
                 glyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
@@ -100,6 +85,44 @@ struct ClipboardPreviewCard: View {
         }
         .padding(.horizontal, 12)
         .frame(height: ClipboardPreviewMetrics.headerHeight)
+    }
+
+    /// The apps that can open this clip, which is only a question worth asking once there
+    /// is a file to open.
+    @ViewBuilder
+    private var openWithMenu: some View {
+        if let url = fileURL {
+            Menu {
+                ForEach(openers(for: url), id: \.self) { app in
+                    Button(appName(app)) {
+                        NSWorkspace.shared.open(
+                            [url], withApplicationAt: app,
+                            configuration: NSWorkspace.OpenConfiguration())
+                    }
+                }
+                Divider()
+                Button("Reveal in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            } label: {
+                glyph("arrow.up.forward.app")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 24, height: 24)
+            .help("Open with")
+        }
+    }
+
+    @ViewBuilder
+    private var shareControl: some View {
+        if let url = fileURL {
+            ShareLink(item: url) {
+                glyph("square.and.arrow.up")
+            }
+            .buttonStyle(.plain)
+            .help("Share")
+        }
     }
 
     /// The clip at a size worth calling a preview: the picture for an image, the text for
@@ -124,8 +147,7 @@ struct ClipboardPreviewCard: View {
                     .padding(.vertical, 8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let path = entry.filePaths.first {
-            let url = URL(fileURLWithPath: path)
+        } else if let url = fileURL {
             HStack(spacing: 10) {
                 Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
                     .resizable()
@@ -145,130 +167,21 @@ struct ClipboardPreviewCard: View {
         }
     }
 
-    /// What came back, in the card that asked.
-    ///
-    /// The question already ran on General's thread and pipeline — nothing here is a second
-    /// engine — but sending the user off to another surface to read the answer made the
-    /// field look like a dead end. Steps while it works, the reply when it arrives, and a
-    /// way through to the full thread.
-    private var answer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if general.isSending {
-                LiveAgentProgressView(
-                    steps: general.activeProgress.isEmpty
-                        ? [general.activeStatus ?? "Thinking…"] : general.activeProgress)
-            } else if let reply = latestReply {
-                ScrollView {
-                    Text(reply)
-                        .font(.system(size: 11.5))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            } else {
-                Text("No answer yet")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 8) {
-                Button("Open in General Chat") {
-                    CornerDockController.shared.chatPresentation.showGeneralFromPreview()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(Color.accentColor)
-
-                Spacer(minLength: 4)
-
-                if general.isSending {
-                    Button("Stop") { general.cancel() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Button("Done") { model.endPreviewConversation() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .frame(height: ClipboardPreviewMetrics.answerHeight)
+    /// A clip is only openable and shareable when it has a file of its own. Text clips have
+    /// none, and inventing a scratch file for a control the user has not pressed would
+    /// write to disk on every arrow key.
+    private var fileURL: URL? {
+        guard let first = entry.filePaths.first else { return nil }
+        let url = URL(fileURLWithPath: first)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
-    private var latestReply: String? {
-        general.messages.last { $0.role == .assistant }?.content
+    private func openers(for url: URL) -> [URL] {
+        Array(NSWorkspace.shared.urlsForApplications(toOpen: url).prefix(5))
     }
 
-    /// Asking about the clip in front of you. It goes to General chat with the clip
-    /// attached — the same thread and the same pipeline, not a third one.
-    private var composer: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            ZStack(alignment: .leading) {
-                if draft.isEmpty {
-                    Text("Ask about this clip…")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary.opacity(0.6))
-                }
-                TextField("", text: $draft)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .focused($fieldFocused)
-                    .onSubmit(send)
-                    // Typing here is attention. Without this the clipboard's own idle
-                    // clock kept running and took the card away mid-question.
-                    .onChange(of: draft) { _, _ in model.keepAlive() }
-                    .onChange(of: fieldFocused) { _, focused in
-                        model.setPreviewComposerFocused(focused)
-                    }
-            }
-
-            if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(0.92))
-                        .frame(width: 22, height: 22)
-                        .background(Color.accentColor, in: Circle())
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .help("Ask")
-            }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: ClipboardPreviewMetrics.composerHeight)
-    }
-
-    private func send() {
-        let question = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty else { return }
-        let general = GeneralChatWindowModel.shared
-        // The clip travels as its file where it has one, so the model sees the image
-        // rather than the word "Image".
-        if let path = entry.filePaths.first {
-            let url = URL(fileURLWithPath: path)
-            if !general.attachments.contains(url) { general.attachments.append(url) }
-            general.input = question
-        } else if let data = ClipboardScopeService.imageData(for: entry),
-            let url = ClipboardScopeService.temporaryDragFile(data: data, fileExtension: "png")
-        {
-            if !general.attachments.contains(url) { general.attachments.append(url) }
-            general.input = question
-        } else {
-            general.input = "\(question)\n\n\(ClipboardScopeService.contextText(from: [entry]))"
-        }
-        general.send()
-        draft = ""
-        // The answer lands here, in the card that asked. General still owns the thread —
-        // "Open in General Chat" is one control away for the rest of it.
-        model.beginPreviewConversation()
+    private func appName(_ appURL: URL) -> String {
+        FileManager.default.displayName(atPath: appURL.path)
     }
 
     private func glyph(_ symbol: String, tinted: Bool = false) -> some View {

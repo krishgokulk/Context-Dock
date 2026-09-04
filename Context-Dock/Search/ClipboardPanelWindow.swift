@@ -264,8 +264,6 @@ final class ClipboardPanelModel: ObservableObject {
     /// ⌘P: the preview card stays put while the walk continues. Held here rather than in a
     /// view because the card and the panel both act on it.
     @Published private(set) var isPreviewPinned = false
-    @Published private(set) var isPreviewComposerFocused = false
-    @Published private(set) var previewConversationActive = false
     @Published private(set) var selectedIDs: Set<UUID> = []
     private var pickOrder: [UUID] = []
     /// Where a ⇧-click measures from.
@@ -332,35 +330,6 @@ final class ClipboardPanelModel: ObservableObject {
     func togglePreviewPin() {
         isPreviewPinned.toggle()
         noteInteraction()
-    }
-
-    /// Typing in the preview's field is attention, and nothing here knew it: the card's own
-    /// idle clock kept running and collapsed the surface out from under a half-typed
-    /// question.
-    func keepAlive() {
-        noteInteraction()
-    }
-
-    /// While that field holds the keyboard the card does not stand down at all. A clock
-    /// that expires mid-sentence is worse than one that never expires.
-    func setPreviewComposerFocused(_ focused: Bool) {
-        isPreviewComposerFocused = focused
-        if focused {
-            hideTask?.cancel()
-        } else {
-            noteInteraction()
-        }
-    }
-
-    /// A question has been asked about the focused clip, so the card shows what came back
-    /// rather than sending the user elsewhere to find it.
-    func beginPreviewConversation() {
-        previewConversationActive = true
-        noteInteraction()
-    }
-
-    func endPreviewConversation() {
-        previewConversationActive = false
     }
 
     /// Delete the clips an action would apply to.
@@ -527,11 +496,6 @@ final class ClipboardPanelModel: ObservableObject {
         }
         let current = focusedEntryIndex ?? (direction >= 0 ? -1 : count)
         let next = min(max(current + direction, 0), count - 1)
-        if next != current {
-            // The answer belonged to the clip that was asked about. Moving on leaves it
-            // behind rather than showing it under a different picture.
-            endPreviewConversation()
-        }
         focusedEntryIndex = next
 
         guard select, visibleEntries.indices.contains(next) else { return }
@@ -658,7 +622,7 @@ final class ClipboardPanelModel: ObservableObject {
     /// One step smaller, never straight to nothing: card, pill, badge, gone. A card under
     /// the pointer is exempt — it belongs to whoever is reading it.
     func standDown() {
-        guard !isPointerOver, !isPreviewComposerFocused else {
+        guard !isPointerOver else {
             armStandDown(after: Self.armedDwell)
             return
         }

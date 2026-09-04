@@ -163,9 +163,6 @@ final class CornerDockController: NSObject {
         clipboardModel.$focusedEntryIndex.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
-        clipboardModel.$previewConversationActive.sink { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
-        }.store(in: &sinks)
         shelf.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
@@ -261,9 +258,7 @@ final class CornerDockController: NSObject {
         CornerDockLayout.slots(
             shelf: shelf.phase.isVisible
                 ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
-            preview: showsClipPreview
-                ? ClipboardPreviewMetrics.size(
-                    showsAnswer: clipboardModel.previewConversationActive) : nil,
+            preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             prompt: chatPresentation.isVisible ? promptSize : nil)

@@ -133,49 +133,6 @@ struct ClipboardPanelModelTests {
         #expect(model.selectedIDs.isEmpty)
     }
 
-    /// A half-typed question must not be taken away by the card's own idle clock.
-    @Test func theCardHoldsStillWhileThePreviewFieldHasTheKeyboard() {
-        let model = ClipboardPanelModel()
-        model.entries = [entry("one", app: "Finder", bundleID: "com.apple.finder")]
-        model.summon()
-
-        model.setPreviewComposerFocused(true)
-        model.standDown()
-
-        #expect(model.phase == .expanded)
-    }
-
-    /// Letting go hands the clock back, or the card would stay open for ever after one
-    /// visit to the field.
-    @Test func lettingGoOfTheFieldStartsTheClockAgain() {
-        let model = ClipboardPanelModel()
-        model.entries = [entry("one", app: "Finder", bundleID: "com.apple.finder")]
-        model.summon()
-        model.setPreviewComposerFocused(true)
-
-        model.setPreviewComposerFocused(false)
-        model.standDown()
-
-        #expect(model.phase != .expanded)
-    }
-
-    /// The answer belonged to the clip it was asked about; walking on leaves it behind
-    /// rather than showing it under a different picture.
-    @Test func movingToAnotherClipEndsTheExchange() {
-        let model = ClipboardPanelModel()
-        model.entries = [
-            entry("one", app: "Finder", bundleID: "com.apple.finder"),
-            entry("two", app: "Finder", bundleID: "com.apple.finder"),
-        ]
-        model.focusedEntryIndex = 0
-        model.beginPreviewConversation()
-        #expect(model.previewConversationActive)
-
-        model.moveEntry(1)
-
-        #expect(!model.previewConversationActive)
-    }
-
     /// A bare arrow still only moves, because Return pastes whatever the focus is on.
     @Test func arrowingWithoutAModifierSelectsNothing() {
         let model = ClipboardPanelModel()
