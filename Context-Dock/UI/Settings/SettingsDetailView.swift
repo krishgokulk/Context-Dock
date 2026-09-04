@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsDetailView: View {
     let page: SettingsPage
+    let integrationDestination: IntegrationDestination?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,6 +22,12 @@ struct SettingsDetailView: View {
             GeneralSettingsPage()
         case .aiProviders:
             AIProvidersSettingsPage()
+        case .integrations:
+            SettingsPlaceholderPage(
+                icon: page.icon,
+                title: page.title,
+                message: "The Integrations workspace will appear here."
+            )
         case .extensionsGlobalWithSelection,
              .extensionsGlobalWithoutSelection,
              .extensionsCLIToolScope,

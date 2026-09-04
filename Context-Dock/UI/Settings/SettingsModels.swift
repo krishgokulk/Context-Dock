@@ -3,6 +3,7 @@ import SwiftUI
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general
     case aiProviders
+    case integrations
     case extensionsGlobalWithSelection
     case extensionsGlobalWithoutSelection
     case extensionsCLIToolScope
@@ -25,6 +26,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "General"
         case .aiProviders: return "AI Providers"
+        case .integrations: return "Integrations"
         case .extensionsGlobalWithSelection: return "With Selection"
         case .extensionsGlobalWithoutSelection: return "Commands"
         case .extensionsCLIToolScope: return "CLI Tool Scope"
@@ -47,6 +49,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "Launch, layers, clipboard, and app behavior."
         case .aiProviders: return "Choose provider and verify model access."
+        case .integrations: return "Apps and global capabilities."
         case .extensionsGlobalWithSelection: return "Actions shown for selected text, files, URLs, and media."
         case .extensionsGlobalWithoutSelection: return "Always-available global commands."
         case .extensionsCLIToolScope: return "Pinned command-line tools available everywhere."
@@ -69,6 +72,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gearshape.fill"
         case .aiProviders: return "brain.head.profile"
+        case .integrations: return "app.connected.to.app.below.fill"
         case .extensionsGlobalWithSelection: return "selection.pin.in.out"
         case .extensionsGlobalWithoutSelection: return "globe"
         case .extensionsCLIToolScope: return "terminal.fill"
@@ -91,6 +95,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: return .blue
         case .aiProviders: return .purple
+        case .integrations: return .orange
         case .extensionsGlobalWithSelection: return .teal
         case .extensionsGlobalWithoutSelection: return .indigo
         case .extensionsCLIToolScope: return .green
