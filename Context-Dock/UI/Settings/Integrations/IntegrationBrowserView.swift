@@ -84,10 +84,9 @@ struct IntegrationBrowserView: View {
 
     private func appRow(_ app: AppIntegrationSummary) -> some View {
         HStack(spacing: 9) {
-            Image(systemName: app.icon)
-                .font(.system(size: 13))
-                .frame(width: 18)
-                .foregroundStyle(app.adapter?.isEnabled == false ? .secondary : .primary)
+            IntegrationAppIcon(bundleID: app.bundleID, fallbackSymbol: app.icon)
+                .frame(width: 18, height: 18)
+                .opacity(app.adapter?.isEnabled == false ? 0.45 : 1)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(app.appName)

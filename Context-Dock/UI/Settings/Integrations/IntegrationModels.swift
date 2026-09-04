@@ -86,6 +86,8 @@ struct AppIntegrationSummary: Identifiable {
     let cliTools: [TerminalPackage]
     let mcpServers: [MCPServerConfig]
     let apiConnections: [APIConnection]
+    /// Linked macOS Shortcuts. Stored on the adapter as actions, surfaced as a resource.
+    let shortcuts: [AdapterAction]
     let contextReaders: [AdapterContextReader]
     let counts: IntegrationResourceCounts
     let health: IntegrationHealth

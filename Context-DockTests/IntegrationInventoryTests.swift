@@ -35,6 +35,67 @@ struct IntegrationInventoryTests {
         #expect(!result.global.cliTools.contains { $0.command == "fmt" })
     }
 
+    @Test func actionsPreserveExecutionSurfaceGroups() throws {
+        let adapter = AppAdapter.fixture(
+            bundleID: "com.example.editor",
+            actions: [
+                .fixture(name: "Open Project", type: .menubar),
+                .fixture(name: "Read Page", type: .pageJS),
+                .fixture(name: "Export Notes", type: .shortcut)
+            ])
+
+        let app = try #require(
+            IntegrationInventoryBuilder.build(from: .fixture(adapters: [adapter])).apps.first)
+
+        #expect(app.appActions.map(\.name) == ["Open Project"])
+        #expect(app.browserActions.map(\.name) == ["Read Page"])
+    }
+
+    /// Shortcuts are linked resources, not app actions. Counting them in both places is how
+    /// the old page's totals would drift from the rows it actually shows.
+    @Test func linkedShortcutsCountAsResourcesNotActions() throws {
+        let adapter = AppAdapter.fixture(
+            bundleID: "com.example.editor",
+            actions: [
+                .fixture(name: "Open Project", type: .menubar),
+                .fixture(name: "Export Notes", type: .shortcut)
+            ])
+
+        let app = try #require(
+            IntegrationInventoryBuilder.build(from: .fixture(adapters: [adapter])).apps.first)
+
+        #expect(app.counts.actions == 1)
+        #expect(app.counts.shortcuts == 1)
+        #expect(!app.actions.contains { $0.type == .shortcut })
+    }
+
+    @Test func appsAreOrderedByDisplayName() {
+        let inventory = IntegrationInventoryBuilder.build(from: .fixture(adapters: [
+            .fixture(bundleID: "com.example.zeta", appName: "Alpha"),
+            .fixture(bundleID: "com.example.alpha", appName: "Zeta")
+        ]))
+
+        #expect(inventory.apps.map(\.appName) == ["Alpha", "Zeta"])
+    }
+
+    @Test func brokenResourceOnlyMarksItsIntegrationNeedsAttention() {
+        let brokenBundleID = "com.example.broken"
+        let healthyBundleID = "com.example.healthy"
+        let inventory = IntegrationInventoryBuilder.build(from: .fixture(
+            adapters: [
+                .fixture(bundleID: brokenBundleID, appName: "Broken"),
+                .fixture(bundleID: healthyBundleID, appName: "Healthy")
+            ],
+            packages: [
+                .fixture(command: "missing", bundleIDs: [brokenBundleID], isInstalled: false),
+                .fixture(command: "present", bundleIDs: [healthyBundleID])
+            ]))
+
+        #expect(inventory.apps.map(\.appName) == ["Broken", "Healthy"])
+        #expect(inventory.apps[0].health == .needsAttention(["CLI tool is not installed"]))
+        #expect(inventory.apps[1].health == .healthy)
+    }
+
     @Test func searchMatchesNameBundleIDCapabilityAndType() {
         let inventory = IntegrationInventory.fixture()
 
@@ -116,12 +177,16 @@ private extension AdapterSkill {
 }
 
 private extension TerminalPackage {
-    static func fixture(command: String, bundleIDs: [String]) -> Self {
+    static func fixture(
+        command: String,
+        bundleIDs: [String],
+        isInstalled: Bool = true
+    ) -> Self {
         Self(
             name: command,
             command: command,
             description: "Fixture CLI tool",
-            installedPath: "/usr/local/bin/\(command)",
+            installedPath: isInstalled ? "/usr/local/bin/\(command)" : nil,
             contextAppBundleIds: bundleIDs)
     }
 }

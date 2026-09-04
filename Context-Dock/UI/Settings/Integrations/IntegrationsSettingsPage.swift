@@ -91,7 +91,7 @@ struct IntegrationsSettingsPage: View {
         case .apps:
             if let id = selection.selectedAppID,
                let app = apps.first(where: { $0.id == id }) {
-                appDetail(app)
+                AppIntegrationDetailView(summary: app, selectedTab: $selection.tab)
             } else {
                 emptyDetail(
                     icon: "app.dashed",
@@ -101,43 +101,6 @@ struct IntegrationsSettingsPage: View {
         case .global:
             globalDetail(global)
         }
-    }
-
-    private func appDetail(_ app: AppIntegrationSummary) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Image(systemName: app.icon)
-                        .font(.system(size: 20))
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(app.appName)
-                            .font(.system(size: 17, weight: .semibold))
-                        Text(app.bundleID)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-
-                tabPicker
-
-                healthRow(app.health)
-
-                countGrid([
-                    ("App actions", app.appActions.count),
-                    ("Browser actions", app.browserActions.count),
-                    ("Skills", app.counts.skills),
-                    ("CLI tools", app.counts.cliTools),
-                    ("MCP servers", app.counts.mcpServers),
-                    ("API connections", app.counts.apiConnections),
-                    ("Shortcuts", app.counts.shortcuts),
-                    ("Context readers", app.counts.contextReaders)
-                ])
-            }
-            .frame(maxWidth: 720, alignment: .leading)
-            .padding(24)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func globalDetail(_ global: GlobalIntegrationSummary) -> some View {
@@ -181,27 +144,6 @@ struct IntegrationsSettingsPage: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .accessibilityLabel("Integration section")
-    }
-
-    @ViewBuilder
-    private func healthRow(_ health: IntegrationHealth) -> some View {
-        switch health {
-        case .healthy:
-            Label("Healthy", systemImage: "checkmark.circle.fill")
-                .font(.system(size: 12))
-                .foregroundStyle(.green)
-        case .needsAttention(let warnings):
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(warnings, id: \.self) { warning in
-                    Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.orange)
-                }
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Needs attention")
-            .accessibilityValue(warnings.joined(separator: ", "))
-        }
     }
 
     private func countGrid(_ entries: [(String, Int)]) -> some View {

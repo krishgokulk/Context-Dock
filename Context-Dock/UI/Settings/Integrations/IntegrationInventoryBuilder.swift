@@ -8,12 +8,20 @@ enum IntegrationInventoryBuilder {
             packages: snapshot.packages,
             globalPackageIDs: snapshot.globalPackageIDs)
 
-        let apps = appBundleIDs.map { bundleID in
-            appSummary(
-                bundleID: bundleID,
-                adapter: adaptersByBundleID[bundleID],
-                snapshot: snapshot)
-        }
+        // Ordered by the name the user reads, not by bundle ID: an alphabetical list of
+        // reverse-DNS strings looks shuffled to anyone scanning for an app.
+        let apps = appBundleIDs
+            .map { bundleID in
+                appSummary(
+                    bundleID: bundleID,
+                    adapter: adaptersByBundleID[bundleID],
+                    snapshot: snapshot)
+            }
+            .sorted { left, right in
+                left.appName.caseInsensitiveCompare(right.appName) == .orderedSame
+                    ? compare(left.bundleID, right.bundleID)
+                    : compare(left.appName, right.appName)
+            }
 
         return IntegrationInventory(
             apps: apps,
@@ -47,8 +55,12 @@ enum IntegrationInventoryBuilder {
         adapter: AppAdapter?,
         snapshot: IntegrationInventorySnapshot
     ) -> AppIntegrationSummary {
-        let appActions = adapter?.actions.filter { $0.type != .pageJS } ?? []
-        let browserActions = adapter?.actions.filter { $0.type == .pageJS } ?? []
+        // Matches the grouping the App Adapters page already uses: linked Shortcuts are a
+        // resource the user manages under Resources, never a row in the actions list.
+        let visibleActions = adapter?.visibleActions ?? []
+        let appActions = visibleActions.filter { $0.type != .pageJS && $0.type != .shortcut }
+        let browserActions = visibleActions.filter { $0.type == .pageJS }
+        let shortcuts = visibleActions.filter { $0.type == .shortcut }
         let skills = snapshot.skills.filter { $0.adapterBundleId == bundleID }
         let cliTools = snapshot.packages.filter {
             $0.isEnabled
@@ -58,7 +70,6 @@ enum IntegrationInventoryBuilder {
         let mcpServers = snapshot.mcpServers.filter { $0.bundleIds.contains(bundleID) }
         let apiConnections = snapshot.apiConnections.filter { $0.adapterBundleId == bundleID }
         let contextReaders = adapter?.contextReaders ?? []
-        let shortcuts = (appActions + browserActions).filter { $0.type == .shortcut }
         let counts = IntegrationResourceCounts(
             actions: appActions.count + browserActions.count,
             skills: skills.count,
@@ -79,6 +90,7 @@ enum IntegrationInventoryBuilder {
             cliTools: cliTools.sorted { compare($0.command, $1.command) },
             mcpServers: sorted(mcpServers, by: \.name),
             apiConnections: sorted(apiConnections, by: \.name),
+            shortcuts: sorted(shortcuts, by: \.name),
             contextReaders: sorted(contextReaders, by: \.name),
             counts: counts,
             health: health(
