@@ -1,7 +1,7 @@
 # Settings Integrations Redesign
 
 **Date:** 2026-09-04
-**Status:** approved in conversation, pending written-spec review
+**Status:** approved; implementation plan written
 
 ## Goal
 
