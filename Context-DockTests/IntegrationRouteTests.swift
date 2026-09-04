@@ -8,12 +8,26 @@ struct IntegrationRouteTests {
         (SettingsPage.extensionsGlobalWithoutSelection, IntegrationDestination(scope: .global, tab: .actions, focus: .commands)),
         (SettingsPage.extensionsCLIToolScope, IntegrationDestination(scope: .global, tab: .resources, focus: .cliTools)),
         (SettingsPage.shortcutSheetWorkflows, IntegrationDestination(scope: .global, tab: .actions, focus: .selectionActions)),
+        (SettingsPage.extensionsGlobalWithSelection, IntegrationDestination(scope: .global, tab: .actions, focus: .selectionActions)),
+        (SettingsPage.workflows, IntegrationDestination(scope: .global, tab: .actions)),
     ])
     func legacyPageMapsToIntegration(
         page: SettingsPage,
         expected: IntegrationDestination
     ) {
         #expect(SettingsRouteResolver.destination(for: page) == expected)
+    }
+
+    /// Every page the Extensions group used to own now resolves, because none of them has a
+    /// sidebar row left to fall back to.
+    @Test func noFormerExtensionsPageIsStranded() {
+        let retired: [SettingsPage] = [
+            .extensionsGlobalWithSelection, .extensionsGlobalWithoutSelection,
+            .extensionsCLIToolScope, .frontmostAppAdapters, .workflows, .shortcutSheetWorkflows
+        ]
+        for page in retired {
+            #expect(SettingsRouteResolver.destination(for: page) != nil)
+        }
     }
 
     @Test func ordinaryPageDoesNotInventIntegrationRoute() {

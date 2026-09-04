@@ -250,8 +250,11 @@ enum SettingsRouteResolver {
             return .init(scope: .global, tab: .actions, focus: .commands)
         case .extensionsCLIToolScope:
             return .init(scope: .global, tab: .resources, focus: .cliTools)
-        case .shortcutSheetWorkflows:
+        case .shortcutSheetWorkflows, .extensionsGlobalWithSelection:
             return .init(scope: .global, tab: .actions, focus: .selectionActions)
+        case .workflows:
+            // Trigger rules live beside the selection actions that replaced them.
+            return .init(scope: .global, tab: .actions)
         default:
             return nil
         }
