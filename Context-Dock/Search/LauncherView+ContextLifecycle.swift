@@ -1113,6 +1113,9 @@ extension LauncherView {
                 note in
                 handleAppChatPromptScopeChange(note)
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptNewChat)) { _ in
+                handleAppChatPromptNewChat()
+            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 ClipboardPanelController.shared.show()
             }
@@ -2070,6 +2073,22 @@ extension LauncherView {
             let appName = info["appName"] as? String
         else { return }
         retargetCornerAppChat(appName: appName, bundleId: bundleId)
+    }
+
+    /// The corner asked to start over. It shows the dock's conversation rather than one of
+    /// its own, so the dock is what empties it — the same span-ending the scope switch
+    /// does, minus the switch.
+    func handleAppChatPromptNewChat() {
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        l2.handledApprovalIds = []
+        l2.chatMessages = []
+        AppChatConversation.shared.liveSteps = []
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.beginSession(for: key)
+        }
     }
 
     /// The corner and dock are two presentations of this one session. Remove explicit

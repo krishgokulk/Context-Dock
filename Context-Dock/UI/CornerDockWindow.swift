@@ -50,6 +50,27 @@ final class CornerDockHostView: NSView {
     }
 }
 
+/// Whether the corner holds the keyboard, and a ticket the composer watches to take focus.
+///
+/// Held apart from the controller because the controller cannot run in a test: it builds an
+/// `NSPanel`. The rule this encodes — a click on the composer both arms the window and asks
+/// the field for focus, and only a real stand-down gives the keyboard back — is the part
+/// worth testing, so it lives where a test can reach it.
+@MainActor
+final class CornerDockKeyboardState: ObservableObject {
+    @Published private(set) var isArmed = false
+    /// Bumped on every request. The composer watches the number, not a boolean, so a second
+    /// click after focus was lost elsewhere is still a change it can see.
+    @Published private(set) var focusRequestToken = 0
+
+    func composerInteracted() {
+        isArmed = true
+        focusRequestToken &+= 1
+    }
+
+    func stoodDown() { isArmed = false }
+}
+
 @MainActor
 final class CornerDockController: NSObject {
     static let shared = CornerDockController()
@@ -58,10 +79,15 @@ final class CornerDockController: NSObject {
     private var hostView: CornerDockHostView?
     private var hoverMonitors: [Any] = []
     private var sinks: Set<AnyCancellable> = []
+    /// How far the current swipe has travelled sideways, reset at each gesture boundary.
+    private var swipeTravel: CGFloat = 0
+    /// Far enough that a stray sideways nudge during a vertical scroll is not a mode change.
+    private static let swipeThreshold: CGFloat = 45
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
     private var shelf: DropShelfPresentation { DropShelfController.shared.presentation }
     let prompt = AppChatPromptModel()
+    let keyboard = CornerDockKeyboardState()
 
     var window: NSPanel? { panel }
 
@@ -163,10 +189,30 @@ final class CornerDockController: NSObject {
                 // ambient pills it takes focus the moment it appears.
                 if phase.showsInput {
                     self?.armKeyboard()
-                } else if phase == .hidden {
+                    self?.keyboard.composerInteracted()
+                } else {
+                    // Shrinking to the badge is a stand-down, not a pause: the corner has
+                    // to stop being key or it keeps the keyboard away from the app the
+                    // user went back to.
                     self?.disarmKeyboard()
+                    self?.keyboard.stoodDown()
                 }
             }
+        }.store(in: &sinks)
+
+        // The pill's height is a function of how many suggestions it has, and switching
+        // app can swap the whole list while the phase stays `.suggesting`. Without this the
+        // pill redraws taller and `interactiveRects` keeps the old rect: the difference is
+        // drawn, and dead to the mouse.
+        prompt.$suggestions.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+
+        // The two modes compose in different bars, so they are different heights. Switching
+        // does not always change the phase — General's composer and App's resting input are
+        // both `.prompt` — so the scope has to be watched in its own right.
+        prompt.$scope.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
     }
 
@@ -224,7 +270,8 @@ final class CornerDockController: NSObject {
     }
 
     private var promptSize: CGSize {
-        AppChatPromptMetrics.size(for: prompt.phase, suggestions: prompt.suggestions.count)
+        AppChatPromptMetrics.size(
+            for: prompt.phase, suggestions: prompt.suggestions.count, scope: prompt.scope)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -254,25 +301,95 @@ final class CornerDockController: NSObject {
         panel?.styleMask = [.borderless, .nonactivatingPanel]
     }
 
+    /// A click landed on the composer.
+    ///
+    /// Arming used to happen only when the phase changed, which meant it happened once: on
+    /// the way in. Click away to another app and back and there was no phase change to
+    /// notice, so the panel stayed non-activating, never became key, and the field the
+    /// user was typing into swallowed every keystroke. This is the path a click takes,
+    /// whatever the phase was already.
+    func requestComposerFocus() {
+        guard prompt.phase.showsInput else { return }
+        // The rect the click was tested against may be stale, and the next one will be
+        // tested against whatever this leaves behind.
+        refresh()
+        armKeyboard()
+        keyboard.composerInteracted()
+        DispatchQueue.main.async { [weak self] in
+            guard let panel = self?.panel else { return }
+            panel.makeFirstResponder(panel.contentView)
+        }
+    }
+
     // MARK: - Hover
 
     private func startHoverWatch() {
         guard hoverMonitors.isEmpty else { return }
         if let global = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved],
-            handler: { [weak self] _ in self?.evaluateHover() })
+            matching: [.mouseMoved, .scrollWheel],
+            handler: { [weak self] event in
+                if event.type == .scrollWheel {
+                    self?.evaluateScroll(event)
+                } else {
+                    self?.evaluateHover()
+                }
+            })
         {
             hoverMonitors.append(global)
         }
         if let local = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved],
+            matching: [.mouseMoved, .scrollWheel],
             handler: { [weak self] event in
+                if event.type == .scrollWheel {
+                    // Swallowed only when it actually switched, so a scroll over the
+                    // transcript still scrolls the transcript.
+                    return self?.evaluateScroll(event) == true ? nil : event
+                }
                 self?.evaluateHover()
                 return event
             })
         {
             hoverMonitors.append(local)
         }
+    }
+
+    /// A two-finger swipe across the composer switches modes.
+    ///
+    /// Read from the pointer monitors rather than a responder-chain override: the corner is
+    /// a non-activating panel hosting a SwiftUI tree with its own scroll views, so which
+    /// view a wheel event reaches is not something to rely on.
+    @discardableResult
+    private func evaluateScroll(_ event: NSEvent) -> Bool {
+        guard prompt.phase.showsInput, let panel, panel.isVisible else { return false }
+        guard let rect = currentSlots().prompt else { return false }
+
+        // Only the composer block. Above it is the transcript, where a horizontal scroll
+        // is a horizontal scroll.
+        let origin = panel.frame.origin
+        let composer = CGRect(
+            x: rect.minX, y: rect.minY,
+            width: rect.width,
+            height: min(rect.height, AppChatPromptMetrics.composerBlockHeight))
+            .offsetBy(dx: origin.x, dy: origin.y)
+        guard composer.contains(NSEvent.mouseLocation) else { return false }
+
+        switch event.phase {
+        case .began:
+            swipeTravel = 0
+        case .ended, .cancelled:
+            swipeTravel = 0
+            return false
+        default:
+            break
+        }
+
+        // Vertical intent is not a swipe, whatever it drifts sideways by.
+        guard abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) else { return false }
+        swipeTravel += event.scrollingDeltaX
+        guard abs(swipeTravel) >= Self.swipeThreshold else { return false }
+        swipeTravel = 0
+        prompt.toggleScope()
+        return true
     }
 
     private func stopHoverWatch() {

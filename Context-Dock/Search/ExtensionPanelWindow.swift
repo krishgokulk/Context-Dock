@@ -528,6 +528,11 @@ struct AIComposerBar: View {
     var onRemoveApp: ((String) -> Void)? = nil
     /// Images pasted with ⌘V. Nil leaves paste as text-only on that surface.
     var onPasteImages: (([URL]) -> Void)? = nil
+    /// How far the field may grow. The corner pins this to a single line: that shell's
+    /// height is computed from model state before the bar is drawn, and a field that grows
+    /// with its content would leave the drawn pill taller than the rect the mouse is
+    /// tested against. Every other surface sizes itself around the bar and keeps 1...5.
+    var lineLimit: ClosedRange<Int> = 1...5
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -600,7 +605,7 @@ struct AIComposerBar: View {
             TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                .lineLimit(1...5)
+                .lineLimit(lineLimit)
                 .onSubmit {
                     // "/rem" + Return means "work with that app", not "ask about the
                     // string /rem".

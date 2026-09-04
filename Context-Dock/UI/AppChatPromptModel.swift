@@ -29,6 +29,34 @@ struct AppChatSuggestion: Identifiable, Equatable {
     var id: String { "\(title)-\(icon)" }
 }
 
+/// What the corner prompt is about. The frontmost app chat and General chat share the
+/// one pill — same phases, same animations, same dwell — and differ only in where the
+/// question goes and what the transcript reads. Two surfaces for two scopes is what the
+/// Unified Dock Surface rule forbids.
+enum AppChatPromptScope: Equatable {
+    case app
+    case general
+}
+
+/// The app a question would be about, remembered rather than re-read.
+///
+/// General mode has no app, and while it is showing the frontmost app keeps changing
+/// underneath it. Switching back must not depend on the right app still being in front —
+/// it goes back to the one the user was actually asking about.
+struct AppChatTarget: Equatable {
+    var name: String
+    var bundleID: String
+    var suggestions: [AppChatSuggestion]
+    var summary: String
+}
+
+/// What the user had typed and attached in a scope they switched away from. The two modes
+/// are two conversations, so a half-written question survives a look at the other one.
+private struct AppChatDraft {
+    var query = ""
+    var attachments: [URL] = []
+}
+
 enum AppChatPromptPhase: Equatable {
     case hidden
     /// Shrunk to the frontmost app's own icon, holding whatever was typed.
@@ -53,6 +81,9 @@ final class AppChatPromptModel: ObservableObject {
     static let miniDwell: TimeInterval = 8
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
+    /// Set at summon time. The pill itself never changes scope mid-life; an app switch
+    /// only re-scopes an app-scoped prompt, never a general one.
+    @Published private(set) var scope: AppChatPromptScope = .app
     @Published var query = ""
     /// The app the question is about, captured when the prompt opened — not read live,
     /// because opening the prompt is itself an app switch.
@@ -64,13 +95,48 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var capabilitySummary = ""
 
     /// The dock's conversation, not a copy of it.
-    var messages: [AIChatMessage] { conversation.messages }
-    var isAnswering: Bool { conversation.isLoading }
-    var liveSteps: [String] { conversation.liveSteps }
+    /// Scope-aware reads. General chat answers live in GeneralChatWindowModel — the same
+    /// conversation the full window shows — so opening the window later continues the
+    /// corner thread instead of forking a second one.
+    var messages: [AIChatMessage] {
+        scope == .general ? GeneralChatWindowModel.shared.messages : conversation.messages
+    }
+    var isAnswering: Bool {
+        scope == .general
+            ? GeneralChatWindowModel.shared.isSending : conversation.isLoading
+    }
+    var liveSteps: [String] {
+        scope == .general
+            ? GeneralChatWindowModel.shared.activeProgress : conversation.liveSteps
+    }
+    /// How many steps the turn that just finished took, kept after the live stream is
+    /// gone. The stream is the answer to "what is it doing"; this is the answer to "what
+    /// did it do", and collapsing to it is what stops a finished run from holding the
+    /// space the result needs.
+    @Published private(set) var lastStepCount = 0
+    private var runningStepCount = 0
+
+    /// Called as the live stream changes. The steps are a passthrough onto whichever
+    /// conversation owns the turn, so there is nothing here to observe directly — the
+    /// high-water mark has to be taken while the turn is still running.
+    func noteActivity() {
+        if isAnswering {
+            runningStepCount = max(runningStepCount, liveSteps.count)
+        } else if runningStepCount > 0 {
+            lastStepCount = runningStepCount
+            runningStepCount = 0
+        }
+    }
+
     /// Files the question should carry.
     @Published private(set) var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
     @Published private(set) var isPinned = false
+
+    /// The app mode's target, held across a visit to General mode.
+    private var storedAppTarget: AppChatTarget?
+    private var appDraft = AppChatDraft()
+    private var generalDraft = AppChatDraft()
 
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
@@ -78,6 +144,7 @@ final class AppChatPromptModel: ObservableObject {
     private let conversation: AppChatConversation
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
+    private var generalConversationObservation: AnyCancellable?
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
 
@@ -85,6 +152,11 @@ final class AppChatPromptModel: ObservableObject {
         let source = conversation ?? AppChatConversation.shared
         self.conversation = source
         conversationObservation = source.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+        generalConversationObservation = GeneralChatWindowModel.shared.objectWillChange.sink {
+            [weak self] _ in
+            guard self?.scope == .general else { return }
             self?.objectWillChange.send()
         }
     }
@@ -97,11 +169,82 @@ final class AppChatPromptModel: ObservableObject {
         suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
+        scope = .app
         appName = name
         appBundleID = bundleID
         self.suggestions = suggestions
         capabilitySummary = summary
+        storedAppTarget = AppChatTarget(
+            name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         set(restingInputPhase)
+        arm(after: Self.idleDwell)
+    }
+
+    // MARK: - Switching modes
+
+    /// The other chat, in the same pill.
+    ///
+    /// One surface, two scopes: the Unified Dock Surface rule is what makes this a switch
+    /// rather than a second window appearing beside the first. Each side keeps its own
+    /// draft, attachments, target and transcript — the only thing they share is the shell.
+    func toggleScope() {
+        switch scope {
+        case .app: showGeneral()
+        case .general: showApp()
+        }
+    }
+
+    private func showGeneral() {
+        appDraft = AppChatDraft(query: query, attachments: attachments)
+        storedAppTarget = AppChatTarget(
+            name: appName, bundleID: appBundleID,
+            suggestions: suggestions, summary: capabilitySummary)
+        scope = .general
+        appName = ""
+        appBundleID = ""
+        suggestions = []
+        capabilitySummary = ""
+        query = generalDraft.query
+        attachments = generalDraft.attachments
+        hasPresentedConversation = !messages.isEmpty
+        set(hasPresentedConversation ? .chat : .prompt)
+        touch()
+    }
+
+    private func showApp() {
+        generalDraft = AppChatDraft(query: query, attachments: attachments)
+        scope = .app
+        if let target = storedAppTarget {
+            appName = target.name
+            appBundleID = target.bundleID
+            suggestions = target.suggestions
+            capabilitySummary = target.summary
+        }
+        query = appDraft.query
+        attachments = appDraft.attachments
+        hasPresentedConversation = !messages.isEmpty
+        set(hasPresentedConversation ? .chat : restingInputPhase)
+        touch()
+    }
+
+    /// General chat in the same corner pill: it opens on the input line alone — the
+    /// start screen is the full window's job — and the same phases carry it from there.
+    func summonGeneral() {
+        if scope == .app, !appBundleID.isEmpty {
+            appDraft = AppChatDraft(query: query, attachments: attachments)
+            storedAppTarget = AppChatTarget(
+                name: appName, bundleID: appBundleID,
+                suggestions: suggestions, summary: capabilitySummary)
+        }
+        scope = .general
+        appName = ""
+        appBundleID = ""
+        suggestions = []
+        capabilitySummary = ""
+        query = generalDraft.query
+        attachments = generalDraft.attachments
+        hasPresentedConversation = !messages.isEmpty
+        set(.prompt)
         arm(after: Self.idleDwell)
     }
 
@@ -126,9 +269,31 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// Opens the same conversation in the dock, for when the corner is too small for it.
+    /// General chat's "bigger place" is the full window, which reads the very model the
+    /// pill was writing to — nothing to hand off.
     func openInDock() {
-        Self.handOff(app: appName, bundleID: appBundleID, query: "", attachments: attachments)
+        if scope == .general {
+            GeneralChatWindowController.shared.show()
+        } else {
+            Self.handOff(app: appName, bundleID: appBundleID, query: "", attachments: attachments)
+        }
         dismiss()
+    }
+
+    /// Start over in the same scope. General chat's transcript belongs to the window
+    /// model, which clears it directly; the app-scoped one belongs to the dock, and the
+    /// dock stays its only writer — so this asks rather than reaching in.
+    func newConversation() {
+        if scope == .general {
+            GeneralChatWindowModel.shared.newChat()
+        } else {
+            NotificationCenter.default.post(name: .appChatPromptNewChat, object: nil)
+        }
+        query = ""
+        attachments = []
+        hasPresentedConversation = false
+        set(restingInputPhase)
+        touch()
     }
 
     func attach(_ url: URL) {
@@ -182,7 +347,23 @@ final class AppChatPromptModel: ObservableObject {
         suggestions: [AppChatSuggestion],
         summary: String
     ) {
-        guard phase.isVisible, !bundleID.isEmpty, bundleID != appBundleID else { return }
+        // DoraX is never the app the question is about. Taking the keyboard for the prompt
+        // makes this app frontmost, so without this an open prompt re-targets itself.
+        guard !bundleID.isEmpty, bundleID != Bundle.main.bundleIdentifier else { return }
+
+        // General mode is not about an app and must not be disturbed by one — but the
+        // switch back is, so the target is kept current the whole time it is hidden. The
+        // app draft goes with it: a half-written question about Safari is not a question
+        // about the app that replaced it.
+        if scope == .general {
+            if storedAppTarget?.bundleID != bundleID { appDraft = AppChatDraft() }
+            storedAppTarget = AppChatTarget(
+                name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
+            return
+        }
+        guard phase.isVisible, bundleID != appBundleID else { return }
+        storedAppTarget = AppChatTarget(
+            name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         query = ""
         attachments = []
         appName = name
@@ -243,8 +424,15 @@ final class AppChatPromptModel: ObservableObject {
     func submit() -> Bool {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAnswering else { return false }
-        Self.handOff(
-            app: appName, bundleID: appBundleID, query: question, attachments: attachments)
+        if scope == .general {
+            let general = GeneralChatWindowModel.shared
+            general.attachments = attachments
+            general.input = question
+            general.send()
+        } else {
+            Self.handOff(
+                app: appName, bundleID: appBundleID, query: question, attachments: attachments)
+        }
         query = ""
         attachments = []
         hasPresentedConversation = true
@@ -304,4 +492,8 @@ extension Notification.Name {
     /// chat's state lives inside LauncherView and is not reachable from a window.
     static let appChatPromptSubmitted = Notification.Name("appChatPromptSubmitted")
     static let appChatPromptScopeChanged = Notification.Name("appChatPromptScopeChanged")
+    /// Corner prompt → the dock, asking it to empty the app-scoped transcript both of
+    /// them are showing. The corner does not clear it itself: `AppChatConversation` has
+    /// one writer and this is not it.
+    static let appChatPromptNewChat = Notification.Name("appChatPromptNewChat")
 }

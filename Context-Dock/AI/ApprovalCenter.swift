@@ -152,6 +152,11 @@ enum ApprovalSurface {
     case dock
     case chatWindow
     case preview
+    /// The corner App Chat pill, while it is showing a conversation. It is a surface here
+    /// for the same reason the chat window is: a turn started in the corner could raise a
+    /// question the user had nowhere to answer, because the card was drawn on the dock
+    /// behind it.
+    case corner
 }
 
 @MainActor
@@ -293,6 +298,12 @@ final class ApprovalCenter: ObservableObject {
             switch (request.origin, surface) {
             case (.window, .chatWindow), (.dock, .dock), (.preview, .preview):
                 return request
+            // The corner pill owns no pipeline: an app-scoped turn runs on the dock's and
+            // a general one on the window model's, so a command it raised carries their
+            // origin, not one of its own. It answers only while it is the surface in
+            // front, so a visible chat window keeps its own question.
+            case (.dock, .corner), (.window, .corner):
+                return frontmostSurface == .corner ? request : nil
             default:
                 return nil
             }
@@ -308,6 +319,10 @@ final class ApprovalCenter: ObservableObject {
     var frontmostSurface: ApprovalSurface {
         if PreviewController.shared.hasVisibleComposer { return .preview }
         if GeneralChatWindowController.shared.isVisible { return .chatWindow }
+        // Only a corner pill showing a conversation counts. The resting composer and the
+        // mini badge are ambient — they are not where the user is looking, and a card that
+        // appeared there would take a question away from the dock without being read.
+        if CornerDockController.shared.prompt.phase == .chat { return .corner }
         return .dock
     }
 

@@ -359,4 +359,188 @@ struct AppChatControlsTests {
         #expect(model.attachments.isEmpty)
         #expect(!model.isPinned)
     }
+
+    /// Opening the prompt takes the keyboard, which makes DoraX frontmost. A prompt that
+    /// followed that would end up asking Context-Dock about Context-Dock, and offering its
+    /// own menu bar back as suggestions.
+    @Test func thePromptNeverRetargetsItselfAtDoraX() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+
+        model.frontmostAppDidChange(
+            app: "Context-Dock",
+            bundleID: Bundle.main.bundleIdentifier ?? "com.krishgokul.ContextDock",
+            suggestions: [.init(icon: "bolt.fill", title: "Quit ILauncher", kind: .action)],
+            summary: "12 actions · 23 commands")
+
+        #expect(model.appName == "Safari")
+        #expect(model.appBundleID == "com.apple.Safari")
+    }
+
+    // MARK: - Switching modes
+
+    @Test func switchingModesSwapsScopeAndBackAgain() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+
+        model.toggleScope()
+        #expect(model.scope == .general)
+        #expect(model.appBundleID.isEmpty)
+
+        model.toggleScope()
+        #expect(model.scope == .app)
+        #expect(model.appBundleID == "com.microsoft.VSCode")
+        #expect(model.appName == "Code")
+    }
+
+    /// Two modes are two conversations. A half-written question must survive a look at the
+    /// other one, and must not follow the user into it.
+    @Test func eachModeKeepsItsOwnDraft() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.query = "why is this file failing"
+
+        model.toggleScope()
+        #expect(model.query.isEmpty)
+        model.query = "what is on my calendar"
+
+        model.toggleScope()
+        #expect(model.query == "why is this file failing")
+
+        model.toggleScope()
+        #expect(model.query == "what is on my calendar")
+    }
+
+    @Test func eachModeKeepsItsOwnAttachments() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.attach(URL(fileURLWithPath: "/tmp/crash.log"))
+
+        model.toggleScope()
+        #expect(model.attachments.isEmpty)
+
+        model.toggleScope()
+        #expect(model.attachments.map(\.lastPathComponent) == ["crash.log"])
+    }
+
+    /// General mode is not about an app, so a frontmost change must not disturb it — but
+    /// the switch back is, so the app it returns to is the one in front now.
+    @Test func generalModeIgnoresFrontmostChangesButRemembersThem() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.toggleScope()
+
+        model.frontmostAppDidChange(
+            app: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+
+        #expect(model.scope == .general)
+        #expect(model.appName.isEmpty)
+
+        model.toggleScope()
+        #expect(model.appBundleID == "com.apple.Safari")
+    }
+
+    /// The app draft belongs to the app it was written about, not to the slot.
+    @Test func theAppDraftDoesNotFollowTheUserToADifferentApp() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.query = "about this file"
+        model.toggleScope()
+
+        model.frontmostAppDidChange(
+            app: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+        model.toggleScope()
+
+        #expect(model.appBundleID == "com.apple.Safari")
+        #expect(model.query.isEmpty)
+    }
+
+    // MARK: - Layout hierarchy
+
+    /// The composer and its control row are the floor. Every state that takes input
+    /// reserves both, so the controls cannot be the thing that gets pushed out when the
+    /// surface grows.
+    @Test func everyInputStateKeepsRoomForTheComposerAndItsControls() {
+        let floor = AppChatPromptMetrics.composerBlockHeight
+
+        #expect(floor == AppChatPromptMetrics.inputHeight + AppChatPromptMetrics.controlRowHeight)
+        #expect(AppChatPromptMetrics.size(for: .prompt, suggestions: 0).height == floor)
+        #expect(AppChatPromptMetrics.size(for: .suggesting, suggestions: 3).height > floor)
+        #expect(AppChatPromptMetrics.size(for: .chat, suggestions: 0).height > floor)
+    }
+
+    /// General mode composes in the shared `AIComposerBar`, which is a different height
+    /// from App mode's input line. The corner draws itself and hit-tests itself from the
+    /// same number, so the scope has to reach the metrics or one of the two is wrong.
+    @Test func theTwoModesReserveTheirOwnComposerHeights() {
+        let app = AppChatPromptMetrics.size(for: .prompt, suggestions: 0, scope: .app).height
+        let general = AppChatPromptMetrics.size(for: .prompt, suggestions: 0, scope: .general).height
+
+        #expect(app == AppChatPromptMetrics.composerBlockHeight)
+        #expect(general == AppChatPromptMetrics.generalComposerBlockHeight)
+        #expect(app != general)
+    }
+
+    @Test func theScopeDefaultsToAppWhenNoneIsGiven() {
+        #expect(
+            AppChatPromptMetrics.size(for: .prompt, suggestions: 0).height
+                == AppChatPromptMetrics.size(for: .prompt, suggestions: 0, scope: .app).height)
+    }
+
+    /// Idle is the composer alone: nothing above it until there is something to say.
+    @Test func anIdlePromptIsNoTallerThanItsComposer() {
+        #expect(
+            AppChatPromptMetrics.size(for: .prompt, suggestions: 4).height
+                == AppChatPromptMetrics.composerBlockHeight)
+    }
+
+    /// The steps are a passthrough onto the conversation running the turn, so once it
+    /// finishes they are gone. The count has to survive that, or a completed run has
+    /// nothing to collapse to.
+    @Test func aFinishedRunCollapsesToItsStepCount() {
+        let conversation = AppChatConversation()
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Safari")
+
+        conversation.isLoading = true
+        conversation.liveSteps = ["Reading the page"]
+        model.noteActivity()
+        conversation.liveSteps = ["Reading the page", "Checking Notes"]
+        model.noteActivity()
+
+        conversation.isLoading = false
+        conversation.liveSteps = []
+        model.noteActivity()
+
+        #expect(model.lastStepCount == 2)
+    }
+
+    @Test func nothingCollapsesWhenNoTurnEverRan() {
+        let conversation = AppChatConversation()
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Safari")
+
+        model.noteActivity()
+
+        #expect(model.lastStepCount == 0)
+    }
+
+    /// The corner shows the dock's transcript rather than one of its own, so starting
+    /// over is a request to the dock — the only writer — not a local clear.
+    @Test func startingOverAsksTheDockRatherThanClearingItself() {
+        let model = opened()
+        model.query = "half a question"
+
+        var asked = false
+        let observation = NotificationCenter.default
+            .publisher(for: .appChatPromptNewChat)
+            .sink { _ in asked = true }
+        defer { observation.cancel() }
+
+        model.newConversation()
+
+        #expect(asked)
+        #expect(model.query.isEmpty)
+        #expect(model.phase.showsInput)
+    }
 }

@@ -1893,9 +1893,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        let target = NSWorkspace.shared.frontmostApplication
+        // Never DoraX itself. Frontmost is whatever holds the keyboard, and after any
+        // interaction with the dock that is this app — which scoped the prompt at
+        // Context-Dock and offered its own menu bar back as suggestions.
+        let target = menuBarOwningUserFacingApplication()
         CornerDockController.shared.activate()
-        CornerDockController.shared.prompt.summon(
+        let prompt = CornerDockController.shared.prompt
+        // Pressing it again is asking for the other chat, not for the same one twice. A
+        // shrunken badge is not "already open" — that is the surface on its way out, and
+        // the hotkey brings it back to the app the user is looking at now.
+        if prompt.phase.showsInput {
+            prompt.toggleScope()
+            return
+        }
+        prompt.summon(
             app: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
@@ -1983,7 +1994,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
                 return OSStatus(eventNotHandledErr)
             }
-            delegate.toggleGeneralChatWindow()
+            delegate.activateGeneralChatPrompt()
             return noErr
         }
         let selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
