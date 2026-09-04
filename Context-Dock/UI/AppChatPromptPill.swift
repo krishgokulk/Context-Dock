@@ -156,14 +156,8 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 6)
 
-            if model.isAnswering {
-                Button { model.cancelTurn() } label: {
-                    headerGlyph("stop.fill", tinted: true)
-                }
-                .buttonStyle(.plain)
-                .help("Stop")
-            }
-
+            // Stop lives in the composer, which is drawn in every phase this header is —
+            // one job, one button, rather than two of them 300 points apart.
             Button { model.openInDock() } label: {
                 headerGlyph("arrow.up.left.and.arrow.down.right")
             }
@@ -241,22 +235,63 @@ struct AppChatPromptPill: View {
                     })
             }
 
-            // Controls belong to the pointer while this row is the whole surface. Once a
-            // conversation exists the header carries them, and drawing them twice six
-            // points apart is two buttons for one job.
+            // Attaching and sending live in the field, always drawn, the way the dock's own
+            // composer keeps its "+" on screen. Hiding them until the pointer arrived meant
+            // the two things you do most here were invisible until found by accident, and
+            // gone entirely once a conversation started.
+            attachMenu
+
+            if model.isAnswering {
+                Button { model.cancelTurn() } label: {
+                    controlGlyph("stop.fill", tinted: true)
+                }
+                .buttonStyle(.plain)
+                .help("Stop")
+                .transition(.opacity)
+            } else if !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button { model.submit() } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 26, height: 26)
+                        .background(Color.accentColor, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Send")
+                .transition(.opacity)
+            }
+
+            // Expand and pin stay with the pointer while this row is the whole surface;
+            // once a conversation exists the header carries them, and drawing them twice
+            // six points apart is two buttons for one job.
             if pointerInside, model.phase != .chat {
-                trailingControls
+                surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            } else if !model.appBundleID.isEmpty, model.phase == .prompt, let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
             }
         }
         .padding(.horizontal, 14)
         .frame(height: AppChatPromptMetrics.inputHeight)
         .animation(.easeOut(duration: 0.14), value: pointerInside)
+        .animation(.easeOut(duration: 0.12), value: model.isAnswering)
+        .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
+    }
+
+    private var attachMenu: some View {
+        Menu {
+            Button("Upload File") { pickFiles(imagesOnly: false) }
+            Button("Upload Photo") { pickFiles(imagesOnly: true) }
+            Divider()
+            Button("Take Screenshot") { capture(interactive: false) }
+            Button("Capture Area") { capture(interactive: true) }
+            Button("Capture Text") { captureText() }
+        } label: {
+            controlGlyph("plus")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 26, height: 26)
+        .help("Add context")
     }
 
     /// The app the question is about, named rather than implied.
@@ -296,23 +331,10 @@ struct AppChatPromptPill: View {
         }
     }
 
-    private var trailingControls: some View {
+    /// What acts on the surface rather than on the question: where it opens, and whether it
+    /// stays. Attach and send are in the field itself, because they are part of asking.
+    private var surfaceControls: some View {
         HStack(spacing: 8) {
-            Menu {
-                Button("Upload File") { pickFiles(imagesOnly: false) }
-                Button("Upload Photo") { pickFiles(imagesOnly: true) }
-                Divider()
-                Button("Take Screenshot") { capture(interactive: false) }
-                Button("Capture Area") { capture(interactive: true) }
-                Button("Capture Text") { captureText() }
-            } label: {
-                controlGlyph("plus")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 26, height: 26)
-            .help("Add context")
-
             Button {
                 model.openInDock()
             } label: {
