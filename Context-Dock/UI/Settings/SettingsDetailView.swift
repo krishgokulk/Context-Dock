@@ -6,7 +6,9 @@ struct SettingsDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if page != .extensionImport {
+            // Integrations renders its own header so the scope switch and integration list
+            // sit flush beneath it; a shared header here would stack two.
+            if page != .extensionImport, page != .integrations {
                 SettingsPageHeader(page: page)
                 Divider()
             }
@@ -23,11 +25,7 @@ struct SettingsDetailView: View {
         case .aiProviders:
             AIProvidersSettingsPage()
         case .integrations:
-            SettingsPlaceholderPage(
-                icon: page.icon,
-                title: page.title,
-                message: "The Integrations workspace will appear here."
-            )
+            IntegrationsSettingsPage(destination: integrationDestination)
         case .extensionsGlobalWithSelection,
              .extensionsGlobalWithoutSelection,
              .extensionsCLIToolScope,

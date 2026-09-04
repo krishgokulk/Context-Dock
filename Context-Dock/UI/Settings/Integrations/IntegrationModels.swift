@@ -115,6 +115,58 @@ extension AdapterSkill {
     var grantsExecutionAuthority: Bool { false }
 }
 
+/// The workspace's own navigation state.
+///
+/// Selection is reconciled against the app rows that actually exist rather than trusted,
+/// so an integration removed elsewhere can never leave stale detail on screen. Reconciliation
+/// is a value operation with no store access, which is why it is testable without a running app.
+struct IntegrationSelectionState: Equatable {
+    var scope: IntegrationScope = .apps
+    var selectedAppID: String?
+    var tab: IntegrationDetailTab = .overview
+    var focus: IntegrationFocus?
+    private var previousOrder: [String] = []
+
+    init(
+        scope: IntegrationScope = .apps,
+        selectedAppID: String? = nil,
+        tab: IntegrationDetailTab = .overview,
+        focus: IntegrationFocus? = nil
+    ) {
+        self.scope = scope
+        self.selectedAppID = selectedAppID
+        self.tab = tab
+        self.focus = focus
+    }
+
+    /// Keeps the selection on a row that exists, preferring the row that took the removed
+    /// row's place and falling back to the last row when the list shrank past it.
+    mutating func reconcile(availableAppIDs: [String]) {
+        defer { previousOrder = availableAppIDs }
+        guard !availableAppIDs.isEmpty else {
+            selectedAppID = nil
+            return
+        }
+        guard let current = selectedAppID else {
+            selectedAppID = availableAppIDs.first
+            return
+        }
+        guard !availableAppIDs.contains(current) else { return }
+        let oldIndex = previousOrder.firstIndex(of: current) ?? 0
+        selectedAppID = availableAppIDs[min(oldIndex, availableAppIDs.count - 1)]
+    }
+
+    /// Applies a deep link atomically so scope, app, tab, and focus can never land half-applied.
+    mutating func apply(_ destination: IntegrationDestination) {
+        scope = destination.scope
+        tab = destination.tab
+        focus = destination.focus
+        if let bundleID = destination.bundleID {
+            selectedAppID = bundleID
+        }
+    }
+}
+
 enum SettingsRouteResolver {
     static func destination(for page: SettingsPage) -> IntegrationDestination? {
         switch page {
