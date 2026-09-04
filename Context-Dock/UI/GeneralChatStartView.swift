@@ -248,7 +248,8 @@ struct GeneralChatStartView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             NotificationCenter.default.post(
                 name: .openSettingsPage, object: nil,
-                userInfo: ["page": SettingsPage.frontmostAppAdapters.rawValue])
+                userInfo: SettingsRouteResolver.notificationPayload(
+                    for: IntegrationDestination(scope: .apps)))
         }
     }
 

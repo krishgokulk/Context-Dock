@@ -21,6 +21,7 @@ struct IntegrationsSettingsPage: View {
 
     @State private var selection = IntegrationSelectionState()
     @State private var query = ""
+    @State private var showBrowserInNarrowLayout = false
 
     // Creation flows, each presenting the editor that already owns that capability.
     @State private var showAdapterSheet = false
@@ -45,29 +46,55 @@ struct IntegrationsSettingsPage: View {
             headerBar
             Divider()
 
-            HStack(spacing: 0) {
-                IntegrationBrowserView(
-                    scope: $selection.scope,
-                    query: $query,
-                    selectedAppID: $selection.selectedAppID,
-                    apps: apps,
-                    global: inventory.global
-                )
-                .frame(width: 250)
+            GeometryReader { proxy in
+                // Below this width the two columns cannot both be read, so the browser
+                // collapses behind an explicit Back route rather than being clipped.
+                let isNarrow = proxy.size.width < 720
 
-                Divider()
+                if isNarrow {
+                    if showBrowserInNarrowLayout || selectedApp == nil && selection.scope == .apps {
+                        browser(apps: apps, global: inventory.global)
+                    } else {
+                        VStack(spacing: 0) {
+                            HStack {
+                                Button {
+                                    showBrowserInNarrowLayout = true
+                                } label: {
+                                    Label("All Integrations", systemImage: "chevron.left")
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .accessibilityLabel("Back to all integrations")
+                                Spacer()
+                            }
+                            Divider()
+                            detail(selectedApp: selectedApp, global: inventory.global)
+                        }
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        browser(apps: apps, global: inventory.global)
+                            .frame(width: 250)
 
-                detail(selectedApp: selectedApp, global: inventory.global)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        Divider()
+
+                        detail(selectedApp: selectedApp, global: inventory.global)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
             }
         }
         .onAppear {
-            if let destination { selection.apply(destination) }
+            if let destination { apply(destination) }
             selection.reconcile(availableAppIDs: apps.map(\.id))
         }
         .onChange(of: destination) { _, newValue in
             guard let newValue else { return }
-            selection.apply(newValue)
+            apply(newValue)
+        }
+        .onChange(of: selection.selectedAppID) { _, _ in
+            showBrowserInNarrowLayout = false
         }
         .onChange(of: apps.map(\.id)) { _, ids in
             selection.reconcile(availableAppIDs: ids)
@@ -133,6 +160,27 @@ struct IntegrationsSettingsPage: View {
             extensions: layeredExtensions.allExtensions,
             selectionRules: settings.axTriggerRules,
             commands: SystemCommandsRegistry.shared.commands))
+    }
+
+    /// A deep link names one integration; an active search could hide it, so the query is
+    /// cleared rather than letting reconciliation move the selection somewhere else.
+    private func apply(_ destination: IntegrationDestination) {
+        if destination.bundleID != nil { query = "" }
+        selection.apply(destination)
+    }
+
+    // MARK: - Browser
+
+    private func browser(
+        apps: [AppIntegrationSummary],
+        global: GlobalIntegrationSummary
+    ) -> some View {
+        IntegrationBrowserView(
+            scope: $selection.scope,
+            query: $query,
+            selectedAppID: $selection.selectedAppID,
+            apps: apps,
+            global: global)
     }
 
     // MARK: - Detail

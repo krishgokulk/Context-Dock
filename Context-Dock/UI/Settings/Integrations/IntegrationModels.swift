@@ -189,7 +189,59 @@ struct IntegrationSelectionState: Equatable {
     }
 }
 
+/// Translates between the settings deep-link notification and a typed destination.
+///
+/// Both directions live here, and `SettingsView` is the only decoder: a caller that posts a
+/// legacy page raw value predates this workspace and must still land in the right scope,
+/// so neither side of that compatibility can drift.
 enum SettingsRouteResolver {
+    enum PayloadKey {
+        static let page = "page"
+        static let scope = "integrationScope"
+        static let tab = "integrationTab"
+        static let bundleID = "bundleID"
+        static let focus = "integrationFocus"
+    }
+
+    /// Encodes a destination as primitive user-info values, so the notification stays
+    /// readable by callers that know nothing about these types.
+    static func notificationPayload(
+        for destination: IntegrationDestination
+    ) -> [AnyHashable: Any] {
+        var payload: [AnyHashable: Any] = [
+            PayloadKey.page: SettingsPage.integrations.rawValue,
+            PayloadKey.scope: destination.scope.rawValue,
+            PayloadKey.tab: destination.tab.rawValue
+        ]
+        payload[PayloadKey.bundleID] = destination.bundleID
+        payload[PayloadKey.focus] = destination.focus?.rawValue
+        return payload
+    }
+
+    /// Reads a destination out of a notification, accepting both the typed payload and a
+    /// bare legacy page raw value.
+    static func destination(from payload: [AnyHashable: Any]?) -> IntegrationDestination? {
+        guard let payload,
+              let rawPage = payload[PayloadKey.page] as? String,
+              let page = SettingsPage(rawValue: rawPage)
+        else { return nil }
+
+        guard page == .integrations else { return destination(for: page) }
+
+        let scope = (payload[PayloadKey.scope] as? String)
+            .flatMap(IntegrationScope.init(rawValue:)) ?? .apps
+        let tab = (payload[PayloadKey.tab] as? String)
+            .flatMap(IntegrationDetailTab.init(rawValue:)) ?? .overview
+        let focus = (payload[PayloadKey.focus] as? String)
+            .flatMap(IntegrationFocus.init(rawValue:))
+
+        return IntegrationDestination(
+            scope: scope,
+            bundleID: payload[PayloadKey.bundleID] as? String,
+            tab: tab,
+            focus: focus)
+    }
+
     static func destination(for page: SettingsPage) -> IntegrationDestination? {
         switch page {
         case .frontmostAppAdapters:

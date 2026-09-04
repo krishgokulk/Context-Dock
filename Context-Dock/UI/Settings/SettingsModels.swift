@@ -162,14 +162,12 @@ extension SettingsSidebarSection {
             id: "extensions",
             title: "Extensions",
             rows: [
-                // The new workspace sits alongside the pages it will replace while parity is
-                // still being built; the old rows are removed only once it fully supersedes them.
+                // One row for every capability. The pages it replaced keep their enum raw
+                // values so old deep links still resolve, but they no longer have their own
+                // destinations. Create Extension stays: its paste-JSON authoring flow has no
+                // equivalent in the workspace yet.
                 SettingsSidebarRow(SettingsPage.integrations.title, page: .integrations),
-                SettingsSidebarRow("Create Extension", page: .extensionImport),
-                SettingsSidebarRow(SettingsPage.extensionsGlobalWithoutSelection.title, page: .extensionsGlobalWithoutSelection),
-                SettingsSidebarRow(SettingsPage.extensionsCLIToolScope.title, page: .extensionsCLIToolScope),
-                SettingsSidebarRow(SettingsPage.frontmostAppAdapters.title, page: .frontmostAppAdapters),
-                SettingsSidebarRow("Selection Scope", page: .shortcutSheetWorkflows)
+                SettingsSidebarRow("Create Extension", page: .extensionImport)
             ]
         ),
         SettingsSidebarSection(

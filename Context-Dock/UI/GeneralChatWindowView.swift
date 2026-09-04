@@ -1388,9 +1388,15 @@ struct GeneralChatWindowView: View {
                             AppDelegate.shared?.showSettings()
                             // The settings window has to exist before it can be navigated.
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                // One typed post carries the app itself, so Settings opens on
+                                // this integration rather than on whichever was last selected.
                                 NotificationCenter.default.post(
                                     name: .openSettingsPage, object: nil,
-                                    userInfo: ["page": SettingsPage.frontmostAppAdapters.rawValue])
+                                    userInfo: SettingsRouteResolver.notificationPayload(
+                                        for: IntegrationDestination(
+                                            scope: .apps,
+                                            bundleID: bundleId,
+                                            tab: .actions)))
                                 NotificationCenter.default.post(
                                     name: .openAppAdapter, object: nil,
                                     userInfo: ["bundleId": bundleId])
