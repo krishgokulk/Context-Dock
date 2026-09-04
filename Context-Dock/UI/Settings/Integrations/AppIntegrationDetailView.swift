@@ -1,5 +1,16 @@
 import SwiftUI
 
+/// Whether the app an integration was written for is still on this Mac.
+///
+/// An adapter outlives the app it targets: uninstalling leaves the integration behind, and
+/// nothing removes it. The list says so rather than presenting a dead row as healthy.
+enum IntegrationAppPresence {
+    static func isInstalled(bundleID: String) -> Bool {
+        guard !bundleID.hasPrefix("cli://") else { return true }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
+    }
+}
+
 /// The real app icon, falling back to the adapter's SF Symbol when the app is not installed
 /// on this Mac — an adapter can outlive the app it was written for.
 struct IntegrationAppIcon: View {

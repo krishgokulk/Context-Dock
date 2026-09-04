@@ -22,6 +22,7 @@ struct IntegrationsSettingsPage: View {
     @State private var selection = IntegrationSelectionState()
     @State private var query = ""
     @State private var showBrowserInNarrowLayout = false
+    @State private var pendingRemoval: AppIntegrationSummary?
 
     // Creation flows, each presenting the editor that already owns that capability.
     @State private var showAdapterSheet = false
@@ -95,6 +96,24 @@ struct IntegrationsSettingsPage: View {
         }
         .onChange(of: selection.selectedAppID) { _, _ in
             showBrowserInNarrowLayout = false
+        }
+        .confirmationDialog(
+            "Remove \(pendingRemoval?.appName ?? "") from Integrations?",
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Remove Integration", role: .destructive) {
+                guard let app = pendingRemoval else { return }
+                pendingRemoval = nil
+                Task {
+                    await IntegrationRemovalService.removeAppIntegration(bundleId: app.bundleID)
+                }
+            }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: {
+            Text(removalMessage)
         }
         .onChange(of: apps.map(\.id)) { _, ids in
             selection.reconcile(availableAppIDs: ids)
@@ -189,7 +208,33 @@ struct IntegrationsSettingsPage: View {
             query: $query,
             selectedAppID: $selection.selectedAppID,
             apps: apps,
-            global: global)
+            global: global,
+            onRemove: { pendingRemoval = $0 })
+    }
+
+    private var removalMessage: String {
+        guard let app = pendingRemoval else { return "" }
+        let preview = IntegrationInventoryBuilder.removalPreview(for: app)
+        var lines = [
+            "Deletes \(preview.removedActionCount) action\(preview.removedActionCount == 1 ? "" : "s")."
+        ]
+        if preview.unlinkedCLIToolCount > 0 {
+            lines.append(
+                "Unlinks \(preview.unlinkedCLIToolCount) CLI tool\(preview.unlinkedCLIToolCount == 1 ? "" : "s") — the tools stay installed.")
+        }
+        var kept: [String] = []
+        if preview.retainedSkillCount > 0 {
+            kept.append("\(preview.retainedSkillCount) skill\(preview.retainedSkillCount == 1 ? "" : "s")")
+        }
+        if preview.retainedMCPCount > 0 {
+            kept.append("\(preview.retainedMCPCount) MCP server\(preview.retainedMCPCount == 1 ? "" : "s")")
+        }
+        if preview.retainedAPIConnectionCount > 0 {
+            kept.append(
+                "\(preview.retainedAPIConnectionCount) API connection\(preview.retainedAPIConnectionCount == 1 ? "" : "s")")
+        }
+        if !kept.isEmpty { lines.append("Keeps \(kept.joined(separator: ", ")).") }
+        return lines.joined(separator: " ")
     }
 
     // MARK: - Detail

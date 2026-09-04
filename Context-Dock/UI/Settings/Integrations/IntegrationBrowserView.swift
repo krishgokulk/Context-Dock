@@ -11,6 +11,7 @@ struct IntegrationBrowserView: View {
     @Binding var selectedAppID: String?
     let apps: [AppIntegrationSummary]
     let global: GlobalIntegrationSummary
+    let onRemove: (AppIntegrationSummary) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,7 +70,20 @@ struct IntegrationBrowserView: View {
             } else {
                 List(selection: $selectedAppID) {
                     ForEach(apps) { app in
-                        appRow(app).tag(app.id)
+                        appRow(app)
+                            .tag(app.id)
+                            .contentShape(Rectangle())
+                            // Double-click and right-click both reach removal, because an
+                            // integration for an app that is gone has no other way out.
+                            .onTapGesture(count: 2) {
+                                selectedAppID = app.id
+                                onRemove(app)
+                            }
+                            .contextMenu {
+                                Button("Remove Integration…", role: .destructive) {
+                                    onRemove(app)
+                                }
+                            }
                     }
                 }
                 .listStyle(.sidebar)
@@ -100,7 +114,14 @@ struct IntegrationBrowserView: View {
 
             Spacer(minLength: 4)
 
-            if case .needsAttention = app.health {
+            if !IntegrationAppPresence.isInstalled(bundleID: app.bundleID) {
+                Text("Not installed")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.secondary.opacity(0.16), in: Capsule())
+            } else if case .needsAttention = app.health {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 10))
                     .foregroundStyle(.orange)
@@ -110,7 +131,10 @@ struct IntegrationBrowserView: View {
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(app.appName)
-        .accessibilityValue(subtitle(for: app))
+        .accessibilityValue(
+            IntegrationAppPresence.isInstalled(bundleID: app.bundleID)
+                ? subtitle(for: app)
+                : "\(subtitle(for: app)), app not installed")
     }
 
     private var globalRow: some View {
