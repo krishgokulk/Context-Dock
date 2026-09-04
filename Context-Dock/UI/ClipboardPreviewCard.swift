@@ -13,11 +13,19 @@ import AppKit
 import SwiftUI
 
 enum ClipboardPreviewMetrics {
-    static var size: CGSize {
-        CGSize(width: CornerDockLayout.cardWidth, height: CornerDockLayout.previewHeight)
-    }
     static let composerHeight: CGFloat = 44
     static let headerHeight: CGFloat = 38
+    /// Room for the reply, once one has been asked for. The card grows rather than sending
+    /// the user somewhere else to read it.
+    static let answerHeight: CGFloat = 148
+
+    static func size(showsAnswer: Bool) -> CGSize {
+        CGSize(
+            width: CornerDockLayout.cardWidth,
+            height: CornerDockLayout.previewHeight + (showsAnswer ? answerHeight : 0))
+    }
+
+    static var size: CGSize { size(showsAnswer: false) }
 }
 
 struct ClipboardPreviewCard: View {
@@ -29,16 +37,25 @@ struct ClipboardPreviewCard: View {
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
+    @ObservedObject private var general = GeneralChatWindowModel.shared
+
+    private var showsAnswer: Bool { model.previewConversationActive }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider().opacity(0.18)
             body(for: entry)
+            if showsAnswer {
+                Divider().opacity(0.18)
+                answer
+            }
             Divider().opacity(0.18)
             composer
         }
-        .frame(width: ClipboardPreviewMetrics.size.width,
-               height: ClipboardPreviewMetrics.size.height)
+        .frame(
+            width: ClipboardPreviewMetrics.size(showsAnswer: showsAnswer).width,
+            height: ClipboardPreviewMetrics.size(showsAnswer: showsAnswer).height)
         .background(GlassBackground(cornerRadius: 22, isDark: true))
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
@@ -128,6 +145,63 @@ struct ClipboardPreviewCard: View {
         }
     }
 
+    /// What came back, in the card that asked.
+    ///
+    /// The question already ran on General's thread and pipeline — nothing here is a second
+    /// engine — but sending the user off to another surface to read the answer made the
+    /// field look like a dead end. Steps while it works, the reply when it arrives, and a
+    /// way through to the full thread.
+    private var answer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if general.isSending {
+                LiveAgentProgressView(
+                    steps: general.activeProgress.isEmpty
+                        ? [general.activeStatus ?? "Thinking…"] : general.activeProgress)
+            } else if let reply = latestReply {
+                ScrollView {
+                    Text(reply)
+                        .font(.system(size: 11.5))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                Text("No answer yet")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Button("Open in General Chat") {
+                    CornerDockController.shared.chatPresentation.showGeneralFromPreview()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+
+                Spacer(minLength: 4)
+
+                if general.isSending {
+                    Button("Stop") { general.cancel() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Done") { model.endPreviewConversation() }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(height: ClipboardPreviewMetrics.answerHeight)
+    }
+
+    private var latestReply: String? {
+        general.messages.last { $0.role == .assistant }?.content
+    }
+
     /// Asking about the clip in front of you. It goes to General chat with the clip
     /// attached — the same thread and the same pipeline, not a third one.
     private var composer: some View {
@@ -147,6 +221,12 @@ struct ClipboardPreviewCard: View {
                     .font(.system(size: 12))
                     .focused($fieldFocused)
                     .onSubmit(send)
+                    // Typing here is attention. Without this the clipboard's own idle
+                    // clock kept running and took the card away mid-question.
+                    .onChange(of: draft) { _, _ in model.keepAlive() }
+                    .onChange(of: fieldFocused) { _, focused in
+                        model.setPreviewComposerFocused(focused)
+                    }
             }
 
             if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -186,7 +266,9 @@ struct ClipboardPreviewCard: View {
         }
         general.send()
         draft = ""
-        CornerDockController.shared.chatPresentation.showGeneralFromPreview()
+        // The answer lands here, in the card that asked. General still owns the thread —
+        // "Open in General Chat" is one control away for the rest of it.
+        model.beginPreviewConversation()
     }
 
     private func glyph(_ symbol: String, tinted: Bool = false) -> some View {
