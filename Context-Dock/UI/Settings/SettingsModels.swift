@@ -162,6 +162,9 @@ extension SettingsSidebarSection {
             id: "extensions",
             title: "Extensions",
             rows: [
+                // The new workspace sits alongside the pages it will replace while parity is
+                // still being built; the old rows are removed only once it fully supersedes them.
+                SettingsSidebarRow(SettingsPage.integrations.title, page: .integrations),
                 SettingsSidebarRow("Create Extension", page: .extensionImport),
                 SettingsSidebarRow(SettingsPage.extensionsGlobalWithoutSelection.title, page: .extensionsGlobalWithoutSelection),
                 SettingsSidebarRow(SettingsPage.extensionsCLIToolScope.title, page: .extensionsCLIToolScope),
