@@ -19,6 +19,9 @@ enum ClipboardPillMetrics {
     static let screenMargin: CGFloat = 20
     /// Slack around the card's hit rect so a pointer resting on the very edge still counts.
     static let hoverTolerance: CGFloat = 6
+    /// The band above the list showing whichever clip the walk is standing on. Taken out of
+    /// the list's room rather than added to the card, so the panel geometry is unchanged.
+    static let focusedPreviewHeight: CGFloat = 64
 
     static var panelSize: NSSize {
         NSSize(
@@ -920,6 +923,13 @@ struct ClipboardDockPill: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // What the walk is standing on, shown here rather than only in a window that
+            // opens beside the card. Navigating a list of "Image, Image, Image" is
+            // guesswork without it.
+            if let focused = model.focusedEntry {
+                focusedPreview(focused)
+                Divider().opacity(0.2)
+            }
             rows
             Divider().opacity(0.2)
             filterRow
@@ -927,6 +937,68 @@ struct ClipboardDockPill: View {
         .frame(
             width: ClipboardPillMetrics.expandedSize.width,
             height: ClipboardPillMetrics.expandedSize.height)
+    }
+
+    /// The focused clip, larger: the picture itself for an image, the opening lines for
+    /// text, the file for anything else — plus where it came from and when.
+    private func focusedPreview(_ entry: LauncherView.ClipboardEntry) -> some View {
+        HStack(spacing: 10) {
+            thumbnail(entry, size: CGSize(width: 64, height: 48))
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entryTitle(entry))
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Text(previewDetail(entry))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 4)
+
+            // Says what ⌘P did, and offers it to the mouse as well.
+            Button {
+                previewPinned.toggle()
+                if previewPinned {
+                    ClipboardPanelController.shared.preview()
+                } else {
+                    PreviewController.shared.close()
+                }
+            } label: {
+                Image(systemName: previewPinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(previewPinned ? Color.accentColor : .secondary)
+                    .frame(width: 24, height: 24)
+                    .background(
+                        previewPinned ? Color.accentColor.opacity(0.18) : Color.clear,
+                        in: Circle())
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(previewPinned ? "Unpin preview (⌘P)" : "Pin preview (⌘P)")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: ClipboardPillMetrics.focusedPreviewHeight)
+    }
+
+    private func previewDetail(_ entry: LauncherView.ClipboardEntry) -> String {
+        let when = entry.timestamp.formatted(.relative(presentation: .named))
+        let app = entry.sourceAppName.isEmpty ? "Unknown app" : entry.sourceAppName
+        let body = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !body.isEmpty {
+            return body.replacingOccurrences(of: "\n", with: " ")
+        }
+        if let first = entry.filePaths.first {
+            return URL(fileURLWithPath: first).lastPathComponent
+        }
+        return "\(app) · \(when)"
     }
 
     private var rows: some View {

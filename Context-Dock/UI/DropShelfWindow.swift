@@ -25,6 +25,9 @@ enum DropShelfMetrics {
     /// Shallow on purpose: the strip is the only part of the shelf that overlaps other
     /// apps' drop targets, so it reaches no further up the screen than it must.
     static let edgeStripHeight: CGFloat = 64
+    /// The bottom-right region a drag heading for the shelf passes through. Wide enough to
+    /// catch that approach, small enough that it is not a full-screen drag interceptor.
+    static let cornerSpotterSize = CGSize(width: 460, height: 460)
     /// Gap left for the clipboard pill sitting below this one in the same corner.
     static let clipboardClearance: CGFloat = 68
 
@@ -216,6 +219,7 @@ final class DropShelfController: NSObject {
         guard edgePanels.isEmpty else { return }
         for screen in NSScreen.screens {
             makeEdgePanel(on: screen)
+            makeCornerSpotter(on: screen)
         }
         screenSink = NotificationCenter.default.publisher(
             for: NSApplication.didChangeScreenParametersNotification
@@ -230,7 +234,41 @@ final class DropShelfController: NSObject {
         edgePanels.removeAll()
         for screen in NSScreen.screens {
             makeEdgePanel(on: screen)
+            makeCornerSpotter(on: screen)
         }
+    }
+
+    /// A spotter over the corner the shelf actually appears in.
+    ///
+    /// The bottom strip only catches a drag that reaches the very edge of the screen. When
+    /// something was already in the corner the drag was caught anyway — the corner panel
+    /// registers the same types — so the shelf appeared reliably *only* once the clipboard
+    /// or a chat had put a pill there. Dragging toward an empty corner found nothing
+    /// watching, which is exactly when the user is reaching for the shelf.
+    private func makeCornerSpotter(on screen: NSScreen) {
+        let visible = screen.visibleFrame
+        let size = DropShelfMetrics.cornerSpotterSize
+        let panel = NSPanel(
+            contentRect: NSRect(
+                x: visible.maxX - size.width, y: visible.minY,
+                width: size.width, height: size.height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isMovable = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        let view = DropShelfEdgeView(frame: .zero)
+        view.controller = self
+        panel.contentView = view
+        panel.orderFrontRegardless()
+        edgePanels.append(panel)
     }
 
     private func makeEdgePanel(on screen: NSScreen) {
