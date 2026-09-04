@@ -145,6 +145,41 @@ struct AppChatPromptTests {
         #expect(model.phase == .suggesting)
     }
 
+    /// The turn belongs to the dock's pipeline, so stopping it is a request, not a reach-in.
+    @Test func stoppingAsksTheDockToCancelTheRunningTurn() {
+        let conversation = AppChatConversation()
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        conversation.isLoading = true
+
+        var asked = false
+        let observation = NotificationCenter.default
+            .publisher(for: .appChatPromptCancel)
+            .sink { _ in asked = true }
+        defer { observation.cancel() }
+
+        model.cancelTurn()
+
+        #expect(asked)
+    }
+
+    /// Nothing running, nothing to stop — and no notification anyone has to guard against.
+    @Test func stoppingIdlyAsksForNothing() {
+        let conversation = AppChatConversation()
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+
+        var asked = false
+        let observation = NotificationCenter.default
+            .publisher(for: .appChatPromptCancel)
+            .sink { _ in asked = true }
+        defer { observation.cancel() }
+
+        model.cancelTurn()
+
+        #expect(!asked)
+    }
+
     /// The two modes are one surface. App mode was pinned at 340 while General grew to 620,
     /// so the same conversation got half the room depending on which scope it was in.
     @Test func bothModesGrowAtTheSameRateToTheSameCeiling() {

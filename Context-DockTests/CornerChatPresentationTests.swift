@@ -16,6 +16,33 @@ struct CornerChatPresentationTests {
         CornerChatTarget(name: "Safari", bundleID: "com.apple.Safari")
     }
 
+    /// App Chat arrows into General, so General has to arrow back — a keyboard that can
+    /// only make the trip one way leaves the user reaching for the mouse to undo it.
+    @Test func theArrowRouteBetweenModesRunsBothWays() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.showFrontmostApp(target: code)
+
+        #expect(subject.handleLeftArrow(draft: "") == true)
+        #expect(subject.mode == .general)
+
+        #expect(subject.handleRightArrow(draft: "") == true)
+        #expect(subject.mode == .frontmostApp)
+    }
+
+    /// With something typed the arrows belong to the text, in both directions.
+    @Test func aDraftKeepsTheArrowsInTheField() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.showFrontmostApp(target: code)
+        _ = subject.handleLeftArrow(draft: "")
+
+        #expect(subject.handleRightArrow(draft: "half a question") == false)
+        #expect(subject.mode == .general)
+    }
+
     @Test func theHotkeySummonsFrontmostAppChat() {
         let app = AppChatPromptModel(conversation: AppChatConversation())
         let general = GeneralChatWindowModel()

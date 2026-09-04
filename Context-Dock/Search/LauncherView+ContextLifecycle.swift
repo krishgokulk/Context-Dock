@@ -1116,6 +1116,9 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .appChatPromptNewChat)) { _ in
                 handleAppChatPromptNewChat()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptCancel)) { _ in
+                handleAppChatPromptCancel()
+            }
             .onReceive(
                 NotificationCenter.default.publisher(for: .clipboardEntriesRemovalRequested)
             ) { note in
@@ -2072,6 +2075,16 @@ extension LauncherView {
         }
         dismissMediaLayer()
         handleL2QuerySkippingMenuRouter(query)
+    }
+
+    /// The corner asked to stop the running turn. The task is the dock's, so the stop is too.
+    func handleAppChatPromptCancel() {
+        guard l2.isLoading || l2.currentTask != nil else { return }
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        AppChatConversation.shared.liveSteps = []
     }
 
     /// The corner asked to drop clips. It reads the same history this writes, and the image

@@ -280,6 +280,27 @@ struct CornerGeneralChatView: View {
         return true
     }
 
+    /// Escape unwinds what the user built, one layer per press, and only closes the corner
+    /// once there is nothing left to undo. Before this there was no key handling here at
+    /// all: an open General chat could not be escaped, only clicked or hotkeyed away.
+    private func handleEscape() -> Bool {
+        if !slashMatches.isEmpty {
+            model.input = ""
+            slashSelection = 0
+            return true
+        }
+        if !model.input.isEmpty {
+            model.input = ""
+            return true
+        }
+        if model.isSending {
+            model.cancel()
+            return true
+        }
+        CornerDockController.shared.chatPresentation.dismiss()
+        return true
+    }
+
     private func commitSlashSelection() -> Bool {
         let matches = slashMatches
         guard !matches.isEmpty else { return false }
@@ -346,6 +367,14 @@ struct CornerGeneralChatView: View {
                     })
                 },
                 onEmptyLeftArrow: { false },
+                // App Chat arrows into General; General has to arrow back, or the keyboard
+                // is a one-way door and only the mouse can undo the trip.
+                onEmptyRightArrow: {
+                    CornerDockController.shared.chatPresentation.handleRightArrow(
+                        draft: model.input)
+                },
+                onEscape: { handleEscape() },
+                onStop: model.isSending ? { model.cancel() } : nil,
                 onMoveSelection: { moveSlashSelection($0) },
                 onCommitSelection: { commitSlashSelection() },
                 usesInlineAppPicker: true,

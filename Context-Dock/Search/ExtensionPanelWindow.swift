@@ -530,6 +530,15 @@ struct AIComposerBar: View {
     var onPasteImages: (([URL]) -> Void)? = nil
     /// Empty-field layer navigation. Nil on composers that do not participate.
     var onEmptyLeftArrow: (() -> Bool)? = nil
+    /// The other direction. A surface that can be arrowed into has to be arrowable out of,
+    /// or the keyboard is a one-way door.
+    var onEmptyRightArrow: (() -> Bool)? = nil
+    /// Escape, handled by the surface so it can unwind its own state before closing.
+    /// `onKeyPress` only reaches a focused view, and in the corner this field is the only
+    /// thing focused — so a surface with no key handling of its own cannot be escaped at all.
+    var onEscape: (() -> Bool)? = nil
+    /// Stop the turn that is running. Nil where the surface cannot cancel one.
+    var onStop: (() -> Void)? = nil
     /// ↑/↓ while a picker is open above the field. Returning true means the surface moved
     /// its own selection and the field should not treat the key as text navigation.
     var onMoveSelection: ((Int) -> Bool)? = nil
@@ -639,6 +648,15 @@ struct AIComposerBar: View {
                           onEmptyLeftArrow?() == true
                     else { return .ignored }
                     return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          onEmptyRightArrow?() == true
+                    else { return .ignored }
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    onEscape?() == true ? .handled : .ignored
                 }
                 .onKeyPress(.upArrow) {
                     onMoveSelection?(-1) == true ? .handled : .ignored
@@ -767,7 +785,22 @@ struct AIComposerBar: View {
             }
 
             if isSending {
-                ProgressView().controlSize(.small)
+                if let onStop {
+                    // A spinner says "wait". A surface that can cancel should offer that
+                    // instead, or the only way out of a long turn is to sit through it.
+                    Button(action: onStop) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 20, height: 20)
+                            .background(Color.primary.opacity(0.12), in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop")
+                } else {
+                    ProgressView().controlSize(.small)
+                }
             }
             }
             .padding(.horizontal, 14)

@@ -131,6 +131,17 @@ final class AppChatPromptModel: ObservableObject {
         dismiss()
     }
 
+    /// Stop the turn that is running.
+    ///
+    /// The turn belongs to the dock's pipeline, so this asks for the same reason clearing
+    /// does — and a request that arrives after the turn already finished is simply ignored
+    /// on the other side.
+    func cancelTurn() {
+        guard isAnswering else { return }
+        NotificationCenter.default.post(name: .appChatPromptCancel, object: nil)
+        touch()
+    }
+
     /// Start the app-scoped conversation over.
     ///
     /// `AppChatConversation` has one writer and this is not it: the dock's pipeline produces
@@ -321,4 +332,7 @@ extension Notification.Name {
     /// Corner prompt → the dock, asking it to empty the app-scoped transcript both of them
     /// are showing. The corner does not clear it itself: that conversation has one writer.
     static let appChatPromptNewChat = Notification.Name("appChatPromptNewChat")
+    /// Corner prompt → the dock, asking it to stop the turn it is running. The pipeline is
+    /// the dock's, so stopping it is the dock's to do.
+    static let appChatPromptCancel = Notification.Name("appChatPromptCancel")
 }

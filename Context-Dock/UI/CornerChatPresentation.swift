@@ -123,6 +123,18 @@ final class CornerChatPresentation: ObservableObject {
         return true
     }
 
+    /// General → the frontmost app's chat, the way `handleLeftArrow` goes the other way.
+    /// It returns to the app that is in front now, not the one the trip started from.
+    @discardableResult
+    func handleRightArrow(draft: String) -> Bool {
+        guard mode == .general,
+            draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let latestTarget
+        else { return false }
+        showFrontmostApp(target: latestTarget)
+        return true
+    }
+
     @discardableResult
     func handleHorizontalSwipe(deltaX: CGFloat, draft: String) -> Bool {
         guard abs(deltaX) > 70,

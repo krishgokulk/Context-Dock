@@ -156,6 +156,14 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 6)
 
+            if model.isAnswering {
+                Button { model.cancelTurn() } label: {
+                    headerGlyph("stop.fill", tinted: true)
+                }
+                .buttonStyle(.plain)
+                .help("Stop")
+            }
+
             Button { model.openInDock() } label: {
                 headerGlyph("arrow.up.left.and.arrow.down.right")
             }
@@ -209,6 +217,18 @@ struct AppChatPromptPill: View {
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit { model.submit() }
                     .onKeyPress(.escape) {
+                        // Unwind, then leave. Dismissing mid-answer threw away a turn the
+                        // user was waiting on and a question they had half-written, for
+                        // one press of the key that usually means "step back".
+                        if !model.query.isEmpty {
+                            model.query = ""
+                            model.queryChanged()
+                            return .handled
+                        }
+                        if model.isAnswering {
+                            model.cancelTurn()
+                            return .handled
+                        }
                         model.dismiss()
                         return .handled
                     }
