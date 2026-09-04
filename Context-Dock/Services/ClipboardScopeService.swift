@@ -28,10 +28,10 @@ enum ClipboardScopeService {
     ///
     /// Order is the whole point: pasting three clips into a document should produce them in
     /// the order they were chosen, not the order the history happens to hold them.
-    static func orderedSelection(
-        from entries: [Entry], selectedIDs: Set<UUID>, pickOrder: [UUID]
-    ) -> [Entry] {
-        let selected = entries.filter { selectedIDs.contains($0.id) }
+    static func orderedSelection<Item: Identifiable>(
+        from items: [Item], selectedIDs: Set<Item.ID>, pickOrder: [Item.ID]
+    ) -> [Item] {
+        let selected = items.filter { selectedIDs.contains($0.id) }
         guard selected.count > 1 else { return selected }
         let rank = Dictionary(
             pickOrder.enumerated().map { ($0.element, $0.offset) },
@@ -47,15 +47,18 @@ enum ClipboardScopeService {
     }
 
     /// What a range selection covers, given the row last clicked and the row shift-clicked.
-    static func rangeSelection(in entries: [Entry], from anchorID: UUID?, to targetID: UUID)
-        -> Set<UUID>
-    {
+    ///
+    /// Generic because the Drop Shelf selects the same way over different items: one rule
+    /// for "what does shift-click mean", not one per list.
+    static func rangeSelection<Item: Identifiable>(
+        in items: [Item], from anchorID: Item.ID?, to targetID: Item.ID
+    ) -> Set<Item.ID> {
         guard let anchorID,
-            let anchor = entries.firstIndex(where: { $0.id == anchorID }),
-            let target = entries.firstIndex(where: { $0.id == targetID })
+            let anchor = items.firstIndex(where: { $0.id == anchorID }),
+            let target = items.firstIndex(where: { $0.id == targetID })
         else { return [targetID] }
         let range = anchor <= target ? anchor...target : target...anchor
-        return Set(entries[range].map(\.id))
+        return Set(items[range].map(\.id))
     }
 
     // MARK: - Content

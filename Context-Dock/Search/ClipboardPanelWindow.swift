@@ -788,11 +788,16 @@ struct ClipboardDockPill: View {
             model.moveEntry(direction, selecting: selecting)
             return .handled
         }
+        // Not while the search field has the keyboard: these bubble up from the focused
+        // field, so arrowing through a typed query jumped the source chip instead of
+        // moving the cursor through the user's own text.
         .onKeyPress(.leftArrow) {
+            guard !searchFocused else { return .ignored }
             model.cycleSource(-1)
             return .handled
         }
         .onKeyPress(.rightArrow) {
+            guard !searchFocused else { return .ignored }
             model.cycleSource(1)
             return .handled
         }

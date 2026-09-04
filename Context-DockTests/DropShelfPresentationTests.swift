@@ -11,6 +11,54 @@ struct DropShelfPresentationTests {
         return presentation
     }
 
+    private func item(_ name: String) -> DropShelfItem {
+        DropShelfItem(
+            id: UUID(),
+            relativePath: "Documents/\(name)",
+            kind: .documents,
+            originalName: name,
+            sourceAppName: "Finder",
+            sourceBundleId: "com.apple.finder",
+            droppedAt: Date())
+    }
+
+    /// The shelf exists to be dragged out of, and dragging four files one at a time is the
+    /// slow way to do the only thing it is for.
+    @Test func theShelfSelectsTheSameWayTheClipboardDoes() {
+        let presentation = shelf(holding: 3)
+        let items = [item("a.pdf"), item("b.pdf"), item("c.pdf")]
+
+        presentation.select(items[0], in: items, extend: false, toggle: false)
+        #expect(presentation.selectedIDs == [items[0].id])
+
+        presentation.select(items[2], in: items, extend: true, toggle: false)
+        #expect(presentation.actionableItems(in: items, fallback: nil).count == 3)
+
+        presentation.select(items[1], in: items, extend: false, toggle: true)
+        #expect(presentation.actionableItems(in: items, fallback: nil).count == 2)
+    }
+
+    /// With nothing picked, an action applies to the row it was invoked on and no more.
+    @Test func withNoSelectionAnActionAppliesToOneRow() {
+        let presentation = shelf(holding: 2)
+        let items = [item("a.pdf"), item("b.pdf")]
+
+        let target = presentation.actionableItems(in: items, fallback: items[1])
+
+        #expect(target.map(\.originalName) == ["b.pdf"])
+    }
+
+    @Test func clearingTheSelectionLeavesTheShelfItself() {
+        let presentation = shelf(holding: 2)
+        let items = [item("a.pdf"), item("b.pdf")]
+        presentation.selectAll(items)
+
+        presentation.clearSelection()
+
+        #expect(presentation.selectedIDs.isEmpty)
+        #expect(presentation.actionableItems(in: items, fallback: nil).isEmpty)
+    }
+
     @Test func anEmptyShelfShowsNothingUntilSomethingIsDragged() {
         #expect(shelf(holding: 0).phase == .hidden)
     }

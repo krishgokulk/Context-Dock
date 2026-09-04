@@ -161,6 +161,15 @@ final class DropShelfController: NSObject {
         ClipboardPanelController.shared.setSuppressed(true)
     }
 
+    /// An item is leaving the shelf by drag. The copy monitor stands down for the duration,
+    /// or the file the drag hands over comes straight back as a clip of itself.
+    func beginDrag() {
+        ClipboardPanelController.shared.setSuppressed(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            ClipboardPanelController.shared.setSuppressed(false)
+        }
+    }
+
     func dragExitedStrip() { scheduleDragEnd() }
     func dragExitedPill() { scheduleDragEnd() }
 

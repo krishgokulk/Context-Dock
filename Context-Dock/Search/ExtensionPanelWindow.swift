@@ -658,6 +658,21 @@ struct AIComposerBar: View {
                 .onKeyPress(.escape) {
                     onEscape?() == true ? .handled : .ignored
                 }
+                // The two things the header offers that the keyboard could not reach.
+                .onKeyPress(keys: ["p"]) { press in
+                    guard press.modifiers.contains(.command), let onTogglePin else {
+                        return .ignored
+                    }
+                    onTogglePin()
+                    return .handled
+                }
+                .onKeyPress(keys: ["k"]) { press in
+                    guard press.modifiers.contains(.command), let onClear else {
+                        return .ignored
+                    }
+                    onClear()
+                    return .handled
+                }
                 .onKeyPress(.upArrow) {
                     onMoveSelection?(-1) == true ? .handled : .ignored
                 }
