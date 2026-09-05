@@ -51,7 +51,6 @@ final class ClipboardPanelController: NSObject {
     private var returnApplication: NSRunningApplication?
     private var outsideClickMonitor: Any?
     private var isSuppressed = false
-    private var keyMonitor: Any?
     /// True only for the hotkey path, which is allowed to take focus. A copy-triggered
     /// pill must never pull the user out of what they are typing in.
     private var didTakeFocus = false
@@ -136,19 +135,44 @@ final class ClipboardPanelController: NSObject {
         }
     }
 
-    func paste(_ entry: LauncherView.ClipboardEntry) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        if !entry.filePaths.isEmpty {
-            pasteboard.writeObjects(entry.filePaths.map { URL(fileURLWithPath: $0) as NSURL })
-        } else if let data = entry.imageData
-            ?? entry.imageFileName.flatMap({ ClipboardImageStore.read(fileName: $0) }),
-            let image = NSImage(data: data)
-        {
-            pasteboard.writeObjects([image])
-        } else {
-            pasteboard.setString(entry.text, forType: .string)
+    /// The app a paste would land in, named so a menu can say where it is going.
+    var returnAppName: String {
+        let target = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
+        return target?.localizedName ?? "the frontmost app"
+    }
+
+    /// Put the selection on the pasteboard and leave it there. No paste, no dismissal —
+    /// the user asked for a copy, which is a thing they will use somewhere else, later.
+    func copy(_ entries: [LauncherView.ClipboardEntry]) {
+        guard !entries.isEmpty else { return }
+        ClipboardScopeService.writeToPasteboard(entries)
+    }
+
+    /// A drag is leaving with these clips, so the copy monitor must not treat the temporary
+    /// file the drag wrote as something the user copied.
+    func beginDrag(_ entries: [LauncherView.ClipboardEntry]) {
+        guard !entries.isEmpty else { return }
+        setSuppressed(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.setSuppressed(false)
         }
+    }
+
+    func pasteMany(_ entries: [LauncherView.ClipboardEntry]) {
+        guard let first = entries.first else { return }
+        guard entries.count > 1 else { return paste(first) }
+        ClipboardScopeService.writeToPasteboard(entries)
+        let target = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
+        model.dismiss()
+        target?.activate()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            guard let pid = target?.processIdentifier else { return }
+            ClipboardScopeService.postPasteShortcut(to: pid)
+        }
+    }
+
+    func paste(_ entry: LauncherView.ClipboardEntry) {
+        ClipboardScopeService.writeToPasteboard([entry])
 
         // The ambient pill never activated us, so the paste target is simply whatever is
         // frontmost; only the hotkey path has an app to hand focus back to.
@@ -188,10 +212,8 @@ final class ClipboardPanelController: NSObject {
         CornerDockController.shared.refresh()
         if phase.isVisible {
             startOutsideClickWatch()
-            startKeyWatch()
         } else {
             stopOutsideClickWatch()
-            stopKeyWatch()
             CornerDockController.shared.disarmKeyboard()
             if didTakeFocus {
                 didTakeFocus = false
@@ -203,45 +225,6 @@ final class ClipboardPanelController: NSObject {
     /// An armed card is dismissed by a click anywhere else. App-active state cannot be
     /// used for this: activating an accessory app whose only window is a floating panel
     /// bounces active straight back, so `didResignActive` fires immediately after arming.
-    /// Arrow keys used to rely on SwiftUI focus, which the hotkey path could never win:
-    /// the card is armed before the view exists, so the `onChange` that grants focus never
-    /// fires and `onKeyPress` receives nothing. A local monitor answers for the whole
-    /// window instead, and only while the card actually holds the keyboard.
-    private func startKeyWatch() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-            [weak self] event in
-            guard let self, self.model.isKeyboardArmed, self.model.phase == .expanded else {
-                return event
-            }
-            switch event.keyCode {
-            case 125:  // down
-                self.model.moveEntry(1)
-            case 126:  // up
-                self.model.moveEntry(-1)
-            case 124:  // right
-                self.model.cycleSource(1)
-            case 123:  // left
-                self.model.cycleSource(-1)
-            case 49:  // space
-                self.preview()
-            case 36:  // return
-                guard let focused = self.model.focusedEntry else { return event }
-                self.paste(focused)
-            case 53:  // escape
-                self.model.dismiss()
-            default:
-                return event
-            }
-            return nil
-        }
-    }
-
-    private func stopKeyWatch() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        keyMonitor = nil
-    }
-
     private func startOutsideClickWatch() {
         guard outsideClickMonitor == nil,
             let panel = CornerDockController.shared.window
@@ -275,6 +258,100 @@ final class ClipboardPanelModel: ObservableObject {
     @Published var query = ""
     @Published var sourceIndex = 0
     @Published var focusedEntryIndex: Int?
+    /// Which clips are picked, and the order they were picked in — pasting three clips into
+    /// a document should produce them in the order the user chose, not the order history
+    /// happens to hold them.
+    /// ⌘P: the preview card stays put while the walk continues. Held here rather than in a
+    /// view because the card and the panel both act on it.
+    @Published private(set) var isPreviewPinned = false
+    @Published private(set) var selectedIDs: Set<UUID> = []
+    private var pickOrder: [UUID] = []
+    /// Where a ⇧-click measures from.
+    private var selectionAnchor: UUID?
+
+    /// The clips an action applies to: the selection when there is one, otherwise whatever
+    /// row is focused, otherwise the row acted on directly.
+    func actionableEntries(fallback entry: LauncherView.ClipboardEntry? = nil)
+        -> [LauncherView.ClipboardEntry]
+    {
+        let visible = visibleEntries
+        let selected = ClipboardScopeService.orderedSelection(
+            from: visible, selectedIDs: selectedIDs, pickOrder: pickOrder)
+        if !selected.isEmpty { return selected }
+        if let entry { return [entry] }
+        if let index = focusedEntryIndex, visible.indices.contains(index) {
+            return [visible[index]]
+        }
+        return []
+    }
+
+    func isSelected(_ entry: LauncherView.ClipboardEntry) -> Bool {
+        selectedIDs.contains(entry.id)
+    }
+
+    /// Plain click replaces, ⌘ adds or removes, ⇧ extends from the last plain click.
+    func selectEntry(_ entry: LauncherView.ClipboardEntry, extend: Bool, toggle: Bool) {
+        if toggle {
+            if selectedIDs.contains(entry.id) {
+                selectedIDs.remove(entry.id)
+                pickOrder.removeAll { $0 == entry.id }
+            } else {
+                selectedIDs.insert(entry.id)
+                pickOrder.append(entry.id)
+            }
+            selectionAnchor = entry.id
+        } else if extend {
+            let range = ClipboardScopeService.rangeSelection(
+                in: visibleEntries, from: selectionAnchor, to: entry.id)
+            selectedIDs = range
+            // A range has no pick order of its own; list order is the honest answer.
+            pickOrder = visibleEntries.map(\.id).filter { range.contains($0) }
+        } else {
+            selectedIDs = [entry.id]
+            pickOrder = [entry.id]
+            selectionAnchor = entry.id
+        }
+        noteInteraction()
+    }
+
+    func selectAllVisible() {
+        let ids = visibleEntries.map(\.id)
+        selectedIDs = Set(ids)
+        pickOrder = ids
+        noteInteraction()
+    }
+
+    func clearSelection() {
+        selectedIDs = []
+        pickOrder = []
+        selectionAnchor = nil
+    }
+
+    func togglePreviewPin() {
+        isPreviewPinned.toggle()
+        noteInteraction()
+    }
+
+    /// Delete the clips an action would apply to.
+    ///
+    /// The history file has one writer — the dock, which also owns the image blobs beside
+    /// it — so this asks rather than rewriting it from here. The rows go immediately so the
+    /// list answers the key press; the dock's own prune is what makes it durable.
+    func removeActionableEntries(fallback entry: LauncherView.ClipboardEntry? = nil) {
+        let doomed = actionableEntries(fallback: entry)
+        guard !doomed.isEmpty else { return }
+        let ids = Set(doomed.map(\.id))
+        entries.removeAll { ids.contains($0.id) }
+        clearSelection()
+        if let focusedEntryIndex, !visibleEntries.indices.contains(focusedEntryIndex) {
+            self.focusedEntryIndex = visibleEntries.isEmpty ? nil : visibleEntries.count - 1
+        }
+        NotificationCenter.default.post(
+            name: .clipboardEntriesRemovalRequested,
+            object: nil,
+            userInfo: ["ids": ids.map(\.uuidString)])
+        noteInteraction()
+    }
 
     let storeURL: URL
 
@@ -363,6 +440,7 @@ final class ClipboardPanelModel: ObservableObject {
         query = ""
         sourceIndex = 0
         focusedEntryIndex = nil
+        clearSelection()
     }
 
     func reload(resetScope shouldReset: Bool = false) {
@@ -404,7 +482,12 @@ final class ClipboardPanelModel: ObservableObject {
         armStandDown(after: Self.armedDwell)
     }
 
-    func moveEntry(_ direction: Int) {
+    /// Move the focus, and optionally take the row it lands on with it.
+    ///
+    /// `select` is ⌘ or ⇧ held: walking the list while picking is the only way to build a
+    /// selection without the mouse, and the arrows on their own must keep meaning "move",
+    /// because that is what Return then pastes.
+    func moveEntry(_ direction: Int, selecting select: Bool = false) {
         noteInteraction()
         let count = visibleEntries.count
         guard count > 0 else {
@@ -412,7 +495,24 @@ final class ClipboardPanelModel: ObservableObject {
             return
         }
         let current = focusedEntryIndex ?? (direction >= 0 ? -1 : count)
-        focusedEntryIndex = min(max(current + direction, 0), count - 1)
+        let next = min(max(current + direction, 0), count - 1)
+        focusedEntryIndex = next
+
+        guard select, visibleEntries.indices.contains(next) else { return }
+
+        // An anchor and a cursor, not a growing pile. Adding on every press meant reversing
+        // could only ever select more: ⌘↓ ⌘↓ ⌘↑ left three rows picked when the user was
+        // plainly taking one back. The selection is the span between where the walk started
+        // and where it is now, so moving toward the anchor shrinks it.
+        if selectionAnchor == nil || selectedIDs.isEmpty {
+            let originIndex = visibleEntries.indices.contains(current) ? current : next
+            selectionAnchor = visibleEntries[originIndex].id
+        }
+        let range = ClipboardScopeService.rangeSelection(
+            in: visibleEntries, from: selectionAnchor, to: visibleEntries[next].id)
+        selectedIDs = range
+        // A span has no pick order of its own; list order is the honest answer.
+        pickOrder = visibleEntries.map(\.id).filter { range.contains($0) }
     }
 
     var focusedEntry: LauncherView.ClipboardEntry? {
@@ -467,20 +567,6 @@ final class ClipboardPanelModel: ObservableObject {
         isKeyboardArmed = true
         phase = .expanded
         armStandDown(after: Self.armedDwell)
-    }
-
-    /// What a row hands over when it is dragged out. Files win over the text mirror: a
-    /// Finder copy also writes its path onto the pasteboard as text, and dragging that
-    /// text into a document would paste a path instead of the file.
-    func dragPayload(for entry: LauncherView.ClipboardEntry) -> ClipboardPreviewTarget? {
-        if let path = entry.filePaths.first {
-            return .file(URL(fileURLWithPath: path))
-        }
-        if let fileName = entry.imageFileName {
-            return .file(ClipboardImageStore.url(for: fileName))
-        }
-        let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : .text(entry.text)
     }
 
     /// What Space should open for the row the user is on, or for the newest clip when
@@ -621,6 +707,8 @@ struct ClipboardDockPill: View {
     /// `onKeyPress` only delivers to a focused view, so a key window is not enough on its
     /// own — the card has to actually hold SwiftUI focus once it is armed.
     @FocusState private var cardFocused: Bool
+    @FocusState private var searchFocused: Bool
+    @State private var searchHovered = false
     private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     private var expanded: Bool { model.phase == .expanded }
@@ -668,22 +756,65 @@ struct ClipboardDockPill: View {
             model.reload()
         }
         .onKeyPress(.escape) {
+            // Undo the narrowing before closing the panel: a selection and a query are both
+            // work the user did, and one key should not throw them away with the window.
+            if !model.selectedIDs.isEmpty {
+                model.clearSelection()
+                return .handled
+            }
+            if !model.query.isEmpty {
+                model.query = ""
+                return .handled
+            }
             ClipboardPanelController.shared.close()
             return .handled
         }
-        .onKeyPress(.downArrow) {
-            model.moveEntry(1)
+        .onKeyPress(keys: ["a"]) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            model.selectAllVisible()
             return .handled
         }
-        .onKeyPress(.upArrow) {
-            model.moveEntry(-1)
+        .onKeyPress(keys: ["c"]) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            let entries = model.actionableEntries()
+            guard !entries.isEmpty else { return .ignored }
+            ClipboardPanelController.shared.copy(entries)
             return .handled
         }
+        // There was no way to drop a clip from here at all: the list could be searched,
+        // selected and pasted, and never pruned.
+        .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+            guard !model.actionableEntries().isEmpty else { return .ignored }
+            model.removeActionableEntries()
+            return .handled
+        }
+        // Space previews the clip you are on and closes when you move. ⌘P pins that
+        // preview open, so walking the list becomes a way to look through the clips
+        // rather than a sequence of open-and-close.
+        .onKeyPress(keys: ["p"]) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            model.togglePreviewPin()
+            return .handled
+        }
+
+        // Modifier-aware, because the plain-key form of `onKeyPress` never sees which keys
+        // were held — so ⌘↓ was arriving here as a bare ↓ and only ever moved the focus.
+        .onKeyPress(keys: [.downArrow, .upArrow]) { press in
+            let direction = press.key == .downArrow ? 1 : -1
+            let selecting = !press.modifiers.isDisjoint(with: [.command, .shift])
+            model.moveEntry(direction, selecting: selecting)
+            return .handled
+        }
+        // Not while the search field has the keyboard: these bubble up from the focused
+        // field, so arrowing through a typed query jumped the source chip instead of
+        // moving the cursor through the user's own text.
         .onKeyPress(.leftArrow) {
+            guard !searchFocused else { return .ignored }
             model.cycleSource(-1)
             return .handled
         }
         .onKeyPress(.rightArrow) {
+            guard !searchFocused else { return .ignored }
             model.cycleSource(1)
             return .handled
         }
@@ -692,8 +823,22 @@ struct ClipboardDockPill: View {
             return .handled
         }
         .onKeyPress(.return) {
-            guard let entry = model.focusedEntry else { return .ignored }
-            ClipboardPanelController.shared.paste(entry)
+            let entries = model.actionableEntries()
+            guard !entries.isEmpty else { return .ignored }
+            ClipboardPanelController.shared.pasteMany(entries)
+            return .handled
+        }
+        // Typing is searching. The arrows, Space and Return above keep their jobs; anything
+        // that would put a character on screen opens the field and goes into it, so finding
+        // a clip never starts with hunting for a control.
+        .onKeyPress(phases: .down) { press in
+            guard !searchFocused,
+                press.modifiers.isDisjoint(with: [.command, .control, .option]),
+                let character = press.characters.first,
+                character.isLetter || character.isNumber
+            else { return .ignored }
+            model.query.append(character)
+            searchFocused = true
             return .handled
         }
     }
@@ -812,10 +957,23 @@ struct ClipboardDockPill: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func row(_ entry: LauncherView.ClipboardEntry, index: Int) -> some View {
-        Button {
-            model.focusedEntryIndex = index
+    /// A modifier means "pick this", a plain click still means "paste this" — the fast path
+    /// stays one click.
+    private func activateRow(_ entry: LauncherView.ClipboardEntry, index: Int) {
+        model.focusedEntryIndex = index
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) || flags.contains(.shift) {
+            model.selectEntry(
+                entry, extend: flags.contains(.shift), toggle: flags.contains(.command))
+        } else {
             ClipboardPanelController.shared.paste(entry)
+        }
+    }
+
+    private func row(_ entry: LauncherView.ClipboardEntry, index: Int) -> some View {
+        let selected = model.isSelected(entry)
+        return Button {
+            activateRow(entry, index: index)
         } label: {
             HStack(spacing: 10) {
                 thumbnail(entry, size: CGSize(width: 34, height: 26))
@@ -829,6 +987,11 @@ struct ClipboardDockPill: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 4)
+                if selected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.accentColor)
+                }
                 if !entry.sourceBundleId.isEmpty,
                     let icon = appIcon(bundleID: entry.sourceBundleId)
                 {
@@ -837,35 +1000,178 @@ struct ClipboardDockPill: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
-            .background(
-                model.focusedEntryIndex == index
-                    ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05),
+            .background(rowTint(index: index, selected: selected),
                 in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1)
+                }
+            }
         }
         .buttonStyle(.plain)
-        // Dragging a clip out is a read: it stays in the history.
-        .onDrag {
-            switch model.dragPayload(for: entry) {
-            case .file(let url):
-                return NSItemProvider(contentsOf: url) ?? NSItemProvider()
-            case .text(let text):
-                return NSItemProvider(object: text as NSString)
-            case nil:
-                return NSItemProvider()
+        // Dragging a selected row drags the whole selection; dragging an unselected one
+        // drags just it, without disturbing what was picked.
+        // `.onDrag` hands over exactly one `NSItemProvider` and has no multi-item form, so
+        // a four-clip selection dragged to Finder arrived as one file. This starts a real
+        // AppKit dragging session instead, and forwards a press that never travelled as the
+        // click it was.
+        .overlay {
+            MultiItemDragSource(
+                urls: {
+                    let dragged = model.isSelected(entry)
+                        ? model.actionableEntries() : [entry]
+                    ClipboardPanelController.shared.beginDrag(dragged)
+                    return ClipboardScopeService.fileURLs(for: dragged)
+                },
+                onClick: { activateRow(entry, index: index) }
+            )
+        }
+        .contextMenu {
+            Button("Copy") { ClipboardPanelController.shared.copy(model.actionableEntries(fallback: entry)) }
+            Button("Paste into \(ClipboardPanelController.shared.returnAppName)") {
+                ClipboardPanelController.shared.pasteMany(
+                    model.actionableEntries(fallback: entry))
+            }
+            Divider()
+            Button(model.isSelected(entry) ? "Deselect" : "Select") {
+                model.selectEntry(entry, extend: false, toggle: true)
+            }
+            Button("Select All") { model.selectAllVisible() }
+            Divider()
+            Button("Remove", role: .destructive) {
+                model.removeActionableEntries(fallback: entry)
             }
         }
     }
 
+    private func rowTint(index: Int, selected: Bool) -> Color {
+        if selected { return Color.accentColor.opacity(0.24) }
+        if model.focusedEntryIndex == index { return Color.accentColor.opacity(0.18) }
+        return Color.primary.opacity(0.05)
+    }
+
+    /// A stack with a count, rather than the single-row screenshot macOS would use — a
+    /// three-clip drag that looks like one clip is a drag the user cannot trust.
+    private func dragPreview(for entries: [LauncherView.ClipboardEntry]) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(Array(entries.prefix(3).enumerated()), id: \.element.id) { offset, entry in
+                thumbnail(entry, size: CGSize(width: 44, height: 34))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .strokeBorder(Color.white.opacity(0.25), lineWidth: 1)
+                    )
+                    .offset(x: CGFloat(offset) * 6, y: CGFloat(offset) * 6)
+            }
+        }
+        .padding(6)
+        .overlay(alignment: .bottomTrailing) {
+            if entries.count > 1 {
+                Text("\(entries.count)")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor, in: Capsule())
+            }
+        }
+    }
+
+    /// Search leads the row, then the app chips.
+    ///
+    /// The model has always filtered on a query — text, OCR text, file names, source app —
+    /// and nothing ever set it. The glyph is the smallest thing that can: it widens into a
+    /// field under the pointer, on a click, or the moment a printable key is typed, and
+    /// gives the width back when it is empty and unfocused, so at rest the row is chips.
     private var filterRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(model.sources) { source in
-                    filterPill(source)
+        HStack(spacing: 6) {
+            searchField
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(model.sources) { source in
+                        filterPill(source)
+                    }
+                }
+                .padding(.trailing, 12)
+            }
+            // Reaching for the chips is asking for the chips. An open field is holding
+            // width they need, so scrolling hands it back — but never while a query is in
+            // it, because collapsing then would hide the thing doing the filtering.
+            .onScrollPhaseChange { _, phase in
+                guard phase != .idle, model.query.isEmpty else { return }
+                searchHovered = false
+                searchFocused = false
+            }
+            // A chip sliding under the field fades out rather than being sliced in half.
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.04),
+                        .init(color: .black, location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing)
+            )
+        }
+        .padding(.leading, 12)
+        .frame(height: 46)
+        .animation(.spring(response: 0.28, dampingFraction: 0.86), value: searchExpanded)
+    }
+
+    private var searchExpanded: Bool {
+        searchHovered || searchFocused || !model.query.isEmpty
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(searchExpanded ? .primary : .secondary)
+
+            if searchExpanded {
+                TextField("Search clips", text: $model.query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11.5))
+                    .focused($searchFocused)
+                    .frame(width: 116)
+                    .onKeyPress(.escape) {
+                        // Clear first, close second: one Escape should not throw away the
+                        // panel and the query together.
+                        if model.query.isEmpty {
+                            searchFocused = false
+                            return .handled
+                        }
+                        model.query = ""
+                        return .handled
+                    }
+
+                if !model.query.isEmpty {
+                    Button { model.query = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear search")
                 }
             }
-            .padding(.horizontal, 12)
         }
-        .frame(height: 46)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(
+            searchExpanded ? Color.primary.opacity(0.09) : Color.primary.opacity(0.05),
+            in: Capsule()
+        )
+        .overlay(
+            Capsule().strokeBorder(
+                searchFocused ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.1))
+        )
+        .contentShape(Capsule())
+        .onHover { searchHovered = $0 }
+        .onTapGesture { searchFocused = true }
+        .help("Search clips")
     }
 
     private func filterPill(_ source: ClipboardPanelModel.SourceChoice) -> some View {
@@ -940,4 +1246,12 @@ struct ClipboardDockPill: View {
         else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
     }
+}
+
+extension Notification.Name {
+    /// Corner panel → the dock, asking it to drop these clips from the history both of
+    /// them read. The corner does not rewrite that file: the dock owns it and the image
+    /// blobs stored beside it, and two writers would race over both.
+    static let clipboardEntriesRemovalRequested = Notification.Name(
+        "clipboardEntriesRemovalRequested")
 }

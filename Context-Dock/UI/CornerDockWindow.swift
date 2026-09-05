@@ -50,27 +50,6 @@ final class CornerDockHostView: NSView {
     }
 }
 
-/// Whether the corner holds the keyboard, and a ticket the composer watches to take focus.
-///
-/// Held apart from the controller because the controller cannot run in a test: it builds an
-/// `NSPanel`. The rule this encodes — a click on the composer both arms the window and asks
-/// the field for focus, and only a real stand-down gives the keyboard back — is the part
-/// worth testing, so it lives where a test can reach it.
-@MainActor
-final class CornerDockKeyboardState: ObservableObject {
-    @Published private(set) var isArmed = false
-    /// Bumped on every request. The composer watches the number, not a boolean, so a second
-    /// click after focus was lost elsewhere is still a change it can see.
-    @Published private(set) var focusRequestToken = 0
-
-    func composerInteracted() {
-        isArmed = true
-        focusRequestToken &+= 1
-    }
-
-    func stoodDown() { isArmed = false }
-}
-
 @MainActor
 final class CornerDockController: NSObject {
     static let shared = CornerDockController()
@@ -78,16 +57,15 @@ final class CornerDockController: NSObject {
     private var panel: CornerDockPanel?
     private var hostView: CornerDockHostView?
     private var hoverMonitors: [Any] = []
+    private var accumulatedChatSwipeX: CGFloat = 0
+    private var accumulatedChatSwipeY: CGFloat = 0
     private var sinks: Set<AnyCancellable> = []
-    /// How far the current swipe has travelled sideways, reset at each gesture boundary.
-    private var swipeTravel: CGFloat = 0
-    /// Far enough that a stray sideways nudge during a vertical scroll is not a mode change.
-    private static let swipeThreshold: CGFloat = 45
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
     private var shelf: DropShelfPresentation { DropShelfController.shared.presentation }
-    let prompt = AppChatPromptModel()
-    let keyboard = CornerDockKeyboardState()
+    let chatPresentation = CornerChatPresentation.shared
+    let keyboardState = CornerDockKeyboardState()
+    var prompt: AppChatPromptModel { chatPresentation.appChat }
 
     var window: NSPanel? { panel }
 
@@ -179,6 +157,12 @@ final class CornerDockController: NSObject {
         clipboardModel.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
+        // The preview card appears and disappears with the walk through the list, so the
+        // stack has to be measured again when the focus moves — otherwise the card is drawn
+        // in a slot nothing reserved and the rect below it is wrong for every row.
+        clipboardModel.$focusedEntryIndex.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
         shelf.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
@@ -189,30 +173,30 @@ final class CornerDockController: NSObject {
                 // ambient pills it takes focus the moment it appears.
                 if phase.showsInput {
                     self?.armKeyboard()
-                    self?.keyboard.composerInteracted()
                 } else {
-                    // Shrinking to the badge is a stand-down, not a pause: the corner has
-                    // to stop being key or it keeps the keyboard away from the app the
-                    // user went back to.
                     self?.disarmKeyboard()
-                    self?.keyboard.stoodDown()
                 }
             }
         }.store(in: &sinks)
-
-        // The pill's height is a function of how many suggestions it has, and switching
-        // app can swap the whole list while the phase stays `.suggesting`. Without this the
-        // pill redraws taller and `interactiveRects` keeps the old rect: the difference is
-        // drawn, and dead to the mouse.
-        prompt.$suggestions.sink { [weak self] _ in
+        chatPresentation.$mode.sink { [weak self] _ in
+            Task { @MainActor in
+                self?.refresh()
+                self?.requestComposerFocus()
+            }
+        }.store(in: &sinks)
+        chatPresentation.$isVisible.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
-
-        // The two modes compose in different bars, so they are different heights. Switching
-        // does not always change the phase — General's composer and App's resting input are
-        // both `.prompt` — so the scope has to be watched in its own right.
-        prompt.$scope.sink { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+        chatPresentation.generalChat.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.refresh() }
+        }.store(in: &sinks)
+        // App mode's card grows with its transcript, and those messages live on the dock's
+        // conversation rather than on the prompt — so watching `$phase` alone left the card
+        // taller than the rect the mouse was tested against. Deferred a turn because
+        // `objectWillChange` fires before the change lands; `refresh` returns immediately
+        // when the geometry is unchanged, which is most of the time.
+        prompt.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.refresh() }
         }.store(in: &sinks)
     }
 
@@ -236,10 +220,18 @@ final class CornerDockController: NSObject {
     func refresh() {
         guard let panel, let hostView else { return }
         let slots = currentSlots()
-        hostView.interactiveRects = [slots.shelf, slots.clipboard, slots.prompt]
+        let rects = [slots.shelf, slots.preview, slots.clipboard, slots.prompt]
             .compactMap { $0 }
 
-        let shouldShow = slots.shelf != nil || slots.clipboard != nil || slots.prompt != nil
+        // Nothing moved, nothing to do. The models this follows republish on every
+        // keystroke — the draft is `@Published` — and without this the corner recomputed
+        // its geometry on each one for a card whose size had not changed.
+        if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
+            return
+        }
+        hostView.interactiveRects = rects
+
+        let shouldShow = !rects.isEmpty
         if shouldShow {
             if !panel.isVisible {
                 position()
@@ -260,18 +252,34 @@ final class CornerDockController: NSObject {
 
     /// Sizes come from each surface's own phase; the placement comes from the shared
     /// layout, so what is drawn and what is hit-tested cannot drift apart.
-    private func currentSlots() -> (shelf: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
+    private func currentSlots()
+        -> (shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, prompt: CGRect?)
+    {
         CornerDockLayout.slots(
             shelf: shelf.phase.isVisible
                 ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
+            preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            prompt: prompt.phase.isVisible ? promptSize : nil)
+            prompt: chatPresentation.isVisible ? promptSize : nil)
+    }
+
+    /// The preview belongs to an open, expanded card with a clip actually chosen — not to a
+    /// pill that happens to be on screen.
+    var showsClipPreview: Bool {
+        clipboardModel.phase == .expanded && clipboardModel.focusedEntry != nil
     }
 
     private var promptSize: CGSize {
-        AppChatPromptMetrics.size(
-            for: prompt.phase, suggestions: prompt.suggestions.count, scope: prompt.scope)
+        if chatPresentation.mode == .general {
+            return chatPresentation.generalPhase == .mini
+                ? AppChatPromptMetrics.miniSize
+                : CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
+        }
+        return AppChatPromptMetrics.size(
+            for: prompt.phase,
+            suggestions: prompt.suggestions.count,
+            messages: prompt.messages.count)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -297,28 +305,16 @@ final class CornerDockController: NSObject {
         panel.makeKeyAndOrderFront(nil)
     }
 
-    func disarmKeyboard() {
-        panel?.styleMask = [.borderless, .nonactivatingPanel]
+    func requestComposerFocus() {
+        ensurePanel()
+        armKeyboard()
+        chatPresentation.composerInteracted()
+        keyboardState.composerInteracted()
     }
 
-    /// A click landed on the composer.
-    ///
-    /// Arming used to happen only when the phase changed, which meant it happened once: on
-    /// the way in. Click away to another app and back and there was no phase change to
-    /// notice, so the panel stayed non-activating, never became key, and the field the
-    /// user was typing into swallowed every keystroke. This is the path a click takes,
-    /// whatever the phase was already.
-    func requestComposerFocus() {
-        guard prompt.phase.showsInput else { return }
-        // The rect the click was tested against may be stale, and the next one will be
-        // tested against whatever this leaves behind.
-        refresh()
-        armKeyboard()
-        keyboard.composerInteracted()
-        DispatchQueue.main.async { [weak self] in
-            guard let panel = self?.panel else { return }
-            panel.makeFirstResponder(panel.contentView)
-        }
+    func disarmKeyboard() {
+        panel?.styleMask = [.borderless, .nonactivatingPanel]
+        keyboardState.stoodDown()
     }
 
     // MARK: - Hover
@@ -326,70 +322,79 @@ final class CornerDockController: NSObject {
     private func startHoverWatch() {
         guard hoverMonitors.isEmpty else { return }
         if let global = NSEvent.addGlobalMonitorForEvents(
-            matching: [.mouseMoved, .scrollWheel],
-            handler: { [weak self] event in
-                if event.type == .scrollWheel {
-                    self?.evaluateScroll(event)
-                } else {
-                    self?.evaluateHover()
-                }
-            })
+            matching: [.mouseMoved],
+            handler: { [weak self] _ in self?.evaluateHover() })
         {
             hoverMonitors.append(global)
         }
         if let local = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .scrollWheel],
+            matching: [.mouseMoved],
             handler: { [weak self] event in
-                if event.type == .scrollWheel {
-                    // Swallowed only when it actually switched, so a scroll over the
-                    // transcript still scrolls the transcript.
-                    return self?.evaluateScroll(event) == true ? nil : event
-                }
                 self?.evaluateHover()
                 return event
             })
         {
             hoverMonitors.append(local)
         }
+        if let swipe = NSEvent.addLocalMonitorForEvents(
+            matching: [.scrollWheel],
+            handler: { [weak self] event in self?.handleChatSwipe(event) ?? event })
+        {
+            hoverMonitors.append(swipe)
+        }
+        if let keys = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown],
+            handler: { [weak self] event in self?.handleChatNavigationKey(event) ?? event })
+        {
+            hoverMonitors.append(keys)
+        }
     }
 
-    /// A two-finger swipe across the composer switches modes.
+    /// Left arrow, but only when the chat is the surface the key was meant for.
     ///
-    /// Read from the pointer monitors rather than a responder-chain override: the corner is
-    /// a non-activating panel hosting a SwiftUI tree with its own scroll views, so which
-    /// view a wheel event reaches is not something to rely on.
-    @discardableResult
-    private func evaluateScroll(_ event: NSEvent) -> Bool {
-        guard prompt.phase.showsInput, let panel, panel.isVisible else { return false }
-        guard let rect = currentSlots().prompt else { return false }
+    /// This is a monitor over the whole corner panel, and it used to ask nothing except
+    /// which key was pressed — so arrowing through the clipboard's own list opened General
+    /// chat, because the clipboard and the chat share this window.
+    private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
+        guard let panel, event.window === panel,
+              event.keyCode == 123,
+              event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              chatPresentation.isVisible,
+              prompt.phase.showsInput,
+              !ClipboardPanelController.shared.model.isKeyboardArmed,
+              chatPresentation.handleLeftArrow(draft: prompt.query)
+        else { return event }
+        return nil
+    }
 
-        // Only the composer block. Above it is the transcript, where a horizontal scroll
-        // is a horizontal scroll.
-        let origin = panel.frame.origin
-        let composer = CGRect(
-            x: rect.minX, y: rect.minY,
-            width: rect.width,
-            height: min(rect.height, AppChatPromptMetrics.composerBlockHeight))
-            .offsetBy(dx: origin.x, dy: origin.y)
-        guard composer.contains(NSEvent.mouseLocation) else { return false }
+    private func handleChatSwipe(_ event: NSEvent) -> NSEvent? {
+        guard let panel, event.window === panel,
+              let promptRect = currentSlots().prompt,
+              promptRect.contains(event.locationInWindow)
+        else { return event }
 
-        switch event.phase {
-        case .began:
-            swipeTravel = 0
-        case .ended, .cancelled:
-            swipeTravel = 0
-            return false
-        default:
-            break
+        if event.phase == .began {
+            accumulatedChatSwipeX = 0
+            accumulatedChatSwipeY = 0
         }
-
-        // Vertical intent is not a swipe, whatever it drifts sideways by.
-        guard abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) else { return false }
-        swipeTravel += event.scrollingDeltaX
-        guard abs(swipeTravel) >= Self.swipeThreshold else { return false }
-        swipeTravel = 0
-        prompt.toggleScope()
-        return true
+        if event.phase == .began || event.phase == .changed
+            || event.momentumPhase == .began || event.momentumPhase == .changed
+        {
+            accumulatedChatSwipeX += event.scrollingDeltaX
+            accumulatedChatSwipeY += event.scrollingDeltaY
+        }
+        guard event.phase == .ended || event.momentumPhase == .ended else { return event }
+        defer {
+            accumulatedChatSwipeX = 0
+            accumulatedChatSwipeY = 0
+        }
+        guard abs(accumulatedChatSwipeX) > abs(accumulatedChatSwipeY) * 1.8 else {
+            return event
+        }
+        let draft = chatPresentation.mode == .general
+            ? chatPresentation.generalChat.input : prompt.query
+        return chatPresentation.handleHorizontalSwipe(
+            deltaX: accumulatedChatSwipeX, draft: draft) ? nil : event
     }
 
     private func stopHoverWatch() {
@@ -422,7 +427,7 @@ final class CornerDockController: NSObject {
         if overPrompt {
             shelf.hoverEnded()
             clipboardModel.hoverEnded()
-            prompt.hoverBegan()
+            chatPresentation.hoverBegan()
         } else if overShelf {
             clipboardModel.hoverEnded()
             shelf.hoverBegan()
@@ -432,7 +437,7 @@ final class CornerDockController: NSObject {
         } else {
             shelf.hoverEnded()
             clipboardModel.hoverEnded()
-            prompt.hoverEnded()
+            chatPresentation.hoverEnded()
         }
     }
 }
@@ -444,17 +449,37 @@ struct CornerDockSurface: View {
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
     @ObservedObject private var prompt = CornerDockController.shared.prompt
+    @ObservedObject private var chatPresentation = CornerDockController.shared.chatPresentation
 
     var body: some View {
         VStack(alignment: .trailing, spacing: CornerDockLayout.gap) {
             if shelf.phase.isVisible {
                 DropShelfPill(presentation: shelf, store: shelfStore)
             }
+            if CornerDockController.shared.showsClipPreview,
+                let focused = clipboardModel.focusedEntry
+            {
+                ClipboardPreviewCard(
+                    model: clipboardModel,
+                    entry: focused,
+                    isPinned: clipboardModel.isPreviewPinned,
+                    onTogglePin: { clipboardModel.togglePreviewPin() }
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
             if clipboardModel.phase.isVisible {
                 ClipboardDockPill(model: clipboardModel)
             }
-            if prompt.phase.isVisible {
-                AppChatPromptPill(model: prompt)
+            if chatPresentation.isVisible {
+                if chatPresentation.mode == .general {
+                    if chatPresentation.generalPhase == .mini {
+                        CornerGeneralChatMini()
+                    } else {
+                        CornerGeneralChatView(model: chatPresentation.generalChat)
+                    }
+                } else {
+                    AppChatPromptPill(model: prompt)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
@@ -467,5 +492,10 @@ struct CornerDockSurface: View {
             value: clipboardModel.phase.isVisible)
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84),
+            value: chatPresentation.generalPhase)
     }
 }

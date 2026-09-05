@@ -25,6 +25,9 @@ enum DropShelfMetrics {
     /// Shallow on purpose: the strip is the only part of the shelf that overlaps other
     /// apps' drop targets, so it reaches no further up the screen than it must.
     static let edgeStripHeight: CGFloat = 64
+    /// The bottom-right region a drag heading for the shelf passes through. Wide enough to
+    /// catch that approach, small enough that it is not a full-screen drag interceptor.
+    static let cornerSpotterSize = CGSize(width: 460, height: 460)
     /// Gap left for the clipboard pill sitting below this one in the same corner.
     static let clipboardClearance: CGFloat = 68
 
@@ -38,8 +41,22 @@ enum DropShelfMetrics {
         phase == .expanded ? expandedSize : collapsedSize
     }
 
+    /// What counts as a drag worth showing the shelf for.
+    ///
+    /// `.string` alone missed most text dragged out of other apps: a Pages or Safari
+    /// selection is offered as RTF or HTML and only *also* as plain text, and an app that
+    /// promises rich text first never matched, so the shelf stayed hidden for exactly the
+    /// drags it exists to catch. Images dragged from a browser are the same story in TIFF
+    /// and PNG.
     static var acceptedTypes: [NSPasteboard.PasteboardType] {
-        [.fileURL, .URL, .string]
+        [
+            .fileURL, .URL, .string,
+            .rtf, .rtfd, .html,
+            .tiff, .png,
+            .init("public.text"),
+            .init("public.utf8-plain-text"),
+            .init("public.image"),
+        ]
     }
 }
 
@@ -118,7 +135,8 @@ final class DropShelfController: NSObject {
     let store = DropShelfStore.shared
     let presentation = DropShelfPresentation()
 
-    private var edgePanel: NSPanel?
+    private var edgePanels: [NSPanel] = []
+    private var screenSink: AnyCancellable?
     private var storeSink: AnyCancellable?
     /// The strip and the pill overlap; a drag crossing from one to the other fires an exit
     /// on the first before the enter on the second. Ending the drag on the next runloop
@@ -145,6 +163,15 @@ final class DropShelfController: NSObject {
         dragEndTask = nil
         presentation.dragEntered()
         ClipboardPanelController.shared.setSuppressed(true)
+    }
+
+    /// An item is leaving the shelf by drag. The copy monitor stands down for the duration,
+    /// or the file the drag hands over comes straight back as a clip of itself.
+    func beginDrag() {
+        ClipboardPanelController.shared.setSuppressed(true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            ClipboardPanelController.shared.setSuppressed(false)
+        }
     }
 
     func dragExitedStrip() { scheduleDragEnd() }
@@ -182,9 +209,69 @@ final class DropShelfController: NSObject {
 
     // MARK: Windows
 
+    /// One spotter per screen, rebuilt when the screens change.
+    ///
+    /// There used to be exactly one, on `NSScreen.main`, created once at launch. Drag a
+    /// file on any other display and nothing was watching, so the shelf never appeared —
+    /// and plugging in or unplugging a monitor left the single strip measuring a screen
+    /// that had moved or gone.
     private func ensurePanels() {
-        guard edgePanel == nil else { return }
-        guard let screen = NSScreen.main else { return }
+        guard edgePanels.isEmpty else { return }
+        for screen in NSScreen.screens {
+            makeEdgePanel(on: screen)
+            makeCornerSpotter(on: screen)
+        }
+        screenSink = NotificationCenter.default.publisher(
+            for: NSApplication.didChangeScreenParametersNotification
+        )
+        .sink { [weak self] _ in
+            MainActor.assumeIsolated { self?.rebuildEdgePanels() }
+        }
+    }
+
+    private func rebuildEdgePanels() {
+        edgePanels.forEach { $0.orderOut(nil) }
+        edgePanels.removeAll()
+        for screen in NSScreen.screens {
+            makeEdgePanel(on: screen)
+            makeCornerSpotter(on: screen)
+        }
+    }
+
+    /// A spotter over the corner the shelf actually appears in.
+    ///
+    /// The bottom strip only catches a drag that reaches the very edge of the screen. When
+    /// something was already in the corner the drag was caught anyway — the corner panel
+    /// registers the same types — so the shelf appeared reliably *only* once the clipboard
+    /// or a chat had put a pill there. Dragging toward an empty corner found nothing
+    /// watching, which is exactly when the user is reaching for the shelf.
+    private func makeCornerSpotter(on screen: NSScreen) {
+        let visible = screen.visibleFrame
+        let size = DropShelfMetrics.cornerSpotterSize
+        let panel = NSPanel(
+            contentRect: NSRect(
+                x: visible.maxX - size.width, y: visible.minY,
+                width: size.width, height: size.height),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.level = .floating
+        panel.hidesOnDeactivate = false
+        panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isMovable = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
+        panel.isReleasedWhenClosed = false
+        let view = DropShelfEdgeView(frame: .zero)
+        view.controller = self
+        panel.contentView = view
+        panel.orderFrontRegardless()
+        edgePanels.append(panel)
+    }
+
+    private func makeEdgePanel(on screen: NSScreen) {
         let visible = screen.visibleFrame
 
         let edge = NSPanel(
@@ -207,7 +294,7 @@ final class DropShelfController: NSObject {
         edgeView.controller = self
         edge.contentView = edgeView
         edge.orderFrontRegardless()
-        edgePanel = edge
+        edgePanels.append(edge)
 
         // The pill itself lives in the shared corner shell, not in a window of its own.
         CornerDockController.shared.activate()

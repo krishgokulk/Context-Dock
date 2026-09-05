@@ -521,6 +521,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ?? resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication)
     }
 
+    /// Chooses a corner App Chat target without ever falling back to Context-Dock itself.
+    /// The panel may already be key when a repeated hotkey arrives, so the remembered
+    /// external app outranks the raw frontmost process.
+    static func appChatTargetApplication(
+        menuBarOwner: NSRunningApplication?,
+        remembered: NSRunningApplication?,
+        rawFrontmost: NSRunningApplication?,
+        ownBundleID: String
+    ) -> NSRunningApplication? {
+        [menuBarOwner, remembered, rawFrontmost]
+            .compactMap { $0 }
+            .first {
+                !$0.isTerminated
+                    && !($0.bundleIdentifier ?? "").isEmpty
+                    && $0.bundleIdentifier != ownBundleID
+            }
+    }
+
     private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
         guard let app, !app.isTerminated else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
@@ -1893,24 +1911,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        // Never DoraX itself. Frontmost is whatever holds the keyboard, and after any
-        // interaction with the dock that is this app — which scoped the prompt at
-        // Context-Dock and offered its own menu bar back as suggestions.
-        let target = menuBarOwningUserFacingApplication()
-        CornerDockController.shared.activate()
-        let prompt = CornerDockController.shared.prompt
-        // Pressing it again is asking for the other chat, not for the same one twice. A
-        // shrunken badge is not "already open" — that is the surface on its way out, and
-        // the hotkey brings it back to the app the user is looking at now.
-        if prompt.phase.showsInput {
-            prompt.toggleScope()
-            return
-        }
-        prompt.summon(
-            app: target?.localizedName ?? "",
+        // Capture the user-facing app before the corner panel activates Context-Dock.
+        // If the panel is already key, this helper remembers the app behind it instead
+        // of accidentally turning the next cycle into "Chat with Context-Dock".
+        let target = Self.appChatTargetApplication(
+            menuBarOwner: menuBarOwningUserFacingApplication(),
+            remembered: previousFrontmostApp,
+            rawFrontmost: NSWorkspace.shared.frontmostApplication,
+            ownBundleID: Bundle.main.bundleIdentifier ?? "")
+        let chatTarget = CornerChatTarget(
+            name: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
             summary: AppChatSuggestionProvider.summary(for: target))
+        CornerDockController.shared.activate()
+        CornerChatPresentation.shared.cycle(target: chatTarget)
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.
@@ -1954,19 +1969,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotKeyID, GetApplicationEventTarget(), 0, &quickNoteHotKeyRef)
     }
 
-    /// The general chat hotkey opens the same corner pill the app chat hotkey does —
-    /// compact input bar first, expanding through the same phases as the user types —
-    /// instead of the full window appearing at once. The window itself stays one expand
-    /// control away (the pill's ⤡ button) and keeps the very conversation, because both
-    /// read GeneralChatWindowModel.
-    func activateGeneralChatPrompt() {
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        CornerDockController.shared.activate()
-        CornerDockController.shared.prompt.summonGeneral()
-    }
-
     /// Global hotkey → open the full-window General Chat surface.
     func registerChatWindowHotkey() {
         if let ref = chatWindowEventHandlerRef {
@@ -1994,7 +1996,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
                 return OSStatus(eventNotHandledErr)
             }
-            delegate.activateGeneralChatPrompt()
+            delegate.toggleGeneralChatWindow()
             return noErr
         }
         let selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
@@ -3091,9 +3093,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Unregister hotkeys and cleanup
         unregisterGlobalHotkey()
-        #if DEBUG
-        unregisterInspectorHotkey()
-        #endif
 
         // Remove notification observers
         NotificationCenter.default.removeObserver(self)

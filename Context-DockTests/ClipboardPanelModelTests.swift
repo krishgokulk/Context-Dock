@@ -53,6 +53,114 @@ struct ClipboardPanelModelTests {
 
         #expect(model.visibleEntries.map(\.text) == ["project beta"])
     }
+
+    /// The field can be emptied as easily as it is filled, and doing so must give the whole
+    /// list back rather than leaving the panel looking empty.
+    @Test func clearingTheSearchRestoresEverythingInScope() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("project alpha", app: "Finder", bundleID: "com.apple.finder"),
+            entry("notes", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+
+        model.query = "project"
+        #expect(model.visibleEntries.count == 1)
+
+        model.query = ""
+        #expect(model.visibleEntries.count == 2)
+    }
+
+    /// Building a selection without the mouse. The walk has to take the row it started on
+    /// as well, or ⌘↓ from a resting list picks the second clip and skips the first.
+    @Test func arrowingWithAModifierPicksTheRowsItWalksThrough() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+            entry("three", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+        model.focusedEntryIndex = 0
+
+        model.moveEntry(1, selecting: true)
+        model.moveEntry(1, selecting: true)
+
+        #expect(model.actionableEntries().map(\.text) == ["one", "two", "three"])
+    }
+
+    /// Reversing takes rows back. Adding on every press meant ⌘↓ ⌘↓ ⌘↑ left three picked
+    /// when the user was plainly giving one up — the selection is the span between the
+    /// anchor and the cursor, so moving toward the anchor shrinks it.
+    @Test func arrowingBackTheOtherWayDeselects() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+            entry("three", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+        model.focusedEntryIndex = 0
+
+        model.moveEntry(1, selecting: true)
+        model.moveEntry(1, selecting: true)
+        #expect(model.actionableEntries().count == 3)
+
+        model.moveEntry(-1, selecting: true)
+        #expect(model.actionableEntries().map(\.text) == ["one", "two"])
+
+        model.moveEntry(-1, selecting: true)
+        #expect(model.actionableEntries().map(\.text) == ["one"])
+    }
+
+    /// Removal goes through the dock, which owns the history file and the image blobs, but
+    /// the rows have to leave immediately or the key press looks ignored.
+    @Test func removingTakesTheRowsOutAndAsksTheDockToPersistIt() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+        model.selectEntry(model.visibleEntries[0], extend: false, toggle: false)
+
+        var asked = false
+        let observation = NotificationCenter.default
+            .publisher(for: .clipboardEntriesRemovalRequested)
+            .sink { _ in asked = true }
+        defer { observation.cancel() }
+
+        model.removeActionableEntries()
+
+        #expect(asked)
+        #expect(model.visibleEntries.map(\.text) == ["two"])
+        #expect(model.selectedIDs.isEmpty)
+    }
+
+    /// A bare arrow still only moves, because Return pastes whatever the focus is on.
+    @Test func arrowingWithoutAModifierSelectsNothing() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("one", app: "Finder", bundleID: "com.apple.finder"),
+            entry("two", app: "Finder", bundleID: "com.apple.finder"),
+        ]
+
+        model.moveEntry(1)
+
+        #expect(model.selectedIDs.isEmpty)
+        #expect(model.focusedEntryIndex == 0)
+    }
+
+    /// Searching a clip you cannot read as text: the app it came from is part of the query,
+    /// which is what makes "safari" find a screenshot.
+    @Test func searchReachesTheSourceAppNotJustTheText() {
+        let model = ClipboardPanelModel()
+        model.entries = [
+            entry("", app: "Safari", bundleID: "com.apple.Safari"),
+            entry("notes", app: "Code", bundleID: "com.microsoft.VSCode"),
+        ]
+
+        model.query = "safari"
+
+        #expect(model.visibleEntries.count == 1)
+        #expect(model.visibleEntries.first?.sourceAppName == "Safari")
+    }
 }
 
 // MARK: - Pill phase machine
@@ -480,58 +588,5 @@ struct ClipboardBurstTests {
 
         #expect(model.phase == .collapsed)
         #expect(model.burstCount == 1)
-    }
-}
-
-// MARK: - Dragging a clip out
-
-@MainActor
-struct ClipboardDragTests {
-    private func model() -> ClipboardPanelModel {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("clipboard-\(UUID().uuidString).json")
-        return ClipboardPanelModel(storeURL: url)
-    }
-
-    /// A file clip drags as the file itself, so dropping it in Finder moves the real thing
-    /// rather than a path written out as text.
-    @Test func aFileClipDragsAsItsFile() {
-        let entry = LauncherView.ClipboardEntry(
-            text: "/tmp/report.pdf", timestamp: Date(), filePaths: ["/tmp/report.pdf"])
-
-        #expect(
-            model().dragPayload(for: entry) == .file(URL(fileURLWithPath: "/tmp/report.pdf")))
-    }
-
-    @Test func anImageClipDragsAsItsStoredBlob() {
-        let entry = LauncherView.ClipboardEntry(
-            text: "", timestamp: Date(), imageFileName: "clip-9.png")
-
-        #expect(
-            model().dragPayload(for: entry) == .file(ClipboardImageStore.url(for: "clip-9.png")))
-    }
-
-    @Test func aTextClipDragsAsText() {
-        let entry = LauncherView.ClipboardEntry(text: "some prose", timestamp: Date())
-
-        #expect(model().dragPayload(for: entry) == .text("some prose"))
-    }
-
-    /// A clip holding neither text nor a file has nothing to hand over; offering an empty
-    /// drag would look like a broken drop rather than nothing to drag.
-    @Test func anEmptyClipHasNothingToDrag() {
-        let entry = LauncherView.ClipboardEntry(text: "   ", timestamp: Date())
-
-        #expect(model().dragPayload(for: entry) == nil)
-    }
-
-    /// Files win over the text mirror: a Finder copy puts the path on the pasteboard as
-    /// text too, and dragging that text into a document would paste a path.
-    @Test func aFileClipIsNotDraggedAsItsOwnPath() {
-        let entry = LauncherView.ClipboardEntry(
-            text: "/tmp/a.png", timestamp: Date(), filePaths: ["/tmp/a.png"],
-            imageFileName: "clip-1.png")
-
-        #expect(model().dragPayload(for: entry) == .file(URL(fileURLWithPath: "/tmp/a.png")))
     }
 }

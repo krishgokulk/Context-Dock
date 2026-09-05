@@ -528,26 +528,47 @@ struct AIComposerBar: View {
     var onRemoveApp: ((String) -> Void)? = nil
     /// Images pasted with ⌘V. Nil leaves paste as text-only on that surface.
     var onPasteImages: (([URL]) -> Void)? = nil
-    /// How far the field may grow. The corner pins this to a single line: that shell's
-    /// height is computed from model state before the bar is drawn, and a field that grows
-    /// with its content would leave the drawn pill taller than the rect the mouse is
-    /// tested against. Every other surface sizes itself around the bar and keeps 1...5.
-    var lineLimit: ClosedRange<Int> = 1...5
+    /// Empty-field layer navigation. Nil on composers that do not participate.
+    var onEmptyLeftArrow: (() -> Bool)? = nil
+    /// The other direction. A surface that can be arrowed into has to be arrowable out of,
+    /// or the keyboard is a one-way door.
+    var onEmptyRightArrow: (() -> Bool)? = nil
+    /// Escape, handled by the surface so it can unwind its own state before closing.
+    /// `onKeyPress` only reaches a focused view, and in the corner this field is the only
+    /// thing focused — so a surface with no key handling of its own cannot be escaped at all.
+    var onEscape: (() -> Bool)? = nil
+    /// Stop the turn that is running. Nil where the surface cannot cancel one.
+    var onStop: (() -> Void)? = nil
+    /// ↑/↓ while a picker is open above the field. Returning true means the surface moved
+    /// its own selection and the field should not treat the key as text navigation.
+    var onMoveSelection: ((Int) -> Bool)? = nil
+    /// Return, when the surface owns the picker and knows which row is selected. Takes
+    /// precedence over this bar's own "first match wins" rule.
+    var onCommitSelection: (() -> Bool)? = nil
+    /// Corner panels cannot safely host an NSPopover child window. On those surfaces
+    /// the app button enters the same inline "/" picker used while typing.
+    var usesInlineAppPicker: Bool = false
+    /// Corner-only keep-open affordance. Nil on surfaces whose lifecycle is external.
+    var isPinned: Bool = false
+    var onTogglePin: (() -> Void)? = nil
+    /// Whether the bar shows its own `/` matches.
+    ///
+    /// Off in the corner, which stacks them as a list above the composer and has to know
+    /// their height in advance — a strip the bar grew on its own would push itself out
+    /// through the top of a card already sized for one row.
+    var rendersSlashMatches: Bool = true
+    /// Whether the bar draws its own capsule.
+    ///
+    /// Off in the corner, where the pill is already a bordered card: a capsule inside it
+    /// is a second border and a second set of insets, which is what made General mode read
+    /// as taller and looser than App mode when the two show the same single row.
+    var drawsChrome: Bool = true
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
     /// Which attached app the cursor is over — hovering swaps its icon for an "×",
     /// the same affordance the dock's chips use.
     @State private var hoveredAppName: String?
-
-    /// Text after a leading "/", or nil when this isn't an app filter. A space ends
-    /// it — "/rem" filters, "/rem what is due" is a sentence the user kept typing.
-    private var slashFilter: String? {
-        guard text.hasPrefix("/") else { return nil }
-        let rest = String(text.dropFirst())
-        guard !rest.contains(" ") else { return nil }
-        return rest.lowercased()
-    }
 
     /// Apps matching the "/" filter — running first, prefix matches before
     /// substring ones, so the leftmost icon is what Return will take.
@@ -556,17 +577,21 @@ struct AIComposerBar: View {
     /// catalogue directly was why "/finder" matched nothing here while it worked in the
     /// dock: the catalogue does not scan /System/Library/CoreServices.
     private var slashApps: [ChatAppEntry] {
-        guard let filter = slashFilter else { return [] }
-        return ChatAppDirectory.matching(filter)
+        ChatSlashAppPicker.matches(for: text)
     }
 
-    private func pickSlashApp(_ name: String) {
-        onAttachApp(name)
+    private func pickSlashApp(_ app: ChatAppEntry) {
+        onAttachApp(app.name)
         text = ""
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
+            if rendersSlashMatches, !slashApps.isEmpty {
+                ChatSlashAppChipStrip(matches: slashApps, onPick: pickSlashApp)
+            }
+
+            HStack(spacing: 8) {
             // Provider chip: switching model is part of asking, so it lives in the bar.
             Menu {
                 ForEach(AIProvider.allCases) { provider in
@@ -605,57 +630,55 @@ struct AIComposerBar: View {
             TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
-                .lineLimit(lineLimit)
+                .lineLimit(1...5)
                 .onSubmit {
+                    // A surface drawing its own picker knows which row is highlighted;
+                    // this bar only knows the order it handed over.
+                    if onCommitSelection?() == true { return }
                     // "/rem" + Return means "work with that app", not "ask about the
                     // string /rem".
                     if let first = slashApps.first {
-                        pickSlashApp(first.name)
+                        pickSlashApp(first)
                         return
                     }
                     onSubmit()
                 }
-
-            // The "/" matches live in the bar itself, narrowing as you type, rather
-            // than in a popover the typing cannot reach.
-            if !slashApps.isEmpty {
-                HStack(spacing: 4) {
-                    ForEach(slashApps) { app in
-                        Button { pickSlashApp(app.name) } label: {
-                            Group {
-                                if let icon = app.icon {
-                                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
-                                } else {
-                                    Image(systemName: "app.dashed")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(width: 17, height: 17)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .padding(2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                    .fill(
-                                        app.id == slashApps.first?.id
-                                            ? Color.accentColor.opacity(0.28) : Color.clear
-                                    )
-                            )
-                            .overlay(alignment: .bottomTrailing) {
-                                if app.isRunning {
-                                    Circle().fill(Color.green).frame(width: 5, height: 5)
-                                }
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help(app.isRunning ? "\(app.name) — running" : app.name)
-                    }
+                .onKeyPress(.leftArrow) {
+                    guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          onEmptyLeftArrow?() == true
+                    else { return .ignored }
+                    return .handled
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(Color.accentColor.opacity(0.12), in: Capsule())
-            }
+                .onKeyPress(.rightArrow) {
+                    guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                          onEmptyRightArrow?() == true
+                    else { return .ignored }
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    onEscape?() == true ? .handled : .ignored
+                }
+                // The two things the header offers that the keyboard could not reach.
+                .onKeyPress(keys: ["p"]) { press in
+                    guard press.modifiers.contains(.command), let onTogglePin else {
+                        return .ignored
+                    }
+                    onTogglePin()
+                    return .handled
+                }
+                .onKeyPress(keys: ["k"]) { press in
+                    guard press.modifiers.contains(.command), let onClear else {
+                        return .ignored
+                    }
+                    onClear()
+                    return .handled
+                }
+                .onKeyPress(.upArrow) {
+                    onMoveSelection?(-1) == true ? .handled : .ignored
+                }
+                .onKeyPress(.downArrow) {
+                    onMoveSelection?(1) == true ? .handled : .ignored
+                }
 
             if let extraAttachMenu {
                 Menu {
@@ -734,7 +757,13 @@ struct AIComposerBar: View {
                 .background(Color.accentColor.opacity(0.16), in: Capsule())
             }
 
-            Button { showAppPicker = true } label: {
+            Button {
+                if usesInlineAppPicker {
+                    ChatSlashAppPicker.openInline(text: &text)
+                } else {
+                    showAppPicker = true
+                }
+            } label: {
                 Image(systemName: "app.dashed")
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
@@ -759,15 +788,49 @@ struct AIComposerBar: View {
                 .help("Clear this conversation")
             }
 
+            if let onTogglePin {
+                Button(action: onTogglePin) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 13))
+                        .foregroundStyle(isPinned ? Color.accentColor : .secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Keep this open")
+            }
+
             if isSending {
-                ProgressView().controlSize(.small)
+                if let onStop {
+                    // A spinner says "wait". A surface that can cancel should offer that
+                    // instead, or the only way out of a long turn is to sit through it.
+                    Button(action: onStop) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 20, height: 20)
+                            .background(Color.primary.opacity(0.12), in: Circle())
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop")
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, drawsChrome ? 10 : 0)
+            .background {
+                if drawsChrome {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.06))
+                        .overlay(
+                            Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+                        )
+                        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+                }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.primary.opacity(0.06), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
         .acceptsPastedImages { urls in onPasteImages?(urls) }
     }
 }

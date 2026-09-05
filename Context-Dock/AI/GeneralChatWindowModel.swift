@@ -717,6 +717,10 @@ final class GeneralChatWindowModel: ObservableObject {
         // history with it, leaving no way back to a conversation the user built.
         let remaining = currentMembership.filter { $0 != name }
         guard remaining.count != currentMembership.count else { return }
+        if activeScopeAppName == name, !activeScope.isWorkspace {
+            openSession(.general, title: "General Chat")
+            return
+        }
         if activeScope.isWorkspace {
             openCombination(remaining)
             return

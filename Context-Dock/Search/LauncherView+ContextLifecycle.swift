@@ -1116,6 +1116,14 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .appChatPromptNewChat)) { _ in
                 handleAppChatPromptNewChat()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptCancel)) { _ in
+                handleAppChatPromptCancel()
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: .clipboardEntriesRemovalRequested)
+            ) { note in
+                handleClipboardEntriesRemovalRequest(note)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 ClipboardPanelController.shared.show()
             }
@@ -2053,31 +2061,55 @@ extension LauncherView {
         let query = (info["query"] as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        NotificationCenter.default.post(name: .activateContextDock, object: nil)
+        // Asking in the corner used to open the Context Dock over whatever the user was
+        // working in, and then wait 120 ms for it to finish appearing before the question
+        // landed. The pipeline never needed that: the launcher view is built once at
+        // startup and only ordered out when hidden, so it and its handlers are alive to run
+        // the turn whether or not anyone can see them. The corner is a second presentation
+        // of this conversation, not a shortcut to the dock.
         retargetCornerAppChat(appName: appName, bundleId: bundleId)
 
         guard !query.isEmpty else {
             requestWindowSizeUpdate(reason: .panelChanged, animated: true)
             return
         }
-        // Let the dock finish opening before the question lands in it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            dismissMediaLayer()
-            handleL2QuerySkippingMenuRouter(query)
-        }
+        dismissMediaLayer()
+        handleL2QuerySkippingMenuRouter(query)
     }
 
-    func handleAppChatPromptScopeChange(_ note: Notification) {
-        guard let info = note.userInfo,
-            let bundleId = info["bundleId"] as? String,
-            let appName = info["appName"] as? String
-        else { return }
-        retargetCornerAppChat(appName: appName, bundleId: bundleId)
+    /// The corner asked to stop the running turn. The task is the dock's, so the stop is too.
+    func handleAppChatPromptCancel() {
+        guard l2.isLoading || l2.currentTask != nil else { return }
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        AppChatConversation.shared.liveSteps = []
+    }
+
+    /// The corner asked to drop clips. It reads the same history this writes, and the image
+    /// blobs live beside that file, so removal happens here where both are owned.
+    func handleClipboardEntriesRemovalRequest(_ note: Notification) {
+        guard let raw = note.userInfo?["ids"] as? [String] else { return }
+        let ids = Set(raw.compactMap(UUID.init(uuidString:)))
+        guard !ids.isEmpty else { return }
+
+        let doomed = clipboardHistory.filter { ids.contains($0.id) }
+        guard !doomed.isEmpty else { return }
+        clipboardHistory.removeAll { ids.contains($0.id) }
+        ClipboardImageStore.delete(fileNames: doomed.compactMap(\.imageFileName))
+        for id in ids {
+            selectedClipboardEntryIDs.remove(id)
+            expandedClipboardEntryIDs.remove(id)
+        }
+        clipboardSelectionOrder.removeAll { ids.contains($0) }
+        savePersistedClipboardHistory()
+        syncVisibleClipboardStateAfterPrune()
+        refreshCompactScopeResults(resetSelection: false)
     }
 
     /// The corner asked to start over. It shows the dock's conversation rather than one of
-    /// its own, so the dock is what empties it — the same span-ending the scope switch
-    /// does, minus the switch.
+    /// its own, so the dock is what empties it.
     func handleAppChatPromptNewChat() {
         l2.currentTask?.cancel()
         l2.currentTask = nil
@@ -2089,6 +2121,14 @@ extension LauncherView {
         if let key = l2.activeDockSessionKey {
             AppPanelChatStore.shared.beginSession(for: key)
         }
+    }
+
+    func handleAppChatPromptScopeChange(_ note: Notification) {
+        guard let info = note.userInfo,
+            let bundleId = info["bundleId"] as? String,
+            let appName = info["appName"] as? String
+        else { return }
+        retargetCornerAppChat(appName: appName, bundleId: bundleId)
     }
 
     /// The corner and dock are two presentations of this one session. Remove explicit
@@ -2105,6 +2145,12 @@ extension LauncherView {
         l2.chatArmed = true
         l2.chatDismissed = false
         syncL2DockSession()
+        // Opening the dock is what used to start context tracking for the target app, so a
+        // corner-only session had no live Finder selection to hand its turn: `showContextInDock`
+        // was false, and `handleSelectionChange` returns on that guard. Retargeting turns it
+        // on above, so read the selection now rather than waiting for the next AX event —
+        // otherwise the first question about a folder is asked with nothing selected.
+        refreshLiveSelectionIntoDockContext()
     }
 
     func checkClipboardForGlobalContext() {

@@ -35,6 +35,62 @@ final class DropShelfPresentation: ObservableObject {
 
     var onPhaseChange: ((DropShelfPhase) -> Void)?
 
+    // MARK: - Selection
+
+    /// Which items are picked, and the order they were picked in. The shelf exists to be
+    /// dragged out of, and dragging one file at a time is the slow way to move four.
+    @Published private(set) var selectedIDs: Set<UUID> = []
+    private var pickOrder: [UUID] = []
+    private var selectionAnchor: UUID?
+
+    func isSelected(_ item: DropShelfItem) -> Bool { selectedIDs.contains(item.id) }
+
+    /// Plain click replaces, ⌘ adds or removes, ⇧ extends — the same rule the clipboard
+    /// follows, read from the same helper.
+    func select(_ item: DropShelfItem, in items: [DropShelfItem], extend: Bool, toggle: Bool) {
+        if toggle {
+            if selectedIDs.contains(item.id) {
+                selectedIDs.remove(item.id)
+                pickOrder.removeAll { $0 == item.id }
+            } else {
+                selectedIDs.insert(item.id)
+                pickOrder.append(item.id)
+            }
+            selectionAnchor = item.id
+        } else if extend {
+            let range = ClipboardScopeService.rangeSelection(
+                in: items, from: selectionAnchor, to: item.id)
+            selectedIDs = range
+            pickOrder = items.map(\.id).filter { range.contains($0) }
+        } else {
+            selectedIDs = [item.id]
+            pickOrder = [item.id]
+            selectionAnchor = item.id
+        }
+    }
+
+    func selectAll(_ items: [DropShelfItem]) {
+        selectedIDs = Set(items.map(\.id))
+        pickOrder = items.map(\.id)
+    }
+
+    func clearSelection() {
+        selectedIDs = []
+        pickOrder = []
+        selectionAnchor = nil
+    }
+
+    /// The items an action applies to, in pick order: the selection when there is one,
+    /// otherwise just the row acted on.
+    func actionableItems(in items: [DropShelfItem], fallback item: DropShelfItem?)
+        -> [DropShelfItem]
+    {
+        let selected = ClipboardScopeService.orderedSelection(
+            from: items, selectedIDs: selectedIDs, pickOrder: pickOrder)
+        if !selected.isEmpty { return selected }
+        return item.map { [$0] } ?? []
+    }
+
     /// How long the pill lingers before standing down. The shelf keeps what it holds
     /// either way — hiding is only the pill leaving the corner, never the items leaving
     /// the shelf.
