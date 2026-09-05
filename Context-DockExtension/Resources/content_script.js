@@ -196,6 +196,18 @@
   };
   window.addEventListener("popstate", onMaybeNavigated);
 
+  // Safari may keep an already-open tab alive across app/extension rebuilds and suspend the
+  // MV3 worker between events. Without a periodic visible-tab refresh, Context Dock can keep
+  // serving yesterday's last payload until the user happens to scroll or reload. A bounded
+  // heartbeat makes passive page reads self-healing without opening menus or controlling UI.
+  const HEARTBEAT_MS = 20000;
+  setInterval(() => {
+    if (document.visibilityState === "visible") send("activate");
+  }, HEARTBEAT_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") send("activate");
+  });
+
   // Throttled scroll (send once per 2 s while scrolling)
   let scrollTimer;
   window.addEventListener("scroll", () => {

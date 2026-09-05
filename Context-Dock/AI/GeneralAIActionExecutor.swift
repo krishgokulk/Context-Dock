@@ -390,6 +390,12 @@ final class GeneralAIActionExecutor {
     func verifyCapability(id: String?, inputValues: [String: String]) async
         -> VerificationOutcome
     {
+        guard let descriptor = ActionVerifierRegistry.descriptor(for: id),
+              descriptor.requiredInputKeys.allSatisfy({ key in
+                  !(inputValues[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              })
+        else { return .notApplicable }
+
         switch id {
         case "reminders.create":
             let title = inputValues["title"]?

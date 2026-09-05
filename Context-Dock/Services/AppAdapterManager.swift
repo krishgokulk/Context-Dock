@@ -578,10 +578,24 @@ final class AppAdapterManager: ObservableObject {
             }
             if var a = try? camelDecoder.decode(AppAdapter.self, from: data) {
                 a.isBuiltIn = false; a.sourceFileURL = url
-                userAdapters.append(a)
+                let contractErrors = AppAdapterContract.errors(in: a)
+                if contractErrors.isEmpty {
+                    userAdapters.append(a)
+                } else {
+                    errors.append((url.lastPathComponent, contractErrors.map {
+                        "\($0.path): \($0.message)"
+                    }.joined(separator: "\n")))
+                }
             } else if var a = try? snakeDecoder.decode(AppAdapter.self, from: data) {
                 a.isBuiltIn = false; a.sourceFileURL = url
-                userAdapters.append(a)
+                let contractErrors = AppAdapterContract.errors(in: a)
+                if contractErrors.isEmpty {
+                    userAdapters.append(a)
+                } else {
+                    errors.append((url.lastPathComponent, contractErrors.map {
+                        "\($0.path): \($0.message)"
+                    }.joined(separator: "\n")))
+                }
             } else {
                 // Capture the real decode error for display
                 do { _ = try camelDecoder.decode(AppAdapter.self, from: data) } catch {
@@ -864,6 +878,14 @@ final class AppAdapterManager: ObservableObject {
         export.icon = export.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "app.fill" : export.icon
         export.isEnabled = true
         export.isBuiltIn = false
+
+        let contractErrors = AppAdapterContract.errors(in: export)
+        guard contractErrors.isEmpty else {
+            loadErrors.append((file: fileName + ".json", message: contractErrors.map {
+                "\($0.path): \($0.message)"
+            }.joined(separator: "\n")))
+            return
+        }
 
         // MERGE into an existing pack for the same app (by actionId): the AI can send a
         // follow-up pack with only NEW actions and Context-Dock adds them while keeping
@@ -1658,16 +1680,33 @@ final class AppAdapterManager: ObservableObject {
 
     // MARK: - Context readers
 
-    /// Run all contextReaders for the given adapter and return their output keyed by reader id.
-    /// Called when L2 opens so the AI has richer, app-specific context.
-    func runContextReaders(for bundleId: String, axContext: AXContext) async -> [String: String] {
-        guard let adapter = adapter(for: bundleId) else { return [:] }
-        var results: [String: String] = [:]
+    /// Run all contextReaders for the given adapter and return typed, scoped evidence.
+    func runGroundedContextReaders(
+        for bundleId: String, axContext: AXContext
+    ) async -> [GroundedContextEvidence] {
+        guard let adapter = adapter(for: bundleId) else { return [] }
+        var results: [GroundedContextEvidence] = []
         for reader in adapter.contextReaders {
             let (ok, output) = await runReader(reader, context: axContext)
-            if ok, !output.isEmpty { results[reader.id] = output }
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard ok, !trimmed.isEmpty else { continue }
+            results.append(GroundedContextEvidence(
+                readerID: reader.id,
+                source: "App Adapter · \(reader.name)",
+                scopeBundleID: adapter.bundleId,
+                capturedAt: Date(),
+                text: trimmed,
+                completeness: .complete))
         }
         return results
+    }
+
+    /// Compatibility view for existing callers. New reasoning paths should retain the typed
+    /// evidence so source, scope and capture time are not lost.
+    /// Called when L2 opens so the AI has richer, app-specific context.
+    func runContextReaders(for bundleId: String, axContext: AXContext) async -> [String: String] {
+        Dictionary(uniqueKeysWithValues: await runGroundedContextReaders(
+            for: bundleId, axContext: axContext).map { ($0.readerID, $0.text) })
     }
 
     private func runReader(_ reader: AdapterContextReader, context: AXContext) async -> (Bool, String) {

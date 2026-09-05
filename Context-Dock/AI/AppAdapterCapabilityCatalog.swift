@@ -4,6 +4,27 @@ import Foundation
 /// Both surfaces must read the same registry.
 @MainActor
 enum AppAdapterCapabilityCatalog {
+
+    /// The words people actually use for a capability, beside the one it was named with.
+    ///
+    /// Matching is token overlap between the sentence and the capability's id, title and
+    /// field names. That works when the user speaks API ("append to my note") and fails
+    /// exactly when they speak English ("add this to my notes"), which is most of the time.
+    static func verbSynonyms(for capabilityID: String) -> String {
+        let action = capabilityID.split(separator: ".").last.map(String.init) ?? capabilityID
+        switch action {
+        case "append": return "add put stick save write include attach"
+        case "create": return "add new make save start write"
+        case "search": return "find look lookup where which show list"
+        case "read": return "open show display get contents"
+        case "update": return "edit change amend revise"
+        case "delete": return "remove trash erase clear"
+        case "extract_tasks": return "todos tasks actions checklist"
+        case "topContacts": return "most often frequently ranking top who"
+        case "recent": return "latest last lately newest"
+        default: return ""
+        }
+    }
     static func registeredCandidates(
         appName: String, bundleID: String, query: String
     ) -> [DoraXActionCandidate] {
@@ -32,10 +53,24 @@ enum AppAdapterCapabilityCatalog {
                 let searchable = "\(capability.id) \(capability.title) "
                     + capability.inputSchema.fields
                         .map { "\($0.name) \($0.description)" }.joined(separator: " ")
-                let overlap = queryTokens.intersection(significantTokens(searchable))
-                let meaningful = overlap.subtracting(["apple", "note", "notes", "current", "file"])
-                guard !meaningful.isEmpty else { return nil }
-                let coverage = Double(meaningful.count) / Double(max(queryTokens.count, 1))
+                let overlap = queryTokens.intersection(
+                    significantTokens(searchable + " " + Self.verbSynonyms(for: capability.id)))
+                guard !overlap.isEmpty else { return nil }
+                // Words that only say which app this is. Matching on them alone is weak
+                // evidence — "notes" in "notes app" names the destination, not the task — so
+                // it scores low instead of being discarded.
+                //
+                // Discarding was the bug. "note" and "notes" were on this list to stop a
+                // match on the app's own name, and they are also the only words that
+                // identify every Notes capability, so every request containing "note" lost
+                // notes.append and notes.create and fell through to clicking Notes' menu bar
+                // — where `Edit → Add Link…` is disabled unless a note is already open. A
+                // weakly-matched capability still belongs in the ranking, because the thing
+                // it was losing to is driving someone's screen.
+                let meaningful = overlap.subtracting(["apple", "current", "file"])
+                let coverage = meaningful.isEmpty
+                    ? 0.1
+                    : Double(meaningful.count) / Double(max(queryTokens.count, 1))
                 var candidate = DoraXActionCandidate(
                     id: "capability.\(capability.id)", title: capability.title,
                     appName: appName, bundleID: bundleID, source: .mcp, route: .adapter,

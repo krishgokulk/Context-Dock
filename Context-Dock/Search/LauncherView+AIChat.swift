@@ -4998,7 +4998,7 @@ extension LauncherView {
                                 AIChatMessage(
                                     role: .assistant,
                                     content: pageLinks.isEmpty
-                                        ? "Safari did not return current-page links through either the direct reader or the enabled extension bridge. Click Context Dock’s Safari toolbar button once on this page to restart the extension worker, then retry."
+                                        ? "Safari did not return current-page links through the passive extension snapshot or direct read-only reader. Reload the page and confirm Context Dock is allowed for this website, then retry."
                                         : "I couldn’t identify that destination confidently. Here are the links from this page—choose the one you meant.",
                                     pageLinks: Array(pageLinks.prefix(20)),
                                     trace: ["Read current page links", "No confident destination match"]))
@@ -5032,9 +5032,9 @@ extension LauncherView {
                             if didReadPageLinks {
                                 message = "I read the current page, but it doesn’t contain links matching that request."
                             } else if bridge.isExtensionActive {
-                                message = "Context Dock’s Safari Extension is enabled, but Safari did not deliver a current-page snapshot and both live recovery readers returned no links. Click the Context Dock toolbar button once on this page to restart Safari’s extension worker, then try again."
+                                message = "Safari has not delivered a fresh current-page snapshot. Reload this page once and confirm Context Dock is allowed for this website in Safari Settings → Websites → Extensions, then retry. Read-only page questions never click Safari menus."
                             } else {
-                                message = "Safari has not delivered any Context Dock page snapshot yet. Open the Context Dock toolbar button on this page once; that establishes the local page bridge and retries the read without sending page data anywhere by itself."
+                                message = "Safari has not delivered a Context Dock page snapshot yet. Reload the page and confirm Context Dock is allowed for this website in Safari Settings → Websites → Extensions, then retry."
                             }
                             l2.chatMessages.append(
                                 AIChatMessage(
@@ -6281,25 +6281,17 @@ extension LauncherView {
             """
     }
 
-    /// Read-only DOM execution with honest fallback semantics. The Safari extension can be
-    /// enabled while its passive native payload is stale (Safari may keep an older service
-    /// worker alive). First use Safari's direct read path; if that is unavailable, wake the
-    /// already-enabled extension and run the same expression in its isolated world.
+    /// Read-only DOM execution with honest fallback semantics. Never route a read through
+    /// SafariExtensionCommandBridge: that bridge wakes the extension with a visible AX menu
+    /// click and is reserved for explicit page actions. Passive extension snapshots and the
+    /// direct AppleScript reader are the only read routes.
     private func executeCurrentSafariReadJavaScript(expression: String) async -> String? {
         if let direct = await SafariTabManager.shared.executeJS(expression),
             !direct.hasPrefix("JS error:"), !direct.isEmpty
         {
             return direct
         }
-        guard let safari = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == "com.apple.Safari" && !$0.isTerminated
-        }) else { return nil }
-        let extensionCode = "return " + expression
-        guard let bridged = try? await SafariExtensionCommandBridge.shared.runJavaScript(
-            extensionCode, in: safari),
-            !bridged.hasPrefix("JS error:"), !bridged.isEmpty
-        else { return nil }
-        return bridged
+        return nil
     }
 
     @MainActor

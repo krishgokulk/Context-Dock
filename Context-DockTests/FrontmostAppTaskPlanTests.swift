@@ -42,6 +42,9 @@ struct FrontmostAppTaskPlanTests {
 
         #expect(page.allows(.browserPage))
         #expect(page.allowedToolNames.contains("read_page"))
+        #expect(!page.permitsUIAutomation)
+        #expect(!page.allowedToolNames.contains("run_menu_command"))
+        #expect(!page.allowedToolNames.contains("send_keys"))
         #expect(!bookmarks.allows(.browserPage))
         #expect(!bookmarks.allowedToolNames.contains("read_page"))
 

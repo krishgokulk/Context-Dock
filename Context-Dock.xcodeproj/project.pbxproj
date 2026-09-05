@@ -224,47 +224,6 @@
 		};
 /* End PBXNativeTarget section */
 
-/* Begin PBXShellScriptBuildPhase section */
-		CAFE00000000000000000100 /* Strip Finder detritus before signing */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Strip Finder detritus before signing";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# Finder detritus that codesign refuses.\n#\n# The project uses PBXFileSystemSynchronizedRootGroup, so every file in a target's\n# folder is a member automatically. macOS custom-folder-icon markers (a zero-byte file\n# named Icon followed by a carriage return, with its data in a resource fork) therefore\n# get copied into the bundle, and signing fails with \"resource fork, Finder information,\n# or similar detritus not allowed\". Cleaning the source tree is not enough: the copy\n# happens during the build, after any pre-build sweep has run.\nBUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n[ -d \"$BUNDLE\" ] || exit 0\nfind \"$BUNDLE\" -type f -name Icon -delete 2>/dev/null || true\nfind \"$BUNDLE\" -type f -name \"Icon$(printf '\r')\" -delete 2>/dev/null || true\nxattr -cr \"$BUNDLE\" 2>/dev/null || true\nexit 0";
-		};
-		CAFE00000000000000000101 /* Strip Finder detritus before signing */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Strip Finder detritus before signing";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# Finder detritus that codesign refuses.\n#\n# The project uses PBXFileSystemSynchronizedRootGroup, so every file in a target's\n# folder is a member automatically. macOS custom-folder-icon markers (a zero-byte file\n# named Icon followed by a carriage return, with its data in a resource fork) therefore\n# get copied into the bundle, and signing fails with \"resource fork, Finder information,\n# or similar detritus not allowed\". Cleaning the source tree is not enough: the copy\n# happens during the build, after any pre-build sweep has run.\nBUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n[ -d \"$BUNDLE\" ] || exit 0\nfind \"$BUNDLE\" -type f -name Icon -delete 2>/dev/null || true\nfind \"$BUNDLE\" -type f -name \"Icon$(printf '\r')\" -delete 2>/dev/null || true\nxattr -cr \"$BUNDLE\" 2>/dev/null || true\nexit 0";
-		};
-/* End PBXShellScriptBuildPhase section */
-
 /* Begin PBXProject section */
 		FD1617CC2ECEA5B500620C78 /* Project object */ = {
 			isa = PBXProject;
@@ -326,6 +285,47 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		CAFE00000000000000000100 /* Strip Finder detritus before signing */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Strip Finder detritus before signing";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Finder detritus that codesign refuses.\n#\n# The project uses PBXFileSystemSynchronizedRootGroup, so every file in a target's\n# folder is a member automatically. macOS custom-folder-icon markers (a zero-byte file\n# named Icon followed by a carriage return, with its data in a resource fork) therefore\n# get copied into the bundle, and signing fails with \"resource fork, Finder information,\n# or similar detritus not allowed\". Cleaning the source tree is not enough: the copy\n# happens during the build, after any pre-build sweep has run.\nBUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n[ -d \"$BUNDLE\" ] || exit 0\nfind \"$BUNDLE\" -type f -name Icon -delete 2>/dev/null || true\nfind \"$BUNDLE\" -type f -name \"Icon$(printf '\r')\" -delete 2>/dev/null || true\nxattr -cr \"$BUNDLE\" 2>/dev/null || true\nexit 0";
+		};
+		CAFE00000000000000000101 /* Strip Finder detritus before signing */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Strip Finder detritus before signing";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Finder detritus that codesign refuses.\n#\n# The project uses PBXFileSystemSynchronizedRootGroup, so every file in a target's\n# folder is a member automatically. macOS custom-folder-icon markers (a zero-byte file\n# named Icon followed by a carriage return, with its data in a resource fork) therefore\n# get copied into the bundle, and signing fails with \"resource fork, Finder information,\n# or similar detritus not allowed\". Cleaning the source tree is not enough: the copy\n# happens during the build, after any pre-build sweep has run.\nBUNDLE=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n[ -d \"$BUNDLE\" ] || exit 0\nfind \"$BUNDLE\" -type f -name Icon -delete 2>/dev/null || true\nfind \"$BUNDLE\" -type f -name \"Icon$(printf '\r')\" -delete 2>/dev/null || true\nxattr -cr \"$BUNDLE\" 2>/dev/null || true\nexit 0";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		CAFE00000000000000000003 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -368,7 +368,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
-				AUTOMATION_APPLE_EVENTS = NO;
+				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_ENTITLEMENTS = "Context-DockExtension/Context-DockExtension.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 15;
@@ -382,12 +382,12 @@
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
-				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
-				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
-				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
-				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
@@ -417,7 +417,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = "";
-				AUTOMATION_APPLE_EVENTS = NO;
+				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_ENTITLEMENTS = "Context-DockExtension/Context-DockExtension.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 15;
@@ -431,12 +431,12 @@
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
-				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
-				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
+				ENABLE_RESOURCE_ACCESS_BLUETOOTH = YES;
+				ENABLE_RESOURCE_ACCESS_CALENDARS = YES;
 				ENABLE_RESOURCE_ACCESS_CAMERA = NO;
-				ENABLE_RESOURCE_ACCESS_CONTACTS = NO;
-				ENABLE_RESOURCE_ACCESS_LOCATION = NO;
-				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
+				ENABLE_RESOURCE_ACCESS_CONTACTS = YES;
+				ENABLE_RESOURCE_ACCESS_LOCATION = YES;
+				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = YES;
 				ENABLE_RESOURCE_ACCESS_PRINTING = NO;
 				ENABLE_RESOURCE_ACCESS_USB = NO;
 				ENABLE_USER_SELECTED_FILES = readwrite;
@@ -501,7 +501,7 @@
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -567,7 +567,7 @@
 				DEVELOPMENT_TEAM = F4PP2L7U76;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
