@@ -283,3 +283,23 @@ enum UserExtensionScriptRunner {
         }
     }
 }
+
+// MARK: - Search
+
+extension UserGlobalExtension {
+    /// Everything the launcher should match this extension against.
+    ///
+    /// `searchableText(for:)` already widens a CLI tool with its keywords and a Global
+    /// Command with its own, from `cli://` and `syscmd://` subtitles. There was no branch
+    /// for `userext://`, so an extension was matched on its title alone and the keywords
+    /// the user typed when creating it were never consulted.
+    ///
+    /// Deduplicated because `description` defaults to `name` when left blank, and the same
+    /// word twice adds nothing to a match.
+    var searchTerms: [String] {
+        var seen = Set<String>()
+        return ([name, description] + keywords)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+}

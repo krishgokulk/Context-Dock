@@ -31,6 +31,13 @@ extension LauncherView {
                 terms += package.keywords
                 terms += package.subcommands
             }
+        } else if result.subtitle.hasPrefix("userext://") {
+            let id = String(result.subtitle.dropFirst("userext://".count))
+            if let uuid = UUID(uuidString: id),
+                let ext = UserGlobalExtensionStore.shared.extensions.first(where: { $0.id == uuid })
+            {
+                terms += ext.searchTerms
+            }
         } else if result.subtitle.hasPrefix("syscmd://") {
             let id = String(result.subtitle.dropFirst("syscmd://".count))
             if let uuid = UUID(uuidString: id),
@@ -305,7 +312,7 @@ extension LauncherView {
                 isKeyboardNavigation = false
             }
 
-            var candidates = allItems.filter { $0.type == .application || $0.type == .cliTool }
+            var candidates = allItems.filter { SearchCandidateEligibility.isSearchable($0.type) }
             if settings.enableSpotlightSearch {
                 candidates += indexedFileResults.filter(includeIndexedSearchResult)
             }
