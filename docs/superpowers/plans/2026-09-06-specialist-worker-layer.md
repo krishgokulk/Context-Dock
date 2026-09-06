@@ -109,7 +109,7 @@ Resolve `claude` and `codex` once in the background using existing binary discov
 availability. Never scan or spawn while the user types, while Context Dock rebuilds rows, or on
 the hotkey path — during a request this is a cached lookup only.
 
-### Task 3 — The bounded task contract
+### ✅ Task 3 — The bounded task contract (done)
 
 `AIWorkerTask`: goal, scope, workspace, context summary, allowed and forbidden operations,
 risk, timeout, attempt budget, expected output, verification requirement. Construction is pure
