@@ -96,14 +96,14 @@ It answers the question this plan turned on: a worker **can** call back into Dor
 below inherit that, and inherit its shape — per-call approval, the app's own tool as the one
 implementation, and no shell through this door.
 
-### Task 1 — Worker model and registry (no execution)
+### ✅ Task 1 — Worker model and registry (done: 1169272)
 
 `AI/Workers/`: `AIWorker`, `AIWorkerKind`, `AIWorkerCapability`, `AIWorkerRegistry`.
 Typed domains (`coding`, `repository`, `build`, `test`, `systemInspection`) so a worker is a
 specialist, not a hammer. Pure, tested: given installed workers and a request, which are
 eligible and in what order.
 
-### Task 2 — Discovery, cached, off the typing path
+### ✅ Task 2 — Discovery, cached, off the typing path (done)
 
 Resolve `claude` and `codex` once in the background using existing binary discovery; cache
 availability. Never scan or spawn while the user types, while Context Dock rebuilds rows, or on

@@ -677,6 +677,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #if DEBUG
         registerInspectorHotkey()
         #endif
+        // Which coding agents are installed, resolved once here rather than when somebody
+        // asks. The alternative is a filesystem probe on the path that answers while the user
+        // is still typing, which is how a launcher stops feeling like one.
+        Task.detached(priority: .utility) {
+            let workers = AIWorkerDiscovery.discoverInstalled()
+            await MainActor.run { AIWorkerRegistry.shared.replaceInstalled(workers) }
+        }
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
