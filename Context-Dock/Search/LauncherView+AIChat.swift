@@ -2319,6 +2319,60 @@ extension LauncherView {
         }
     }
 
+    /// Runs a choice the corner offered: a route the answer proposed, or a specialist it
+    /// offered to ask.
+    ///
+    /// A delegation is not a route — its id names the worker, and handing that to the route
+    /// resolver would match on the words and run something else. The report comes back marked
+    /// as a report, because a worker's word is not proof until DoraX reads the machine back.
+    func runOfferedChoiceFromCorner(id: String, title: String) {
+        let scope = dockChatScope
+        let question = l2.chatMessages.last { $0.role == .user }?.content ?? ""
+        guard !question.isEmpty else { return }
+
+        if let kind = AIWorkerOffer.worker(for: id) {
+            let appName = chatFocusApps.first?.name
+            let bundleId = chatFocusApps.first?.bundleId ?? ""
+            l2.chatMessages.append(
+                AIChatMessage(role: .tool, content: "Asking \(kind.displayName)…"))
+            Task { @MainActor in
+                guard let task = AIWorkerTask.bounded(
+                    goal: question,
+                    scope: bundleId.isEmpty ? scope : .app(bundleId: bundleId),
+                    appName: appName,
+                    workspace: ChatWorkingDirectory.resolve(for: nil))
+                else {
+                    l2.chatMessages.append(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "That is not a bounded task a specialist can take.",
+                            isError: true))
+                    return
+                }
+                let report = await AIWorkerRunner.run(task, on: kind)
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .assistant,
+                        content: "**\(kind.displayName) reports** — read-only, not yet verified "
+                            + "by DoraX.\n\n\(report)"))
+            }
+            return
+        }
+
+        Task { @MainActor in
+            let history: [ChatMessage] = l2.chatMessages.compactMap { message in
+                switch message.role {
+                case .user: return ChatMessage(role: .user, content: message.content)
+                case .assistant: return ChatMessage(role: .assistant, content: message.content)
+                case .tool, .approval: return nil
+                }
+            }
+            let answer = await AppScopedChatService.runChosenRoute(
+                id, query: question, history: history, scope: scope)
+            l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer.text))
+        }
+    }
+
     /// Strip leaked tool-call scaffolding from a general-chat answer before it is shown.
     /// Models sometimes print their tool call as text — Anthropic-style
     /// `<function><invoke name="mcp_call">…</invoke></function>` XML, or a bare

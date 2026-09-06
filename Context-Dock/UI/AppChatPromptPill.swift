@@ -138,10 +138,52 @@ struct AppChatPromptPill: View {
                 suggestionList
                 Divider().opacity(0.18)
             }
+            if !model.pendingChoices.isEmpty {
+                choiceCard
+                Divider().opacity(0.18)
+            }
             if !model.attachments.isEmpty { attachmentRow }
             inputRow
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
+    }
+
+    /// What the answer is waiting on, above the composer.
+    ///
+    /// The buttons exist inside the message too, and inside a scrolling transcript in a
+    /// 372-point card that is somewhere the user has to go back to. A turn that has stopped to
+    /// ask belongs at the point of reply, which is where the clipboard panel already puts its
+    /// preview.
+    private var choiceCard: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(model.pendingChoices) { choice in
+                Button { model.pick(choice) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16)
+                        Text(choice.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Text(choice.routeLabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.secondary.opacity(0.12)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(choice.title)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     /// Who the chat is with, and what to do with the chat itself — the same shape General

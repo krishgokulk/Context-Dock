@@ -116,6 +116,24 @@ final class AppChatPromptModel: ObservableObject {
 
     /// Pinning is the user saying "stay", so the clock stops entirely rather than being
     /// reset — a pinned surface is not waiting for attention, it has been given some.
+    /// The pick-one buttons the newest answer is offering — a route it could take, or a
+    /// specialist it could ask.
+    ///
+    /// Shown as a card above the composer rather than as buttons inside the transcript, the
+    /// way the clipboard panel stacks its preview: a decision the turn is waiting on belongs
+    /// where the eye already is, not somewhere the user has to scroll back to.
+    var pendingChoices: [ActionChoice] {
+        guard !isAnswering, let last = messages.last, last.role == .assistant else { return [] }
+        return last.actionChoices
+    }
+
+    /// The turn belongs to the dock's pipeline, so the choice does too.
+    func pick(_ choice: ActionChoice) {
+        NotificationCenter.default.post(
+            name: .appChatPromptPickAction, object: nil,
+            userInfo: ["choiceID": choice.id, "title": choice.title])
+    }
+
     func togglePin() {
         isPinned.toggle()
         if isPinned {
@@ -335,4 +353,6 @@ extension Notification.Name {
     /// Corner prompt → the dock, asking it to stop the turn it is running. The pipeline is
     /// the dock's, so stopping it is the dock's to do.
     static let appChatPromptCancel = Notification.Name("appChatPromptCancel")
+    /// The corner picked one of the answer's offered routes; the dock runs it.
+    static let appChatPromptPickAction = Notification.Name("appChatPromptPickAction")
 }

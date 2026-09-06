@@ -1119,6 +1119,10 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .appChatPromptCancel)) { _ in
                 handleAppChatPromptCancel()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptPickAction)) {
+                note in
+                handleAppChatPromptPickAction(note)
+            }
             .onReceive(
                 NotificationCenter.default.publisher(for: .clipboardEntriesRemovalRequested)
             ) { note in
@@ -2075,6 +2079,18 @@ extension LauncherView {
         }
         dismissMediaLayer()
         handleL2QuerySkippingMenuRouter(query)
+    }
+
+    /// The corner picked one of the answer's offered routes.
+    ///
+    /// The turn ran on the dock's pipeline, so the choice runs there too — the corner is a
+    /// second presentation of this conversation, not a second engine for it.
+    func handleAppChatPromptPickAction(_ note: Notification) {
+        guard let choiceID = note.userInfo?["choiceID"] as? String, !choiceID.isEmpty else {
+            return
+        }
+        let title = note.userInfo?["title"] as? String ?? choiceID
+        runOfferedChoiceFromCorner(id: choiceID, title: title)
     }
 
     /// The corner asked to stop the running turn. The task is the dock's, so the stop is too.
