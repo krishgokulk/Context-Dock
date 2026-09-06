@@ -204,9 +204,21 @@ enum ClaudeCodeCLIService {
         model: String?,
         access: ToolAccess,
         workingDirectory: URL?,
-        streaming: Bool = false
+        streaming: Bool = false,
+        /// DoraX's own MCP server, when it is switched on. Passing it is what lets the CLI see
+        /// the screen the user is looking at and act on the app in front of them; without it
+        /// the CLI is a coding agent in a terminal that happens to be driven by this app.
+        mcpConfigPath: String? = nil
     ) -> [String] {
-        var arguments = ["-p", prompt, "--tools", access.toolList]
+        // `--tools` says which tools exist and `--allowedTools` grants them; a tool named in
+        // only the first is refused at the moment it is called, which reads to the model as
+        // the tool not existing.
+        let toolList = mcpConfigPath == nil
+            ? access.toolList
+            : ([access.toolList, "mcp__\(DoraXMCPServer.serverName)"]
+                .filter { !$0.isEmpty }
+                .joined(separator: ","))
+        var arguments = ["-p", prompt, "--tools", toolList]
         // A single JSON object arrives only when the turn is over, so DoraX had nothing to show
         // and could not tell a long turn from a hung one. Streaming is used whenever somebody
         // is listening; the one-shot form is kept for callers that are not.
@@ -219,11 +231,14 @@ enum ClaudeCodeCLIService {
             // `--tools` says which tools exist; `--allowedTools` is the permission allowlist.
             // `--permission-mode acceptEdits` covers edits and nothing else, so a fetch still
             // stopped to ask — and `-p` is non-interactive, so there was nobody to ask.
-            arguments.append(contentsOf: ["--allowedTools", access.toolList])
+            arguments.append(contentsOf: ["--allowedTools", toolList])
             arguments.append(contentsOf: ["--permission-mode", "acceptEdits"])
             if let workingDirectory {
                 arguments.append(contentsOf: ["--add-dir", workingDirectory.path])
             }
+        }
+        if let mcpConfigPath {
+            arguments.append(contentsOf: ["--mcp-config", mcpConfigPath])
         }
         if let systemPrompt, !systemPrompt.isEmpty {
             arguments.append(contentsOf: ["--append-system-prompt", systemPrompt])
@@ -256,9 +271,17 @@ enum ClaudeCodeCLIService {
         let directory: URL? = access.runsTools
             ? (workingDirectory ?? ChatWorkingDirectory.resolve(for: nil))
             : nil
+        // The app's own MCP server, when the user has switched it on. Without this the CLI
+        // cannot see the screen it is being asked about, and the app printed a `claude mcp add`
+        // line and left the wiring to the user — so a turn under this provider had DoraX's
+        // context in its prompt and none of DoraX's tools in its hands.
+        let mcpConfigPath = UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey)
+            ? DoraXMCPServer.writeCLIConfig()?.path
+            : nil
         let arguments = arguments(
             prompt: prompt, systemPrompt: systemPrompt, model: model,
-            access: access, workingDirectory: directory, streaming: onProgress != nil)
+            access: access, workingDirectory: directory, streaming: onProgress != nil,
+            mcpConfigPath: mcpConfigPath)
         log.notice(
             "claude cli access=\(access.rawValue, privacy: .public) dir=\(directory?.path ?? "-", privacy: .public)")
 

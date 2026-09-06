@@ -142,7 +142,7 @@ final class DoraXMCPServer: ObservableObject {
                     }
                     return
                 }
-                let response = self.handle(request)
+                let response = await self.handle(request)
                 connection.send(
                     content: response,
                     completion: .contentProcessed { _ in connection.cancel() })
@@ -194,7 +194,7 @@ final class DoraXMCPServer: ObservableObject {
 
     // MARK: - JSON-RPC
 
-    private func handle(_ request: Request) -> Data {
+    private func handle(_ request: Request) async -> Data {
         guard request.authorization == "Bearer \(Self.token)" else {
             log.notice("rejected: bad token")
             return Self.httpResponse(status: "401 Unauthorized", json: nil)
@@ -232,7 +232,7 @@ final class DoraXMCPServer: ObservableObject {
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             lastRequest = name
-            let text = callTool(named: name, arguments: arguments)
+            let text = await callTool(named: name, arguments: arguments)
             result = ["content": [["type": "text", "text": text]]]
 
         default:
@@ -247,6 +247,53 @@ final class DoraXMCPServer: ObservableObject {
         return Self.httpResponse(
             status: "200 OK", json: ["jsonrpc": "2.0", "id": id, "result": result])
     }
+
+    // MARK: - Handing this server to a CLI
+
+    /// Writes the MCP config the Claude Code CLI is launched with, and returns its path.
+    ///
+    /// A file rather than an inline `--mcp-config` string, because the token is a bearer
+    /// credential for everything this server exposes and argv is world-readable: passed on the
+    /// command line it would sit in every `ps` listing on the Mac. The file is owner-only.
+    ///
+    /// Rewritten on every launch rather than cached, so rotating the token cannot leave a
+    /// stale file authorising nothing while the CLI reports a connection failure the user
+    /// cannot explain.
+    static func writeCLIConfig() -> URL? {
+        guard let directory = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Context-Dock")
+        else { return nil }
+        try? FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true)
+
+        let url = directory.appendingPathComponent("claude-mcp-config.json")
+        let config: [String: Any] = [
+            "mcpServers": [
+                serverName: [
+                    "type": "http",
+                    "url": "http://127.0.0.1:\(port)/mcp",
+                    "headers": ["Authorization": "Bearer \(token)"],
+                ]
+            ]
+        ]
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: config, options: [.prettyPrinted])
+        else { return nil }
+
+        do {
+            try data.write(to: url, options: [.atomic])
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o600))], ofItemAtPath: url.path)
+        } catch {
+            return nil
+        }
+        return url
+    }
+
+    /// The name the CLI knows this server by, and therefore the prefix its tools carry:
+    /// `mcp__dorax__dorax_selection`.
+    static let serverName = "dorax"
 
     // MARK: - Tools
 
@@ -276,6 +323,27 @@ final class DoraXMCPServer: ObservableObject {
             "inputSchema": ["type": "object", "properties": [:] as [String: Any]],
         ],
         [
+            "name": "dorax_run_menu_command",
+            "description":
+                "Click a menu command in a Mac app on the user's behalf — app: \"Claude\", "
+                + "path: \"Claude > Check for Updates…\". The user is shown the exact app and "
+                + "menu path and must approve it before anything is clicked; a path that does "
+                + "not exist in the app's menus is refused. Call this when the user has asked "
+                + "for something the app itself does through its menus and no repository or "
+                + "shell route can do it.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "app": ["type": "string", "description": "The app's name."],
+                    "path": [
+                        "type": "string",
+                        "description": "Menu path, e.g. \"Claude > Check for Updates…\".",
+                    ],
+                ] as [String: Any],
+                "required": ["app", "path"],
+            ],
+        ],
+        [
             "name": "dorax_browser_tabs",
             "description":
                 "The pages the user has open in Safari, with titles and URLs. Call this when "
@@ -284,7 +352,7 @@ final class DoraXMCPServer: ObservableObject {
         ],
     ]
 
-    private func callTool(named name: String, arguments: [String: Any]) -> String {
+    private func callTool(named name: String, arguments: [String: Any]) async -> String {
         switch name {
         case "dorax_frontmost_app":
             // Read live rather than trusting the shared snapshot. That snapshot updates on
@@ -328,6 +396,40 @@ final class DoraXMCPServer: ObservableObject {
             return tabs.prefix(40)
                 .map { "- \($0.title)\n  \($0.url)" }
                 .joined(separator: "\n")
+
+        case "dorax_run_menu_command":
+            // Deliberately the same tool the app's own chat uses, dispatched through the same
+            // registry: the approval card, the cached-path check, the live verification and
+            // the receipt all come with it. A second implementation here would be a second
+            // authority boundary, and the weaker one would be the one an outside agent holds.
+            let app = (arguments["app"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            let path = (arguments["path"] as? String ?? "").trimmingCharacters(in: .whitespaces)
+            guard !app.isEmpty, !path.isEmpty else {
+                return "Both app and path are required, e.g. app: \"Claude\", path: \"Claude > Check for Updates…\"."
+            }
+            var grantedApps: [String: String] = [:]
+            if let running = NSWorkspace.shared.runningApplications.first(where: {
+                $0.localizedName?.caseInsensitiveCompare(app) == .orderedSame
+            }), let bundleId = running.bundleIdentifier {
+                grantedApps[app.lowercased()] = bundleId
+                grantedApps[bundleId.lowercased()] = bundleId
+            }
+            let context = AgentToolContext(
+                // An outside agent gets no shell through this door. It asked for a menu
+                // command; the menu command is what it may have.
+                commandExecutor: { _, _, _ in
+                    (false, "Running shell commands is not available through the DoraX MCP server.", 1)
+                },
+                userRequest: "Menu command requested by a connected coding agent: \(app) ▸ \(path)",
+                grantedApps: grantedApps)
+            let result = await AgentToolRegistry.shared.dispatch(
+                name: "run_menu_command",
+                arguments: ["app": app, "path": path],
+                context: context)
+            guard let result else { return "Menu commands are unavailable in this build." }
+            return result.success
+                ? (result.output.isEmpty ? "Done — \(app) ▸ \(path)." : result.output)
+                : "Did not run — \(result.output)"
 
         default:
             return "Unknown tool \(name)."
