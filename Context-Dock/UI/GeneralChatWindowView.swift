@@ -857,9 +857,28 @@ struct GeneralChatWindowView: View {
     /// The one AI input in the app — same capsule, provider chip, attach and app
     /// picker the Quick Note and panel surfaces use, with the provider spelled out
     /// and a clear button because this surface has a transcript and the room.
+    /// The question the newest answer asked, if it asked one and the user has not started
+    /// typing over it. Same reading as the corner: one surface, two sizes.
+    private var clarification: ChatClarification? {
+        guard !model.isSending, model.input.isEmpty,
+            let last = model.messages.last, last.role == .assistant, !last.isError
+        else { return nil }
+        return ChatClarification.parse(last.content)
+    }
+
     private var composer: some View {
         VStack(spacing: 6) {
             selectionPill
+
+            if let clarification {
+                ChatClarificationCard(
+                    clarification: clarification,
+                    onChoose: { option in
+                        model.input = clarification.reply(for: option)
+                        model.send()
+                    },
+                    onSomethingElse: {})
+            }
 
             if !model.attachments.isEmpty {
                 HStack(spacing: 6) {

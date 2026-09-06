@@ -284,6 +284,6 @@ rather than by accident.
 2. ✅ Task 2 — a combined chat names every app it is with
 3. ✅ Task 3 — corner General shows its steps
 4. ✅ Task 6 — "no linked route" is not "cannot": the approval-gated command rung
-5. Task 8 — ask in options, not prose
+5. ✅ Task 8 — ask in options, not prose
 6. Worker layer (Claude Code / Codex as specialist workers, with an authority
    envelope) — its own plan, after the above

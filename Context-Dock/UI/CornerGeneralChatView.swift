@@ -52,15 +52,22 @@ enum CornerGeneralChatMetrics {
         showsStarter: Bool = false,
         starterCount: Int = 0,
         starterHasConnections: Bool = false,
-        liveStepCount: Int = 0
+        liveStepCount: Int = 0,
+        clarificationOptionCount: Int = 0
     ) -> CGFloat {
         if messageCount > 0 || isSending {
             let steps = isSending
                 ? CGFloat(min(liveStepCount, maximumCountedLiveSteps)) * liveStepHeight
                 : 0
+            // A question with options is a control, not text: it needs its own room, or the
+            // card asks something the user has to scroll to answer.
+            let clarification = clarificationOptionCount > 0
+                ? ChatClarificationCard.height(for: clarificationOptionCount)
+                : 0
             return min(
                 maximumHeight,
-                transcriptBaseHeight + CGFloat(min(messageCount, 5)) * perMessageHeight + steps)
+                transcriptBaseHeight + CGFloat(min(messageCount, 5)) * perMessageHeight
+                    + steps + clarification)
         }
         if showsStarter {
             // Measured from the start screen's own numbers rather than guessed. A flat 350
@@ -95,6 +102,17 @@ enum CornerGeneralChatMetrics {
             && model.attachments.isEmpty
     }
 
+    /// The options the newest answer is offering, if it is offering any and the user has
+    /// not started typing over them.
+    @MainActor
+    static func clarificationOptionCount(for model: GeneralChatWindowModel) -> Int {
+        guard !model.isSending, model.input.isEmpty,
+            let last = model.messages.last, last.role == .assistant, !last.isError,
+            let clarification = ChatClarification.parse(last.content)
+        else { return 0 }
+        return clarification.options.count
+    }
+
     @MainActor
     static func size(for model: GeneralChatWindowModel) -> CGSize {
         let slashMatches = ChatSlashAppPicker.matches(for: model.input)
@@ -109,7 +127,8 @@ enum CornerGeneralChatMetrics {
                 showsStarter: showsStarter(for: model),
                 starterCount: connected.count,
                 starterHasConnections: !connected.isEmpty,
-                liveStepCount: model.activeProgress.count))
+                liveStepCount: model.activeProgress.count,
+                clarificationOptionCount: clarificationOptionCount(for: model)))
     }
 }
 
@@ -121,6 +140,10 @@ struct CornerGeneralChatView: View {
     /// Which `/` match ↑/↓ has landed on. Reset whenever the filter changes, because the
     /// third row of one list is not the third row of the next.
     @State private var slashSelection = 0
+    /// Which option ↑/↓ has landed on in a clarifying question. Separate from the slash
+    /// selection: the two lists never show at once, but sharing one index would make the
+    /// highlight jump when the user typed after being asked something.
+    @State private var clarificationSelection = 0
 
     private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
@@ -293,6 +316,28 @@ struct CornerGeneralChatView: View {
             : ["Reading \(members.joined(separator: " and "))…"]
     }
 
+    /// The question the last answer asked, if it asked one.
+    ///
+    /// Only the newest message, and only when the turn has finished: an older question has
+    /// already been answered, and one still being written is not a question yet.
+    private var clarification: ChatClarification? {
+        guard !model.isSending,
+            let last = model.messages.last,
+            last.role == .assistant,
+            !last.isError
+        else { return nil }
+        return ChatClarification.parse(last.content)
+    }
+
+    /// Answering by pointing sends what the option says, so the next turn reads a request
+    /// rather than a number whose list it can no longer see.
+    private func answer(_ option: ChatClarification.Option) {
+        guard let clarification else { return }
+        model.input = clarification.reply(for: option)
+        clarificationSelection = 0
+        model.send()
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -345,11 +390,19 @@ struct CornerGeneralChatView: View {
     /// ↑/↓ move the highlight, and only while there is a list to move it through — the key
     /// has to go back to the field otherwise, or the cursor stops working in a text box.
     private func moveSlashSelection(_ delta: Int) -> Bool {
-        guard
+        if let next = ChatSlashAppPicker.movedSelection(
+            from: slashSelection, by: delta, count: slashMatches.count)
+        {
+            slashSelection = next
+            return true
+        }
+        // The same rule for a clarifying question, and only while the field is empty —
+        // once the user is typing their own answer the arrows belong to the cursor.
+        guard model.input.isEmpty, let clarification,
             let next = ChatSlashAppPicker.movedSelection(
-                from: slashSelection, by: delta, count: slashMatches.count)
+                from: clarificationSelection, by: delta, count: clarification.options.count)
         else { return false }
-        slashSelection = next
+        clarificationSelection = next
         return true
     }
 
@@ -376,8 +429,14 @@ struct CornerGeneralChatView: View {
 
     private func commitSlashSelection() -> Bool {
         let matches = slashMatches
-        guard !matches.isEmpty else { return false }
-        pick(matches[min(max(slashSelection, 0), matches.count - 1)])
+        if !matches.isEmpty {
+            pick(matches[min(max(slashSelection, 0), matches.count - 1)])
+            return true
+        }
+        guard model.input.isEmpty, let clarification, !clarification.options.isEmpty
+        else { return false }
+        let index = min(max(clarificationSelection, 0), clarification.options.count - 1)
+        answer(clarification.options[index])
         return true
     }
 
@@ -390,6 +449,16 @@ struct CornerGeneralChatView: View {
                     pick(app)
                 }
                 Divider().opacity(0.18)
+            } else if let clarification, model.input.isEmpty {
+                // Typing replaces the card: the composer is the answer the model did not
+                // think of, and a list of its own guesses on top of that reads as a wall.
+                ChatClarificationCard(
+                    clarification: clarification,
+                    selection: clarificationSelection,
+                    onChoose: { answer($0) },
+                    onSomethingElse: { composerFocused = true })
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
             }
 
             if !model.attachments.isEmpty {
