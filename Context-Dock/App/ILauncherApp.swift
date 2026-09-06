@@ -2920,10 +2920,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             scopeChatSpaceHold = false
         }
         if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
+            // A floating dock stays on screen when focus moves — that is what floating means.
+            // It must not take focus while doing so: this branch runs from hide-on-focus-loss,
+            // and `.focusSearchField` ends in NSApp.activate(ignoringOtherApps: true), so
+            // pressing Return in the corner chat pulled the dock over the app the user was
+            // working in. A hide request that activates the app is not a hide.
             window.alphaValue = 1
             applyPersistentDockBehavior()
             window.orderFrontRegardless()
-            NotificationCenter.default.post(name: .focusSearchField, object: nil)
             return
         }
         NSAnimationContext.runAnimationGroup(
