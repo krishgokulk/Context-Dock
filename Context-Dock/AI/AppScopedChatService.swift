@@ -1467,8 +1467,13 @@ enum AppScopedChatService {
                 surfaceScoped: true
             )
             let text = ChatAnswerSanitizer.clean(raw)
+            // This provider was handed no tools, so a request to *do* something could not run.
+            // The model cannot know why — it was given neither tools nor the reason — and the
+            // guesses it made instead ("my toolset lacks run_menu_command", "not granted this
+            // session") described rules that do not exist. The app knows the reason exactly.
+            let notice = ProviderActionNotice.note(provider: provider, intent: taskPlan.intent)
             return Answer(
-                text: text,
+                text: text + (notice ?? ""),
                 toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
         }
 

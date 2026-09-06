@@ -611,6 +611,9 @@ final class AgentToolRegistry {
         turnQuery = query
         turnProvider = provider
         turnAllowedToolNames = allowedToolNames
+        AgentToolDiagnostics.record(
+            "turn prepared — query=\"\(query.prefix(60))\" provider=\(provider.rawValue) "
+            + "allowed=\(allowedToolNames.map { $0.sorted().joined(separator: ",") } ?? "all")")
     }
 
     /// The tool list as a provider expects to receive it. One source, three renderings —
@@ -631,10 +634,16 @@ final class AgentToolRegistry {
     /// A chat reported it had no run_menu_command while the plan granted it, the filter kept
     /// it and the prompt named it — every check that could be made without a live turn said
     /// the tool was there. This is the one fact none of them can see: the list as sent.
+    ///
+    /// Written to a file rather than OSLog because this app's Logger output does not reach
+    /// the unified log store on this machine — a diagnostic nobody can read is not one.
     private func logged(_ schemas: [[String: Any]]) -> [[String: Any]] {
-        let names = schemas.compactMap { $0["name"] as? String ?? ($0["function"] as? [String: Any])?["name"] as? String }
-        Logger(subsystem: "com.krishgokul.ContextDock", category: "AgentTools")
-            .notice("turn tools (\(names.count, privacy: .public)): \(names.sorted().joined(separator: ", "), privacy: .public)")
+        let names = schemas.compactMap {
+            $0["name"] as? String ?? ($0["function"] as? [String: Any])?["name"] as? String
+        }
+        AgentToolDiagnostics.record(
+            "schemas requested — query=\"\(turnQuery.prefix(60))\" count=\(names.count) "
+            + "tools=\(names.sorted().joined(separator: ","))")
         return schemas
     }
 

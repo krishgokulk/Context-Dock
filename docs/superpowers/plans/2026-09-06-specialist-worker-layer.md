@@ -77,6 +77,19 @@ That is the never-merge-layers rule applied to delegation.
 
 ## Tasks
 
+### Task 0 — Bridge DoraX tools into Claude Code (found by using it)
+
+`AIProviderService.swift:1272` returns before the tool loop when the provider is Claude Code:
+DoraX's tools are never offered, deliberately — "it answers, the app acts". So with Claude Code
+selected as the *provider*, an app action cannot run, and the chat can only describe the wall.
+The app now says why (`ProviderActionNotice`) rather than leaving the model to guess.
+
+That is the same problem this plan exists to solve, arriving from the other direction: Claude
+Code as a harness that could hold DoraX's capabilities. Bridging them — most plausibly by
+exposing the app's tools over MCP to the CLI — makes the provider and the worker one story
+instead of two. Do this before the tasks below, because it decides whether a worker calls back
+into DoraX or only reports to it.
+
 ### Task 1 — Worker model and registry (no execution)
 
 `AI/Workers/`: `AIWorker`, `AIWorkerKind`, `AIWorkerCapability`, `AIWorkerRegistry`.
