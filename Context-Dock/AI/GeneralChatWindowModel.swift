@@ -380,6 +380,41 @@ final class GeneralChatWindowModel: ObservableObject {
 
         sendingScopeKeys.insert(key)
         progressByScopeKey[key] = ["Understanding your request…"]
+
+        // A delegation is not a route: the id says which specialist, and handing it to the
+        // route resolver would match on the words and run something else entirely.
+        if let kind = AIWorkerOffer.worker(for: choice.id) {
+            let appName = activeScopeAppName
+            sendTasks[key] = Task { [weak self] in
+                guard let task = AIWorkerTask.bounded(
+                    goal: question, scope: scope, appName: appName,
+                    workspace: ChatWorkingDirectory.resolve(for: nil))
+                else {
+                    await MainActor.run {
+                        self?.deliver(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: "That is not a bounded task a specialist can take.",
+                                isError: true),
+                            to: scope, title: title)
+                    }
+                    return
+                }
+                let report = await AIWorkerRunner.run(task, on: kind) { step in
+                    Task { @MainActor [weak self] in self?.recordProgress(step, for: key) }
+                }
+                await MainActor.run {
+                    self?.deliver(
+                        AIChatMessage(
+                            role: .assistant,
+                            content: "**\(kind.displayName) reports** — read-only, not yet "
+                                + "verified by DoraX.\n\n\(report)"),
+                        to: scope, title: title)
+                }
+            }
+            return
+        }
+
         sendTasks[key] = Task { [weak self] in
             let answer = await AppScopedChatService.runChosenRoute(
                 choice.id, query: question, history: history, scope: scope)

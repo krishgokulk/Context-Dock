@@ -1752,6 +1752,24 @@ enum AppScopedChatService {
             }
         }
 
+        // Nothing linked could carry this out, and it is work rather than a question: offer a
+        // specialist instead of ending at what cannot be done. Offered, never taken — the
+        // buttons are the whole point, and a worker costs minutes where a route costs none.
+        if sendChoices.isEmpty,
+            let task = AIWorkerTask.bounded(
+                goal: sendIntent,
+                scope: scope,
+                appName: appName,
+                workspace: ChatWorkingDirectory.resolve(for: nil))
+        {
+            let workers = AIWorkerRegistry.shared.installed
+            let offers = AIWorkerOffer.choices(for: task, workers: workers)
+            if !offers.isEmpty {
+                sendChoices = offers
+                text += "\n\n---\n" + AIWorkerOffer.explanation(for: task, workers: workers)
+            }
+        }
+
         return Answer(
             text: text, toolChips: chips,
             routeChoices: sendChoices,

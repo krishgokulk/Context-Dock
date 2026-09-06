@@ -115,14 +115,14 @@ the hotkey path — during a request this is a cached lookup only.
 risk, timeout, attempt budget, expected output, verification requirement. Construction is pure
 and tested — an envelope wider than its scope is a test failure, not a code review note.
 
-### Task 4 — The offer, and approval
+### ✅ Task 4 — The offer, and approval (done)
 
 When the ladder reaches this rung, the answer carries a delegation proposal, rendered with the
 `ActionChoice` mechanism that already exists: *"No verified update route is linked. Codex and
 Claude Code can inspect this read-only. Use one?"* — Use Codex / Use Claude Code / Cancel.
 Nothing runs before approval. Reuse the corner and window surfaces; no new window, no new mode.
 
-### Task 5 — Execution and progress
+### ◑ Task 5 — Execution and progress (Claude Code done; Codex pending)
 
 Run the worker as a process with the envelope applied. Report through the existing step rows —
 `● Codex inspecting installation…` — never as hidden reasoning, only factual stages and tool
