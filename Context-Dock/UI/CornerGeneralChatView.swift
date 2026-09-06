@@ -36,6 +36,13 @@ enum CornerGeneralChatMetrics {
     static let perMessageHeight: CGFloat = 90
     /// The transcript's own room before any messages are counted.
     static let transcriptBaseHeight: CGFloat = 220
+    /// One live step: the row plus the spacing under it. Counted while a turn runs so the
+    /// steps have somewhere to appear — a card sized for a single status line shows the
+    /// work as a scrollbar instead of as progress.
+    static let liveStepHeight: CGFloat = 22
+    /// Past this the turn is long enough that the steps scroll rather than grow the card
+    /// over the user's work.
+    static let maximumCountedLiveSteps = 4
 
     static func height(
         messageCount: Int,
@@ -44,12 +51,16 @@ enum CornerGeneralChatMetrics {
         slashMatchCount: Int,
         showsStarter: Bool = false,
         starterCount: Int = 0,
-        starterHasConnections: Bool = false
+        starterHasConnections: Bool = false,
+        liveStepCount: Int = 0
     ) -> CGFloat {
         if messageCount > 0 || isSending {
+            let steps = isSending
+                ? CGFloat(min(liveStepCount, maximumCountedLiveSteps)) * liveStepHeight
+                : 0
             return min(
                 maximumHeight,
-                transcriptBaseHeight + CGFloat(min(messageCount, 5)) * perMessageHeight)
+                transcriptBaseHeight + CGFloat(min(messageCount, 5)) * perMessageHeight + steps)
         }
         if showsStarter {
             // Measured from the start screen's own numbers rather than guessed. A flat 350
@@ -97,7 +108,8 @@ enum CornerGeneralChatMetrics {
                 slashMatchCount: slashMatches.count,
                 showsStarter: showsStarter(for: model),
                 starterCount: connected.count,
-                starterHasConnections: !connected.isEmpty))
+                starterHasConnections: !connected.isEmpty,
+                liveStepCount: model.activeProgress.count))
     }
 }
 
@@ -266,6 +278,21 @@ struct CornerGeneralChatView: View {
         return scopedAppName.map { [$0] } ?? []
     }
 
+    /// The steps are the truth when there are any. Before the first one arrives there is
+    /// still something honest to say — who the question went to — and saying it beats a
+    /// spinner, which reports only that the app is busy.
+    private var waitingSteps: [String] {
+        let steps = model.activeProgress.filter {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard steps.isEmpty else { return steps }
+        if let status = model.activeStatus, !status.isEmpty { return [status] }
+        let members = membershipAppNames
+        return members.isEmpty
+            ? ["Thinking…"]
+            : ["Reading \(members.joined(separator: " and "))…"]
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -279,11 +306,16 @@ struct CornerGeneralChatView: View {
                                 ? model.activeProgress : [])
                             .id(message.id)
                     }
-                    if model.isSending, let status = model.activeStatus {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(status).font(.system(size: 11)).foregroundStyle(.secondary)
-                        }
+                    // The same step list App mode shows, in the same card.
+                    //
+                    // General drew one status line here while the frontmost-app chat, two
+                    // inches away in the same corner, showed every step it had taken. Both
+                    // read the same published progress; only this one was throwing it away,
+                    // so the surface that could explain itself least was the one asked the
+                    // broadest questions.
+                    if model.isSending {
+                        LiveAgentProgressView(steps: waitingSteps)
+                            .id("live-progress")
                     }
                 }
                 .padding(15)
