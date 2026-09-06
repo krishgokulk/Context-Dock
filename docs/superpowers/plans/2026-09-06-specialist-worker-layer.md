@@ -77,7 +77,7 @@ That is the never-merge-layers rule applied to delegation.
 
 ## Tasks
 
-### Task 0 — Bridge DoraX tools into Claude Code (found by using it)
+### ✅ Task 0 — Bridge DoraX tools into Claude Code (done: 53e4fc8)
 
 `AIProviderService.swift:1272` returns before the tool loop when the provider is Claude Code:
 DoraX's tools are never offered, deliberately — "it answers, the app acts". So with Claude Code
@@ -87,8 +87,14 @@ The app now says why (`ProviderActionNotice`) rather than leaving the model to g
 That is the same problem this plan exists to solve, arriving from the other direction: Claude
 Code as a harness that could hold DoraX's capabilities. Bridging them — most plausibly by
 exposing the app's tools over MCP to the CLI — makes the provider and the worker one story
-instead of two. Do this before the tasks below, because it decides whether a worker calls back
-into DoraX or only reports to it.
+instead of two. Done. The server existed and was switched on; nothing pointed the CLI at it. Every Claude
+Code turn now passes an owner-only `--mcp-config` and grants `mcp__dorax`, and the server
+gained its first action — `dorax_run_menu_command`, dispatched through the app's own
+`run_menu_command` so approval, path checking and verification come with it.
+
+It answers the question this plan turned on: a worker **can** call back into DoraX. The tasks
+below inherit that, and inherit its shape — per-call approval, the app's own tool as the one
+implementation, and no shell through this door.
 
 ### Task 1 — Worker model and registry (no execution)
 

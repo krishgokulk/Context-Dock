@@ -611,9 +611,6 @@ final class AgentToolRegistry {
         turnQuery = query
         turnProvider = provider
         turnAllowedToolNames = allowedToolNames
-        AgentToolDiagnostics.record(
-            "turn prepared — query=\"\(query.prefix(60))\" provider=\(provider.rawValue) "
-            + "allowed=\(allowedToolNames.map { $0.sorted().joined(separator: ",") } ?? "all")")
     }
 
     /// The tool list as a provider expects to receive it. One source, three renderings —
@@ -625,26 +622,8 @@ final class AgentToolRegistry {
     func schemas(format: SchemaFormat) -> [[String: Any]] {
         let available = toolsAvailable(for: turnQuery)
         let rendered = renderedSchemas(format: format, tools: available)
-        guard let provider = turnProvider else { return logged(rendered) }
-        return logged(AIToolBudget.trim(rendered, query: turnQuery, provider: provider))
-    }
-
-    /// What the model was actually handed.
-    ///
-    /// A chat reported it had no run_menu_command while the plan granted it, the filter kept
-    /// it and the prompt named it — every check that could be made without a live turn said
-    /// the tool was there. This is the one fact none of them can see: the list as sent.
-    ///
-    /// Written to a file rather than OSLog because this app's Logger output does not reach
-    /// the unified log store on this machine — a diagnostic nobody can read is not one.
-    private func logged(_ schemas: [[String: Any]]) -> [[String: Any]] {
-        let names = schemas.compactMap {
-            $0["name"] as? String ?? ($0["function"] as? [String: Any])?["name"] as? String
-        }
-        AgentToolDiagnostics.record(
-            "schemas requested — query=\"\(turnQuery.prefix(60))\" count=\(names.count) "
-            + "tools=\(names.sorted().joined(separator: ","))")
-        return schemas
+        guard let provider = turnProvider else { return rendered }
+        return AIToolBudget.trim(rendered, query: turnQuery, provider: provider)
     }
 
     /// Questions get readers, not controls or command catalogues. Tool schemas are an
