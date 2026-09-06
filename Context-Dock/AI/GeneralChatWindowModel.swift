@@ -403,12 +403,17 @@ final class GeneralChatWindowModel: ObservableObject {
                 let report = await AIWorkerRunner.run(task, on: kind) { step in
                     Task { @MainActor [weak self] in self?.recordProgress(step, for: key) }
                 }
+                // What the machine says, after the worker has spoken. Nothing read back is
+                // still an answer — "its executor confirmed it" — and never "verified".
+                let outcome = AIWorkerVerification.assess(
+                    report: report, task: task, readings: [])
                 await MainActor.run {
                     self?.deliver(
                         AIChatMessage(
                             role: .assistant,
-                            content: "**\(kind.displayName) reports** — read-only, not yet "
-                                + "verified by DoraX.\n\n\(report)"),
+                            content: "**\(kind.displayName) reports** — \(outcome.status.displayName). "
+                                + "\(outcome.note)\n\n\(report)",
+                            evidenceReceipts: [outcome.receipt]),
                         to: scope, title: title)
                 }
             }

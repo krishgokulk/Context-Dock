@@ -2350,11 +2350,14 @@ extension LauncherView {
                     return
                 }
                 let report = await AIWorkerRunner.run(task, on: kind)
+                let outcome = AIWorkerVerification.assess(
+                    report: report, task: task, readings: [])
                 l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
-                        content: "**\(kind.displayName) reports** — read-only, not yet verified "
-                            + "by DoraX.\n\n\(report)"))
+                        content: "**\(kind.displayName) reports** — \(outcome.status.displayName). "
+                            + "\(outcome.note)\n\n\(report)",
+                        evidenceReceipts: [outcome.receipt]))
             }
             return
         }

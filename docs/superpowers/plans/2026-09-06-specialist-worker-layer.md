@@ -128,7 +128,7 @@ Run the worker as a process with the envelope applied. Report through the existi
 `● Codex inspecting installation…` — never as hidden reasoning, only factual stages and tool
 receipts.
 
-### Task 6 — Verification
+### ◑ Task 6 — Verification (status vocabulary done; read-backs pending)
 
 A worker's text is not proof. Map its result onto `AIVerificationStatus` and, where possible,
 verify independently: app version, filesystem state, git state, package-manager state. A write
