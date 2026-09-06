@@ -730,7 +730,11 @@ final class GeneralChatWindowModel: ObservableObject {
     }
 
     /// Bundle id for an app the user picked by name, running or merely installed.
-    private static func bundleId(forAppNamed name: String) -> String? {
+    ///
+    /// Internal rather than private because route recovery resolves the same names: an app
+    /// attached to a conversation has to reach the same bundle id there as it does here, or
+    /// the thread and its routes would disagree about which app is which.
+    static func bundleId(forAppNamed name: String) -> String? {
         // The directory the pickers offer from, so anything listed can also be scoped —
         // an app the user could pick but not resolve would attach as a name and silently
         // lose its tools.

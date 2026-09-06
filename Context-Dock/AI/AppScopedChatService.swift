@@ -1663,11 +1663,22 @@ enum AppScopedChatService {
         //
         // Routes are the deterministic path in this surface. If one exists for what was
         // asked, run it; the request is carried out rather than reported undeliverable.
-        if ChatAnswerSanitizer.isProtocolOnly(text), case .app(let bundleId) = scope {
-            log.notice("protocol-only answer; resolving via routes")
-            let recovered = await ChatRouteResolver.routes(
-                for: query, bundleId: bundleId, appName: appName)
-            if let route = recovered.first {
+        if ChatAnswerSanitizer.isProtocolOnly(text) {
+            // Every scope that has an app to ask, not only a single-app thread. A combined
+            // workspace and a General chat with an app attached both own routes; gating this
+            // on `case .app` is what reported a resolved Messages call as undeliverable.
+            let candidates = ChatRouteRecovery.candidateApps(
+                scope: scope,
+                attachedAppNames: extraAppNames,
+                scopeAppName: appName,
+                bundleID: { GeneralChatWindowModel.bundleId(forAppNamed: $0) })
+            log.notice(
+                "protocol-only answer; resolving via routes across \(candidates.count) app(s)")
+
+            for candidate in candidates {
+                let recovered = await ChatRouteResolver.routes(
+                    for: query, bundleId: candidate.bundleID, appName: candidate.name)
+                guard let route = recovered.first else { continue }
                 let result = await ChatRouteResolver.run(route, query: query)
                 ChatConsoleLog.shared.append(
                     .route, title: route.title,
@@ -1676,6 +1687,9 @@ enum AppScopedChatService {
                 text = result.success
                     ? "Done — \(route.title)."
                     : "`\(route.title)` didn't run — \(result.output)"
+                // One route carries the request. Trying the next app after a route already
+                // ran would perform the same intent twice in two apps.
+                break
             }
         }
 
