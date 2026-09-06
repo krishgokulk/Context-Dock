@@ -4027,7 +4027,8 @@ extension LauncherView {
             appName: scopedAppName.isEmpty ? frontmost.name : scopedAppName,
             hasSelection: liveSelectionForChat() != nil || !initialFinderSelection.isEmpty,
             hasAttachments: !contextDockChatFiles.isEmpty,
-            priorConversation: l2.chatMessages.suffix(4).map(\.content).joined(separator: "\n"))
+            priorConversation: l2.chatMessages.suffix(4).map(\.content).joined(separator: "\n"),
+            previousUserRequests: l2.chatMessages.filter { $0.role == .user }.map(\.content))
         let isExplicitScopedApp =
             dockScope.isExplicitAppScope
             && !scopedBundleId.isEmpty

@@ -636,7 +636,11 @@ final class AgentToolRegistry {
         let policyFiltered = turnAllowedToolNames.map { allowed in
             allTools.filter { allowed.contains($0.name) }
         } ?? allTools
-        guard !query.isEmpty, GeneralAIActionResolver.shared.asksOnly(query) else {
+        // Agreeing is not asking. "Do it" carries no verb of its own, so it reads as a
+        // question and had the action tools stripped from the very turn it approved.
+        guard !query.isEmpty, !ChatRouteRecovery.isBareConfirmation(query),
+            GeneralAIActionResolver.shared.asksOnly(query)
+        else {
             return policyFiltered
         }
         let actionOnly: Set<String> = [

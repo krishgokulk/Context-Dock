@@ -46,11 +46,28 @@ struct FrontmostAppTaskPlan: Equatable {
 
     static func make(query: String, bundleId: String, appName: String,
                      hasSelection: Bool = false, hasAttachments: Bool = false,
-                     priorConversation: String = "") -> Self {
-        let lower = query.lowercased()
+                     priorConversation: String = "",
+                     previousUserRequests: [String] = []) -> Self {
+        // Agreeing to an action is not asking a question.
+        //
+        // Offered "Claude ▸ Check for Updates… Run it?" and answered "sure", the plan read
+        // the word "sure", found no action verb in it, and withheld run_menu_command — so the
+        // model reported, correctly, that it had no menu tool. The offer was disarmed by its
+        // own acceptance. A bare agreement carries the intent of the request it agreed to.
+        let intentQuery = ChatRouteRecovery.resolutionQuery(
+            current: query, previousUserRequests: previousUserRequests)
+        let lower = intentQuery.lowercased()
         let subjectContext = lower + "\n" + priorConversation.lowercased()
-        let complexity = TaskComplexityRouter.route(query)
-        let actionWords = ["create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ", "open ", "play ", "save ", "write ", "add ", "remove "]
+        let complexity = TaskComplexityRouter.route(intentQuery)
+        // "update the app" was not an action here, which is how agreeing to run Check for
+        // Updates still produced a turn with no menu tool. The words a person uses to ask an
+        // app to do something are wider than create/draft/send.
+        //
+        // "launch " is deliberately absent. It matched "which conversations mention the launch
+        // date?" — a noun, in a question, granted UI automation. A word that is as often a
+        // noun as a verb cannot be read as intent by substring, which is the lesson "trash"
+        // already taught this file's neighbours.
+        let actionWords = ["create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ", "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ", "quit ", "enable ", "disable ", "export "]
         let readWords = ["find ", "search ", "list ", "show ", "read ", "what ", "which ", "who ", "when ", "how many", "summar", "check "]
         let hasAction = actionWords.contains(where: lower.contains)
         let hasRead = readWords.contains(where: lower.contains)
@@ -97,7 +114,7 @@ struct FrontmostAppTaskPlan: Equatable {
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
         if hasAction { tools.formUnion(["run_menu_command", "send_keys", "window_control"]) }
 
-        return Self(goal: query.trimmingCharacters(in: .whitespacesAndNewlines), appName: appName,
+        return Self(goal: intentQuery.trimmingCharacters(in: .whitespacesAndNewlines), appName: appName,
                     bundleId: bundleId, intent: intent, sources: sources,
                     allowedToolNames: tools, complexity: complexity)
     }

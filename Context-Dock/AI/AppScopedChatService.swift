@@ -1102,7 +1102,8 @@ enum AppScopedChatService {
             appName: appName,
             hasSelection: !finderSelection.isEmpty,
             hasAttachments: !attachments.isEmpty,
-            priorConversation: history.suffix(4).map(\.content).joined(separator: "\n"))
+            priorConversation: history.suffix(4).map(\.content).joined(separator: "\n"),
+            previousUserRequests: history.filter { $0.role == .user }.map(\.content))
         // Assembled into named slots rather than a flat list, so reading order and the
         // budget for a small-context model are one rule shared with the dock instead of two
         // that drifted. This surface had no budget at all: on Apple's on-device model the
