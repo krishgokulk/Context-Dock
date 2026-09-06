@@ -73,6 +73,31 @@ struct ChatRouteRecoveryTests {
         #expect(candidates.map(\.bundleID) == ["com.microsoft.VSCode", "com.apple.MobileSMS"])
     }
 
+    /// A drafted message should end in a Send button, not in prose the user has to copy.
+    /// The trigger is the request, not the answer: the model's wording varies, the ask does
+    /// not, and a heuristic over generated prose would be guessing about our own feature.
+    @Test(arguments: [
+        "draft a message to salman khan",
+        "send salman a text about the release",
+        "message sujith that I'm running late",
+        "text mum the address",
+        "write an imessage to Ann",
+    ])
+    func aRequestToWriteToSomeoneWantsSending(query: String) {
+        #expect(ChatRouteRecovery.wantsMessageComposition(query))
+    }
+
+    @Test(arguments: [
+        "summarise my last edit",
+        "what did I change in this repo",
+        "how do I send a message with the API",
+        "read the messages from salman",
+        "what's in my inbox",
+    ])
+    func aQuestionAboutMessagesIsNotARequestToSendOne(query: String) {
+        #expect(!ChatRouteRecovery.wantsMessageComposition(query))
+    }
+
     @Test func anAppWithNoBundleIDIsSkippedRatherThanFailingTheRest() {
         let candidates = ChatRouteRecovery.candidateApps(
             scope: .general,

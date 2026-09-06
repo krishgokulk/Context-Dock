@@ -1712,8 +1712,31 @@ enum AppScopedChatService {
 
         var chips = memoryChips + outcome.mcpToolsRan + executed.map(\.command)
         if !liveAppleData.isEmpty { chips.insert("Live app data · just now", at: 0) }
+
+        // A drafted message ends in a button, not in prose to copy out by hand. The user
+        // asked for something to be written to a person; whether the model chose to say so
+        // or to write it out, sending it is one tap away and still goes through approval.
+        var sendChoices: [ActionChoice] = []
+        if ChatRouteRecovery.wantsMessageComposition(query), !ChatAnswerSanitizer.isProtocolOnly(text) {
+            let candidates = ChatRouteRecovery.candidateApps(
+                scope: scope,
+                attachedAppNames: extraAppNames,
+                scopeAppName: appName,
+                bundleID: { GeneralChatWindowModel.bundleId(forAppNamed: $0) })
+            for candidate in candidates {
+                let routes = await ChatRouteResolver.routes(
+                    for: query, bundleId: candidate.bundleID, appName: candidate.name)
+                sendChoices = routes.prefix(2).map(\.asActionChoice)
+                if !sendChoices.isEmpty { break }
+            }
+            if !sendChoices.isEmpty {
+                log.notice("offering \(sendChoices.count) send route(s) for a drafted message")
+            }
+        }
+
         return Answer(
             text: text, toolChips: chips,
+            routeChoices: sendChoices,
             evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
             subjectiveEvaluation: outcome.subjectiveEvaluation,
             trace: sourceTrace)

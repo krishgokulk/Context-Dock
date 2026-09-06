@@ -167,15 +167,32 @@ struct CornerGeneralChatView: View {
     /// twice — as a chip down in the composer and nowhere the eye starts.
     private var header: some View {
         HStack(spacing: 8) {
-            if let app = scopedAppName, let icon = AppContextPicker.icon(forAppNamed: app) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .help("This chat is scoped to \(app)")
-                Text(app)
+            let members = membershipAppNames
+            if !members.isEmpty {
+                // Every member gets its icon: a combined chat is one conversation with two
+                // apps in it, and which two is the first thing worth knowing about it.
+                HStack(spacing: -5) {
+                    ForEach(members.prefix(3), id: \.self) { name in
+                        if let icon = AppContextPicker.icon(forAppNamed: name) {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 5))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .stroke(Color(NSColor.windowBackgroundColor), lineWidth: 1))
+                        }
+                    }
+                }
+                .help(
+                    members.count == 1
+                        ? "This chat is scoped to \(members[0])"
+                        : "This chat is with \(members.joined(separator: " + "))")
+
+                Text(headerTitle(for: members))
                     .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
+                    .truncationMode(.middle)
             } else {
                 AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 18)
                 Text(AppSettings.shared.selectedAIProvider.shortName)
@@ -226,6 +243,27 @@ struct CornerGeneralChatView: View {
     /// The app this thread is about, if it is about one.
     private var scopedAppName: String? {
         model.activeScopeAppName ?? model.scopeAppNames.first
+    }
+
+    /// Names for the header: both when two fit, a count past that.
+    private func headerTitle(for members: [String]) -> String {
+        switch members.count {
+        case 0: return ""
+        case 1: return members[0]
+        case 2: return members.joined(separator: " + ")
+        default: return "\(members[0]) + \(members.count - 1) more"
+        }
+    }
+
+    /// Every app this conversation is with.
+    ///
+    /// A combined chat is the cross-app power of this surface, and the header used to name
+    /// only the first member — so Messages + Code read as a chat with Messages, and the
+    /// second app the user deliberately attached was invisible at the place the eye starts.
+    private var membershipAppNames: [String] {
+        let names = model.currentMembership
+        guard names.isEmpty else { return names }
+        return scopedAppName.map { [$0] } ?? []
     }
 
     private var transcript: some View {
