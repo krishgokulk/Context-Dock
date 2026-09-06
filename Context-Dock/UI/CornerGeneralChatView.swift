@@ -301,6 +301,37 @@ struct CornerGeneralChatView: View {
         return scopedAppName.map { [$0] } ?? []
     }
 
+    /// A file this conversation produced, at the size the corner can carry: name, kind, and
+    /// one tap to open it. The window's card carries more; this is the same fact in less room.
+    private func artifactRow(_ url: URL) -> some View {
+        Button {
+            NSWorkspace.shared.open(url)
+        } label: {
+            HStack(spacing: 8) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+                Text(url.lastPathComponent)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.secondary.opacity(0.10)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Open \(url.lastPathComponent)")
+        .accessibilityLabel("Open \(url.lastPathComponent)")
+    }
+
     /// The steps are the truth when there are any. Before the first one arrives there is
     /// still something honest to say — who the question went to — and saying it beats a
     /// spinner, which reports only that the app is busy.
@@ -343,13 +374,27 @@ struct CornerGeneralChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(model.messages) { message in
-                        AIChatMessageView(
-                            message: message,
-                            onEnableApp: { model.enableApp($0) },
-                            onPickAction: { model.pickRoute($0) },
-                            liveSteps: message.id == model.messages.last?.id
-                                ? model.activeProgress : [])
-                            .id(message.id)
+                        VStack(alignment: .leading, spacing: 6) {
+                            AIChatMessageView(
+                                message: message,
+                                onEnableApp: { model.enableApp($0) },
+                                onPickAction: { model.pickRoute($0) },
+                                liveSteps: message.id == model.messages.last?.id
+                                    ? model.activeProgress : [])
+
+                            // What this answer built. The model extracts artifacts for every
+                            // scope, and the window shows them under the message that made
+                            // one — the corner extracted them and showed nothing, so a
+                            // document written from here existed only on disk.
+                            let produced = ArtifactStore.artifacts(
+                                mentionedIn: message.content, scope: model.activeScope)
+                            if message.role == .assistant, !produced.isEmpty {
+                                ForEach(produced, id: \.path) { url in
+                                    artifactRow(url)
+                                }
+                            }
+                        }
+                        .id(message.id)
                     }
                     // The same step list App mode shows, in the same card.
                     //

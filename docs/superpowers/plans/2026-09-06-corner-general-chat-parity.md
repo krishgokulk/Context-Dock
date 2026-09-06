@@ -97,16 +97,23 @@ Render `LiveAgentProgressView(steps:)` from the model's progress for the active 
 is running, the way `AppChatPromptPill` does. Same component, same placement relative to the
 transcript, so the two corner chats read as one surface in two modes.
 
-### Task 4 — Audit the rest of the corner for the same class
+### ✅ Task 4 — Audit the rest of the corner for the same class
 
-The class is "one surface knows how to do it, the other was never given it". Check, and write down
-each answer even when it is fine:
+The class is "one surface knows how to do it, the other was never given it". Swept, with each
+answer written down even where nothing was wrong:
 
-- attachments and Finder selection in corner General vs App
-- stop/cancel mid-turn
-- approvals raised inside a corner General turn (`ApprovalSurface.corner`)
-- artifacts extracted from a corner answer
-- console log entries for corner turns
+- **Attachments** — parity. Both surfaces read and clear `model.attachments`.
+- **Finder selection** — parity, and neither view touches it: `selectionInScope` narrows it in
+  the model, so both inherit one rule.
+- **Stop mid-turn** — the corner has it (Escape cancels a running turn); the window has no
+  cancel at all. The same class pointing the other way, and worth its own fix.
+- **Approvals** — parity since `ApprovalSurface.corner` was added.
+- **Artifacts** — **the gap.** `deliver` extracts artifacts for every scope and only the window
+  drew them, so a document written from the corner existed on disk and nowhere on screen.
+  Fixed: a compact row under the message that produced it.
+- **Console entries** — the window has a console panel; the corner does not, and should not. A
+  372-point card is not a place to read a log, and the expand button opens the window that is.
+  Deliberate, not a gap.
 
 ### Task 6 — "No linked route" is not "cannot"
 
