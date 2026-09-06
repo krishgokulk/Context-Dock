@@ -611,6 +611,10 @@ final class AgentToolRegistry {
         turnQuery = query
         turnProvider = provider
         turnAllowedToolNames = allowedToolNames
+        DoraXTurnLog.record(
+            "turn prepared — provider=\(provider.rawValue) "
+            + "nativeTools=\(provider.supportsNativeTools) "
+            + "allowed=\(allowedToolNames.map { $0.sorted().joined(separator: ",") } ?? "all")")
     }
 
     /// The tool list as a provider expects to receive it. One source, three renderings —
@@ -621,6 +625,8 @@ final class AgentToolRegistry {
     /// happens here rather than at each call site so no provider path can forget it.
     func schemas(format: SchemaFormat) -> [[String: Any]] {
         let available = toolsAvailable(for: turnQuery)
+        DoraXTurnLog.record(
+            "tools sent (\(available.count)): \(available.map(\.name).sorted().joined(separator: ","))")
         let rendered = renderedSchemas(format: format, tools: available)
         guard let provider = turnProvider else { return rendered }
         return AIToolBudget.trim(rendered, query: turnQuery, provider: provider)
