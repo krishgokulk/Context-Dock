@@ -2723,6 +2723,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func showLauncher() {
+        // Who asked. The corner chat runs its turn on the dock's pipeline without wanting the
+        // dock on screen, and it kept arriving anyway — with every static caller ruled out,
+        // the honest instrument is the stack at the moment it happens. Only while the turn log
+        // is switched on, so this costs nothing in normal use.
+        if DoraXTurnLog.isEnabled {
+            let stack = Thread.callStackSymbols.dropFirst().prefix(8).joined(separator: " | ")
+            DoraXTurnLog.record("showLauncher called — \(stack)")
+        }
         guard let window = launcherWindow else { return }
         startPointerTransparencyMonitor()
 
