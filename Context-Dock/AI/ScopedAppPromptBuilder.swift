@@ -245,9 +245,32 @@ enum ScopedAppPromptBuilder {
         }
         lines.append(
             "Tool choice order: exact saved adapter action → verified live app menu for visible UI commands → MCP/API for app data → Shortcut → linked CLI fallback → answer from "
-            + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, say what "
-            + "IS possible now and suggest linking the right tool in Settings → App Adapters → "
-            + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI).")
+            + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, propose one exact read-only "
+            + "run_command that would answer it and let the user approve it — and say what "
+            + "IS possible now, and that linking the right tool in Settings → App Adapters → "
+            + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI) would make it one tap.")
+        // Nothing linked is not the same as nothing possible.
+        //
+        // Asked whether a newer VS Code existed, this prompt produced a correct-sounding
+        // dead end: no update route linked, `code` prints only the installed version, so
+        // "I can tell you what runs, not what's latest" — and advice to go configure
+        // Settings. Meanwhile run_command was available, and anything the command gate does
+        // not recognise goes to the approval sheet rather than being refused. The answer was
+        // one approved curl away and the model had been taught to stop.
+        lines.append(
+            "Unlinked is not impossible. When no linked route fits and a read-only command "
+            + "could answer the question (a version endpoint, a package manager query, a "
+            + "status read), name the exact command and propose it — it goes to the user for "
+            + "approval before it runs, so proposing costs them a tap and refusing costs them "
+            + "the answer. Never end with \"I can't\" while an approvable read-only command "
+            + "exists. Writes, installs, deletes and anything touching remote state still "
+            + "wait for that approval and are never proposed as read-only.")
+        lines.append(
+            "Never claim a tool is unavailable, ungranted, or \"not granted this session\". "
+            + "There is no per-session tool grant in this app: a capability either exists for "
+            + "this scope or does not, and an app outside the chat's scope produces its own "
+            + "enable request. Describing a permission system that does not exist teaches the "
+            + "user a rule they will act on and cannot satisfy.")
         lines.append(
             "Intent rule: a question is answered from the supplied live context, observed data, "
             + "adapter readers, MCP results, skills, memory, or reference material. Never run a "

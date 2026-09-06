@@ -264,3 +264,22 @@ Rules:
 - If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Finish the started task before taking the next one
+
+Work in this repo is sequenced deliberately, and the sequence is the user's.
+
+When a task or feature is underway and the user asks for something else — a new
+feature, another bug, a question that turns into work — **finish the current
+task first**, then take the new one. Say plainly that the new item is queued and
+where it sits in the order; do not silently drop it, and do not abandon what is
+half-built to chase it. A half-finished feature is worse than an unstarted one:
+it looks done from the outside and nobody knows what it left behind.
+
+The exception is the user saying to switch, or the new item making the current
+task pointless. A defect found *inside* the current task is part of it and gets
+fixed on the spot.
+
+Keep the agreed order visible. When the plan is a numbered sequence, name the
+task being worked on and what comes next, so the user can reorder deliberately
+rather than by accident.
