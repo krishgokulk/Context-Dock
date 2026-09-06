@@ -35,6 +35,7 @@ private func runningApplication(named name: String) -> NSRunningApplication? {
 // the only step required to make a tool callable from every provider.
 
 import Foundation
+import OSLog
 import PDFKit
 
 /// What a tool receives. Carries the per-request collaborators a handler may need, so
@@ -621,8 +622,20 @@ final class AgentToolRegistry {
     func schemas(format: SchemaFormat) -> [[String: Any]] {
         let available = toolsAvailable(for: turnQuery)
         let rendered = renderedSchemas(format: format, tools: available)
-        guard let provider = turnProvider else { return rendered }
-        return AIToolBudget.trim(rendered, query: turnQuery, provider: provider)
+        guard let provider = turnProvider else { return logged(rendered) }
+        return logged(AIToolBudget.trim(rendered, query: turnQuery, provider: provider))
+    }
+
+    /// What the model was actually handed.
+    ///
+    /// A chat reported it had no run_menu_command while the plan granted it, the filter kept
+    /// it and the prompt named it — every check that could be made without a live turn said
+    /// the tool was there. This is the one fact none of them can see: the list as sent.
+    private func logged(_ schemas: [[String: Any]]) -> [[String: Any]] {
+        let names = schemas.compactMap { $0["name"] as? String ?? ($0["function"] as? [String: Any])?["name"] as? String }
+        Logger(subsystem: "com.krishgokul.ContextDock", category: "AgentTools")
+            .notice("turn tools (\(names.count, privacy: .public)): \(names.sorted().joined(separator: ", "), privacy: .public)")
+        return schemas
     }
 
     /// Questions get readers, not controls or command catalogues. Tool schemas are an

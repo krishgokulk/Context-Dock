@@ -52,3 +52,37 @@ struct ConfirmationKeepsActionToolsTests {
         #expect(available.isDisjoint(with: actionTools))
     }
 }
+
+/// The turn that started it: "like to update the app", with the app in front.
+@MainActor
+@Suite("Asking an app to update is an action")
+struct UpdateRequestIsActionTests {
+    @Test func thePlanGrantsTheMenuTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "like to update the app",
+            bundleId: "com.anthropic.claudefordesktop",
+            appName: "Claude")
+        #expect(plan.allowedToolNames.contains("run_menu_command"))
+    }
+
+    /// The second gate, and the one the plan cannot see: a query that only asks has its
+    /// action tools removed after the plan has granted them.
+    @Test func theToolFilterKeepsIt() {
+        let available = AgentToolRegistry.shared.toolNamesAvailable(for: "like to update the app")
+        #expect(available.contains("run_menu_command"))
+    }
+}
+
+/// Does the prompt for Claude actually name the menu tool and the command?
+@MainActor
+@Suite("Menu tool reaches the prompt")
+struct MenuToolPromptTests {
+    @Test func claudeIdentityBlockOffersTheMenuTool() {
+        let block = ScopedAppPromptBuilder.appIdentityBlock(
+            bundleId: "com.anthropic.claudefordesktop",
+            appName: "Claude",
+            query: "like to update the app")
+        #expect(block.contains("run_menu_command"))
+        #expect(block.lowercased().contains("check for updates"))
+    }
+}
