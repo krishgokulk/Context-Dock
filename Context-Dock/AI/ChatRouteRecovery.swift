@@ -16,6 +16,35 @@ enum ChatRouteRecovery {
         let name: String
     }
 
+    /// Words that agree to something without restating it.
+    ///
+    /// Offered a compose window and answered "yes", the user has made a request — but not in
+    /// this message. Resolving routes from the word itself finds nothing, and the surface
+    /// then reports that it could not carry out the very thing that was just approved.
+    static func isBareConfirmation(_ query: String) -> Bool {
+        let text = query.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".!"))
+        let agreements: Set<String> = [
+            "y", "yes", "yeah", "yep", "yup", "ok", "okay", "k", "sure", "please", "yes please",
+            "do it", "go ahead", "go for it", "please do", "sounds good", "correct", "confirm",
+        ]
+        return agreements.contains(text)
+    }
+
+    /// The words a route should be resolved from.
+    ///
+    /// A bare agreement points back to the last thing the user actually asked for; anything
+    /// else speaks for itself. With no earlier request to point at, the agreement keeps its
+    /// own words rather than borrowing an intent that was never stated.
+    static func resolutionQuery(current: String, previousUserRequests: [String]) -> String {
+        guard isBareConfirmation(current) else { return current }
+        let candidate = previousUserRequests
+            .reversed()
+            .first { !isBareConfirmation($0) && !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return candidate ?? current
+    }
+
     /// Did the user ask for something to be written *to* a person?
     ///
     /// Read from the request rather than the answer. A drafted message should end in a Send

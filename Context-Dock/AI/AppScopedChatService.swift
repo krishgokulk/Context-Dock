@@ -1664,6 +1664,12 @@ enum AppScopedChatService {
         // Routes are the deterministic path in this surface. If one exists for what was
         // asked, run it; the request is carried out rather than reported undeliverable.
         if ChatAnswerSanitizer.isProtocolOnly(text) {
+            // "Yes" agrees to a request made a turn ago. Resolved from the word itself it
+            // matches no route, and the surface then reports it could not carry out the
+            // thing the user had just approved.
+            let intent = ChatRouteRecovery.resolutionQuery(
+                current: query, previousUserRequests: history.filter { $0.role == .user }.map(\.content))
+
             // Every scope that has an app to ask, not only a single-app thread. A combined
             // workspace and a General chat with an app attached both own routes; gating this
             // on `case .app` is what reported a resolved Messages call as undeliverable.
@@ -1677,9 +1683,9 @@ enum AppScopedChatService {
 
             for candidate in candidates {
                 let recovered = await ChatRouteResolver.routes(
-                    for: query, bundleId: candidate.bundleID, appName: candidate.name)
+                    for: intent, bundleId: candidate.bundleID, appName: candidate.name)
                 guard let route = recovered.first else { continue }
-                let result = await ChatRouteResolver.run(route, query: query)
+                let result = await ChatRouteResolver.run(route, query: intent)
                 ChatConsoleLog.shared.append(
                     .route, title: route.title,
                     output: result.output.isEmpty ? "(no output)" : result.output,
@@ -1717,7 +1723,13 @@ enum AppScopedChatService {
         // asked for something to be written to a person; whether the model chose to say so
         // or to write it out, sending it is one tap away and still goes through approval.
         var sendChoices: [ActionChoice] = []
-        if ChatRouteRecovery.wantsMessageComposition(query), !ChatAnswerSanitizer.isProtocolOnly(text) {
+        // Read through an agreement to the request it answers, so "yes" offers the same
+        // button the request itself would have.
+        let sendIntent = ChatRouteRecovery.resolutionQuery(
+            current: query, previousUserRequests: history.filter { $0.role == .user }.map(\.content))
+        if ChatRouteRecovery.wantsMessageComposition(sendIntent),
+            !ChatAnswerSanitizer.isProtocolOnly(text)
+        {
             let candidates = ChatRouteRecovery.candidateApps(
                 scope: scope,
                 attachedAppNames: extraAppNames,
@@ -1725,7 +1737,7 @@ enum AppScopedChatService {
                 bundleID: { GeneralChatWindowModel.bundleId(forAppNamed: $0) })
             for candidate in candidates {
                 let routes = await ChatRouteResolver.routes(
-                    for: query, bundleId: candidate.bundleID, appName: candidate.name)
+                    for: sendIntent, bundleId: candidate.bundleID, appName: candidate.name)
                 sendChoices = routes.prefix(2).map(\.asActionChoice)
                 if !sendChoices.isEmpty { break }
             }

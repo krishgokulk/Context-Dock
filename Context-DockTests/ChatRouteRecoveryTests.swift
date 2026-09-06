@@ -98,6 +98,39 @@ struct ChatRouteRecoveryTests {
         #expect(!ChatRouteRecovery.wantsMessageComposition(query))
     }
 
+    /// "Yes" is an answer, not a request. The intent it agrees to was stated a turn earlier,
+    /// so resolving routes from the word itself finds nothing and the surface reports that it
+    /// could not carry out something the user had just approved.
+    @Test(arguments: ["yes", "Yes", "yeah", "yep", "ok", "okay", "sure", "do it", "go ahead", "yes please"])
+    func aBareAgreementIsNotARequest(query: String) {
+        #expect(ChatRouteRecovery.isBareConfirmation(query))
+    }
+
+    @Test(arguments: ["yes, and add the invoice", "ok now delete it", "sure thing — send it to Ann tomorrow"])
+    func anAgreementThatCarriesItsOwnRequestStandsAlone(query: String) {
+        #expect(!ChatRouteRecovery.isBareConfirmation(query))
+    }
+
+    @Test func confirmationResolvesAgainstWhatWasAskedBefore() {
+        let history = ["draft a mail to ruby", "open compose window in Mail with this"]
+        #expect(
+            ChatRouteRecovery.resolutionQuery(current: "yes", previousUserRequests: history)
+                == "open compose window in Mail with this")
+    }
+
+    @Test func anOrdinaryRequestResolvesAgainstItself() {
+        #expect(
+            ChatRouteRecovery.resolutionQuery(
+                current: "open compose window in Mail",
+                previousUserRequests: ["something older"])
+                == "open compose window in Mail")
+    }
+
+    @Test func aConfirmationWithNothingBeforeItKeepsItsOwnWords() {
+        #expect(
+            ChatRouteRecovery.resolutionQuery(current: "yes", previousUserRequests: []) == "yes")
+    }
+
     @Test func anAppWithNoBundleIDIsSkippedRatherThanFailingTheRest() {
         let candidates = ChatRouteRecovery.candidateApps(
             scope: .general,
