@@ -114,6 +114,10 @@ enum AgentSourceAuthority {
         if GeneralAIActionResolver.shared.requestsChange(q) { return false }
         // A question about the interface carries the same freshness words as a question about
         // the contents. "how do I see what is due today?" wants documentation, not a read.
+        // Naming the app itself makes it a question about the product, not its records.
+        // "what does this app do?" reaches the same signals as "what does this note say?" and
+        // wants documentation, not a read of anything.
+        if q.contains("this app") || q.contains("the app") { return false }
         let procedurePrefixes = [
             "how do i ", "how can i ", "how to ", "where do i ", "where is ",
             "what happens if ", "can i ",
@@ -131,6 +135,15 @@ enum AgentSourceAuthority {
         let readSignals = [
             "how many", "do i have", "any ", "anything", "my ", "show me", "list ",
             "what's on", "whats on",
+            // "what's in this note?" named the thing in front of it and still grounded
+            // nowhere: no freshness word, no possessive. Asking what is *inside* the open
+            // record is the plainest read there is, and the scope already says which record.
+            //
+            // "in this"/"in the", not a bare "what's in": "what's in it for me?" is an idiom
+            // about nothing, and grounding it would answer a figure of speech with "your notes
+            // were not readable".
+            "what's in this", "whats in this", "what is in this", "what's in the",
+            "what does this", "what's this", "summarise this", "summarize this", "read this",
         ]
         return agenda.contains(where: q.contains) || readSignals.contains(where: q.contains)
     }
