@@ -801,6 +801,9 @@ final class GeneralAIActionResolver {
             // capture.area and capture.text. "screenshot" is a whole word here, so "show me my
             // screenshots" stays the read it is — the word-split match sees "screenshots".
             "screenshot", "capture",
+            // reminders.update. "move" already covers "move these to tomorrow", but nobody
+            // says that when they mean a date — they say reschedule.
+            "reschedule",
         ]
         let words = query.lowercased()
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })

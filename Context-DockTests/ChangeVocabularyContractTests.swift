@@ -34,6 +34,7 @@ struct ChangeVocabularyContractTests {
         "reminders.create": "add a reminder to pay the bank tomorrow",
         "reminders.complete": "mark the bank reminder as done",
         "reminders.delete": "delete my grocery reminder",
+        "reminders.update": "reschedule these to friday",
         "finder.trash": "delete these files",
         "finder.renameFiles": "rename this file to invoice-final",
         "finder.moveFiles": "move these to Downloads",

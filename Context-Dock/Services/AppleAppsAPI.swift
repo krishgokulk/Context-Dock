@@ -326,6 +326,68 @@ class AppleAppsAPI {
         } catch { return nil }
     }
 
+    /// Change the due date and/or priority of several reminders in one pass.
+    ///
+    /// One call rather than one per reminder, because a bulk edit is approved once — see the
+    /// decision "A bulk edit is one approval that names every record".
+    ///
+    /// Returns what the store says *afterwards*, re-read rather than assumed. A reminder whose
+    /// save was rejected simply does not come back, so the answer cannot report a change that
+    /// did not happen.
+    func rescheduleReminders(
+        titles: [String], dueDate: Date?, priority: Int?
+    ) -> [(title: String, dueDate: Date?, priority: Int)] {
+        guard requestReminderAccess() else { return [] }
+        let needles = titles
+            .map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !needles.isEmpty, dueDate != nil || priority != nil else { return [] }
+
+        var changedTitles: [String] = []
+        let writeDone = DispatchSemaphore(value: 0)
+        eventStore.fetchReminders(matching: eventStore.predicateForReminders(in: nil)) {
+            [weak self] reminders in
+            guard let self, let reminders else { writeDone.signal(); return }
+            for needle in needles {
+                // Each title claims its own reminder: matching by `contains` twice over would
+                // otherwise let one reminder answer for two names and silently skip the other.
+                guard let match = reminders.first(where: {
+                    !$0.isCompleted
+                        && ($0.title ?? "").lowercased().contains(needle)
+                        && !changedTitles.contains($0.title ?? "")
+                }) else { continue }
+                if let dueDate {
+                    match.dueDateComponents = Calendar.current.dateComponents(
+                        [.year, .month, .day, .hour, .minute], from: dueDate)
+                }
+                if let priority { match.priority = priority }
+                do {
+                    try self.eventStore.save(match, commit: true)
+                    changedTitles.append(match.title ?? needle)
+                } catch {
+                    continue
+                }
+            }
+            writeDone.signal()
+        }
+        _ = writeDone.wait(timeout: .now() + 8)
+        guard !changedTitles.isEmpty else { return [] }
+
+        var observed: [(title: String, dueDate: Date?, priority: Int)] = []
+        let readDone = DispatchSemaphore(value: 0)
+        eventStore.fetchReminders(matching: eventStore.predicateForReminders(in: nil)) { reminders in
+            for title in changedTitles {
+                guard let match = reminders?.first(where: { ($0.title ?? "") == title }) else {
+                    continue
+                }
+                observed.append((title, match.dueDateComponents?.date, match.priority))
+            }
+            readDone.signal()
+        }
+        _ = readDone.wait(timeout: .now() + 6)
+        return observed
+    }
+
     private func modifyReminder(
         matchingTitle: String, _ change: @escaping (EKReminder) -> Void
     ) -> String? {

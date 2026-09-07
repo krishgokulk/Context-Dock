@@ -11,13 +11,147 @@ import EventKit
 @MainActor
 enum AppleRemindersMCPCapabilities {
 
+    // MARK: - Priority, in words
+    //
+    // EventKit stores priority as a number with banded meaning — 0 unset, 1–4 high, 5 medium,
+    // 6–9 low. Rendering the number is useless to a model asked for "the low-priority ones",
+    // which is half of why that request was unanswerable.
+
+    nonisolated static func priorityLabel(_ priority: Int) -> String? {
+        switch priority {
+        case 1...4: return "high"
+        case 5: return "medium"
+        case 6...9: return "low"
+        default: return nil
+        }
+    }
+
+    nonisolated static func priorityValue(for name: String) -> Int? {
+        switch name.lowercased().trimmingCharacters(in: .whitespaces) {
+        case "high": return 1
+        case "medium": return 5
+        case "low": return 9
+        case "none", "": return 0
+        default: return nil
+        }
+    }
+
+    /// The titles a bulk edit will touch, as the model wrote them.
+    ///
+    /// Pure and tested, because this is where a bulk edit quietly becomes the wrong set of
+    /// records — an empty fragment from a trailing comma would otherwise match the first
+    /// reminder in the store.
+    nonisolated static func titles(from raw: String) -> [String] {
+        raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// "• title — due 3 Apr, 09:00 · low" — priority only when it is set.
+    nonisolated static func describe(title: String, due: String?, priority: Int) -> String {
+        var line = "• \(title)"
+        if let due, !due.isEmpty { line += " — due \(due)" }
+        if let band = priorityLabel(priority) { line += " · \(band) priority" }
+        return line
+    }
+
     static func register(in registry: CapabilityRegistry) {
         registerToday(registry)
+        registerUpdate(registry)
         registerOverdue(registry)
         registerList(registry)
         registerCreate(registry)
         registerComplete(registry)
         registerDelete(registry)
+    }
+
+    // MARK: - reminders.update
+
+    private static func registerUpdate(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "reminders.update",
+                title: "Reschedule or Reprioritise Reminders",
+                appBundleID: "com.apple.reminders",
+                inputSchema: .init(fields: [
+                    .init(
+                        name: "titles",
+                        description:
+                            "Comma-separated titles of the reminders to change. Name them "
+                            + "explicitly — call reminders.list or reminders.today first and "
+                            + "resolve which ones the user meant, so the approval names them.",
+                        required: true),
+                    .init(
+                        name: "dueDate",
+                        description: "New due date in ISO 8601 (e.g. 2026-09-08T09:00:00)",
+                        required: false),
+                    .init(
+                        name: "priority",
+                        description: "New priority: high, medium, low, or none",
+                        required: false),
+                ]),
+                riskLevel: .medium
+            ) { request in
+                guard AppSettings.shared.remindersMCPEnabled else {
+                    throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
+                }
+                let wanted = titles(from: request.input["titles"] ?? "")
+                guard !wanted.isEmpty else {
+                    throw AICapabilityError.missingInput("titles")
+                }
+                let dueRaw = request.input["dueDate"] ?? ""
+                let due = dueRaw.isEmpty ? nil : ISO8601DateFormatter().date(from: dueRaw)
+                if !dueRaw.isEmpty, due == nil {
+                    throw AICapabilityError.missingInput("dueDate in ISO 8601")
+                }
+                let priorityRaw = request.input["priority"] ?? ""
+                let priority = priorityRaw.isEmpty ? nil : priorityValue(for: priorityRaw)
+                if !priorityRaw.isEmpty, priority == nil {
+                    throw AICapabilityError.missingInput("priority: high, medium, low or none")
+                }
+                guard due != nil || priority != nil else {
+                    throw AICapabilityError.missingInput("dueDate or priority — nothing to change")
+                }
+
+                let observed = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        continuation.resume(
+                            returning: AppleAppsAPI.shared.rescheduleReminders(
+                                titles: wanted, dueDate: due, priority: priority))
+                    }
+                }
+                guard !observed.isEmpty else {
+                    return .init(
+                        success: false,
+                        output: "Nothing was changed — no open reminder matched "
+                            + wanted.map { "'\($0)'" }.joined(separator: ", ") + ".")
+                }
+
+                let formatter = DateFormatter()
+                formatter.dateStyle = .medium
+                formatter.timeStyle = .short
+                let lines = observed.map { row in
+                    describe(
+                        title: row.title,
+                        due: row.dueDate.map { formatter.string(from: $0) },
+                        priority: row.priority)
+                }
+                // Reported from the read-back, so a reminder whose save was refused is absent
+                // here rather than described as changed.
+                var output = "Changed \(observed.count) of \(wanted.count):\n"
+                    + lines.joined(separator: "\n")
+                if observed.count < wanted.count {
+                    let changed = Set(observed.map(\.title))
+                    let missed = wanted.filter { want in
+                        !changed.contains { $0.lowercased().contains(want.lowercased()) }
+                    }
+                    if !missed.isEmpty {
+                        output += "\n\nNot found: " + missed.joined(separator: ", ")
+                    }
+                }
+                return .init(success: true, output: output)
+            }
+        )
     }
 
     // MARK: - reminders.complete
@@ -111,9 +245,11 @@ enum AppleRemindersMCPCapabilities {
                 df.timeStyle = .short
                 let lines = items.prefix(30).map { r -> String in
                     let title = r["title"] as? String ?? "Untitled"
-                    let due = (r["dueDate"] as? String).flatMap { ISO8601DateFormatter().date(from: $0) }
-                    let dueStr = due.map { " (due \(df.string(from: $0)))" } ?? ""
-                    return "• \(title)\(dueStr)"
+                    let due = (r["dueDate"] as? String)
+                        .flatMap { ISO8601DateFormatter().date(from: $0) }
+                    return describe(
+                        title: title, due: due.map { df.string(from: $0) },
+                        priority: r["priority"] as? Int ?? 0)
                 }
                 return .init(
                     success: true,
@@ -159,12 +295,13 @@ enum AppleRemindersMCPCapabilities {
                 df.timeStyle = .short
                 let lines = todayAndOverdue.map { r -> String in
                     let title = r["title"] as? String ?? "Untitled"
-                    guard let dueDateStr = r["dueDate"] as? String,
-                          let dueDate = ISO8601DateFormatter().date(from: dueDateStr) else {
-                        return "• \(title)"
-                    }
-                    let tag = dueDate < now ? " ⚠️ overdue" : ""
-                    return "• \(title) — due \(df.string(from: dueDate))\(tag)"
+                    let dueDate = (r["dueDate"] as? String)
+                        .flatMap { ISO8601DateFormatter().date(from: $0) }
+                    let line = describe(
+                        title: title, due: dueDate.map { df.string(from: $0) },
+                        priority: r["priority"] as? Int ?? 0)
+                    guard let dueDate, dueDate < now else { return line }
+                    return line + " ⚠️ overdue"
                 }
                 return .init(success: true, output: "Due today/overdue (\(todayAndOverdue.count)):\n\(lines.joined(separator: "\n"))")
             }
@@ -201,11 +338,12 @@ enum AppleRemindersMCPCapabilities {
                 df.timeStyle = .short
                 let lines = reminders.map { r -> String in
                     let title = r["title"] as? String ?? "Untitled"
-                    if let dueDateStr = r["dueDate"] as? String,
-                       let dueDate = ISO8601DateFormatter().date(from: dueDateStr) {
-                        return "• \(title) — due \(df.string(from: dueDate))"
-                    }
-                    return "• \(title)"
+                    let due = (r["dueDate"] as? String)
+                        .flatMap { ISO8601DateFormatter().date(from: $0) }
+                        .map { df.string(from: $0) }
+                    // Priority was in the data all along and never rendered, which is why
+                    // "the low-priority ones" had nothing to match on.
+                    return describe(title: title, due: due, priority: r["priority"] as? Int ?? 0)
                 }
                 return .init(success: true, output: "Active reminders (\(reminders.count)):\n\(lines.joined(separator: "\n"))")
             }
