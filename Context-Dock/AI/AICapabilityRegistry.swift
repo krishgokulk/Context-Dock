@@ -883,11 +883,41 @@ final class AICapabilityApprovalCenter: ObservableObject {
 
     private init() {}
 
+    /// Refuse every approval without showing one, and record what was asked.
+    ///
+    /// Set while an external agent drives DoraX through the MCP server. An agent looping over
+    /// fifty eval questions must not be able to send mail or empty the trash because a sheet
+    /// resolved on its own — and there is nobody at the keyboard to refuse one.
+    ///
+    /// This makes the evaluation better, not merely safer. The question an eval should ask is
+    /// "was the right approval requested?", which is a decision DoraX owns, rather than "did
+    /// the side effect happen?", which depends on a person and on the state of their Mac.
+    static var refusesEveryApprovalUnattended = false
+
+    /// What was asked for while unattended, in order, so an eval can assert on it.
+    static private(set) var approvalsRequestedUnattended: [String] = []
+
+    static func beginUnattendedRun() {
+        refusesEveryApprovalUnattended = true
+        approvalsRequestedUnattended = []
+    }
+
+    static func endUnattendedRun() -> [String] {
+        refusesEveryApprovalUnattended = false
+        let asked = approvalsRequestedUnattended
+        approvalsRequestedUnattended = []
+        return asked
+    }
+
     func requestApproval(
         plan: AIActionPlan, capability: AICapability, context: UserContext,
         chatScope: GeneralChatScope? = nil
     ) async -> Bool {
-        await withCheckedContinuation { continuation in
+        if Self.refusesEveryApprovalUnattended {
+            Self.approvalsRequestedUnattended.append(capability.id)
+            return false
+        }
+        return await withCheckedContinuation { continuation in
             expiryTask?.cancel()
             pending = PendingApproval(
                 plan: plan,

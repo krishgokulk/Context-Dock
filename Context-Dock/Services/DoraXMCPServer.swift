@@ -344,6 +344,35 @@ final class DoraXMCPServer: ObservableObject {
             ],
         ],
         [
+            "name": "dorax_ask",
+            "description":
+                "Ask DoraX's own assistant a question, exactly as the user would in an app "
+                + "chat, and get back its answer along with the steps it took and the "
+                + "receipts of what it actually ran. Call this to TEST DoraX itself — to "
+                + "check that a question reaches a real reader, that the right capability is "
+                + "chosen, or that a change fixed what it was meant to fix.\n\n"
+                + "Runs unattended: every approval is refused without being shown, and the "
+                + "capability ids that asked are returned in approvalsRequested. So nothing "
+                + "is sent, deleted or written, and the thing worth asserting is which "
+                + "approval was requested rather than whether the side effect happened.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "query": [
+                        "type": "string",
+                        "description": "The question, worded as the user would type it.",
+                    ],
+                    "app": [
+                        "type": "string",
+                        "description":
+                            "Optional app name or bundle id to scope the question to, e.g. "
+                            + "\"Notes\" or \"com.apple.Notes\". Omit for General Chat.",
+                    ],
+                ] as [String: Any],
+                "required": ["query"],
+            ],
+        ],
+        [
             "name": "dorax_browser_tabs",
             "description":
                 "The pages the user has open in Safari, with titles and URLs. Call this when "
@@ -351,6 +380,87 @@ final class DoraXMCPServer: ObservableObject {
             "inputSchema": ["type": "object", "properties": [:] as [String: Any]],
         ],
     ]
+
+    /// Run one DoraX turn with nobody at the keyboard, and report what it decided.
+    ///
+    /// The point is testing the *decision*: which reader ran, which capability was chosen,
+    /// which approval was asked for. Approvals are refused throughout — an agent looping over
+    /// an eval set must not be able to send mail because a sheet resolved on its own, and
+    /// there is no one there to refuse it.
+    private func runUnattendedTurn(query: String, app: String?) async -> String {
+        let resolved = await MainActor.run { () -> (scope: GeneralChatScope, name: String) in
+            guard let app, !app.isEmpty else {
+                return (.thread(id: "dorax-mcp-eval"), "General Chat")
+            }
+            // Accept either a bundle id or the name a person would type.
+            let installed = InstalledApplicationsCatalog.cachedInstalledApps()
+            if let match = installed.first(where: {
+                $0.bundleId.caseInsensitiveCompare(app) == .orderedSame
+                    || $0.name.caseInsensitiveCompare(app) == .orderedSame
+            }) {
+                return (.app(bundleId: match.bundleId), match.name)
+            }
+            // An unrecognised name is used as-is rather than silently becoming General Chat:
+            // a test that asked about Notes and was quietly answered unscoped would pass or
+            // fail for the wrong reason.
+            return (.app(bundleId: app), app)
+        }
+
+        await MainActor.run { AICapabilityApprovalCenter.beginUnattendedRun() }
+        let answer: AppScopedChatService.Answer
+        do {
+            answer = try await AppScopedChatService.send(
+                scope: resolved.scope, appName: resolved.name, query: query, history: [])
+        } catch {
+            // A turn that threw is a result an eval needs to see, reported in the same shape
+            // as any other — not an exception the caller has to guess the meaning of.
+            _ = await MainActor.run { AICapabilityApprovalCenter.endUnattendedRun() }
+            let failure: [String: Any] = [
+                "scope": resolved.name,
+                "failed": true,
+                "error": error.localizedDescription,
+            ]
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: failure, options: [.prettyPrinted, .sortedKeys]),
+                let text = String(data: data, encoding: .utf8)
+            else { return "The turn failed: \(error.localizedDescription)" }
+            return text
+        }
+        let approvals = await MainActor.run { AICapabilityApprovalCenter.endUnattendedRun() }
+
+        var payload: [String: Any] = [
+            "answer": answer.text,
+            "scope": resolved.name,
+            "steps": answer.trace,
+            "toolChips": answer.toolChips,
+            "approvalsRequested": approvals,
+            "receipts": answer.evidenceReceipts.map { receipt in
+                [
+                    "command": receipt.command,
+                    "output": String(receipt.output.prefix(400)),
+                    "success": receipt.success,
+                    "isVerification": receipt.isVerification,
+                ] as [String: Any]
+            },
+        ]
+        if !answer.routeChoices.isEmpty {
+            payload["askedToChooseBetween"] = answer.routeChoices.map(\.title)
+        }
+        if let enable = answer.enableApp {
+            payload["blockedNeedingAccessTo"] = enable.name
+        }
+        payload["note"] =
+            "Approvals were refused unattended. approvalsRequested is what DoraX decided to "
+            + "ask for; nothing was executed behind them."
+
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
+            let text = String(data: data, encoding: .utf8)
+        else {
+            return answer.text
+        }
+        return text
+    }
 
     private func callTool(named name: String, arguments: [String: Any]) async -> String {
         switch name {
@@ -387,6 +497,15 @@ final class DoraXMCPServer: ObservableObject {
 
         case "dorax_screenshot":
             return Self.captureScreen()
+
+        case "dorax_ask":
+            let query = (arguments["query"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return "dorax_ask needs a query." }
+            return await runUnattendedTurn(
+                query: query,
+                app: (arguments["app"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines))
 
         case "dorax_browser_tabs":
             let tabs = SafariTabManager.shared.cachedTabs(maxAge: 30)
