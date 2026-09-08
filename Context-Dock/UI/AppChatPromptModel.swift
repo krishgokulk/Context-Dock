@@ -60,6 +60,13 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var appBundleID = ""
     /// What this app can do, shown before anything is typed.
     @Published private(set) var suggestions: [AppChatSuggestion] = []
+    /// The app's own menu commands matching what is typed, ranked by the dock's rule.
+    /// See `AppChatMenuBrowsing`.
+    @Published var menuMatches: [AXMenuItem] = []
+    /// Which command the arrow keys are on.
+    @Published var focusedMenuIndex = 0
+    /// Every command the app offers, read once per app rather than per keystroke.
+    var allMenuItems: [AXMenuItem] = []
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
@@ -101,6 +108,7 @@ final class AppChatPromptModel: ObservableObject {
         appBundleID = bundleID
         self.suggestions = suggestions
         capabilitySummary = summary
+        loadMenuItems()
         set(restingInputPhase)
         arm(after: Self.idleDwell)
     }
@@ -109,7 +117,9 @@ final class AppChatPromptModel: ObservableObject {
     /// guess what the app can do.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (!suggestions.isEmpty && !typed) ? .suggesting : .prompt
+        // Typed: the app's matching commands sit under the field. Untyped: what it can do.
+        if typed { return isBrowsingMenus ? .suggesting : .prompt }
+        return suggestions.isEmpty ? .prompt : .suggesting
     }
 
     // MARK: - Controls
@@ -190,12 +200,13 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         guard phase.isVisible else { return }
+        updateMenuMatches()
         if phase != .chat { set(restingInputPhase) }
         touch()
     }
 
     /// Any interaction puts the clock back, unless the surface is pinned.
-    private func touch() {
+    func touch() {
         guard !isPinned, phase.isVisible else { return }
         arm(after: Self.idleDwell)
     }
@@ -335,7 +346,7 @@ final class AppChatPromptModel: ObservableObject {
         isStandDownArmed = false
     }
 
-    private func set(_ next: AppChatPromptPhase) {
+    func set(_ next: AppChatPromptPhase) {
         guard phase != next else { return }
         phase = next
         onPhaseChange?(next)

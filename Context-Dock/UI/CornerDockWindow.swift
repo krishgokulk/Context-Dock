@@ -150,6 +150,7 @@ final class CornerDockController: NSObject {
                         bundleID: appInfo.bundleID,
                         suggestions: AppChatSuggestionProvider.suggestions(for: app),
                         summary: AppChatSuggestionProvider.summary(for: app))
+                    self.prompt.loadMenuItems()
                 }
             }
             .store(in: &sinks)
@@ -278,7 +279,7 @@ final class CornerDockController: NSObject {
         }
         return AppChatPromptMetrics.size(
             for: prompt.phase,
-            suggestions: prompt.suggestions.count,
+            suggestions: prompt.listRowCount,
             messages: prompt.messages.count)
     }
 

@@ -71,7 +71,7 @@ struct AppChatPromptPill: View {
     private var size: CGSize {
         AppChatPromptMetrics.size(
             for: model.phase,
-            suggestions: model.suggestions.count,
+            suggestions: model.listRowCount,
             messages: model.messages.count)
     }
 
@@ -135,7 +135,7 @@ struct AppChatPromptPill: View {
                 }
                 Divider().opacity(0.18)
             } else if model.phase == .suggesting {
-                suggestionList
+                if model.isBrowsingMenus { menuList } else { suggestionList }
                 Divider().opacity(0.18)
             }
             if !model.pendingChoices.isEmpty {
@@ -260,7 +260,20 @@ struct AppChatPromptPill: View {
                     .font(.system(size: 14, weight: .medium))
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
-                    .onSubmit { model.submit() }
+                    .onSubmit {
+                        // A chosen command runs; anything else is a question for the app.
+                        if let item = model.focusedMenuItem {
+                            model.runMenuItem(item)
+                        } else {
+                            model.submit()
+                        }
+                    }
+                    .onKeyPress(.downArrow) {
+                        model.moveMenuFocus(by: 1) ? .handled : .ignored
+                    }
+                    .onKeyPress(.upArrow) {
+                        model.moveMenuFocus(by: -1) ? .handled : .ignored
+                    }
                     .onKeyPress(.escape) {
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the
                         // user was waiting on and a question they had half-written, for
@@ -458,6 +471,54 @@ struct AppChatPromptPill: View {
     }
 
     // MARK: - Suggestions
+
+    /// The frontmost app's own commands, filtered by what is typed. Same shape as the
+    /// suggestion rows it replaces, plus the menu it came from and its shortcut — the two
+    /// things that tell the user this is the app's real command and not a paraphrase.
+    private var menuList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(model.appName.isEmpty ? "Commands" : "\(model.appName) commands")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary.opacity(0.7))
+                .lineLimit(1)
+                .padding(.horizontal, 16)
+                .frame(height: AppChatPromptMetrics.summaryHeight, alignment: .leading)
+
+            ForEach(Array(model.menuMatches.enumerated()), id: \.element.id) { index, item in
+                let isFocused = index == model.focusedMenuIndex
+                HStack(spacing: 10) {
+                    Image(systemName: "command")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18)
+                    Text(item.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                    if let context = item.path.dropLast().last, !context.isEmpty {
+                        Text(context)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary.opacity(0.7))
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 4)
+                    if let shortcut = item.shortcutDisplay {
+                        Text(shortcut)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .frame(height: AppChatPromptMetrics.suggestionRowHeight)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                        .padding(.horizontal, 8))
+                .contentShape(Rectangle())
+                .onTapGesture { model.runMenuItem(item) }
+            }
+        }
+        .padding(.bottom, 12)
+    }
 
     private var suggestionList: some View {
         VStack(alignment: .leading, spacing: 0) {
