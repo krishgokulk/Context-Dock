@@ -2407,6 +2407,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func activateContextDock() {
+        // Captured before the async hop, which is what lost the caller last time: the stack
+        // inside the dispatched closure shows only libdispatch.
+        if DoraXTurnLog.isEnabled {
+            DoraXTurnLog.record(
+                "activateContextDock — \(Thread.callStackSymbols.dropFirst().prefix(6).joined(separator: " | "))")
+        }
         guard settings.enableLayer2 else { return }  // Layer 2 disabled — hotkey does nothing
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
