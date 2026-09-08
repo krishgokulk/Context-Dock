@@ -692,6 +692,14 @@ enum AppScopedChatService {
         let queryWords = Set(normalized.split { !$0.isLetter && !$0.isNumber }.map(String.init))
         guard !queryWords.isEmpty else { return nil }
 
+        // A menu is a list of commands, so it cannot say how many notes, emails or reminders
+        // exist — however well its name matches. "how many notes do i have?" was answered with
+        // the contents of the Notes menu, from a snapshot 1700 minutes old, and the count was
+        // never attempted. Counting questions belong to a reader.
+        guard !normalized.contains("how many"), !normalized.contains("how much") else {
+            return nil
+        }
+
         var evidenceWords = queryWords
         let mediaReadWords: Set<String> = [
             "watch", "watched", "watching", "view", "viewed", "video", "videos",
@@ -717,8 +725,18 @@ enum AppScopedChatService {
             grouped[key, default: []].append(clean)
         }
 
+        // Every app's application menu carries the app's own name, so the app name in a
+        // question scores a direct hit on a menu that holds About, Settings, Hide and Quit —
+        // which answers nothing anyone asks about the app's contents.
+        let appNameWords = Set(
+            appName.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+
         let candidates = rootOrder.compactMap { key -> (key: String, score: Int, count: Int)? in
             guard let rows = grouped[key], let displayRoot = rows.first?.first else { return nil }
+            let rootIsTheApplicationMenu = !appNameWords.isEmpty
+                && Set(displayRoot.lowercased().split { !$0.isLetter && !$0.isNumber }
+                    .map(String.init)) == appNameWords
+            guard !rootIsTheApplicationMenu else { return nil }
             let rootWords = Set(
                 displayRoot.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
             let direct = rootWords.intersection(queryWords).count
