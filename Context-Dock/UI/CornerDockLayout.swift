@@ -28,13 +28,16 @@ enum CornerDockLayout {
     /// is sized once for the largest thing it will ever hold.
     /// The clip preview that stacks above the clipboard while a clip is being looked at.
     static let previewHeight: CGFloat = 232
+    /// The commands card that stacks above the App Chat field while a list is showing.
+    static let listHeight: CGFloat = 230
 
     static var panelSize: CGSize {
         // Worst case: one surface fully expanded, the preview above it, and both other
         // pills stacked above that.
         CGSize(
             width: cardWidth + pad * 2,
-            height: cardHeight + previewHeight + gap + (gap + pillHeight) * 2 + pad * 2)
+            height: cardHeight + previewHeight + listHeight + gap * 2 + (gap + pillHeight) * 2
+                + pad * 2)
     }
 
     /// Rects in the panel's coordinates, origin bottom-left. A nil size means that
@@ -47,8 +50,10 @@ enum CornerDockLayout {
     /// preview and the row it belongs to are next to each other.
     static func slots(
         shelf: CGSize? = nil, preview: CGSize? = nil, clipboard: CGSize? = nil,
-        prompt: CGSize? = nil
-    ) -> (shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, prompt: CGRect?) {
+        list: CGSize? = nil, prompt: CGSize? = nil
+    ) -> (
+        shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, list: CGRect?, prompt: CGRect?
+    ) {
         let rightEdge = panelSize.width - pad
         var baseline = pad
 
@@ -60,10 +65,13 @@ enum CornerDockLayout {
             return rect
         }
 
+        // The app's commands sit directly above the field they were typed into, the way
+        // the clip preview sits directly above the list it was chosen from.
         let promptRect = place(prompt)
+        let listRect = place(list)
         let clipboardRect = place(clipboard)
         let previewRect = place(preview)
         let shelfRect = place(shelf)
-        return (shelfRect, previewRect, clipboardRect, promptRect)
+        return (shelfRect, previewRect, clipboardRect, listRect, promptRect)
     }
 }

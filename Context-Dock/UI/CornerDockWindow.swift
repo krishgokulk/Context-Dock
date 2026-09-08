@@ -221,7 +221,7 @@ final class CornerDockController: NSObject {
     func refresh() {
         guard let panel, let hostView else { return }
         let slots = currentSlots()
-        let rects = [slots.shelf, slots.preview, slots.clipboard, slots.prompt]
+        let rects = [slots.shelf, slots.preview, slots.clipboard, slots.list, slots.prompt]
             .compactMap { $0 }
 
         // Nothing moved, nothing to do. The models this follows republish on every
@@ -254,7 +254,9 @@ final class CornerDockController: NSObject {
     /// Sizes come from each surface's own phase; the placement comes from the shared
     /// layout, so what is drawn and what is hit-tested cannot drift apart.
     private func currentSlots()
-        -> (shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, prompt: CGRect?)
+        -> (
+            shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, list: CGRect?, prompt: CGRect?
+        )
     {
         CornerDockLayout.slots(
             shelf: shelf.phase.isVisible
@@ -262,7 +264,17 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
+            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: chatPresentation.isVisible ? promptSize : nil)
+    }
+
+    /// The app's commands, or what it can do — a card of its own above the field, and only
+    /// while the App Chat field is the thing on screen.
+    var showsAppChatList: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && prompt.phase == .suggesting
+            && prompt.listRowCount > 0
     }
 
     /// The preview belongs to an open, expanded card with a clip actually chosen — not to a
@@ -290,6 +302,7 @@ final class CornerDockController: NSObject {
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
+            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil
         ).shelf
     }
@@ -479,6 +492,10 @@ struct CornerDockSurface: View {
                         CornerGeneralChatView(model: chatPresentation.generalChat)
                     }
                 } else {
+                    if CornerDockController.shared.showsAppChatList {
+                        AppChatListCard(model: prompt)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
                     AppChatPromptPill(model: prompt)
                 }
             }

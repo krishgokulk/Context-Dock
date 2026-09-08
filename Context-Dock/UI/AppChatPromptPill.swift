@@ -53,10 +53,8 @@ enum AppChatPromptMetrics {
         case .chat:
             return CGSize(width: width, height: chatHeight(messages: messages))
         case .suggesting:
-            let rows = CGFloat(min(suggestions, 5))
-            return CGSize(
-                width: width,
-                height: inputHeight + summaryHeight + rows * suggestionRowHeight + 12)
+            // The list is its own card above this one, so the field stays a field.
+            return CGSize(width: width, height: inputHeight)
         }
     }
 }
@@ -72,7 +70,7 @@ struct AppChatPromptPill: View {
         AppChatPromptMetrics.size(
             for: model.phase,
             suggestions: model.listRowCount,
-            messages: model.messages.count)
+            messages: model.messages.count)  // list rows live in AppChatListCard now
     }
 
     var body: some View {
@@ -133,9 +131,6 @@ struct AppChatPromptPill: View {
                 if let request = approvals.pending(for: .corner) {
                     ApprovalCard(request: request)
                 }
-                Divider().opacity(0.18)
-            } else if model.phase == .suggesting {
-                if model.isBrowsingMenus { menuList } else { suggestionList }
                 Divider().opacity(0.18)
             }
             if !model.pendingChoices.isEmpty {
@@ -471,82 +466,6 @@ struct AppChatPromptPill: View {
     }
 
     // MARK: - Suggestions
-
-    /// The frontmost app's own commands, filtered by what is typed. Same shape as the
-    /// suggestion rows it replaces, plus the menu it came from and its shortcut — the two
-    /// things that tell the user this is the app's real command and not a paraphrase.
-    private var menuList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(model.appName.isEmpty ? "Commands" : "\(model.appName) commands")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary.opacity(0.7))
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .frame(height: AppChatPromptMetrics.summaryHeight, alignment: .leading)
-
-            ForEach(Array(model.menuMatches.enumerated()), id: \.element.id) { index, item in
-                let isFocused = index == model.focusedMenuIndex
-                HStack(spacing: 10) {
-                    Image(systemName: "command")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18)
-                    Text(item.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                    if let context = item.path.dropLast().last, !context.isEmpty {
-                        Text(context)
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary.opacity(0.7))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 4)
-                    if let shortcut = item.shortcutDisplay {
-                        Text(shortcut)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .frame(height: AppChatPromptMetrics.suggestionRowHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                        .padding(.horizontal, 8))
-                .contentShape(Rectangle())
-                .onTapGesture { model.runMenuItem(item) }
-            }
-        }
-        .padding(.bottom, 12)
-    }
-
-    private var suggestionList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if !model.capabilitySummary.isEmpty {
-                Text(model.capabilitySummary)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary.opacity(0.7))
-                    .lineLimit(1)
-                    .padding(.horizontal, 16)
-                    .frame(height: AppChatPromptMetrics.summaryHeight, alignment: .leading)
-            }
-            ForEach(model.suggestions.prefix(5)) { suggestion in
-                HStack(spacing: 10) {
-                    Image(systemName: suggestion.icon)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18)
-                    Text(suggestion.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                }
-                .padding(.horizontal, 16)
-                .frame(height: AppChatPromptMetrics.suggestionRowHeight)
-            }
-        }
-        .padding(.bottom, 12)
-    }
 
     // MARK: - Conversation
 
