@@ -18,9 +18,14 @@ import Testing
 
 struct GeneralChatScopeResolverTests {
 
+    // "sent" and "attachment" are Mail's words as much as "inbox" is. Leaving them out is what
+    // made the headline case below resolve to Finder alone: "the invoice Sarah sent me" names
+    // no app, and a vocabulary of only {mail, email, inbox, message, sender} cannot reach it.
+    // Resolution is exactly as good as the vocabulary an adapter declares — see
+    // `aRequestThatNamesNoAppNounAtAllIsUnresolved` for where that stops.
     private static let mail = GeneralChatScopeResolver.Candidate(
         bundleId: "com.apple.mail", name: "Mail",
-        vocabulary: ["mail", "email", "inbox", "message", "sender"])
+        vocabulary: ["mail", "email", "inbox", "message", "sender", "sent", "attachment"])
     private static let finder = GeneralChatScopeResolver.Candidate(
         bundleId: "com.apple.finder", name: "Finder",
         vocabulary: ["file", "folder", "finder", "downloads", "document"])
@@ -101,6 +106,18 @@ struct GeneralChatScopeResolverTests {
         #expect(resolve("") == .unresolved)
     }
 
+    /// The limit of the whole approach, stated rather than discovered later.
+    ///
+    /// A request that describes *content* and names no kind of thing — no "email", no "file",
+    /// no "note" — has nothing for a vocabulary to match, and comes back unresolved rather
+    /// than guessing. Unresolved is a real answer here: General Chat says it cannot serve the
+    /// request, which is honest. Guessing would produce a confident answer about the wrong
+    /// app, and a wrong answer about someone's mail looks exactly like a right one.
+    @Test func aRequestThatNamesNoAppNounAtAllIsUnresolved() {
+        #expect(resolve("find the thing Sarah gave me") == .unresolved)
+        #expect(resolve("sort out that stuff from yesterday") == .unresolved)
+    }
+
     /// A word inside another word is not a match. "reminder" must not be found in "remembered",
     /// nor "note" in "noteworthy" — the whole point is that a wrong app is worse than none.
     @Test func matchingIsByWholeWord() {
@@ -134,5 +151,91 @@ struct GeneralChatScopeResolverTests {
         let resolution = GeneralChatScopeResolver.scope(
             request: "any unread email?", focused: [], inventory: Self.inventory)
         #expect(resolution == .resolved(["com.apple.mail"]))
+    }
+}
+
+// MARK: - Building the inventory from what DoraX already knows
+//
+// The resolver is only as good as the vocabulary it is given, so where that vocabulary comes
+// from is part of the design rather than a detail. It comes from CapabilityIndex's records —
+// the app name plus each capability's keywords — and not from titles or descriptions, which are
+// prose full of words every adapter shares.
+
+struct GeneralChatScopeInventoryTests {
+
+    private func record(
+        id: String, app: String, keywords: [String], isWrite: Bool = false
+    ) -> CapabilityRecord {
+        CapabilityRecord(
+            id: id, app: app, kind: .capability, title: "Get Something",
+            description: "Reads the current thing from the app", keywords: keywords,
+            isWrite: isWrite)
+    }
+
+    private let ids = ["Mail": "com.apple.mail", "Finder": "com.apple.finder"]
+
+    @Test func anAppsVocabularyIsItsNamePlusItsCapabilityKeywords() {
+        let inventory = GeneralChatScopeResolver.inventory(
+            from: [
+                record(id: "mail.search", app: "Mail", keywords: ["email", "inbox"]),
+                record(id: "mail.recent", app: "Mail", keywords: ["message", "unread"]),
+            ],
+            bundleId: { self.ids[$0] })
+
+        #expect(inventory.count == 1, "one app, one candidate")
+        let mail = inventory[0]
+        #expect(mail.bundleId == "com.apple.mail")
+        for word in ["mail", "email", "inbox", "message", "unread"] {
+            #expect(mail.vocabulary.contains(word), "\(word) should reach Mail")
+        }
+    }
+
+    /// Prose is excluded on purpose. "Get Something" and "Reads the current thing" contain words
+    /// every adapter would claim, and an inventory where everything matches everything makes
+    /// every request contested — which reads to the user as being asked "which app?" constantly.
+    @Test func titlesAndDescriptionsAreNotVocabulary() {
+        let inventory = GeneralChatScopeResolver.inventory(
+            from: [record(id: "mail.search", app: "Mail", keywords: ["email"])],
+            bundleId: { self.ids[$0] })
+
+        for prose in ["get", "something", "reads", "current", "thing", "from", "the", "app"] {
+            #expect(
+                !inventory[0].vocabulary.contains(prose),
+                "\"\(prose)\" is prose and belongs to every adapter")
+        }
+    }
+
+    /// An app whose name does not map to a bundle id is dropped, not guessed at. A candidate
+    /// with the wrong id sends a whole step to the wrong app, which is the failure this whole
+    /// design is trying to avoid.
+    @Test func anAppWithNoBundleIdIsLeftOut() {
+        let inventory = GeneralChatScopeResolver.inventory(
+            from: [
+                record(id: "mail.search", app: "Mail", keywords: ["email"]),
+                record(id: "ghost.do", app: "Uninstalled App", keywords: ["ghost"]),
+            ],
+            bundleId: { self.ids[$0] })
+
+        #expect(inventory.map(\.name) == ["Mail"])
+    }
+
+    /// Machine-wide commands have no app, so they belong to no candidate.
+    @Test func recordsWithNoAppAreSkipped() {
+        let inventory = GeneralChatScopeResolver.inventory(
+            from: [record(id: "globalcmd.sleep", app: "", keywords: ["sleep"])],
+            bundleId: { self.ids[$0] })
+        #expect(inventory.isEmpty)
+    }
+
+    /// Short and numeric fragments reach everything, so they are not vocabulary. "to" in a
+    /// keyword list would make every sentence match every app.
+    @Test func shortAndNumericFragmentsAreNotVocabulary() {
+        let inventory = GeneralChatScopeResolver.inventory(
+            from: [record(id: "mail.search", app: "Mail", keywords: ["to", "v2", "email"])],
+            bundleId: { self.ids[$0] })
+
+        #expect(!inventory[0].vocabulary.contains("to"))
+        #expect(!inventory[0].vocabulary.contains("v2"))
+        #expect(inventory[0].vocabulary.contains("email"))
     }
 }

@@ -96,6 +96,53 @@ enum GeneralChatScopeResolver {
         return resolved.isEmpty ? .unresolved : .resolved(resolved)
     }
 
+    /// Build the inventory from what DoraX already knows it can do.
+    ///
+    /// `CapabilityRecord` carries the app as a *name* and not a bundle id, so the mapping is
+    /// injected rather than reached for — which is also what makes this testable without
+    /// standing up InstalledApplicationsCatalog.
+    ///
+    /// An app whose name does not resolve to a bundle id is dropped rather than guessed at: a
+    /// candidate with the wrong id would send a whole step to the wrong app.
+    static func inventory(
+        from records: [CapabilityRecord],
+        bundleId resolveBundleId: (String) -> String?
+    ) -> [Candidate] {
+        var vocabularies: [String: Set<String>] = [:]
+        var order: [String] = []
+
+        for record in records {
+            let app = record.app.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !app.isEmpty else { continue }
+            if vocabularies[app] == nil { order.append(app) }
+            // The app's own name and its capabilities' keywords. Titles and descriptions are
+            // deliberately excluded: they are prose, and prose words like "get" or "current"
+            // belong to every adapter at once, which turns every request ambiguous.
+            var words = vocabularies[app] ?? []
+            words.formUnion(terms(in: app))
+            for keyword in record.keywords { words.formUnion(terms(in: keyword)) }
+            vocabularies[app] = words
+        }
+
+        return order.compactMap { app in
+            guard let id = resolveBundleId(app) else { return nil }
+            guard let words = vocabularies[app], !words.isEmpty else { return nil }
+            return Candidate(bundleId: id, name: app, vocabulary: words)
+        }
+    }
+
+    /// Words worth matching on, from a name or a keyword.
+    ///
+    /// Two-letter fragments and pure numbers are dropped — "to", "my" and "v2" reach every
+    /// adapter and would make everything contested.
+    private static func terms(in text: String) -> Set<String> {
+        Set(
+            text.lowercased()
+                .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init)
+                .filter { $0.count > 2 && !$0.allSatisfy(\.isNumber) })
+    }
+
     /// Whole words, singular and plural.
     ///
     /// Substring matching would find "note" in "noteworthy" and "reminder" in "remembered", and
