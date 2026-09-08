@@ -342,7 +342,57 @@ final class AppAdapterManager: ObservableObject {
     /// Execute an adapter action, showing an approval sheet if needed.
     /// For `.aiPrompt` actions this returns the resolved prompt string as output
     /// so ContentView can inject it into the search field.
+    /// Why this call must not run, or nil when it may.
+    ///
+    /// A decision rather than a side effect, so it can be asserted without pressing anything.
+    /// The first version of its tests called `execute` and clicked File ▸ New Note for real —
+    /// the very bug they were written for — and a later version still reached runChain, which
+    /// activates an app, which writes to the turn log and broke an unrelated test.
+    static func refusalReason(
+        for action: AdapterAction, query: String, unattended: Bool
+    ) -> String? {
+        // Nobody is at the keyboard. Refuse everything, whatever the action claims about
+        // needing approval.
+        //
+        // An adapter action with requiresApproval == false runs immediately, so the refusal in
+        // AICapabilityApprovalCenter never saw it. Asked "how many notes do i have?" through
+        // dorax_ask, DoraX reached the Notes adapter's only action — New Note — and created a
+        // blank note on the user's Mac. An eval loop must not be able to do that fifty times.
+        if unattended {
+            return "Refused: adapter actions do not run unattended."
+        }
+
+        // A question is not an instruction. AgentToolRegistry already strips run_adapter_action
+        // from a turn whose query only asks; this path had no such guard, so a counting
+        // question ran a write because that write was the only route the adapter offered.
+        //
+        // Narrowed to what actually commands the app. Some adapter actions are readers —
+        // Spotify's current-track is AppleScript that returns what is playing — and refusing
+        // those would break "what's playing?", a question whose only good route is an action.
+        // A menu click is never a reader: it presses a command, and reading a menu is a
+        // different thing entirely (menuSnapshotEvidence).
+        //
+        // Only when a query came with the call: a dock pill or menu click passes none, and
+        // that is the user pressing the thing themselves.
+        let commandsTheApp = action.type == .menubar || action.requiresApproval
+            || action.isDestructive
+        guard commandsTheApp,
+            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            GeneralAIActionResolver.shared.asksOnly(query)
+        else { return nil }
+        return "Refused: \"\(query)\" asks a question, and \(action.name) changes something. "
+            + "Answer it from a reader instead."
+    }
+
     func execute(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "") async -> (Bool, String) {
+        let unattended = AICapabilityApprovalCenter.refusesEveryApprovalUnattended
+        if let refusal = Self.refusalReason(for: action, query: query, unattended: unattended) {
+            if unattended {
+                AICapabilityApprovalCenter.recordUnattendedRefusal("adapter:\(action.id)")
+            }
+            return (false, refusal)
+        }
+
         let owningAdapter = adapters.first { $0.actions.contains { $0.id == action.id } }
         let consentBundleId = targetBundleId ?? owningAdapter?.bundleId ?? ""
 

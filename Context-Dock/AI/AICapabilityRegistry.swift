@@ -897,6 +897,13 @@ final class AICapabilityApprovalCenter: ObservableObject {
     /// What was asked for while unattended, in order, so an eval can assert on it.
     static private(set) var approvalsRequestedUnattended: [String] = []
 
+    /// Record a refusal made somewhere other than this centre — adapter actions run their own
+    /// gate and never reach requestApproval, which is how a blank note got created during an
+    /// unattended run that reported no approvals at all.
+    static func recordUnattendedRefusal(_ what: String) {
+        approvalsRequestedUnattended.append(what)
+    }
+
     static func beginUnattendedRun() {
         refusesEveryApprovalUnattended = true
         approvalsRequestedUnattended = []
