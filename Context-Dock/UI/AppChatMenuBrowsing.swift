@@ -22,10 +22,17 @@ extension AppChatPromptModel {
 
     // MARK: - Reading the app's menus
 
-    /// The app's menus, from the warm cache. Reading them live would mean an AX round-trip
-    /// on every keystroke; the cache is what the dock filters too.
+    /// The app's menus: the warm cache first, then a live read that fills in what the cache
+    /// refuses to keep.
     ///
-    /// Called when the prompt opens and when the app changes — not per keystroke.
+    /// The cache deliberately never persists the Window menu — it is live state (open
+    /// documents, tabs, restored windows) and stale rows there are worse than none. So
+    /// "Minimize" and "Zoom" exist in no snapshot, and a cache-only list answers "minimize"
+    /// with nothing. The dock has always covered this by reading live menus alongside the
+    /// cache; this does the same.
+    ///
+    /// Called when the prompt opens and when the app changes — never per keystroke. The
+    /// cached rows land immediately so the list is never empty while the AX read runs.
     func loadMenuItems() {
         guard !appBundleID.isEmpty,
             let app = NSWorkspace.shared.runningApplications.first(where: {
@@ -36,8 +43,21 @@ extension AppChatPromptModel {
             menuMatches = []
             return
         }
+
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
+
+        // The AX read walks the whole menu bar, so it happens after the surface is up
+        // rather than in front of it. Live items go first: where both have a row, the live
+        // one is the one that is actually clickable, and dedupe keeps the first.
+        let pid = app.processIdentifier
+        let bundleID = appBundleID
+        Task { @MainActor [weak self] in
+            let live = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 7)
+            guard let self, self.appBundleID == bundleID, !live.isEmpty else { return }
+            self.allMenuItems = live + self.allMenuItems
+            self.updateMenuMatches()
+        }
     }
 
     /// Re-filters against what is typed. Pure and synchronous: the matcher does no I/O, so
@@ -47,6 +67,7 @@ extension AppChatPromptModel {
         guard !typed.isEmpty, !allMenuItems.isEmpty else {
             menuMatches = []
             focusedMenuIndex = 0
+            syncListPhase()
             return
         }
         menuMatches = FrontmostMenuMatcher.ranked(
@@ -55,6 +76,7 @@ extension AppChatPromptModel {
             limit: Self.menuRowLimit,
             policy: .cornerAppChat)
         focusedMenuIndex = min(focusedMenuIndex, max(menuMatches.count - 1, 0))
+        syncListPhase()
     }
 
     /// The list is showing commands rather than opening suggestions.

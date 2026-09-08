@@ -201,8 +201,15 @@ final class AppChatPromptModel: ObservableObject {
     func queryChanged() {
         guard phase.isVisible else { return }
         updateMenuMatches()
-        if phase != .chat { set(restingInputPhase) }
+        syncListPhase()
         touch()
+    }
+
+    /// The pill's height comes from its phase, so the phase has to follow the list — which
+    /// can also arrive *after* typing, when the live menu read lands.
+    func syncListPhase() {
+        guard phase.isVisible, phase != .chat else { return }
+        set(restingInputPhase)
     }
 
     /// Any interaction puts the clock back, unless the surface is pinned.
