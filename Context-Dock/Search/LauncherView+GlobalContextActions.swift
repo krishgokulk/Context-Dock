@@ -1113,76 +1113,8 @@ extension LauncherView {
         aliases: [String] = [],
         contexts: [String] = []
     ) -> Double? {
-        let q = normalizedDockPillText(query)
-        guard !q.isEmpty else { return nil }
-
-        let primaryText = normalizedDockPillText(primary)
-        let aliasTexts = aliases.map(normalizedDockPillText).filter {
-            !$0.isEmpty && $0 != primaryText
-        }
-        let contextTexts = contexts.map(normalizedDockPillText).filter { !$0.isEmpty }
-        let queryTokens = q.split(separator: " ").map(String.init)
-
-        func wordPrefixScore(_ text: String, base: Double) -> Double? {
-            let words = text.split(separator: " ").map(String.init)
-            guard let idx = words.firstIndex(where: { $0.hasPrefix(q) }) else { return nil }
-            return base - Double(idx * 34) - min(Double(text.count), 42)
-        }
-
-        var best: Double?
-        func keep(_ score: Double?) {
-            guard let score else { return }
-            best = max(best ?? -Double.infinity, score)
-        }
-
-        if primaryText == q { keep(12_000) }
-        if aliasTexts.contains(q) { keep(10_600) }
-        if primaryText.hasPrefix(q) {
-            keep(9_600 + Double(q.count * 20) - min(Double(primaryText.count), 48))
-        }
-        keep(wordPrefixScore(primaryText, base: 8_900 + Double(q.count * 12)))
-
-        for alias in aliasTexts {
-            if alias.hasPrefix(q) {
-                keep(8_250 + Double(q.count * 14) - min(Double(alias.count), 48))
-            }
-            keep(wordPrefixScore(alias, base: 7_700 + Double(q.count * 10)))
-        }
-
-        for context in contextTexts {
-            if context == q { keep(6_800) }
-            if context.hasPrefix(q) { keep(6_100 - min(Double(context.count), 48)) }
-            keep(wordPrefixScore(context, base: 5_700))
-        }
-
-        if q.count >= 2 {
-            if let range = primaryText.range(of: q) {
-                let offset = primaryText.distance(
-                    from: primaryText.startIndex, to: range.lowerBound)
-                keep(4_900 - Double(offset * 72) - min(Double(primaryText.count), 48))
-            }
-            for alias in aliasTexts {
-                if let range = alias.range(of: q) {
-                    let offset = alias.distance(from: alias.startIndex, to: range.lowerBound)
-                    keep(4_250 - Double(offset * 58) - min(Double(alias.count), 48))
-                }
-            }
-            for context in contextTexts where context.contains(q) {
-                keep(3_400 - min(Double(context.count), 48))
-            }
-        }
-
-        if queryTokens.count > 1 {
-            let primaryTokens = Set(dockPillTokens(primaryText))
-            let aliasTokens = Set(aliasTexts.flatMap(dockPillTokens))
-            let contextTokens = Set(contextTexts.flatMap(dockPillTokens))
-            let qSet = Set(queryTokens)
-            keep(Double(qSet.intersection(primaryTokens).count) * 820)
-            keep(Double(qSet.intersection(aliasTokens).count) * 680)
-            keep(Double(qSet.intersection(contextTokens).count) * 420)
-        }
-
-        return best
+        DockTextMatch.rankedScore(
+            query: query, primary: primary, aliases: aliases, contexts: contexts)
     }
 
     func appSearchMatchScore(

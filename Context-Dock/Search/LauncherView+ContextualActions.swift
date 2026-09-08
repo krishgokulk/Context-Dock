@@ -4223,40 +4223,7 @@ extension LauncherView {
     }
 
     func distributedMenuItems(_ items: [AXMenuItem], limit: Int) -> [AXMenuItem] {
-        guard limit > 0, !items.isEmpty else { return [] }
-
-        var buckets: [String: [AXMenuItem]] = [:]
-        var rootOrder: [String] = []
-
-        for item in items {
-            let root = item.path.first ?? item.title
-            if buckets[root] == nil {
-                buckets[root] = []
-                rootOrder.append(root)
-            }
-            buckets[root, default: []].append(item)
-        }
-
-        for root in rootOrder {
-            buckets[root]?.sort {
-                if $0.path.count != $1.path.count { return $0.path.count < $1.path.count }
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
-        }
-
-        var distributed: [AXMenuItem] = []
-        var didAppend = true
-        while distributed.count < limit && didAppend {
-            didAppend = false
-            for root in rootOrder where distributed.count < limit {
-                guard var bucket = buckets[root], !bucket.isEmpty else { continue }
-                distributed.append(bucket.removeFirst())
-                buckets[root] = bucket
-                didAppend = true
-            }
-        }
-
-        return distributed
+        FrontmostMenuMatcher.distributed(items, limit: limit)
     }
 
     func orderedScopedMenuMatches(_ items: [AXMenuItem], filterQuery: String, limit: Int)

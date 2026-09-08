@@ -3197,32 +3197,11 @@ extension LauncherView {
     }
 
     nonisolated func normalizedDockPillText(_ text: String) -> String {
-        let lowered = text.lowercased()
-        let mapped = lowered.unicodeScalars.map { scalar -> Character in
-            if CharacterSet.alphanumerics.contains(scalar)
-                || CharacterSet.whitespacesAndNewlines.contains(scalar)
-            {
-                return Character(scalar)
-            }
-            return " "
-        }
-        return String(mapped)
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        DockTextMatch.normalized(text)
     }
 
     func dockPillTokens(_ text: String) -> [String] {
-        normalizedDockPillText(text).split(separator: " ").flatMap { rawToken -> [String] in
-            let token = String(rawToken)
-            switch token {
-            case "fav", "favs", "favourite", "favourites", "favorite", "favorites", "favourate",
-                "favourates":
-                return [token, "favorite"]
-            default:
-                return [token]
-            }
-        }
+        DockTextMatch.tokens(text)
     }
 
     /// Raycast-style fuzzy match: every character of `needle` appears in `haystack`
@@ -3282,14 +3261,7 @@ extension LauncherView {
     }
 
     nonisolated func isGenericAppMenu(_ item: AXMenuItem) -> Bool {
-        let title = normalizedDockPillText(item.title)
-        let genericPatterns = [
-            "about", "help", "quit", "exit", "close",
-            "settings", "preferences", "options",
-            "hide", "show", "reveal",
-            "services", "documentation",
-        ]
-        return genericPatterns.contains { title.contains($0) }
+        FrontmostMenuMatcher.isGenericAppMenu(item)
     }
 
     func menuItemsVisibleInActiveDockMode(_ items: [AXMenuItem]) -> [AXMenuItem] {
@@ -3540,25 +3512,7 @@ extension LauncherView {
 
     /// Levenshtein edit distance (capped early at 3 for performance).
     func pillEditDistance(_ a: String, _ b: String) -> Int {
-        let a = Array(a)
-        let b = Array(b)
-        let m = a.count
-        let n = b.count
-        if abs(m - n) > 3 { return 4 }
-        var prev = Array(0...n)
-        var curr = [Int](repeating: 0, count: n + 1)
-        for i in 1...m {
-            curr[0] = i
-            var rowMin = i
-            for j in 1...n {
-                curr[j] =
-                    a[i - 1] == b[j - 1] ? prev[j - 1] : 1 + min(prev[j - 1], prev[j], curr[j - 1])
-                rowMin = min(rowMin, curr[j])
-            }
-            if rowMin > 3 { return 4 }
-            swap(&prev, &curr)
-        }
-        return prev[n]
+        DockTextMatch.editDistance(a, b)
     }
 
     func rankDockPills(
