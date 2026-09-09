@@ -54,6 +54,8 @@ struct AppSnapshotCard: View {
         .onHover { _ in model.touch() }
         .contentShape(Rectangle())
         .onTapGesture { activate() }
+        .onAppear { retryIfEmpty() }
+        .task(id: model.appBundleID) { retryIfEmpty() }
     }
 
     private var header: some View {
@@ -99,6 +101,13 @@ struct AppSnapshotCard: View {
             }
             .frame(maxWidth: .infinity, maxHeight: AppSnapshotMetrics.imageHeight)
         }
+    }
+
+    /// A window that was not ready when the scope opened — an app still drawing, or one
+    /// coming forward from another Space — gets asked again rather than being left blank.
+    private func retryIfEmpty() {
+        guard image == nil, !snapshots.isDenied else { return }
+        snapshots.refresh(bundleID: model.appBundleID)
     }
 
     /// Switch to the app, which is what a switcher is for.

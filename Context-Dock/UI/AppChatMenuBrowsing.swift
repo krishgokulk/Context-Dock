@@ -250,10 +250,18 @@ extension AppChatPromptModel {
     ///
     /// The dock does exactly this, and it is a step *into* something rather than sideways
     /// along the scopes, which is why it is not part of the left/right walk.
+    /// The apps in the order the pills show them — Finder first, then the rest. Right
+    /// arrow walks *this* list, because the pills are what the user is looking at: stepping
+    /// into an app the row does not lead with makes the gesture look broken even when it
+    /// picked something reasonable.
+    static func orderedAppPills() -> [MatchDockIcon] {
+        pillIcons().filter { $0.id != clipboardPillID && $0.bundleID != nil }
+    }
+
     @discardableResult
     func scopeIntoFirstRunningApp() -> Bool {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        let apps = Self.runningAppIcons()
+        let apps = Self.orderedAppPills()
         guard !apps.isEmpty else { return false }
 
         if isGlobalScope {

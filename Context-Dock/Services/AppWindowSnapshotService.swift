@@ -53,11 +53,15 @@ final class AppWindowSnapshotService: ObservableObject {
             let image = await Self.capture(bundleID: bundleID)
             guard let self else { return }
             self.inFlight.remove(bundleID)
-            self.lastCaptured[bundleID] = Date()
-            if let image {
-                self.isDenied = false
-                self.snapshots[bundleID] = image
+            guard let image else {
+                // No timestamp on a failure. Recording one meant a window that was simply
+                // not ready yet — an app still drawing, a window on another Space coming
+                // forward — was written off for two seconds and never asked about again.
+                return
             }
+            self.lastCaptured[bundleID] = Date()
+            self.isDenied = false
+            self.snapshots[bundleID] = image
         }
     }
 
@@ -68,9 +72,12 @@ final class AppWindowSnapshotService: ObservableObject {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
                 true, onScreenWindowsOnly: true)
+            // Small windows are palettes and tooltips, not the app — but the floor has to
+            // stay low enough for a genuinely small window to count.
             let windows = content.windows.filter {
                 $0.owningApplication?.bundleIdentifier == bundleID
-                    && $0.frame.width > 120 && $0.frame.height > 120
+                    && $0.frame.width > 80 && $0.frame.height > 80
+                    && $0.isOnScreen
             }
             guard let window = windows.max(by: {
                 $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
