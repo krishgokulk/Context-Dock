@@ -258,6 +258,24 @@ struct AppChatPromptTests {
         #expect(model.phase != .chat)
     }
 
+    /// Attaching a file is composing a question about it — the opening menu of what the
+    /// app can do is answering something the user has already stopped asking.
+    @Test func attachingAFilePutsTheOpeningOfferAway() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(
+            app: "Code", bundleID: "com.microsoft.VSCode",
+            suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
+            summary: "5 actions")
+        #expect(model.phase == .suggesting)
+
+        model.attach(URL(fileURLWithPath: "/tmp/shot.png"))
+        #expect(model.phase == .prompt)
+
+        // Remove it and the offer comes back — nothing was asked in between.
+        model.detach(URL(fileURLWithPath: "/tmp/shot.png"))
+        #expect(model.phase == .suggesting)
+    }
+
     /// Attachments were never counted, so pasting a file into App mode drew a row the
     /// card had no room for.
     @Test func theCardMakesRoomForWhatSitsOverTheField() {

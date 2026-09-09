@@ -155,6 +155,9 @@ final class AppChatPromptModel: ObservableObject {
         // the opening menu again reads as the surface forgetting what just happened.
         if typed { return isBrowsingMenus ? .suggesting : .prompt }
         if hasActed { return .prompt }
+        // Attaching a file is composing a question about it. Offering the app's opening
+        // menu on top of that answers something the user has already stopped asking.
+        if !attachments.isEmpty { return .prompt }
         return (rows.isEmpty && suggestions.isEmpty) ? .prompt : .suggesting
     }
 
@@ -224,11 +227,13 @@ final class AppChatPromptModel: ObservableObject {
     func attach(_ url: URL) {
         guard !attachments.contains(url) else { return }
         attachments.append(url)
+        syncListPhase()
         touch()
     }
 
     func detach(_ url: URL) {
         attachments.removeAll { $0 == url }
+        syncListPhase()
         touch()
     }
 
