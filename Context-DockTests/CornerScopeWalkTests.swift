@@ -70,3 +70,35 @@ struct CornerScopeWalkTests {
         #expect(FrontmostMenuMatcher.Policy.cornerAppChat.allowsAppleMenuItems == false)
     }
 }
+
+@Suite("App scope hint")
+struct AppScopeHintTests {
+
+    @Test("Each app says what it offers, in its own terms")
+    func knownAppsHaveTheirOwnHint() {
+        #expect(
+            AppScopeHint.placeholder(bundleId: "com.apple.finder", appName: "Finder")
+                == "Finder — search files and folders")
+        #expect(
+            AppScopeHint.hint(bundleId: "com.microsoft.VSCode", appName: "Code")
+                == "run tasks, commands, menu cmds")
+        #expect(
+            AppScopeHint.hint(bundleId: "com.apple.mail", appName: "Mail")
+                .contains("mailboxes"))
+    }
+
+    @Test("An app nobody wrote a line for still says something true")
+    func unknownAppsFallBack() {
+        // "menu cmds" is the floor: every app has menus, so the hint is never a promise
+        // the scope cannot keep.
+        #expect(AppScopeHint.hint(bundleId: "com.example.thing", appName: "Thing") == "menu cmds")
+        #expect(
+            AppScopeHint.hint(bundleId: "com.example.thing", appName: "Thing", hasActions: true)
+                == "app actions, menu cmds")
+    }
+
+    @Test("A nameless scope is still named")
+    func namelessScopeHasAFallback() {
+        #expect(AppScopeHint.placeholder(bundleId: "", appName: "").hasPrefix("Context —"))
+    }
+}

@@ -83,8 +83,9 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalTopMatch: GlobalContextTopMatch?
     @Published private(set) var globalMatchIcons: [MatchDockIcon] = []
     @Published private(set) var globalOverflowCount = 0
-    /// The pills, opened as a list — right arrow on an empty Global field.
-    @Published var isBrowsingRunningApps = false
+    /// This scope was entered from Global, so leaving it goes back there rather than to the
+    /// frontmost app.
+    @Published var returnsToGlobalScope = false
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 

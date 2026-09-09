@@ -110,8 +110,6 @@ struct AppChatListCard: View {
                         actionRow(action, isFocused: index == model.focusedMenuIndex)
                     case .global(let doc):
                         globalRow(doc, isFocused: index == model.focusedMenuIndex)
-                    case .runningApp(let icon):
-                        runningAppRow(icon, isFocused: index == model.focusedMenuIndex)
                     }
                 }
             }
@@ -137,18 +135,21 @@ struct AppChatListCard: View {
     private var headerText: String {
         let app = model.appName.isEmpty ? "App" : model.appName
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if model.isBrowsingRunningApps && !typed {
-            return "Running apps · \(model.rows.count)"
-        }
         if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
         return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary
     }
 
     /// What the field says before anything is typed, per scope.
     static func placeholder(for model: AppChatPromptModel) -> String {
-        model.isGlobalScope
-            ? "Search apps, tools and menus…"
-            : "Ask \(model.appName.isEmpty ? "this app" : model.appName)"
+        if model.isGlobalScope { return "Search apps, tools and menus…" }
+        // Scoped into an app from Global, the field is a filter over that app — so it says
+        // what the dock says there, rather than offering to chat.
+        if model.returnsToGlobalScope {
+            return AppScopeHint.placeholder(
+                bundleId: model.appBundleID, appName: model.appName,
+                hasActions: !model.adapterActions.isEmpty)
+        }
+        return "Ask \(model.appName.isEmpty ? "this app" : model.appName)"
     }
 
     /// A command the app really has: its name, the menu it lives under, and its shortcut —
@@ -192,37 +193,6 @@ struct AppChatListCard: View {
         if app.isEmpty { return menu }
         return menu.isEmpty ? app : "\(app) > \(menu)"
     }
-
-    /// One of the running apps, opened from the pills.
-    private func runningAppRow(_ icon: MatchDockIcon, isFocused: Bool) -> some View {
-        HStack(spacing: 10) {
-            ZStack(alignment: .bottomTrailing) {
-                Image(nsImage: icon.icon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 22, height: 22)
-                Circle()
-                    .fill(Color.green.opacity(0.72))
-                    .frame(width: 5, height: 5)
-                    .offset(x: 2, y: 2)
-            }
-            .frame(width: 28, height: 28)
-
-            Text(icon.title)
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-            Spacer(minLength: 4)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: AppChatListMetrics.rowHeight)
-        .background(
-            RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .padding(.horizontal, 8))
-        .contentShape(Rectangle())
-        .onTapGesture { model.run(.runningApp(icon)) }
-    }
-
     /// A Global Context result: whatever the machine offers for this query, with its own
     /// icon where the index has one.
     private func globalRow(_ doc: GlobalSearchService.SearchDocument, isFocused: Bool)

@@ -75,13 +75,9 @@ extension AppChatPromptModel {
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
-            if typed.isEmpty && isBrowsingRunningApps {
-                rows = Self.runningAppIcons().map(AppChatRow.runningApp)
-            } else {
-                rows = GlobalContextRow
-                    .documents(for: typed, limit: Self.menuRowLimit)
-                    .map(AppChatRow.global)
-            }
+            rows = GlobalContextRow
+                .documents(for: typed, limit: Self.menuRowLimit)
+                .map(AppChatRow.global)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
@@ -114,7 +110,6 @@ extension AppChatPromptModel {
         adapterActions = []
         allMenuItems = []
         hasActed = false
-        isBrowsingRunningApps = false
         updateMenuMatches()
         set(.prompt)
         syncListPhase()
@@ -142,7 +137,7 @@ extension AppChatPromptModel {
         // The pills are what is running, the way the dock's global bar shows them — they
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
-        let running = Self.runningAppIcons()
+        let running = Self.pillIcons()
         setGlobalTyping(
             top: typed.isEmpty
                 ? nil
@@ -150,6 +145,36 @@ extension AppChatPromptModel {
             icons: Array(running.prefix(Self.matchIconLimit)),
             overflow: max(running.count - Self.matchIconLimit, 0))
     }
+
+    /// The pills: what is running, and the clipboard when it is holding something.
+    ///
+    /// The clipboard leads, because it is the thing that just happened — the user copied
+    /// something a moment ago and the pill is how they get back to it without leaving what
+    /// they are doing.
+    static func pillIcons() -> [MatchDockIcon] {
+        var icons: [MatchDockIcon] = []
+        if let clipboard = clipboardPill() { icons.append(clipboard) }
+        return icons + runningAppIcons()
+    }
+
+    /// The clipboard, as a pill, when there is anything in it.
+    static func clipboardPill() -> MatchDockIcon? {
+        guard !ClipboardPanelController.shared.model.entries.isEmpty,
+            let icon = NSImage(
+                systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Clipboard")
+        else { return nil }
+        return MatchDockIcon(
+            id: Self.clipboardPillID,
+            bundleID: nil,
+            title: "Clipboard",
+            icon: icon,
+            isRunning: false,
+            isExpandable: true,
+            score: 0,
+            isExactAppPrefix: false)
+    }
+
+    static let clipboardPillID = "corner.clipboard"
 
     /// The apps that are running, newest first, as the pill row draws them.
     static func runningAppIcons() -> [MatchDockIcon] {
@@ -198,16 +223,46 @@ extension AppChatPromptModel {
         return true
     }
 
-    /// The pills, opened as a list. Right arrow on an empty field does this in the dock;
-    /// it is the same gesture as walking into a scope, one level down instead of sideways.
+    /// Right arrow on an empty Global field scopes into an app — the leading chip becomes
+    /// that app, the placeholder becomes what that app can do, and the field filters it.
+    ///
+    /// The dock does exactly this, and it is a step *into* something rather than sideways
+    /// along the scopes, which is why it is not part of the left/right walk.
     @discardableResult
-    func toggleRunningAppScope() -> Bool {
+    func scopeIntoFirstRunningApp() -> Bool {
         guard isGlobalScope,
-            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let first = Self.runningAppIcons().first,
+            let bundleID = first.bundleID
         else { return false }
-        isBrowsingRunningApps.toggle()
-        updateMenuMatches()
+        scopeIntoApp(name: first.title, bundleID: bundleID)
+        return true
+    }
+
+    /// Scope the corner into one app, remembering that Global is where it came from so the
+    /// chip's "−" has somewhere to go back to.
+    func scopeIntoApp(name: String, bundleID: String) {
+        returnsToGlobalScope = true
+        let app = NSWorkspace.shared.runningApplications.first {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }
+        adoptScope(
+            name: name, bundleID: bundleID,
+            suggestions: AppChatSuggestionProvider.suggestions(for: app),
+            summary: AppChatSuggestionProvider.summary(for: app))
+        hasActed = false
+        loadMenuItems()
+        updateGlobalTyping(for: "")
+        syncListPhase()
         touch()
+    }
+
+    /// Leave a scope entered from Global and go back to it.
+    @discardableResult
+    func leaveScopeForGlobal() -> Bool {
+        guard returnsToGlobalScope else { return false }
+        returnsToGlobalScope = false
+        summonGlobalContext()
         return true
     }
 
@@ -215,7 +270,17 @@ extension AppChatPromptModel {
     func openGlobalMatchIcon(_ icon: MatchDockIcon) {
         hasActed = true
         touch()
+        if icon.id == Self.clipboardPillID {
+            ClipboardPanelController.shared.show()
+            return
+        }
+        // An app pill scopes the field into that app rather than launching it: the pills
+        // are how you get *into* something from here, and the row list is how you run it.
         guard let bundleID = icon.bundleID, !bundleID.isEmpty else { return }
+        if isGlobalScope {
+            scopeIntoApp(name: icon.title, bundleID: bundleID)
+            return
+        }
         if let running = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleID && !$0.isTerminated
         }) {
@@ -274,8 +339,6 @@ extension AppChatPromptModel {
 
     func run(_ row: AppChatRow) {
         switch row {
-        case .runningApp(let icon):
-            openGlobalMatchIcon(icon)
         case .command(let item): runMenuItem(item)
         case .action(let action): runAdapterAction(action)
         case .global(let doc):

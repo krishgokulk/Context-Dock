@@ -273,6 +273,8 @@ struct AppChatPromptPill: View {
                     .frame(width: 22)
             } else if model.isGlobalScope {
                 globalLeadingChip
+            } else if model.returnsToGlobalScope {
+                scopeChipWithExit
             } else {
                 appChip
             }
@@ -324,13 +326,16 @@ struct AppChatPromptPill: View {
                         return .handled
                     }
                     .onKeyPress(.leftArrow) {
-                        CornerDockController.shared.chatPresentation
+                        // Left out of a scope entered from Global goes back to Global,
+                        // before the walk between scopes is considered at all.
+                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
+                        return CornerDockController.shared.chatPresentation
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
                     .onKeyPress(.rightArrow) {
-                        // In Global, right on an empty field opens the running apps the
-                        // pills stand for. Everywhere else it walks back through the scopes.
-                        if model.toggleRunningAppScope() { return .handled }
+                        // In Global, right on an empty field scopes into the first running
+                        // app. Everywhere else it walks back through the scopes.
+                        if model.scopeIntoFirstRunningApp() { return .handled }
                         return CornerDockController.shared.chatPresentation
                             .handleRightArrow(draft: model.query) ? .handled : .ignored
                     }
@@ -355,7 +360,7 @@ struct AppChatPromptPill: View {
             // Hidden the moment the result board is up: the rows already say what matched,
             // and two answers to one question is the clutter the dock avoids by expanding
             // only when it has something to expand into.
-            if model.isGlobalScope, model.rows.isEmpty,
+            if model.isGlobalScope || model.returnsToGlobalScope, model.rows.isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 ContextMatchDock(
@@ -465,6 +470,24 @@ struct AppChatPromptPill: View {
         .background(Color.accentColor.opacity(0.14), in: Capsule())
         .transition(.opacity)
         .help("This question will carry the app's current selection")
+    }
+
+    /// The scope chip with a way out of it — the "−" the dock's scope chip carries. Only
+    /// for a scope entered from Global: the frontmost app's own scope is not something the
+    /// user stepped into, so there is nothing to step back from.
+    private var scopeChipWithExit: some View {
+        HStack(spacing: 6) {
+            appChip
+            Button { model.leaveScopeForGlobal() } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .background(Color.primary.opacity(0.10), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Back to Global Context")
+        }
     }
 
     private var appChip: some View {
