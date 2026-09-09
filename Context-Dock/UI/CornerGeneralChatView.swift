@@ -70,7 +70,7 @@ enum CornerGeneralChatMetrics {
                 ? ChatClarificationCard.height(for: clarificationOptionCount)
                 : 0
             return min(
-                maximumHeight - compactHeight,
+                maximumHeight - compactHeight - CornerDockLayout.gap,
                 transcriptBaseHeight - composerRowHeight
                     + CGFloat(min(messageCount, 5)) * perMessageHeight
                     + steps + clarification)

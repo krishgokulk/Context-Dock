@@ -256,12 +256,9 @@ struct AppChatPromptPill: View {
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
-                        // A chosen command runs; anything else is a question for the app.
-                        if let item = model.focusedMenuItem {
-                            model.runMenuItem(item)
-                        } else {
-                            model.submit()
-                        }
+                        // A chosen row runs — a command or an adapter action; anything
+                        // else is a question for the app.
+                        if !model.runFocusedRow() { model.submit() }
                     }
                     .onKeyPress(.downArrow) {
                         model.moveMenuFocus(by: 1) ? .handled : .ignored

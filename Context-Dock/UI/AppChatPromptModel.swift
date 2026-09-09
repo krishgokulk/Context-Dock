@@ -67,6 +67,10 @@ final class AppChatPromptModel: ObservableObject {
     @Published var focusedMenuIndex = 0
     /// Every command the app offers, read once per app rather than per keystroke.
     var allMenuItems: [AXMenuItem] = []
+    /// What this app's adapter declares it can do — curated, unlike the menus.
+    var adapterActions: [AdapterAction] = []
+    /// The one list the card draws: actions and commands ranked together.
+    @Published var rows: [AppChatRow] = []
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
@@ -124,7 +128,8 @@ final class AppChatPromptModel: ObservableObject {
         // but only until the user has done something — running a command and being handed
         // the opening menu again reads as the surface forgetting what just happened.
         if typed { return isBrowsingMenus ? .suggesting : .prompt }
-        return (suggestions.isEmpty || hasActed) ? .prompt : .suggesting
+        if hasActed { return .prompt }
+        return (rows.isEmpty && suggestions.isEmpty) ? .prompt : .suggesting
     }
 
     // MARK: - Controls

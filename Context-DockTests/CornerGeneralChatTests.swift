@@ -49,9 +49,11 @@ struct CornerGeneralChatTests {
             hasAttachments: false, slashMatchCount: 0,
             showsStarter: false)
 
+        // The starter is its own card above the field now, so the total also carries the
+        // corner's gap between the two. Same content, one more seam.
         #expect(
             starters
-                == CornerGeneralChatMetrics.compactHeight
+                == CornerGeneralChatMetrics.compactHeight + CornerDockLayout.gap
                     + GeneralChatStartView.Metrics.compactHeight(
                         starters: 3, hasConnections: true))
         #expect(starters > typing)
@@ -96,10 +98,12 @@ struct CornerGeneralChatTests {
         }
         let bare = height(0)
 
+        // The picker is a separate card above the field, so what separates it from the
+        // field is the corner's gap rather than a rule drawn inside one container.
         #expect(
             height(1) - bare
                 == ChatSlashAppList.rowHeight + ChatSlashAppList.verticalInset * 2
-                    + CornerGeneralChatMetrics.dividerHeight)
+                    + CornerDockLayout.gap)
         #expect(height(3) - height(1) == ChatSlashAppList.rowHeight * 2)
         // No list, no inset: an empty picker must not leave a gap above the field.
         #expect(ChatSlashAppList.height(for: 0) == 0)

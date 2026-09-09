@@ -44,6 +44,8 @@ extension AppChatPromptModel {
             return
         }
 
+        adapterActions = AppAdapterManager.shared.adapter(for: appBundleID)?
+            .actions.filter { !$0.name.isEmpty } ?? []
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
@@ -64,27 +66,30 @@ extension AppChatPromptModel {
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !typed.isEmpty, !allMenuItems.isEmpty else {
-            menuMatches = []
-            focusedMenuIndex = 0
-            syncListPhase()
-            return
-        }
-        menuMatches = FrontmostMenuMatcher.ranked(
-            allMenuItems,
+        rows = AppChatRowRanker.rank(
+            commands: allMenuItems,
+            actions: adapterActions,
             query: typed,
-            limit: Self.menuRowLimit,
-            policy: .cornerAppChat)
-        focusedMenuIndex = min(focusedMenuIndex, max(menuMatches.count - 1, 0))
+            limit: Self.menuRowLimit)
+        // Kept for the surfaces that still ask specifically about commands.
+        menuMatches = rows.compactMap {
+            if case .command(let item) = $0 { return item }
+            return nil
+        }
+        focusedMenuIndex = min(focusedMenuIndex, max(rows.count - 1, 0))
         syncListPhase()
     }
 
-    /// The list is showing commands rather than opening suggestions.
-    var isBrowsingMenus: Bool { !menuMatches.isEmpty }
+    /// The list has something to show.
+    var isBrowsingMenus: Bool { !rows.isEmpty }
 
-    /// What the pill's height is computed from, whichever list is on screen.
-    var listRowCount: Int {
-        isBrowsingMenus ? menuMatches.count : suggestions.count
+    /// What the card's height is computed from. Falls back to the handed-in suggestions
+    /// for an app with no adapter and no cached menus — otherwise the surface would open
+    /// on an empty card.
+    var listRowCount: Int { rows.isEmpty ? suggestions.count : rows.count }
+
+    var focusedRow: AppChatRow? {
+        rows.indices.contains(focusedMenuIndex) ? rows[focusedMenuIndex] : nil
     }
 
     // MARK: - Keyboard
@@ -95,15 +100,49 @@ extension AppChatPromptModel {
     @discardableResult
     func moveMenuFocus(by delta: Int) -> Bool {
         guard isBrowsingMenus else { return false }
-        let count = menuMatches.count
+        let count = rows.count
         focusedMenuIndex = (focusedMenuIndex + delta + count) % count
         touch()
         return true
     }
 
-    var focusedMenuItem: AXMenuItem? {
-        guard isBrowsingMenus, menuMatches.indices.contains(focusedMenuIndex) else { return nil }
-        return menuMatches[focusedMenuIndex]
+    /// Runs whichever row the keyboard is on. Returns false when there is none, so Enter
+    /// falls through to asking the question the user typed.
+    @discardableResult
+    func runFocusedRow() -> Bool {
+        guard let row = focusedRow else { return false }
+        run(row)
+        return true
+    }
+
+    func run(_ row: AppChatRow) {
+        switch row {
+        case .command(let item): runMenuItem(item)
+        case .action(let action): runAdapterAction(action)
+        }
+    }
+
+    /// An adapter action runs through AppAdapterManager, which is where its approval and
+    /// its context resolution already live.
+    func runAdapterAction(_ action: AdapterAction) {
+        let bundleID = appBundleID
+        hasActed = true
+        query = ""
+        updateMenuMatches()
+        touch()
+        // The reader's latest snapshot, refreshed against the app the corner is about —
+        // the corner opening is itself an app switch, so the resting snapshot can be of
+        // something else.
+        if let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }) {
+            AXContextReader.shared.refreshLightweight(from: app)
+        }
+        let context = AXContextReader.shared.current
+        Task { @MainActor in
+            _ = await AppAdapterManager.shared.execute(
+                action, context: context, targetBundleId: bundleID)
+        }
     }
 
     // MARK: - Running one

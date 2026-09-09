@@ -97,13 +97,18 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 16)
                 .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
 
-            if model.isBrowsingMenus {
-                ForEach(Array(model.menuMatches.enumerated()), id: \.element.id) { index, item in
-                    commandRow(item, isFocused: index == model.focusedMenuIndex)
-                }
-            } else {
+            if model.rows.isEmpty {
                 ForEach(model.suggestions.prefix(AppChatPromptModel.menuRowLimit)) { suggestion in
                     suggestionRow(suggestion)
+                }
+            } else {
+                ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                    switch row {
+                    case .command(let item):
+                        commandRow(item, isFocused: index == model.focusedMenuIndex)
+                    case .action(let action):
+                        actionRow(action, isFocused: index == model.focusedMenuIndex)
+                    }
                 }
             }
         }
@@ -124,11 +129,12 @@ struct AppChatListCard: View {
         .onHover { _ in model.touch() }
     }
 
+    /// Names what the list is: what the app can do at rest, what matched once typing starts.
     private var headerText: String {
-        if model.isBrowsingMenus {
-            return model.appName.isEmpty ? "Commands" : "\(model.appName) commands"
-        }
-        return model.capabilitySummary
+        let app = model.appName.isEmpty ? "App" : model.appName
+        let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
+        return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary
     }
 
     /// A command the app really has: its name, the menu it lives under, and its shortcut —
@@ -173,12 +179,13 @@ struct AppChatListCard: View {
         return menu.isEmpty ? app : "\(app) > \(menu)"
     }
 
+    /// The opening offer for an app with no adapter and nothing cached yet.
     private func suggestionRow(_ suggestion: AppChatSuggestion) -> some View {
         HStack(spacing: 10) {
             Image(systemName: suggestion.icon)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 18)
+                .frame(width: 28)
             Text(suggestion.title)
                 .font(.system(size: 13, weight: .medium))
                 .lineLimit(1)
@@ -186,5 +193,40 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
+    }
+
+    /// An action the app's adapter declares: curated, so it says what it does rather than
+    /// where it lives.
+    private func actionRow(_ action: AdapterAction, isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.16))
+                    .frame(width: 26, height: 26)
+                Image(systemName: action.icon.isEmpty ? "bolt.fill" : action.icon)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.accentColor)
+            }
+            .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(action.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(action.description.isEmpty ? model.appName : action.description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.runAdapterAction(action) }
     }
 }
