@@ -929,6 +929,8 @@ class AppSettings: ObservableObject {
     @AppStorage("captureAreaHotkeyModifiers") private var _captureAreaHotkeyModifiers: Int = 0
     @AppStorage("captureScreenshotHotkeyKeyCode") private var _captureScreenshotHotkeyKeyCode: Int = 0
     @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
+    @AppStorage("globalContextHotkeyKeyCode") private var _globalContextHotkeyKeyCode: Int = 0
+    @AppStorage("globalContextHotkeyModifiers") private var _globalContextHotkeyModifiers: Int = 0
     @AppStorage("selectionScopeHotkeyKeyCode") private var _selectionScopeHotkeyKeyCode: Int = 0
     @AppStorage("selectionScopeHotkeyModifiers") private var _selectionScopeHotkeyModifiers: Int = 0
 
@@ -1882,6 +1884,16 @@ class AppSettings: ObservableObject {
     /// Dedicated Selection Scope shortcut. When set, the normal launcher open no longer
     /// auto-enters Selection Scope (that hijacked plain app launches); the selection is
     /// only frozen into a scope when this shortcut fires.
+    var globalContextHotkeyKeyCode: UInt32 {
+        get { UInt32(_globalContextHotkeyKeyCode) }
+        set { objectWillChange.send(); _globalContextHotkeyKeyCode = Int(newValue) }
+    }
+    var globalContextHotkeyModifiers: UInt32 {
+        get { UInt32(_globalContextHotkeyModifiers) }
+        set { objectWillChange.send(); _globalContextHotkeyModifiers = Int(newValue) }
+    }
+    var globalContextHotkeyEnabled: Bool { _globalContextHotkeyKeyCode != 0 }
+
     var selectionScopeHotkeyKeyCode: UInt32 {
         get { UInt32(_selectionScopeHotkeyKeyCode) }
         set { objectWillChange.send(); _selectionScopeHotkeyKeyCode = Int(newValue) }
@@ -2641,6 +2653,11 @@ class AppSettings: ObservableObject {
             keyCode: captureScreenshotHotkeyKeyCode,
             modifiers: captureScreenshotHotkeyModifiers)
     }
+    var globalContextHotkeyDisplayString: String {
+        hotkeyDisplayString(
+            keyCode: globalContextHotkeyKeyCode, modifiers: globalContextHotkeyModifiers)
+    }
+
     var selectionScopeHotkeyDisplayString: String {
         hotkeyDisplayString(
             keyCode: selectionScopeHotkeyKeyCode, modifiers: selectionScopeHotkeyModifiers)

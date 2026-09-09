@@ -97,11 +97,26 @@ struct HotkeysSettingsPage: View {
                             })
                         Divider()
                         captureHotkeyRow(
+                            icon: "globe", color: .teal,
+                            title: "Global Context",
+                            subtitle:
+                                "Every running app's commands in the corner, in one ranked list",
+                            display: settings.globalContextHotkeyDisplayString,
+                            clear: {
+                                settings.globalContextHotkeyKeyCode = 0
+                                settings.globalContextHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.globalContextHotkeyKeyCode = $0
+                                settings.globalContextHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "text.cursor", color: .green,
                             title: "Selection Scope",
                             subtitle: settings.selectionScopeHotkeyEnabled
-                                ? "Open the dock scoped to the current selection — a plain launch stays a launcher"
-                                : "Open the dock scoped to selected files or text. Unset: a selection auto-scopes on every launch",
+                                ? "Open the selection in the corner — a plain launch stays a launcher"
+                                : "Open selected files or text as a corner card. Unset: a selection auto-scopes on every launch",
                             display: settings.selectionScopeHotkeyDisplayString,
                             clear: {
                                 settings.selectionScopeHotkeyKeyCode = 0

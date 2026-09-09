@@ -29,6 +29,14 @@ enum FrontmostMenuMatcher {
             allowsAppleMenuItems: false,
             excludesGenericAppMenus: false,
             suppressesWindowManagement: false)
+
+        /// Global Context: every running app at once. About/Help/Quit are dropped here —
+        /// with one app they are real answers, but across twenty they are the same twenty
+        /// rows repeated, and they bury whatever the user actually meant.
+        static let globalContext = Policy(
+            allowsAppleMenuItems: false,
+            excludesGenericAppMenus: true,
+            suppressesWindowManagement: false)
     }
 
     // MARK: - Matching

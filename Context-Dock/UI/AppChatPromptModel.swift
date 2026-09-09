@@ -100,6 +100,8 @@ final class AppChatPromptModel: ObservableObject {
     private var conversationObservation: AnyCancellable?
     private var messagesObservation: AnyCancellable?
     private var selectionObservation: AnyCancellable?
+    /// Half-written questions, kept per scope so a walk between them loses nothing.
+    private var drafts: [String: String] = [:]
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
 
@@ -127,6 +129,36 @@ final class AppChatPromptModel: ObservableObject {
             }
     }
 
+    /// Point the surface at a scope. The scope's identity stays `private(set)` — only the
+    /// model may change what it is about — and this is the one door.
+    ///
+    /// Each scope keeps its own half-written question. App Chat and Global Context share
+    /// this one model, so without that a walk from one to the other threw away whatever the
+    /// user had typed — and walking back did not bring it home.
+    func adoptScope(
+        name: String, bundleID: String, suggestions: [AppChatSuggestion] = [],
+        summary: String = ""
+    ) {
+        let outgoing = scopeKey
+        let incoming = Self.scopeKey(name: name, bundleID: bundleID)
+        if outgoing != incoming {
+            drafts[outgoing] = query
+            query = drafts[incoming] ?? ""
+        }
+        appName = name
+        appBundleID = bundleID
+        self.suggestions = suggestions
+        capabilitySummary = summary
+    }
+
+    /// What a scope is called when it holds a draft. The bundle id where there is one, the
+    /// name otherwise — Global Context has no bundle id and is still a scope.
+    private var scopeKey: String { Self.scopeKey(name: appName, bundleID: appBundleID) }
+
+    private static func scopeKey(name: String, bundleID: String) -> String {
+        bundleID.isEmpty ? name : bundleID
+    }
+
     // MARK: - Opening
 
     func summon(
@@ -135,10 +167,8 @@ final class AppChatPromptModel: ObservableObject {
         suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
-        appName = name
-        appBundleID = bundleID
-        self.suggestions = suggestions
-        capabilitySummary = summary
+        adoptScope(
+            name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         selection = AppChatSelectionScope.from(
             context: AXContextReader.shared.current, scopedTo: bundleID)
         loadMenuItems()

@@ -20,6 +20,12 @@ extension AppChatPromptModel {
     /// pill's height is a pure function of this count, so it cannot exceed what is drawn.
     static let menuRowLimit = 5
 
+    /// How many apps Global Context reads, most recently used first. Every running app's
+    /// full menu is thousands of rows and seconds of AX; the ranking only ever shows five.
+    static let globalAppLimit = 12
+    /// And how much of each app's menu it takes.
+    static let globalPerAppLimit = 60
+
     // MARK: - Reading the app's menus
 
     /// The app's menus: the warm cache first, then a live read that fills in what the cache
@@ -70,7 +76,8 @@ extension AppChatPromptModel {
             commands: allMenuItems,
             actions: adapterActions,
             query: typed,
-            limit: Self.menuRowLimit)
+            limit: Self.menuRowLimit,
+            policy: isGlobalScope ? .globalContext : .cornerAppChat)
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -79,6 +86,33 @@ extension AppChatPromptModel {
         // A new list is a new offer: nothing is chosen until the user arrows into it.
         focusedMenuIndex = nil
         syncListPhase()
+    }
+
+    /// Every running app at once, in the same field the app scope uses.
+    ///
+    /// Global Context is the frontmost app's scope widened to the machine, so it reuses this
+    /// surface rather than introducing a third one: the chip says which scope is answering
+    /// and the list underneath changes with it.
+    func summonGlobalContext() {
+        adoptScope(name: Self.globalScopeName, bundleID: "")
+        adapterActions = []
+        hasActed = false
+        allMenuItems = Self.runningAppMenuItems()
+        updateMenuMatches()
+        set(.prompt)
+        syncListPhase()
+        touch()
+    }
+
+    /// The menus of the apps that are running, from the same warm cache the app scope reads.
+    static func runningAppMenuItems() -> [AXMenuItem] {
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && !$0.isTerminated }
+            .prefix(globalAppLimit)
+
+        return apps.flatMap { app in
+            AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: globalPerAppLimit)
+        }
     }
 
     /// The list has something to show.
@@ -163,10 +197,22 @@ extension AppChatPromptModel {
     ///
     /// A menu click is normally the last resort — here the user picked the row by name,
     /// which is the one case where it is a choice rather than a guess.
+    /// The corner is in Global Context — the scope is the machine, not one app.
+    var isGlobalScope: Bool { appBundleID.isEmpty && appName == Self.globalScopeName }
+
+    /// The name the scope goes by, in one place so the chip and the check cannot disagree.
+    static let globalScopeName = "Global Context"
+
     func runMenuItem(_ item: AXMenuItem) {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == appBundleID && !$0.isTerminated
-        }) else { return }
+        // In Global Context the row carries its own app: the scope has no single one, and
+        // sending a Safari command to whatever happens to be frontmost is how a global list
+        // becomes dangerous.
+        let owner = NSWorkspace.shared.runningApplications.first {
+            item.sourcePID != 0
+                ? $0.processIdentifier == item.sourcePID
+                : $0.bundleIdentifier == appBundleID
+        }
+        guard let app = owner, !app.isTerminated else { return }
 
         let request = MenuExecutionCoordinator.DockMenuActionRequest(
             sourcePID: app.processIdentifier,

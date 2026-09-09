@@ -9,7 +9,23 @@ import Foundation
 
 enum CornerChatMode: Equatable {
     case frontmostApp
+    /// Everything running, not one app: the machine's menus and actions, ranked together.
+    /// Between the two chats deliberately — it is the frontmost app's scope widened, not a
+    /// different conversation.
+    case globalContext
     case general
+
+    /// The order the scopes are walked in, left to right.
+    static let walk: [CornerChatMode] = [.general, .globalContext, .frontmostApp]
+
+    /// The scope `delta` steps away, or nil at either end. The walk does not wrap: running
+    /// off the end and reappearing on the other side reads as the surface losing its place.
+    static func step(from current: CornerChatMode, by delta: Int) -> CornerChatMode? {
+        guard let index = walk.firstIndex(of: current) else { return nil }
+        let next = index + delta
+        guard walk.indices.contains(next) else { return nil }
+        return walk[next]
+    }
 }
 
 enum CornerGeneralPhase: Equatable {
@@ -95,7 +111,7 @@ final class CornerChatPresentation: ObservableObject {
         case .general:
             return generalPhase == .expanded
                 && (!generalChat.messages.isEmpty || generalChat.isSending)
-        case .frontmostApp:
+        case .frontmostApp, .globalContext:
             return appChat.phase == .chat
         }
     }
@@ -103,7 +119,7 @@ final class CornerChatPresentation: ObservableObject {
     private var isShowingSomethingToDismiss: Bool {
         switch mode {
         case .general: return generalPhase == .expanded
-        case .frontmostApp: return appChat.phase.showsInput
+        case .frontmostApp, .globalContext: return appChat.phase.showsInput
         }
     }
 
@@ -129,10 +145,10 @@ final class CornerChatPresentation: ObservableObject {
 
     @discardableResult
     func handleLeftArrow(draft: String) -> Bool {
-        guard mode == .frontmostApp,
-              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let next = CornerChatMode.step(from: mode, by: -1)
         else { return false }
-        showGeneral()
+        show(next)
         return true
     }
 
@@ -140,32 +156,56 @@ final class CornerChatPresentation: ObservableObject {
     /// It returns to the app that is in front now, not the one the trip started from.
     @discardableResult
     func handleRightArrow(draft: String) -> Bool {
-        guard mode == .general,
-            draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let latestTarget
+        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let next = CornerChatMode.step(from: mode, by: 1)
         else { return false }
-        showFrontmostApp(target: latestTarget)
+        show(next)
         return true
     }
 
+    /// Show a scope by name, from an arrow walk or a hotkey.
+    ///
+    /// Returning to the app scope goes to the app that is in front *now*, not the one the
+    /// trip started from — the walk is through scopes, not through history.
+    func show(_ next: CornerChatMode) {
+        switch next {
+        case .general: showGeneral()
+        case .globalContext: showGlobalContext()
+        case .frontmostApp:
+            guard let latestTarget else { return }
+            showFrontmostApp(target: latestTarget)
+        }
+    }
+
+    /// A swipe walks the same scopes the arrows do, one step per swipe.
+    ///
+    /// It used to jump straight between the two chats, which was the whole walk when there
+    /// were only two. With Global Context between them, a gesture that skipped it would
+    /// disagree with the arrow keys about what sits next to what.
     @discardableResult
     func handleHorizontalSwipe(deltaX: CGFloat, draft: String) -> Bool {
         guard abs(deltaX) > 70,
-              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let next = CornerChatMode.step(from: mode, by: deltaX > 0 ? -1 : 1)
         else { return false }
-        if mode == .general {
-            guard deltaX < 0 else { return false }
-            guard let latestTarget else { return false }
-            showFrontmostApp(target: latestTarget)
-            return true
-        }
-        guard deltaX > 0 else { return false }
-        showGeneral()
+        show(next)
         return true
     }
 
     /// A question asked from the clip preview: General is already answering it, so the
     /// corner has to be showing General rather than whatever it was showing before.
+    /// Everything running, in the same field the app scope uses.
+    ///
+    /// Global Context is the frontmost app's scope widened to the machine, so it reuses that
+    /// surface rather than introducing a third one — the chip says which scope is answering
+    /// and the list underneath changes accordingly.
+    func showGlobalContext() {
+        cancelGeneralStandDown()
+        mode = .globalContext
+        isVisible = true
+        appChat.summonGlobalContext()
+    }
+
     func showGeneralFromPreview() {
         showGeneral()
     }

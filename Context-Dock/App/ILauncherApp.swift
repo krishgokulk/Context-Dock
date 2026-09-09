@@ -437,6 +437,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var captureAreaHotKeyRef: EventHotKeyRef?
     var captureScreenshotHotKeyRef: EventHotKeyRef?
     var selectionScopeHotKeyRef: EventHotKeyRef?
+    var globalContextHotKeyRef: EventHotKeyRef?
     var captureHotkeyEventHandlerRef: EventHandlerRef?
     #if DEBUG
     var inspectorHotKeyRef: EventHotKeyRef?
@@ -2068,6 +2069,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case 42: ScreenCaptureService.shared.capture(.area)
             case 43: ScreenCaptureService.shared.capture(.screenshot)
             case 45: AppDelegate.shared?.activateSelectionScope()
+            case 46: AppDelegate.shared?.activateGlobalContextScope()
             default: return OSStatus(eventNotHandledErr)
             }
             return noErr
@@ -2101,6 +2103,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             RegisterEventHotKey(
                 settings.selectionScopeHotkeyKeyCode, settings.selectionScopeHotkeyModifiers,
                 id, GetApplicationEventTarget(), 0, &selectionScopeHotKeyRef)
+        }
+        if settings.globalContextHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 46)
+            RegisterEventHotKey(
+                settings.globalContextHotkeyKeyCode, settings.globalContextHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &globalContextHotKeyRef)
         }
     }
 
@@ -2454,6 +2462,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Global hotkey → open the dock directly in Selection Scope for whatever the frontmost
     /// app has selected. Deliberately separate from the launcher hotkey: a plain launcher open
     /// must stay a launcher (typing an app name), never get hijacked by a live selection.
+    /// Global Context in the corner: every running app's commands in one ranked list.
+    ///
+    /// A scope of the corner chat rather than a surface of its own — the same field asks,
+    /// and the chip says which scope is answering. Pressing it again puts the corner away,
+    /// like the other scope hotkeys.
+    func activateGlobalContextScope() {
+        guard settings.enableLayer2 else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+
+        let presentation = CornerDockController.shared.chatPresentation
+        if presentation.isVisible, presentation.mode == .globalContext {
+            presentation.dismiss()
+            return
+        }
+        presentation.showGlobalContext()
+        CornerDockController.shared.armKeyboard()
+    }
+
     func activateSelectionScope() {
         guard settings.enableLayer2 else { return }
         let now = Date().timeIntervalSinceReferenceDate

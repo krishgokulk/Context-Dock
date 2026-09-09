@@ -24,9 +24,14 @@ struct CornerChatPresentationTests {
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
 
+        // Global Context sits between the two chats, so the walk outward is two steps.
+        #expect(subject.handleLeftArrow(draft: "") == true)
+        #expect(subject.mode == .globalContext)
         #expect(subject.handleLeftArrow(draft: "") == true)
         #expect(subject.mode == .general)
 
+        #expect(subject.handleRightArrow(draft: "") == true)
+        #expect(subject.mode == .globalContext)
         #expect(subject.handleRightArrow(draft: "") == true)
         #expect(subject.mode == .frontmostApp)
     }
@@ -40,7 +45,7 @@ struct CornerChatPresentationTests {
         _ = subject.handleLeftArrow(draft: "")
 
         #expect(subject.handleRightArrow(draft: "half a question") == false)
-        #expect(subject.mode == .general)
+        #expect(subject.mode == .globalContext)
     }
 
     @Test func theHotkeySummonsFrontmostAppChat() {
@@ -62,9 +67,12 @@ struct CornerChatPresentationTests {
 
         subject.cycle(target: code)
         app.query = "app draft"
+        // App → Global → General, one step per swipe.
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         general.input = "general draft"
         // Swiping back, not the hotkey: the hotkey puts the corner away now.
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
 
         #expect(subject.mode == .frontmostApp)
@@ -127,7 +135,7 @@ struct CornerChatPresentationTests {
         subject.showFrontmostApp(target: code)
 
         #expect(subject.handleLeftArrow(draft: "") == true)
-        #expect(subject.mode == .general)
+        #expect(subject.mode == .globalContext)
 
         subject.showFrontmostApp(target: code)
         #expect(subject.handleLeftArrow(draft: "editing") == false)
@@ -140,11 +148,16 @@ struct CornerChatPresentationTests {
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
 
+        // From the app scope there is nothing further right, and one swipe left is one
+        // step of the same walk the arrows take.
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == false)
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.mode == .globalContext)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(subject.mode == .general)
+        // And nothing further left of General.
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == false)
-        #expect(subject.mode == .general)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.mode == .frontmostApp)
         #expect(subject.appChat.appBundleID == code.bundleID)
@@ -155,6 +168,7 @@ struct CornerChatPresentationTests {
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
 
         subject.standDown()
