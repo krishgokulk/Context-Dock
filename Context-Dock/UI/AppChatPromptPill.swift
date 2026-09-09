@@ -327,6 +327,13 @@ struct AppChatPromptPill: View {
                         CornerDockController.shared.chatPresentation
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
+                    .onKeyPress(.rightArrow) {
+                        // In Global, right on an empty field opens the running apps the
+                        // pills stand for. Everywhere else it walks back through the scopes.
+                        if model.toggleRunningAppScope() { return .handled }
+                        return CornerDockController.shared.chatPresentation
+                            .handleRightArrow(draft: model.query) ? .handled : .ignored
+                    }
                     .onKeyPress(keys: ["p"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
                         model.togglePin()
@@ -345,7 +352,10 @@ struct AppChatPromptPill: View {
             // The dock's own match pills, mounted rather than imitated: the apps that
             // answer what is typed, with "+N" for the rest. Same view, same icons, same
             // running dot as the dock's global bar.
-            if model.isGlobalScope,
+            // Hidden the moment the result board is up: the rows already say what matched,
+            // and two answers to one question is the clutter the dock avoids by expanding
+            // only when it has something to expand into.
+            if model.isGlobalScope, model.rows.isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 ContextMatchDock(
@@ -361,7 +371,10 @@ struct AppChatPromptPill: View {
             // composer keeps its "+" on screen. Hiding them until the pointer arrived meant
             // the two things you do most here were invisible until found by accident, and
             // gone entirely once a conversation started.
-            attachMenu
+            //
+            // Global Context is a search bar rather than a composer, and the dock's global
+            // bar carries none of this — so neither does this one.
+            if !model.isGlobalScope { attachMenu }
 
             if model.isAnswering {
                 Button { model.cancelTurn() } label: {
@@ -370,7 +383,9 @@ struct AppChatPromptPill: View {
                 .buttonStyle(.plain)
                 .help("Stop")
                 .transition(.opacity)
-            } else if !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            } else if !model.isGlobalScope,
+                !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
                 Button { model.submit() } label: {
                     Image(systemName: "arrow.up")
                         .font(.system(size: 12, weight: .bold))
@@ -387,7 +402,7 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat {
+            if pointerInside, model.phase != .chat, !model.isGlobalScope {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }

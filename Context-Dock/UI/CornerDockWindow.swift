@@ -57,6 +57,8 @@ final class CornerDockController: NSObject {
     private var panel: CornerDockPanel?
     private var hostView: CornerDockHostView?
     private var hoverMonitors: [Any] = []
+    /// When Command went down alone, for the tap gesture above.
+    private var commandTapStarted: Date?
     private var accumulatedChatSwipeX: CGFloat = 0
     private var accumulatedChatSwipeY: CGFloat = 0
     private var sinks: Set<AnyCancellable> = []
@@ -425,6 +427,15 @@ final class CornerDockController: NSObject {
         {
             hoverMonitors.append(keys)
         }
+        // A tap of Command switches the app scope to Global and back — the gesture the dock
+        // uses. It is a tap, not a hold: Command pressed and released on its own, with no
+        // other key in between, so every ⌘-shortcut still means what it always did.
+        if let flags = NSEvent.addLocalMonitorForEvents(
+            matching: [.flagsChanged],
+            handler: { [weak self] event in self?.handleCommandTap(event) ?? event })
+        {
+            hoverMonitors.append(flags)
+        }
     }
 
     /// Left arrow, but only when the chat is the surface the key was meant for.
@@ -432,7 +443,39 @@ final class CornerDockController: NSObject {
     /// This is a monitor over the whole corner panel, and it used to ask nothing except
     /// which key was pressed — so arrowing through the clipboard's own list opened General
     /// chat, because the clipboard and the chat share this window.
+    /// Command, pressed and released alone, toggles the app scope and Global.
+    ///
+    /// Anything else — another key while it is down, a second modifier, too long a hold —
+    /// disqualifies the tap, because ⌘ is half the shortcuts on the machine and stealing it
+    /// would be worse than not having the gesture.
+    private func handleCommandTap(_ event: NSEvent) -> NSEvent? {
+        guard let panel, event.window === panel else { return event }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let isCommandDown = flags.contains(.command)
+        let hasOtherModifier = !flags.subtracting([.command]).isEmpty
+
+        if isCommandDown {
+            commandTapStarted = hasOtherModifier ? nil : Date()
+            return event
+        }
+        guard let started = commandTapStarted else { return event }
+        commandTapStarted = nil
+        guard Date().timeIntervalSince(started) < 0.4,
+              chatPresentation.isVisible,
+              prompt.phase.showsInput
+        else { return event }
+
+        switch chatPresentation.mode {
+        case .frontmostApp: chatPresentation.show(.globalContext)
+        case .globalContext: chatPresentation.show(.frontmostApp)
+        case .general: return event
+        }
+        return nil
+    }
+
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
+        // A key pressed while Command is down means this was a shortcut, not a tap.
+        commandTapStarted = nil
         guard let panel, event.window === panel,
               event.keyCode == 123,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,

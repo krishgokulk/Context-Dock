@@ -21,12 +21,15 @@ enum AppChatRow: Identifiable {
     /// A Global Context result: an app, a CLI tool, a system command, a tab, a menu — the
     /// dock's own index, ranked by the dock's own coordinator.
     case global(GlobalSearchService.SearchDocument)
+    /// One of the running apps, from the pills beside the field.
+    case runningApp(MatchDockIcon)
 
     var id: String {
         switch self {
         case .command(let item): return "menu:" + item.path.joined(separator: ">")
         case .action(let action): return "action:" + action.id
         case .global(let doc): return "global:" + doc.id
+        case .runningApp(let icon): return "running:" + icon.id
         }
     }
 
@@ -35,6 +38,7 @@ enum AppChatRow: Identifiable {
         case .command(let item): return item.title
         case .action(let action): return action.name
         case .global(let doc): return doc.title
+        case .runningApp(let icon): return icon.title
         }
     }
 

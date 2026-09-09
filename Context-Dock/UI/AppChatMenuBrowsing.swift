@@ -75,9 +75,13 @@ extension AppChatPromptModel {
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
-            rows = GlobalContextRow
-                .documents(for: typed, limit: Self.menuRowLimit)
-                .map(AppChatRow.global)
+            if typed.isEmpty && isBrowsingRunningApps {
+                rows = Self.runningAppIcons().map(AppChatRow.runningApp)
+            } else {
+                rows = GlobalContextRow
+                    .documents(for: typed, limit: Self.menuRowLimit)
+                    .map(AppChatRow.global)
+            }
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
@@ -110,6 +114,7 @@ extension AppChatPromptModel {
         adapterActions = []
         allMenuItems = []
         hasActed = false
+        isBrowsingRunningApps = false
         updateMenuMatches()
         set(.prompt)
         syncListPhase()
@@ -134,16 +139,37 @@ extension AppChatPromptModel {
     /// and cached by query — fast typing re-asks per keystroke without a hop, which is what
     /// keeps the leading icon in step with the field instead of a character behind it.
     func updateGlobalTyping(for typed: String) {
-        guard !typed.isEmpty else {
-            setGlobalTyping(top: nil, icons: [], overflow: 0)
-            return
-        }
-        let coordinator = GlobalContextSearchCoordinator.shared
-        let icons = coordinator.resolveFastMatchDockIcons(query: typed, limit: 12)
+        // The pills are what is running, the way the dock's global bar shows them — they
+        // are ambient, not a second copy of the results. The top match still comes from the
+        // index, because that is what Tab takes.
+        let running = Self.runningAppIcons()
         setGlobalTyping(
-            top: coordinator.resolveFastTopMatch(query: typed),
-            icons: Array(icons.prefix(Self.matchIconLimit)),
-            overflow: max(icons.count - Self.matchIconLimit, 0))
+            top: typed.isEmpty
+                ? nil
+                : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
+            icons: Array(running.prefix(Self.matchIconLimit)),
+            overflow: max(running.count - Self.matchIconLimit, 0))
+    }
+
+    /// The apps that are running, newest first, as the pill row draws them.
+    static func runningAppIcons() -> [MatchDockIcon] {
+        NSWorkspace.shared.runningApplications
+            .filter {
+                $0.activationPolicy == .regular && !$0.isTerminated
+                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+            }
+            .compactMap { app in
+                guard let bundleID = app.bundleIdentifier, let icon = app.icon else { return nil }
+                return MatchDockIcon(
+                    id: bundleID,
+                    bundleID: bundleID,
+                    title: app.localizedName ?? bundleID,
+                    icon: icon,
+                    isRunning: true,
+                    isExpandable: false,
+                    score: 0,
+                    isExactAppPrefix: false)
+            }
     }
 
     /// How many app icons fit beside a 372-point field before the rest become "+N".
@@ -169,6 +195,19 @@ extension AppChatPromptModel {
             return true
         }
         run(row)
+        return true
+    }
+
+    /// The pills, opened as a list. Right arrow on an empty field does this in the dock;
+    /// it is the same gesture as walking into a scope, one level down instead of sideways.
+    @discardableResult
+    func toggleRunningAppScope() -> Bool {
+        guard isGlobalScope,
+            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        isBrowsingRunningApps.toggle()
+        updateMenuMatches()
+        touch()
         return true
     }
 
@@ -235,6 +274,8 @@ extension AppChatPromptModel {
 
     func run(_ row: AppChatRow) {
         switch row {
+        case .runningApp(let icon):
+            openGlobalMatchIcon(icon)
         case .command(let item): runMenuItem(item)
         case .action(let action): runAdapterAction(action)
         case .global(let doc):
