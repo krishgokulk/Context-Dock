@@ -21,6 +21,26 @@ struct AppearanceSettingsPage: View {
                     }
                 }
 
+                CardSection(title: "Corner Position", systemImage: "rectangle.bottomthird.inset.filled") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("", selection: $settings.cornerDockAnchorRaw) {
+                            ForEach(CornerDockAnchor.allCases, id: \.rawValue) { anchor in
+                                Text(anchor.label).tag(anchor.rawValue)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        Text(
+                            """
+                            Where the chat, clipboard, selection and shelf sit along the \
+                            bottom of the screen. Centred, they read as a dock.
+                            """)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 10)
+                }
+
                 CardSection(title: "Liquid Glass", systemImage: "circle.lefthalf.filled") {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {

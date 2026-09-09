@@ -889,6 +889,10 @@ class AppSettings: ObservableObject {
     /// leaves this machine, and it only ever fetches an address the user configured.
     @AppStorage("appWebsiteKnowledgeEnabled") var appWebsiteKnowledgeEnabled: Bool = false
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
+    /// Where the corner shell sits along the bottom of the screen: left, centre or right.
+    /// Centred, with the input bar under it, it reads as a dock — which is what it has
+    /// become, rather than a corner annex to one.
+    @AppStorage("cornerDockAnchor") var cornerDockAnchorRaw: String = CornerDockAnchor.right.rawValue
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =
         true

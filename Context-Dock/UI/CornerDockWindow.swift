@@ -194,6 +194,15 @@ final class CornerDockController: NSObject {
         chatPresentation.$isVisible.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
+        // Moving the shell is a placement change, not just a redraw: the window itself has
+        // to travel to the other edge. Any settings change re-places it, which is cheap —
+        // `position` writes the same origin when nothing moved.
+        AppSettings.shared.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.position()
+                self?.refresh()
+            }
+        }.store(in: &sinks)
         chatPresentation.generalChat.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.refresh() }
         }.store(in: &sinks)
@@ -207,6 +216,13 @@ final class CornerDockController: NSObject {
         }.store(in: &sinks)
     }
 
+    /// Which edge the shell is anchored to. Read fresh each time rather than cached: the
+    /// user can move it while the surface is up, and the window and the cards inside it
+    /// have to agree on the answer in the same frame.
+    var anchor: CornerDockAnchor {
+        CornerDockAnchor(rawValue: AppSettings.shared.cornerDockAnchorRaw) ?? .right
+    }
+
     private func position() {
         guard let panel else { return }
         let screen =
@@ -216,10 +232,13 @@ final class CornerDockController: NSObject {
         let pad = CornerDockLayout.pad
         let margin: CGFloat = 20
         let size = panel.frame.size
-        panel.setFrameOrigin(
-            NSPoint(
-                x: visible.maxX - margin + pad - size.width,
-                y: visible.minY + margin - pad))
+        let x: CGFloat
+        switch anchor {
+        case .right: x = visible.maxX - margin + pad - size.width
+        case .left: x = visible.minX + margin - pad
+        case .center: x = visible.midX - size.width / 2
+        }
+        panel.setFrameOrigin(NSPoint(x: x, y: visible.minY + margin - pad))
     }
 
     // MARK: - Visibility
@@ -276,7 +295,8 @@ final class CornerDockController: NSObject {
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
-            prompt: chatPresentation.isVisible ? promptSize : nil)
+            prompt: chatPresentation.isVisible ? promptSize : nil,
+            anchor: anchor)
     }
 
     /// The app's commands, or what it can do — a card of its own above the field, and only
@@ -317,7 +337,8 @@ final class CornerDockController: NSObject {
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
-            prompt: prompt.phase.isVisible ? promptSize : nil
+            prompt: prompt.phase.isVisible ? promptSize : nil,
+            anchor: anchor
         ).shelf
     }
 
@@ -478,9 +499,16 @@ struct CornerDockSurface: View {
     @ObservedObject private var shelfStore = DropShelfController.shared.store
     @ObservedObject private var prompt = CornerDockController.shared.prompt
     @ObservedObject private var chatPresentation = CornerDockController.shared.chatPresentation
+    @ObservedObject private var settings = AppSettings.shared
+
+    /// The same answer `CornerDockLayout.slots` is given, so what is drawn sits exactly
+    /// where the shell hit-tests it.
+    private var anchor: CornerDockAnchor {
+        CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
+    }
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: CornerDockLayout.gap) {
+        VStack(alignment: anchor.horizontalAlignment, spacing: CornerDockLayout.gap) {
             if shelf.phase.isVisible {
                 DropShelfPill(presentation: shelf, store: shelfStore)
             }
@@ -524,7 +552,7 @@ struct CornerDockSurface: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: anchor.frameAlignment)
         .padding(CornerDockLayout.pad)
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isVisible

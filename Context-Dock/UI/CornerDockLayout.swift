@@ -10,6 +10,42 @@
 
 import CoreGraphics
 import Foundation
+import SwiftUI
+
+/// Where the shell sits along the bottom of the screen.
+///
+/// The surface stopped being "the dock plus a corner annex" some time ago: the frontmost
+/// app, the selection, the clipboard, the shelf and both chats all live here now. What is
+/// left is where it sits — and centred, with the input bar under it, it reads as a dock
+/// again without being a second surface.
+enum CornerDockAnchor: String, CaseIterable, Codable {
+    case left, center, right
+
+    var label: String {
+        switch self {
+        case .left: return "Left"
+        case .center: return "Centre"
+        case .right: return "Right"
+        }
+    }
+
+    /// How the cards line up with each other inside the shell.
+    var horizontalAlignment: HorizontalAlignment {
+        switch self {
+        case .left: return .leading
+        case .center: return .center
+        case .right: return .trailing
+        }
+    }
+
+    var frameAlignment: Alignment {
+        switch self {
+        case .left: return .bottomLeading
+        case .center: return .bottom
+        case .right: return .bottomTrailing
+        }
+    }
+}
 
 enum CornerDockLayout {
     /// Between the two pills.
@@ -52,18 +88,28 @@ enum CornerDockLayout {
     /// preview and the row it belongs to are next to each other.
     static func slots(
         shelf: CGSize? = nil, preview: CGSize? = nil, clipboard: CGSize? = nil,
-        selection: CGSize? = nil, list: CGSize? = nil, prompt: CGSize? = nil
+        selection: CGSize? = nil, list: CGSize? = nil, prompt: CGSize? = nil,
+        anchor: CornerDockAnchor = .right
     ) -> (
         shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
         list: CGRect?, prompt: CGRect?
     ) {
-        let rightEdge = panelSize.width - pad
         var baseline = pad
+
+        /// Cards line up with each other along the anchored edge, so a narrow pill sits
+        /// under the wide card it belongs to rather than drifting away from it.
+        func x(for width: CGFloat) -> CGFloat {
+            switch anchor {
+            case .right: return panelSize.width - pad - width
+            case .left: return pad
+            case .center: return (panelSize.width - width) / 2
+            }
+        }
 
         func place(_ size: CGSize?) -> CGRect? {
             guard let size else { return nil }
             let rect = CGRect(
-                x: rightEdge - size.width, y: baseline, width: size.width, height: size.height)
+                x: x(for: size.width), y: baseline, width: size.width, height: size.height)
             baseline = rect.maxY + gap
             return rect
         }
