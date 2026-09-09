@@ -12,11 +12,12 @@
 // Still one shell and one window: the Unified Dock Surface rule is about containers the app
 // floats, not about a stack of surfaces inside the one it has.
 
+import AppKit
 import SwiftUI
 
 enum AppChatListMetrics {
     static let width = AppChatPromptMetrics.width
-    static let rowHeight: CGFloat = 34
+    static let rowHeight: CGFloat = 40
     static let headerHeight: CGFloat = 30
     /// Room above and below the rows.
     static let verticalPadding: CGFloat = 10
@@ -27,6 +28,55 @@ enum AppChatListMetrics {
         CGSize(
             width: width,
             height: headerHeight + CGFloat(rows) * rowHeight + verticalPadding * 2)
+    }
+}
+
+/// A command's icon: the menu's own image when macOS gives one, otherwise the symbol the
+/// dock resolves for that command, badged with the app it belongs to. `SFSymbolResolver` is
+/// already a shared service, so this is the dock's choice of glyph rather than a second one.
+private struct MenuRowIcon: View {
+    let item: AXMenuItem
+    let bundleID: String
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.08))
+                .frame(width: 26, height: 26)
+                .overlay {
+                    if let image = item.image {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 15, height: 15)
+                    } else {
+                        Image(systemName: symbolName)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.primary.opacity(0.85))
+                    }
+                }
+
+            if let appIcon {
+                Image(nsImage: appIcon)
+                    .resizable()
+                    .frame(width: 12, height: 12)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .offset(x: 3, y: 3)
+            }
+        }
+        .frame(width: 28, height: 28)
+    }
+
+    private var symbolName: String {
+        SFSymbolResolver.menuSymbol(
+            title: item.title, path: item.path, isAppleMenu: item.isAppleMenu)
+    }
+
+    private var appIcon: NSImage? {
+        guard !bundleID.isEmpty,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 }
 
@@ -85,17 +135,17 @@ struct AppChatListCard: View {
     /// the three things that say this is the app's own command and not a paraphrase of one.
     private func commandRow(_ item: AXMenuItem, isFocused: Bool) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "command")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            Text(item.title)
-                .font(.system(size: 13, weight: .medium))
-                .lineLimit(1)
-            if let context = item.path.dropLast().last, !context.isEmpty {
-                Text(context)
+            MenuRowIcon(item: item, bundleID: model.appBundleID)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                // Where the command actually lives, said the way the dock says it:
+                // "Code > File". The trail is what tells the user this is the app's real
+                // menu command and not a paraphrase of one.
+                Text(trail(for: item))
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary.opacity(0.7))
+                    .foregroundStyle(.secondary.opacity(0.75))
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
@@ -113,6 +163,14 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.runMenuItem(item) }
+    }
+
+    /// "Code > File" — the app, then the menu the row sits in.
+    private func trail(for item: AXMenuItem) -> String {
+        let menu = item.path.dropLast().last ?? item.path.first ?? ""
+        let app = model.appName
+        if app.isEmpty { return menu }
+        return menu.isEmpty ? app : "\(app) > \(menu)"
     }
 
     private func suggestionRow(_ suggestion: AppChatSuggestion) -> some View {
