@@ -76,7 +76,8 @@ extension AppChatPromptModel {
             if case .command(let item) = $0 { return item }
             return nil
         }
-        focusedMenuIndex = min(focusedMenuIndex, max(rows.count - 1, 0))
+        // A new list is a new offer: nothing is chosen until the user arrows into it.
+        focusedMenuIndex = nil
         syncListPhase()
     }
 
@@ -88,8 +89,11 @@ extension AppChatPromptModel {
     /// on an empty card.
     var listRowCount: Int { rows.isEmpty ? suggestions.count : rows.count }
 
+    /// The row the user has arrowed to. Nil until they do, which is what lets Enter mean
+    /// "ask this question" by default.
     var focusedRow: AppChatRow? {
-        rows.indices.contains(focusedMenuIndex) ? rows[focusedMenuIndex] : nil
+        guard let index = focusedMenuIndex, rows.indices.contains(index) else { return nil }
+        return rows[index]
     }
 
     // MARK: - Keyboard
@@ -97,11 +101,17 @@ extension AppChatPromptModel {
     /// Arrow keys walk the commands. They are only claimed while commands are on screen —
     /// the corner's surfaces share one key monitor, so an unclaimed arrow must fall through
     /// to whatever else is up.
+    /// Arrow keys walk the rows, and the first press is what chooses one at all.
     @discardableResult
     func moveMenuFocus(by delta: Int) -> Bool {
         guard isBrowsingMenus else { return false }
         let count = rows.count
-        focusedMenuIndex = (focusedMenuIndex + delta + count) % count
+        if let current = focusedMenuIndex {
+            focusedMenuIndex = (current + delta + count) % count
+        } else {
+            // Down enters at the top, up enters at the bottom.
+            focusedMenuIndex = delta > 0 ? 0 : count - 1
+        }
         touch()
         return true
     }

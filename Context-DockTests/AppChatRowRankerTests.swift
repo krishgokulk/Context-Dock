@@ -85,6 +85,23 @@ struct AppChatRowRankerTests {
         #expect(rows.isEmpty)
     }
 
+    @Test("Prose that matches nothing offers nothing — not a list of weak guesses")
+    func proseMatchesNothing() {
+        // "hi hello hope you g" scored zero against every action, and the tie-breaking
+        // edge given to curated actions lifted that zero above the filter — so typing a
+        // sentence produced five confident-looking "matches".
+        let rows = AppChatRowRanker.rank(
+            commands: [menuItem("Minimize", path: ["Window", "Minimize"])],
+            actions: [
+                action("Add Project to Reminders", description: "Creates a Reminder"),
+                action("New Window", description: "Open a new VS Code window"),
+            ],
+            query: "hi hello hope you g",
+            limit: 5)
+
+        #expect(rows.isEmpty)
+    }
+
     @Test("The limit is honoured across both kinds together")
     func limitSpansBothKinds() {
         let commands = (1...6).map { menuItem("Save \($0)", path: ["File", "Save \($0)"]) }

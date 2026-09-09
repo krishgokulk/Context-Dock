@@ -63,8 +63,12 @@ final class AppChatPromptModel: ObservableObject {
     /// The app's own menu commands matching what is typed, ranked by the dock's rule.
     /// See `AppChatMenuBrowsing`.
     @Published var menuMatches: [AXMenuItem] = []
-    /// Which command the arrow keys are on.
-    @Published var focusedMenuIndex = 0
+    /// Which row the arrow keys are on, or nil when the user has not chosen one.
+    ///
+    /// Starts nil deliberately. With a row preselected, Enter ran a command when the user
+    /// had typed a question — the list is an offer, and taking it should be something you
+    /// do, not something that happens because you did not avoid it.
+    @Published var focusedMenuIndex: Int?
     /// Every command the app offers, read once per app rather than per keystroke.
     var allMenuItems: [AXMenuItem] = []
     /// What this app's adapter declares it can do — curated, unlike the menus.

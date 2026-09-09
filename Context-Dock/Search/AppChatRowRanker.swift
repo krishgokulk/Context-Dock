@@ -87,11 +87,15 @@ enum AppChatRowRanker {
         for action in actions {
             // Triggers are aliases the author gave the action — "reopen" for Open Recent —
             // and are exactly what the alias band of the score is for.
+            // A zero is a miss, not a weak hit: the multi-token band returns 0 rather
+            // than nil when none of the words land, and adding the tie-break edge to that
+            // zero is what let a sentence produce five "matches".
             guard let score = DockTextMatch.rankedScore(
                 query: typed,
                 primary: action.name,
                 aliases: action.triggers,
-                contexts: [action.category ?? "", action.description])
+                contexts: [action.category ?? "", action.description]),
+                score > 0
             else { continue }
             scored.append((.action(action), score + curatedActionEdge))
         }

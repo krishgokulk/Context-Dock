@@ -258,6 +258,45 @@ struct AppChatPromptTests {
         #expect(model.phase != .chat)
     }
 
+    /// Enter means "ask this", until the user says otherwise with the arrow keys.
+    ///
+    /// With the first row preselected, typing a question and pressing Enter ran a command
+    /// instead of asking it — the list is an offer, and taking it should be something the
+    /// user does rather than something that happens because they did not avoid it.
+    @Test func enterAsksUnlessTheUserArrowedIntoTheList() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+
+        // Nothing chosen: Enter falls through to the question.
+        #expect(model.focusedRow == nil)
+        #expect(model.runFocusedRow() == false)
+
+        // Arrowing in chooses the first row, and now Enter takes the offer.
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.focusedRow != nil)
+    }
+
+    /// Typing again withdraws the choice: a new list is a new offer.
+    @Test func aNewListClearsWhateverWasChosen() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+        model.moveMenuFocus(by: 1)
+        #expect(model.focusedMenuIndex != nil)
+
+        model.query = "something else"
+        model.queryChanged()
+
+        #expect(model.focusedMenuIndex == nil)
+    }
+
     @Test func switchingFrontmostAppKeepsThePromptAndUpdatesItsScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
