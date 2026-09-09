@@ -72,6 +72,17 @@ extension AppChatPromptModel {
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Global Context is the dock's index, queried through the same coordinator the dock
+        // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
+        if isGlobalScope {
+            rows = GlobalContextRow
+                .documents(for: typed, limit: Self.menuRowLimit)
+                .map(AppChatRow.global)
+            menuMatches = []
+            focusedMenuIndex = nil
+            syncListPhase()
+            return
+        }
         rows = AppChatRowRanker.rank(
             commands: allMenuItems,
             actions: adapterActions,
@@ -96,8 +107,8 @@ extension AppChatPromptModel {
     func summonGlobalContext() {
         adoptScope(name: Self.globalScopeName, bundleID: "")
         adapterActions = []
+        allMenuItems = []
         hasActed = false
-        allMenuItems = Self.runningAppMenuItems()
         updateMenuMatches()
         set(.prompt)
         syncListPhase()
@@ -163,6 +174,12 @@ extension AppChatPromptModel {
         switch row {
         case .command(let item): runMenuItem(item)
         case .action(let action): runAdapterAction(action)
+        case .global(let doc):
+            hasActed = true
+            query = ""
+            updateMenuMatches()
+            touch()
+            GlobalContextRow.run(doc)
         }
     }
 

@@ -436,7 +436,7 @@ struct AppChatPromptPill: View {
     private var placeholder: some View {
         if model.phase == .suggesting {
             HStack(spacing: 6) {
-                Text("Ask \(model.appName.isEmpty ? "this app" : model.appName)")
+                Text(AppChatListCard.placeholder(for: model))
                     .foregroundStyle(.secondary.opacity(0.85))
                 Text("— press Enter to send…")
                     .foregroundStyle(.secondary.opacity(0.45))
@@ -444,7 +444,7 @@ struct AppChatPromptPill: View {
             .font(.system(size: 14, weight: .medium))
             .lineLimit(1)
         } else {
-            Text("Ask \(model.appName.isEmpty ? "this app" : model.appName)…")
+            Text("\(AppChatListCard.placeholder(for: model))…")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary.opacity(0.6))
                 .lineLimit(1)

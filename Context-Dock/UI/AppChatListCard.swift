@@ -108,6 +108,8 @@ struct AppChatListCard: View {
                         commandRow(item, isFocused: index == model.focusedMenuIndex)
                     case .action(let action):
                         actionRow(action, isFocused: index == model.focusedMenuIndex)
+                    case .global(let doc):
+                        globalRow(doc, isFocused: index == model.focusedMenuIndex)
                     }
                 }
             }
@@ -135,6 +137,13 @@ struct AppChatListCard: View {
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
         return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary
+    }
+
+    /// What the field says before anything is typed, per scope.
+    static func placeholder(for model: AppChatPromptModel) -> String {
+        model.isGlobalScope
+            ? "Search apps, tools and menus…"
+            : "Ask \(model.appName.isEmpty ? "this app" : model.appName)"
     }
 
     /// A command the app really has: its name, the menu it lives under, and its shortcut —
@@ -177,6 +186,50 @@ struct AppChatListCard: View {
         let app = model.appName
         if app.isEmpty { return menu }
         return menu.isEmpty ? app : "\(app) > \(menu)"
+    }
+
+    /// A Global Context result: whatever the machine offers for this query, with its own
+    /// icon where the index has one.
+    private func globalRow(_ doc: GlobalSearchService.SearchDocument, isFocused: Bool)
+        -> some View
+    {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(width: 26, height: 26)
+                if let icon = doc.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 18, height: 18)
+                } else {
+                    Image(systemName: GlobalContextRow.symbol(for: doc))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.primary.opacity(0.85))
+                }
+            }
+            .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(doc.title)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(GlobalContextRow.subtitle(for: doc))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.run(.global(doc)) }
     }
 
     /// The opening offer for an app with no adapter and nothing cached yet.

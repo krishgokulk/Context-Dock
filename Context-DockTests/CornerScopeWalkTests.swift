@@ -35,6 +35,29 @@ struct CornerScopeWalkTests {
         #expect(CornerChatMode.step(from: .frontmostApp, by: 1) == nil)
     }
 
+    @Test("Global Context asks the dock's index, and rests empty until something is typed")
+    func globalRestsEmpty() {
+        // A search over the whole machine has no useful resting list — "everything" is the
+        // one thing it cannot show. The dock's own global bar rests empty too.
+        #expect(GlobalContextRow.documents(for: "", limit: 5).isEmpty)
+        #expect(GlobalContextRow.documents(for: "   ", limit: 5).isEmpty)
+    }
+
+    @Test("Every kind of Global result says where it comes from")
+    func everyKindHasASubtitleAndASymbol() {
+        // A row with no provenance is a row the user has to guess at, and Global mixes
+        // apps, tools, tabs and menus in one list.
+        let doc = GlobalSearchService.SearchDocument(
+            id: "com.apple.Safari", title: "Safari", subtitle: "", bundleId: "com.apple.Safari",
+            filePath: nil, normalizedTitle: "safari", titleWords: ["safari"], acronym: "s",
+            aliases: [], aliasWords: [], sourceKind: .running, rankingBoost: 0, icon: nil,
+            usageTrackingKey: "com.apple.Safari",
+            action: .activatePID(1, bundleId: "com.apple.Safari", path: nil))
+
+        #expect(GlobalContextRow.subtitle(for: doc) == "Running app")
+        #expect(GlobalContextRow.symbol(for: doc) == "app")
+    }
+
     @Test("Global Context drops the rows every app has; the app scope keeps them")
     func globalPolicyDropsGenericRows() {
         #expect(FrontmostMenuMatcher.Policy.globalContext.excludesGenericAppMenus)
