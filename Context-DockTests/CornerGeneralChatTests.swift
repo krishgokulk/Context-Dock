@@ -87,6 +87,24 @@ struct CornerGeneralChatTests {
         #expect(longThread == 620)
     }
 
+    /// An approval waits over the field, with the picker and the attachments — not inside
+    /// the transcript, where the user can scroll away from the question they must answer.
+    @Test func anApprovalIsReservedInTheComposerNotTheBoard() {
+        let board = CornerGeneralChatMetrics.boardHeight(messageCount: 2, isSending: false)
+        let withApproval = CornerGeneralChatMetrics.height(
+            messageCount: 2, isSending: false, hasAttachments: false,
+            slashMatchCount: 0, hasApproval: true)
+
+        #expect(
+            withApproval
+                == board + CornerDockLayout.gap
+                    + CornerGeneralChatMetrics.composerHeight(
+                        hasAttachments: false, hasApproval: true))
+        // The board is untouched by it.
+        #expect(
+            CornerGeneralChatMetrics.boardHeight(messageCount: 2, isSending: false) == board)
+    }
+
     /// The app filter has to work while a conversation is on screen — which is exactly
     /// where it stopped working when the picker was moved into the board, because the
     /// board holds the transcript once there is one.

@@ -12,6 +12,10 @@
 import SwiftUI
 
 struct ApprovalCard: View {
+    /// What a surface reserves for one. The corner sizes from model state rather than
+    /// measured content, so the card is given a known height and keeps to it.
+    static let height: CGFloat = 96
+
     let request: ApprovalRequest
 
     @ObservedObject private var center = ApprovalCenter.shared

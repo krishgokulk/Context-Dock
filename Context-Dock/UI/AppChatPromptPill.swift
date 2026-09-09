@@ -42,19 +42,32 @@ enum AppChatPromptMetrics {
         min(maximumChatHeight, chatHeight + CGFloat(min(messages, 5)) * perMessageHeight)
     }
 
-    static func size(for phase: AppChatPromptPhase, suggestions: Int, messages: Int = 0)
-        -> CGSize
-    {
+    /// What sits over the field — an approval waiting on a yes, attached files — is part
+    /// of the card's height in every phase. Attachments were not counted at all before, so
+    /// pasting a file into App mode drew a row the card had no room for.
+    static func sheetHeight(hasApproval: Bool, attachments: Int) -> CGFloat {
+        var result: CGFloat = 0
+        if hasApproval { result += ApprovalCard.height + 1 }
+        if attachments > 0 { result += attachmentRowHeight }
+        return result
+    }
+
+    static func size(
+        for phase: AppChatPromptPhase,
+        suggestions: Int,
+        messages: Int = 0,
+        hasApproval: Bool = false,
+        attachments: Int = 0
+    ) -> CGSize {
+        let sheet = sheetHeight(hasApproval: hasApproval, attachments: attachments)
         switch phase {
         case .hidden, .mini:
             return miniSize
-        case .prompt:
-            return CGSize(width: width, height: inputHeight)
-        case .chat:
-            return CGSize(width: width, height: chatHeight(messages: messages))
-        case .suggesting:
+        case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field.
-            return CGSize(width: width, height: inputHeight)
+            return CGSize(width: width, height: inputHeight + sheet)
+        case .chat:
+            return CGSize(width: width, height: chatHeight(messages: messages) + sheet)
         }
     }
 }
@@ -69,8 +82,10 @@ struct AppChatPromptPill: View {
     private var size: CGSize {
         AppChatPromptMetrics.size(
             for: model.phase,
-            suggestions: model.listRowCount,
-            messages: model.messages.count)  // list rows live in AppChatListCard now
+            suggestions: model.listRowCount,  // list rows live in AppChatListCard now
+            messages: model.messages.count,
+            hasApproval: approvals.pending(for: .corner) != nil,
+            attachments: model.attachments.count)
     }
 
     var body: some View {
@@ -126,11 +141,14 @@ struct AppChatPromptPill: View {
                 header
                 Divider().opacity(0.18)
                 transcript
-                // A turn asked from here can need a yes. Without this the question was
-                // drawn on the dock behind the corner, or on nothing at all.
-                if let request = approvals.pending(for: .corner) {
-                    ApprovalCard(request: request)
-                }
+                Divider().opacity(0.18)
+            }
+            // A turn asked from here can need a yes, and that question belongs directly
+            // over the field — the same place the `/` picker and the command list appear —
+            // rather than inside a transcript the user can scroll away from.
+            if let request = approvals.pending(for: .corner) {
+                ApprovalCard(request: request)
+                    .frame(height: ApprovalCard.height)
                 Divider().opacity(0.18)
             }
             if !model.pendingChoices.isEmpty {

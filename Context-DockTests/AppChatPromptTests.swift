@@ -258,6 +258,24 @@ struct AppChatPromptTests {
         #expect(model.phase != .chat)
     }
 
+    /// Attachments were never counted, so pasting a file into App mode drew a row the
+    /// card had no room for.
+    @Test func theCardMakesRoomForWhatSitsOverTheField() {
+        let bare = AppChatPromptMetrics.size(for: .prompt, suggestions: 0).height
+        let withFile = AppChatPromptMetrics.size(
+            for: .prompt, suggestions: 0, attachments: 1).height
+        let withApproval = AppChatPromptMetrics.size(
+            for: .prompt, suggestions: 0, hasApproval: true).height
+
+        #expect(withFile == bare + AppChatPromptMetrics.attachmentRowHeight)
+        #expect(withApproval > bare)
+        // A conversation reserves it too — an approval can arrive mid-answer.
+        #expect(
+            AppChatPromptMetrics.size(for: .chat, suggestions: 0, messages: 2, hasApproval: true)
+                .height
+                > AppChatPromptMetrics.size(for: .chat, suggestions: 0, messages: 2).height)
+    }
+
     /// Enter means "ask this", until the user says otherwise with the arrow keys.
     ///
     /// With the first row preselected, typing a question and pressing Enter ran a command

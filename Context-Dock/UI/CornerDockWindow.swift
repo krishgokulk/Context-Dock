@@ -303,7 +303,9 @@ final class CornerDockController: NSObject {
         return AppChatPromptMetrics.size(
             for: prompt.phase,
             suggestions: prompt.listRowCount,
-            messages: prompt.messages.count)
+            messages: prompt.messages.count,
+            hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
+            attachments: prompt.attachments.count)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.

@@ -50,8 +50,11 @@ enum CornerGeneralChatMetrics {
     /// conversation once there is one, so a picker placed there had nowhere to go the
     /// moment a chat started — and pushing the transcript aside to make room would
     /// disturb what the user is reading. A sheet over the field disturbs nothing.
-    static func composerHeight(hasAttachments: Bool, slashMatchCount: Int = 0) -> CGFloat {
+    static func composerHeight(
+        hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false
+    ) -> CGFloat {
         var result = compactHeight
+        if hasApproval { result += ApprovalCard.height + dividerHeight }
         if slashMatchCount > 0 {
             result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
         }
@@ -95,6 +98,7 @@ enum CornerGeneralChatMetrics {
         isSending: Bool,
         hasAttachments: Bool,
         slashMatchCount: Int,
+        hasApproval: Bool = false,
         showsStarter: Bool = false,
         starterCount: Int = 0,
         starterHasConnections: Bool = false,
@@ -112,7 +116,8 @@ enum CornerGeneralChatMetrics {
             liveStepCount: liveStepCount,
             clarificationOptionCount: clarificationOptionCount)
         let composer = composerHeight(
-            hasAttachments: hasAttachments, slashMatchCount: slashMatchCount)
+            hasAttachments: hasAttachments, slashMatchCount: slashMatchCount,
+            hasApproval: hasApproval)
         return board > 0 ? board + CornerDockLayout.gap + composer : composer
     }
 
@@ -164,6 +169,7 @@ enum CornerGeneralChatMetrics {
                 isSending: model.isSending,
                 hasAttachments: !model.attachments.isEmpty,
                 slashMatchCount: slashMatches.count,
+                hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
                 showsStarter: showsStarter(for: model),
                 starterCount: connected.count,
                 starterHasConnections: !connected.isEmpty,
@@ -212,7 +218,8 @@ struct CornerGeneralChatView: View {
                     width: size.width,
                     height: CornerGeneralChatMetrics.composerHeight(
                         hasAttachments: !model.attachments.isEmpty,
-                        slashMatchCount: slashMatches.count))
+                        slashMatchCount: slashMatches.count,
+                        hasApproval: approvals.pending(for: .corner) != nil))
                 .background(GlassBackground(cornerRadius: 22, isDark: true))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
@@ -239,14 +246,6 @@ struct CornerGeneralChatView: View {
                 header
                 Divider().opacity(0.18)
                 transcript
-                // `.chatWindow` is non-nil only while the General Chat *window* is frontmost,
-                // so in the corner this card never appeared and a question raised by a
-                // corner turn had nowhere to be answered.
-                if let request = approvals.pending(for: .corner) {
-                    ApprovalCard(request: request)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
-                }
             } else if showsStarter {
                 GeneralChatStartView(
                     onPick: { prompt in
@@ -552,6 +551,17 @@ struct CornerGeneralChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // `.chatWindow` is non-nil only while the General Chat *window* is frontmost,
+            // so in the corner this card never appeared and a question raised by a corner
+            // turn had nowhere to be answered. It sits over the field with everything else
+            // the turn is waiting on.
+            if let request = approvals.pending(for: .corner) {
+                ApprovalCard(request: request)
+                    .frame(height: ApprovalCard.height)
+                    .padding(.horizontal, 12)
+                Divider().opacity(0.18)
+            }
+
             // A sheet over the field, not a control inside it: list above, input below,
             // the same shape the clipboard panel uses. It stays here rather than in the
             // board so an open conversation is never pushed around by a picker.
