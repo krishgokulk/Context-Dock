@@ -485,11 +485,16 @@ struct CornerDockSurface: View {
                 ClipboardDockPill(model: clipboardModel)
             }
             if chatPresentation.isVisible {
+                // Both modes are now the same shape — a board above a field — so the switch
+                // is a cross-fade of what the board holds, not one container being torn down
+                // and a differently-built one going up. That teardown is what flickered.
                 if chatPresentation.mode == .general {
                     if chatPresentation.generalPhase == .mini {
                         CornerGeneralChatMini()
+                            .transition(.opacity)
                     } else {
                         CornerGeneralChatView(model: chatPresentation.generalChat)
+                            .transition(.opacity)
                     }
                 } else {
                     if CornerDockController.shared.showsAppChatList {
@@ -497,6 +502,7 @@ struct CornerDockSurface: View {
                             .transition(.opacity.combined(with: .move(edge: .bottom)))
                     }
                     AppChatPromptPill(model: prompt)
+                        .transition(.opacity)
                 }
             }
         }

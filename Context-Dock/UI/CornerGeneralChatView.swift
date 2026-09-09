@@ -44,10 +44,17 @@ enum CornerGeneralChatMetrics {
     /// over the user's work.
     static let maximumCountedLiveSteps = 4
 
-    static func height(
+    /// The composer card on its own: the row, plus attachments when there are any.
+    /// Identical to App mode's field by construction — the two modes are one surface.
+    static func composerHeight(hasAttachments: Bool) -> CGFloat {
+        compactHeight + (hasAttachments ? attachmentRowHeight : 0)
+    }
+
+    /// The card above the field: the conversation, the start screen, or the `/` picker.
+    /// Zero when there is nothing to put there, and then no gap is spent either.
+    static func boardHeight(
         messageCount: Int,
         isSending: Bool,
-        hasAttachments: Bool,
         slashMatchCount: Int,
         showsStarter: Bool = false,
         starterCount: Int = 0,
@@ -59,35 +66,49 @@ enum CornerGeneralChatMetrics {
             let steps = isSending
                 ? CGFloat(min(liveStepCount, maximumCountedLiveSteps)) * liveStepHeight
                 : 0
-            // A question with options is a control, not text: it needs its own room, or the
-            // card asks something the user has to scroll to answer.
             let clarification = clarificationOptionCount > 0
                 ? ChatClarificationCard.height(for: clarificationOptionCount)
                 : 0
             return min(
-                maximumHeight,
-                transcriptBaseHeight + CGFloat(min(messageCount, 5)) * perMessageHeight
+                maximumHeight - compactHeight,
+                transcriptBaseHeight - composerRowHeight
+                    + CGFloat(min(messageCount, 5)) * perMessageHeight
                     + steps + clarification)
         }
         if showsStarter {
-            // Measured from the start screen's own numbers rather than guessed. A flat 350
-            // held 234 points of content, and the 116 points of slack read as a card that
-            // could not decide what it was for.
-            return min(
-                maximumHeight,
-                compactHeight
-                    + GeneralChatStartView.Metrics.compactHeight(
-                        starters: starterCount, hasConnections: starterHasConnections))
+            return GeneralChatStartView.Metrics.compactHeight(
+                starters: starterCount, hasConnections: starterHasConnections)
         }
-        // The `/` matches stack above the composer as their own list, so the card has to
-        // carry their exact height — one row's worth per match, capped, plus the rule
-        // between the list and the field.
-        var result = compactHeight
         if slashMatchCount > 0 {
-            result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
+            return ChatSlashAppList.height(for: slashMatchCount)
         }
-        if hasAttachments { result += attachmentRowHeight }
-        return result
+        return 0
+    }
+
+    static func height(
+        messageCount: Int,
+        isSending: Bool,
+        hasAttachments: Bool,
+        slashMatchCount: Int,
+        showsStarter: Bool = false,
+        starterCount: Int = 0,
+        starterHasConnections: Bool = false,
+        liveStepCount: Int = 0,
+        clarificationOptionCount: Int = 0
+    ) -> CGFloat {
+        // Two cards with the corner's gap between them, so what is drawn and what the
+        // shell hit-tests are the same number.
+        let board = boardHeight(
+            messageCount: messageCount,
+            isSending: isSending,
+            slashMatchCount: slashMatchCount,
+            showsStarter: showsStarter,
+            starterCount: starterCount,
+            starterHasConnections: starterHasConnections,
+            liveStepCount: liveStepCount,
+            clarificationOptionCount: clarificationOptionCount)
+        let composer = composerHeight(hasAttachments: hasAttachments)
+        return board > 0 ? board + CornerDockLayout.gap + composer : composer
     }
 
     /// The one definition of "nothing has happened in this chat yet", read by the view that
@@ -114,6 +135,22 @@ enum CornerGeneralChatMetrics {
     }
 
     @MainActor
+    /// The board's height for this model — read from the same places `size(for:)` reads,
+    /// so the card drawn above the field and the room reserved for it stay one number.
+    static func boardHeight(for model: GeneralChatWindowModel) -> CGFloat {
+        let slashMatches = ChatSlashAppPicker.matches(for: model.input)
+        let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
+        return boardHeight(
+            messageCount: model.messages.count,
+            isSending: model.isSending,
+            slashMatchCount: slashMatches.count,
+            showsStarter: showsStarter(for: model),
+            starterCount: connected.count,
+            starterHasConnections: !connected.isEmpty,
+            liveStepCount: model.activeProgress.count,
+            clarificationOptionCount: clarificationOptionCount(for: model))
+    }
+
     static func size(for model: GeneralChatWindowModel) -> CGSize {
         let slashMatches = ChatSlashAppPicker.matches(for: model.input)
         let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
@@ -149,7 +186,50 @@ struct CornerGeneralChatView: View {
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
     private var showsStarter: Bool { CornerGeneralChatMetrics.showsStarter(for: model) }
 
+    /// The conversation, the start screen, or the `/` picker: a card of its own above the
+    /// field, exactly as App mode puts the app's commands above its field. The two modes
+    /// are one surface, so switching scope changes what the board holds — not how many
+    /// containers there are, which is what made the switch flicker.
+    private var boardHeight: CGFloat { CornerGeneralChatMetrics.boardHeight(for: model) }
+
     var body: some View {
+        VStack(spacing: CornerDockLayout.gap) {
+            if boardHeight > 0 {
+                board
+                    .frame(width: size.width, height: boardHeight)
+                    .background(GlassBackground(cornerRadius: 22, isDark: true))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
+                    .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+                    .transition(.opacity)
+            }
+            composer
+                .frame(
+                    width: size.width,
+                    height: CornerGeneralChatMetrics.composerHeight(
+                        hasAttachments: !model.attachments.isEmpty))
+                .background(GlassBackground(cornerRadius: 22, isDark: true))
+                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
+                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+        }
+        .frame(width: size.width, height: size.height, alignment: .bottom)
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in composerFocused = true }
+        .onChange(of: model.input) { _, _ in
+            CornerDockController.shared.chatPresentation.composerInteracted()
+            // The filter narrows as you type, so the row under the highlight is a
+            // different app from one keystroke to the next. Start from the top again.
+            slashSelection = 0
+        }
+        // One animation for the whole card. Two — a spring on the height and an ease on the
+        // starter — ran against each other every time the starter appeared, which is the
+        // stutter the resize looked like it had.
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: size.height)
+    }
+
+    @ViewBuilder
+    private var board: some View {
         VStack(spacing: 0) {
             if showsTranscript {
                 header
@@ -171,28 +251,13 @@ struct CornerGeneralChatView: View {
                     },
                     compact: true
                 )
-                // Fades only. The card's own height is already animating underneath it, and
-                // a slide inside a resize is two motions describing one change.
                 .transition(.opacity)
+            } else if !slashMatches.isEmpty {
+                ChatSlashAppList(matches: slashMatches, selection: slashSelection) { app in
+                    pick(app)
+                }
             }
-            composer
         }
-        .frame(width: size.width, height: size.height)
-        .background(GlassBackground(cornerRadius: 22, isDark: true))
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
-        .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        .onChange(of: keyboardState.focusRequestToken) { _, _ in composerFocused = true }
-        .onChange(of: model.input) { _, _ in
-            CornerDockController.shared.chatPresentation.composerInteracted()
-            // The filter narrows as you type, so the row under the highlight is a
-            // different app from one keystroke to the next. Start from the top again.
-            slashSelection = 0
-        }
-        // One animation for the whole card. Two — a spring on the height and an ease on the
-        // starter — ran against each other every time the starter appeared, which is the
-        // stutter the resize looked like it had.
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: size.height)
     }
 
     /// Who the chat is with, and what to do with the chat itself.
@@ -487,14 +552,9 @@ struct CornerGeneralChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The picker is a sheet over the field, not a control inside it: the same
-            // shape the clipboard panel uses, list above and input below.
-            if !slashMatches.isEmpty {
-                ChatSlashAppList(matches: slashMatches, selection: slashSelection) { app in
-                    pick(app)
-                }
-                Divider().opacity(0.18)
-            } else if let clarification, model.input.isEmpty {
+            // The `/` picker is drawn in the board above, where every list in this corner
+            // lives now.
+            if let clarification, model.input.isEmpty, slashMatches.isEmpty {
                 // Typing replaces the card: the composer is the answer the model did not
                 // think of, and a list of its own guesses on top of that reads as a wall.
                 ChatClarificationCard(
