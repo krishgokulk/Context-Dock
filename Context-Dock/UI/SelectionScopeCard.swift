@@ -29,6 +29,7 @@ enum SelectionScopeMetrics {
 
 struct SelectionScopeCard: View {
     @ObservedObject var model: SelectionScopeModel
+    @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -55,8 +56,11 @@ struct SelectionScopeCard: View {
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
         .onHover { _ in model.touch() }
-        .onAppear { fieldFocused = true }
-        .onChange(of: model.phase) { _, phase in fieldFocused = phase.isVisible }
+        .onAppear { fieldFocused = keyboardState.owner == .selection }
+        .onChange(of: keyboardState.owner) { _, owner in fieldFocused = owner == .selection }
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in
+            fieldFocused = keyboardState.owner == .selection
+        }
     }
 
     /// What was selected and where it came from — said plainly, because acting on the wrong

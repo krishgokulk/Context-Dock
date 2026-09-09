@@ -706,6 +706,9 @@ struct ClipboardDockPill: View {
     @ObservedObject var model: ClipboardPanelModel
     /// `onKeyPress` only delivers to a focused view, so a key window is not enough on its
     /// own — the card has to actually hold SwiftUI focus once it is armed.
+    /// Observed, not merely read: `onChange` only fires for values this view depends on,
+    /// and without the subscription the owner could change with nothing here noticing.
+    @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @FocusState private var cardFocused: Bool
     @FocusState private var searchFocused: Bool
     @State private var searchHovered = false
@@ -748,8 +751,13 @@ struct ClipboardDockPill: View {
         .focusable(model.isKeyboardArmed)
         .focusEffectDisabled()
         .focused($cardFocused)
-        .onChange(of: model.isKeyboardArmed) { _, armed in
-            cardFocused = armed
+        // The shell says which board holds the keyboard; this one takes it when named.
+        // Reacting to its own armed flag alone missed the case that mattered: the card is
+        // armed by the hotkey before this view exists, so there was no change to see.
+        .onAppear { cardFocused = keyboardState.owner == .clipboard }
+        .onChange(of: keyboardState.owner) { _, owner in cardFocused = owner == .clipboard }
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in
+            cardFocused = keyboardState.owner == .clipboard
         }
         .onReceive(refresh) { _ in
             guard model.phase.isVisible else { return }

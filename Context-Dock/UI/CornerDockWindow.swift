@@ -159,7 +159,13 @@ final class CornerDockController: NSObject {
             .store(in: &sinks)
 
         clipboardModel.$phase.sink { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in
+                self?.refresh()
+                self?.publishKeyboardOwner()
+            }
+        }.store(in: &sinks)
+        clipboardModel.$isKeyboardArmed.sink { [weak self] _ in
+            Task { @MainActor in self?.publishKeyboardOwner() }
         }.store(in: &sinks)
         // The preview card appears and disappears with the walk through the list, so the
         // stack has to be measured again when the focus moves — otherwise the card is drawn
@@ -171,7 +177,10 @@ final class CornerDockController: NSObject {
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
         selection.$phase.sink { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+            Task { @MainActor in
+                self?.refresh()
+                self?.publishKeyboardOwner()
+            }
         }.store(in: &sinks)
         prompt.$phase.sink { [weak self] phase in
             Task { @MainActor in
@@ -183,6 +192,7 @@ final class CornerDockController: NSObject {
                 } else {
                     self?.disarmKeyboard()
                 }
+                self?.publishKeyboardOwner()
             }
         }.store(in: &sinks)
         chatPresentation.$mode.sink { [weak self] _ in
@@ -352,6 +362,15 @@ final class CornerDockController: NSObject {
         panel.styleMask = [.borderless]
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// Recompute who should hold the keyboard and tell every board. Called whenever one of
+    /// them opens, arms or closes — the boards themselves only listen.
+    func publishKeyboardOwner() {
+        keyboardState.ownerChanged(
+            clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
+            selectionVisible: selection.phase.isVisible,
+            chatShowsInput: prompt.phase.showsInput)
     }
 
     /// The chat asks for the caret — unless a louder surface is holding it. Arming the

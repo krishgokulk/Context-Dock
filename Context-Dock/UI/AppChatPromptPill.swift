@@ -130,17 +130,16 @@ struct AppChatPromptPill: View {
         // One rule decides who holds the caret, and this field asks it rather than
         // asserting. Before, every phase change and focus token pulled focus back here —
         // so arming the clipboard armed a card that never got the keys.
-        .onChange(of: model.phase) { _, _ in syncFocus() }
-        .onChange(of: clipboard.isKeyboardArmed) { _, _ in syncFocus() }
-        .onChange(of: selection.phase) { _, _ in syncFocus() }
+        // Claimed when named, and on appear too: a board that mounts after the owner was
+        // decided has no change to react to, which is exactly how the clipboard ended up
+        // armed and keyless.
+        .onAppear { syncFocus() }
+        .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
     }
 
     private func syncFocus() {
-        fieldFocused = CornerKeyboardOwner.chatFieldHoldsFocus(
-            clipboardArmed: clipboard.isKeyboardArmed,
-            selectionVisible: selection.phase.isVisible,
-            chatShowsInput: model.phase.showsInput)
+        fieldFocused = keyboardState.owner == .chat
     }
 
     // MARK: - Input
