@@ -2064,6 +2064,16 @@ extension LauncherView {
         else { return }
         let query = (info["query"] as? String ?? "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        // The corner posts what the user attached. This handler used to read only the
+        // question, so a screenshot attached in the corner was neither shown on the message
+        // nor sent with the turn — the answer was about the words alone, and nothing said
+        // so. They go where the dock's own composer puts them, which is also what renders
+        // them as chips on the message.
+        let attached = (info["attachments"] as? [String] ?? [])
+            .map(URL.init(fileURLWithPath:))
+        for url in attached where !aiMode.attachments.contains(url) {
+            aiMode.attachments.append(url)
+        }
 
         // Asking in the corner used to open the Context Dock over whatever the user was
         // working in, and then wait 120 ms for it to finish appearing before the question
