@@ -76,6 +76,10 @@ struct AppChatPromptPill: View {
     @ObservedObject var model: AppChatPromptModel
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @ObservedObject private var approvals = ApprovalCenter.shared
+    /// Watched, not asked once: the clipboard can arm while this field is already up, and
+    /// the caret has to leave when it does.
+    @ObservedObject private var clipboard = ClipboardPanelController.shared.model
+    @ObservedObject private var selection = CornerDockController.shared.selection
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
 
@@ -123,12 +127,20 @@ struct AppChatPromptPill: View {
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
         .onHover { pointerInside = $0 }
-        .onChange(of: model.phase) { _, phase in
-            fieldFocused = phase.showsInput
-        }
-        .onChange(of: keyboardState.focusRequestToken) { _, _ in
-            fieldFocused = true
-        }
+        // One rule decides who holds the caret, and this field asks it rather than
+        // asserting. Before, every phase change and focus token pulled focus back here —
+        // so arming the clipboard armed a card that never got the keys.
+        .onChange(of: model.phase) { _, _ in syncFocus() }
+        .onChange(of: clipboard.isKeyboardArmed) { _, _ in syncFocus() }
+        .onChange(of: selection.phase) { _, _ in syncFocus() }
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
+    }
+
+    private func syncFocus() {
+        fieldFocused = CornerKeyboardOwner.chatFieldHoldsFocus(
+            clipboardArmed: clipboard.isKeyboardArmed,
+            selectionVisible: selection.phase.isVisible,
+            chatShowsInput: model.phase.showsInput)
     }
 
     // MARK: - Input

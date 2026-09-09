@@ -1,0 +1,55 @@
+// CornerKeyboardOwner.swift
+// Context-Dock
+//
+// Which corner surface owns the keyboard.
+//
+// The corner stacks several surfaces in one shell, and each of them used to answer that
+// question for itself: the clipboard card takes SwiftUI focus when it is armed, the App Chat
+// field takes it whenever its phase changes or a focus token is bumped, and the selection
+// card takes it on appear. Whoever wrote last won — so opening the clipboard while the chat
+// was up left the caret in the chat, and the down arrow moved the text cursor instead of
+// walking the clips.
+//
+// One rule, in one place, read by every surface that wants focus.
+
+import Foundation
+
+enum CornerKeyboardClaimant: Equatable {
+    case clipboard
+    case selection
+    case chat
+    case none
+}
+
+enum CornerKeyboardOwner {
+
+    /// Who should hold the keyboard, given what is on screen.
+    ///
+    /// Precedence is by how explicitly the user asked for it. Arming the clipboard is a
+    /// deliberate "I am working in the clips now" — a hotkey, or a click on the card — so it
+    /// outranks a chat field that is merely present. The selection card is summoned the same
+    /// way and outranks the chat for the same reason. The chat field is the resting owner:
+    /// it holds the keyboard whenever nothing louder is up, which is most of the time.
+    static func owner(
+        clipboardArmed: Bool,
+        selectionVisible: Bool,
+        chatShowsInput: Bool
+    ) -> CornerKeyboardClaimant {
+        if clipboardArmed { return .clipboard }
+        if selectionVisible { return .selection }
+        if chatShowsInput { return .chat }
+        return .none
+    }
+
+    /// Should the App Chat field hold the caret right now?
+    static func chatFieldHoldsFocus(
+        clipboardArmed: Bool,
+        selectionVisible: Bool,
+        chatShowsInput: Bool
+    ) -> Bool {
+        owner(
+            clipboardArmed: clipboardArmed,
+            selectionVisible: selectionVisible,
+            chatShowsInput: chatShowsInput) == .chat
+    }
+}

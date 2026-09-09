@@ -354,9 +354,18 @@ final class CornerDockController: NSObject {
         panel.makeKeyAndOrderFront(nil)
     }
 
+    /// The chat asks for the caret — unless a louder surface is holding it. Arming the
+    /// clipboard and then switching chat modes used to hand the keys straight back to the
+    /// chat, which is why the clips could not be walked.
     func requestComposerFocus() {
         ensurePanel()
         armKeyboard()
+        guard
+            CornerKeyboardOwner.owner(
+                clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
+                selectionVisible: selection.phase.isVisible,
+                chatShowsInput: prompt.phase.showsInput) == .chat
+        else { return }
         chatPresentation.composerInteracted()
         keyboardState.composerInteracted()
     }
