@@ -72,6 +72,15 @@ extension AppChatPromptModel {
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A window snapshot answers the untyped scope; typing turns it back into a filter
+        // over that app, because now the user is asking for something specific.
+        if showsWindowSnapshot, typed.isEmpty {
+            rows = []
+            menuMatches = []
+            focusedMenuIndex = nil
+            syncListPhase()
+            return
+        }
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
@@ -137,7 +146,7 @@ extension AppChatPromptModel {
         // The pills are what is running, the way the dock's global bar shows them — they
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
-        let running = Self.pillIcons()
+        let running = Self.pillIcons(excluding: appBundleID)
         setGlobalTyping(
             top: typed.isEmpty
                 ? nil
@@ -151,10 +160,17 @@ extension AppChatPromptModel {
     /// The clipboard leads, because it is the thing that just happened — the user copied
     /// something a moment ago and the pill is how they get back to it without leaving what
     /// they are doing.
-    static func pillIcons() -> [MatchDockIcon] {
+    static func pillIcons(excluding scopedBundleID: String = "") -> [MatchDockIcon] {
         var icons: [MatchDockIcon] = []
         if let clipboard = clipboardPill() { icons.append(clipboard) }
-        return icons + runningAppIcons()
+        let apps = runningAppIcons()
+            .filter { $0.bundleID != scopedBundleID || scopedBundleID.isEmpty }
+        // Finder leads the apps, always. It is the one scope that is always there and
+        // always means the same thing, so it is the fixed point the eye starts from — the
+        // dock puts it first for the same reason.
+        let finder = apps.filter { $0.bundleID == "com.apple.finder" }
+        let rest = apps.filter { $0.bundleID != "com.apple.finder" }
+        return icons + finder + rest
     }
 
     /// The clipboard, as a pill, when there is anything in it.
@@ -230,12 +246,39 @@ extension AppChatPromptModel {
     /// along the scopes, which is why it is not part of the left/right walk.
     @discardableResult
     func scopeIntoFirstRunningApp() -> Bool {
-        guard isGlobalScope,
-            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let first = Self.runningAppIcons().first,
-            let bundleID = first.bundleID
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        let apps = Self.runningAppIcons()
+        guard !apps.isEmpty else { return false }
+
+        if isGlobalScope {
+            guard let first = apps.first, let bundleID = first.bundleID else { return false }
+            scopeIntoApp(name: first.title, bundleID: bundleID)
+            return true
+        }
+        // Already inside one: walk to the next, which is what makes this a switcher rather
+        // than a one-way door.
+        guard returnsToGlobalScope,
+            let index = apps.firstIndex(where: { $0.bundleID == appBundleID })
         else { return false }
-        scopeIntoApp(name: first.title, bundleID: bundleID)
+        let next = apps[(index + 1) % apps.count]
+        guard let bundleID = next.bundleID else { return false }
+        scopeIntoApp(name: next.title, bundleID: bundleID)
+        return true
+    }
+
+    /// Return, on a snapshot with nothing typed, switches to the app — the switcher's whole
+    /// point. Returns false otherwise so Return still sends the question.
+    @discardableResult
+    func activateSnapshotApp() -> Bool {
+        guard showsWindowSnapshot,
+            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == appBundleID && !$0.isTerminated
+            })
+        else { return false }
+        app.activate()
+        hasActed = true
+        touch()
         return true
     }
 
@@ -253,8 +296,21 @@ extension AppChatPromptModel {
         hasActed = false
         loadMenuItems()
         updateGlobalTyping(for: "")
+
+        // Scoping in from Global asks "what is this app doing?", and a list of its menu
+        // commands does not answer that — the window does. Finder is the exception the user
+        // named: there the question really is about files, so it keeps its own behaviour.
+        if showsWindowSnapshot {
+            AppWindowSnapshotService.shared.refresh(bundleID: bundleID)
+        }
         syncListPhase()
         touch()
+    }
+
+    /// This scope shows the app's window rather than its commands.
+    var showsWindowSnapshot: Bool {
+        returnsToGlobalScope && !appBundleID.isEmpty
+            && appBundleID != "com.apple.finder"
     }
 
     /// Leave a scope entered from Global and go back to it.

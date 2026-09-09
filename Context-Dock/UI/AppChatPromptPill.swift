@@ -295,9 +295,12 @@ struct AppChatPromptPill: View {
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
-                        // A chosen row runs — a command or an adapter action; anything
-                        // else is a question for the app.
-                        if !model.runFocusedRow() { model.submit() }
+                        // A chosen row runs — a command or an adapter action. On a window
+                        // snapshot with nothing typed, Return switches to that app, because
+                        // that is what the switcher is for. Anything else is a question.
+                        if model.runFocusedRow() { return }
+                        if model.activateSnapshotApp() { return }
+                        model.submit()
                     }
                     .onKeyPress(.tab) {
                         // Tab takes the top match in Global, the way it does in the dock.
@@ -357,10 +360,12 @@ struct AppChatPromptPill: View {
             // The dock's own match pills, mounted rather than imitated: the apps that
             // answer what is typed, with "+N" for the rest. Same view, same icons, same
             // running dot as the dock's global bar.
-            // Hidden the moment the result board is up: the rows already say what matched,
-            // and two answers to one question is the clutter the dock avoids by expanding
-            // only when it has something to expand into.
-            if model.isGlobalScope || model.returnsToGlobalScope, model.rows.isEmpty,
+            // Hidden once the user has typed and the board is answering: the rows say what
+            // matched, and two answers to one question is the clutter the dock avoids. An
+            // untyped field is not that case — there the pills are the only thing offering
+            // anywhere to go, so they stay through a scope change.
+            if model.isGlobalScope || model.returnsToGlobalScope,
+                model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 ContextMatchDock(

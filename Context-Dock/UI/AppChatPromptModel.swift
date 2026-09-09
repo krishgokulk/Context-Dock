@@ -200,6 +200,8 @@ final class AppChatPromptModel: ObservableObject {
         // but only until the user has done something — running a command and being handed
         // the opening menu again reads as the surface forgetting what just happened.
         if typed { return isBrowsingMenus ? .suggesting : .prompt }
+        // A window snapshot occupies the board even with no rows to list.
+        if showsWindowSnapshot { return .suggesting }
         if hasActed { return .prompt }
         // Attaching a file is composing a question about it. Offering the app's opening
         // menu on top of that answers something the user has already stopped asking.
