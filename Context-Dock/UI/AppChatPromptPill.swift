@@ -246,6 +246,12 @@ struct AppChatPromptPill: View {
                 appChip
             }
 
+            // What the question will carry besides the words. Next to the scope chip
+            // because the two together are the subject: this app, this selection.
+            if let selection = model.selection {
+                selectionChip(selection)
+            }
+
             ZStack(alignment: .leading) {
                 if model.query.isEmpty {
                     placeholder
@@ -361,6 +367,25 @@ struct AppChatPromptPill: View {
     }
 
     /// The app the question is about, named rather than implied.
+    /// The app's current selection, shown because the turn carries it. Read from the same
+    /// snapshot the turn is built from, so it cannot promise something the turn will not
+    /// send.
+    private func selectionChip(_ selection: AppChatSelectionScope) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: selection.icon)
+                .font(.system(size: 10, weight: .semibold))
+            Text(selection.label)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Color.accentColor)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color.accentColor.opacity(0.14), in: Capsule())
+        .transition(.opacity)
+        .help("This question will carry the app's current selection")
+    }
+
     private var appChip: some View {
         HStack(spacing: 6) {
             if let icon = appIcon {

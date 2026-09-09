@@ -71,6 +71,8 @@ final class AppChatPromptModel: ObservableObject {
     var adapterActions: [AdapterAction] = []
     /// The one list the card draws: actions and commands ranked together.
     @Published var rows: [AppChatRow] = []
+    /// What the app has selected right now — carried by the question, so it is shown.
+    @Published private(set) var selection: AppChatSelectionScope?
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
@@ -93,6 +95,7 @@ final class AppChatPromptModel: ObservableObject {
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
     private var messagesObservation: AnyCancellable?
+    private var selectionObservation: AnyCancellable?
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
 
@@ -109,6 +112,15 @@ final class AppChatPromptModel: ObservableObject {
         messagesObservation = source.$messages.sink { [weak self] incoming in
             self?.dropChatPhaseWithoutAConversation(messages: incoming)
         }
+        // The selection changes under the corner while it is open — the user highlights
+        // something and then asks about it, which is the whole point of the surface.
+        selectionObservation = AXContextReader.shared.contextPublisher
+            .receive(on: RunLoop.main)
+            .sink { [weak self] context in
+                guard let self else { return }
+                self.selection = AppChatSelectionScope.from(
+                    context: context, scopedTo: self.appBundleID)
+            }
     }
 
     // MARK: - Opening
@@ -123,6 +135,8 @@ final class AppChatPromptModel: ObservableObject {
         appBundleID = bundleID
         self.suggestions = suggestions
         capabilitySummary = summary
+        selection = AppChatSelectionScope.from(
+            context: AXContextReader.shared.current, scopedTo: bundleID)
         loadMenuItems()
         set(restingInputPhase)
         arm(after: Self.idleDwell)
@@ -280,6 +294,8 @@ final class AppChatPromptModel: ObservableObject {
         self.suggestions = suggestions
         capabilitySummary = summary
         Self.changeScope(app: name, bundleID: bundleID)
+        selection = AppChatSelectionScope.from(
+            context: AXContextReader.shared.current, scopedTo: bundleID)
         hasPresentedConversation = !messages.isEmpty
         set(hasPresentedConversation ? .chat : restingInputPhase)
         if isPinned || isPointerInside {
