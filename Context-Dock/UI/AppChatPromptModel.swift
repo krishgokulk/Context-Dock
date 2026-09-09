@@ -77,6 +77,12 @@ final class AppChatPromptModel: ObservableObject {
     @Published var rows: [AppChatRow] = []
     /// What the app has selected right now — carried by the question, so it is shown.
     @Published private(set) var selection: AppChatSelectionScope?
+    /// Global Context only: the dock's own top match for what is typed, and the matching
+    /// app icons it shows beside the field. Resolved by the dock's coordinator so the two
+    /// surfaces agree on what "the best match" means.
+    @Published private(set) var globalTopMatch: GlobalContextTopMatch?
+    @Published private(set) var globalMatchIcons: [MatchDockIcon] = []
+    @Published private(set) var globalOverflowCount = 0
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
@@ -127,6 +133,13 @@ final class AppChatPromptModel: ObservableObject {
                 self.selection = AppChatSelectionScope.from(
                     context: context, scopedTo: self.appBundleID)
             }
+    }
+
+    /// Set by `AppChatMenuBrowsing` as the user types in Global Context.
+    func setGlobalTyping(top: GlobalContextTopMatch?, icons: [MatchDockIcon], overflow: Int) {
+        globalTopMatch = top
+        globalMatchIcons = icons
+        globalOverflowCount = overflow
     }
 
     /// Point the surface at a scope. The scope's identity stays `private(set)` — only the

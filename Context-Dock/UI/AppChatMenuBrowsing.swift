@@ -80,6 +80,7 @@ extension AppChatPromptModel {
                 .map(AppChatRow.global)
             menuMatches = []
             focusedMenuIndex = nil
+            updateGlobalTyping(for: typed)
             syncListPhase()
             return
         }
@@ -124,6 +125,68 @@ extension AppChatPromptModel {
         return apps.flatMap { app in
             AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: globalPerAppLimit)
         }
+    }
+
+    /// The top match and the matching app icons, from the dock's coordinator.
+    ///
+    /// Both are resolved from the same index the dock's global bar uses, so "the best match
+    /// for what I typed" means one thing in this app rather than two. They are synchronous
+    /// and cached by query — fast typing re-asks per keystroke without a hop, which is what
+    /// keeps the leading icon in step with the field instead of a character behind it.
+    func updateGlobalTyping(for typed: String) {
+        guard !typed.isEmpty else {
+            setGlobalTyping(top: nil, icons: [], overflow: 0)
+            return
+        }
+        let coordinator = GlobalContextSearchCoordinator.shared
+        let icons = coordinator.resolveFastMatchDockIcons(query: typed, limit: 12)
+        setGlobalTyping(
+            top: coordinator.resolveFastTopMatch(query: typed),
+            icons: Array(icons.prefix(Self.matchIconLimit)),
+            overflow: max(icons.count - Self.matchIconLimit, 0))
+    }
+
+    /// How many app icons fit beside a 372-point field before the rest become "+N".
+    static let matchIconLimit = 3
+
+    /// Tab takes the top match, the way it does in the dock: the fastest path from three
+    /// letters to the thing you meant. Returns false when there is nothing to take, so the
+    /// key falls through rather than eating a keystroke silently.
+    @discardableResult
+    func acceptGlobalTopMatch() -> Bool {
+        guard isGlobalScope, let top = globalTopMatch else { return false }
+        // The top match is a document in the same list the rows come from, so taking it is
+        // running that row — not a second code path that might do something else.
+        guard let row = rows.first(where: {
+            if case .global(let doc) = $0 { return doc.id == top.id }
+            return false
+        }) else {
+            // The top match outranked what fits in five rows; run it directly.
+            guard let doc = GlobalContextRow.documents(for: query, limit: 40)
+                .first(where: { $0.id == top.id })
+            else { return false }
+            run(.global(doc))
+            return true
+        }
+        run(row)
+        return true
+    }
+
+    /// Clicking one of the match pills opens that app, the way it does in the dock.
+    func openGlobalMatchIcon(_ icon: MatchDockIcon) {
+        hasActed = true
+        touch()
+        guard let bundleID = icon.bundleID, !bundleID.isEmpty else { return }
+        if let running = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }) {
+            running.activate()
+            return
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return }
+        NSWorkspace.shared.openApplication(
+            at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
     /// The list has something to show.

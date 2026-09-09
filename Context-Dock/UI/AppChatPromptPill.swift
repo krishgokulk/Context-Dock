@@ -271,6 +271,8 @@ struct AppChatPromptPill: View {
                     .font(.system(size: 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 22)
+            } else if model.isGlobalScope {
+                globalLeadingChip
             } else {
                 appChip
             }
@@ -294,6 +296,10 @@ struct AppChatPromptPill: View {
                         // A chosen row runs — a command or an adapter action; anything
                         // else is a question for the app.
                         if !model.runFocusedRow() { model.submit() }
+                    }
+                    .onKeyPress(.tab) {
+                        // Tab takes the top match in Global, the way it does in the dock.
+                        model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
                     .onKeyPress(.downArrow) {
                         model.moveMenuFocus(by: 1) ? .handled : .ignored
@@ -334,6 +340,21 @@ struct AppChatPromptPill: View {
                     .simultaneousGesture(TapGesture().onEnded {
                         CornerDockController.shared.requestComposerFocus()
                     })
+            }
+
+            // The dock's own match pills, mounted rather than imitated: the apps that
+            // answer what is typed, with "+N" for the rest. Same view, same icons, same
+            // running dot as the dock's global bar.
+            if model.isGlobalScope,
+                !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
+            {
+                ContextMatchDock(
+                    phase: .idle,
+                    icons: model.globalMatchIcons,
+                    overflowCount: model.globalOverflowCount,
+                    isSearching: false,
+                    onSelect: { icon in model.openGlobalMatchIcon(icon) })
+                    .transition(.opacity)
             }
 
             // Attaching and sending live in the field, always drawn, the way the dock's own
@@ -396,6 +417,22 @@ struct AppChatPromptPill: View {
     }
 
     /// The app the question is about, named rather than implied.
+    /// In Global Context the leading chip is the top match, not the scope — the same thing
+    /// the dock's global bar shows, so three letters and a glance tell the user what Tab
+    /// would take.
+    private var globalLeadingChip: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 26, height: 26)
+            Image(systemName: model.globalTopMatch == nil ? "magnifyingglass" : "return")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(model.globalTopMatch == nil ? .secondary : Color.accentColor)
+        }
+        .frame(width: 28, height: 28)
+        .help(model.globalTopMatch.map { "Tab to open \($0.title)" } ?? "Search everything")
+    }
+
     /// The app's current selection, shown because the turn carries it. Read from the same
     /// snapshot the turn is built from, so it cannot promise something the turn will not
     /// send.
