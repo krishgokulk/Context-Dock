@@ -21,12 +21,15 @@ enum AppChatRow: Identifiable {
     /// A Global Context result: an app, a CLI tool, a system command, a tab, a menu — the
     /// dock's own index, ranked by the dock's own coordinator.
     case global(GlobalSearchService.SearchDocument)
+    /// A file or folder, from the Finder scope's Spotlight search.
+    case file(URL)
 
     var id: String {
         switch self {
         case .command(let item): return "menu:" + item.path.joined(separator: ">")
         case .action(let action): return "action:" + action.id
         case .global(let doc): return "global:" + doc.id
+        case .file(let url): return "file:" + url.path
         }
     }
 
@@ -35,6 +38,7 @@ enum AppChatRow: Identifiable {
         case .command(let item): return item.title
         case .action(let action): return action.name
         case .global(let doc): return doc.title
+        case .file(let url): return url.lastPathComponent
         }
     }
 

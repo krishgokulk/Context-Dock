@@ -312,6 +312,12 @@ struct AppChatPromptPill: View {
                     .onKeyPress(.upArrow) {
                         model.moveMenuFocus(by: -1) ? .handled : .ignored
                     }
+                    .onKeyPress(.delete) {
+                        // Backspace on an empty field leaves the scope — the dock's way out,
+                        // and the one most people reach for before they find the "−".
+                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
+                        return .ignored
+                    }
                     .onKeyPress(.escape) {
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the
                         // user was waiting on and a question they had half-written, for

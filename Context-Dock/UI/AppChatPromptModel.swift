@@ -86,6 +86,8 @@ final class AppChatPromptModel: ObservableObject {
     /// This scope was entered from Global, so leaving it goes back there rather than to the
     /// frontmost app.
     @Published var returnsToGlobalScope = false
+    /// Guards async Finder results against the keystroke that overtook them.
+    var finderSearchGeneration = 0
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 

@@ -72,6 +72,12 @@ extension AppChatPromptModel {
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Finder searches the disk instead of its own menus.
+        if isFinderScope {
+            updateFinderResults(for: typed)
+            updateGlobalTyping(for: typed)
+            return
+        }
         // A window snapshot answers the untyped scope; typing turns it back into a filter
         // over that app, because now the user is asking for something specific.
         if showsWindowSnapshot, typed.isEmpty {
@@ -214,7 +220,7 @@ extension AppChatPromptModel {
     }
 
     /// How many app icons fit beside a 372-point field before the rest become "+N".
-    static let matchIconLimit = 3
+    static let matchIconLimit = 4
 
     /// Tab takes the top match, the way it does in the dock: the fastest path from three
     /// letters to the thing you meant. Returns false when there is nothing to take, so the
@@ -307,6 +313,42 @@ extension AppChatPromptModel {
         touch()
     }
 
+    /// The Finder scope searches the disk rather than Finder's menus — the question there
+    /// is about files, which is why the user carved it out of the snapshot behaviour.
+    var isFinderScope: Bool {
+        returnsToGlobalScope && appBundleID == "com.apple.finder"
+    }
+
+    /// Files and folders matching what is typed, from the same Spotlight index the dock's
+    /// Finder scope reads. Async: a metadata query cannot answer on the keystroke, so the
+    /// rows land a moment later and the generation guard drops anything overtaken by the
+    /// next keystroke.
+    func updateFinderResults(for typed: String) {
+        guard isFinderScope else { return }
+        guard !typed.isEmpty else {
+            rows = []
+            syncListPhase()
+            return
+        }
+        finderSearchGeneration &+= 1
+        let generation = finderSearchGeneration
+        let home = NSHomeDirectory()
+
+        Task { @MainActor [weak self] in
+            let paths = await LauncherView.spotlightSearchPaths(
+                predicate: NSPredicate(
+                    format: "kMDItemFSName LIKE[cd] %@", "*\(typed)*"),
+                inDirectories: [home],
+                sortByLastUsed: true,
+                limit: Self.menuRowLimit)
+            guard let self, self.finderSearchGeneration == generation, self.isFinderScope
+            else { return }
+            self.rows = paths.map { AppChatRow.file(URL(fileURLWithPath: $0)) }
+            self.focusedMenuIndex = nil
+            self.syncListPhase()
+        }
+    }
+
     /// This scope shows the app's window rather than its commands.
     var showsWindowSnapshot: Bool {
         returnsToGlobalScope && !appBundleID.isEmpty
@@ -397,6 +439,12 @@ extension AppChatPromptModel {
         switch row {
         case .command(let item): runMenuItem(item)
         case .action(let action): runAdapterAction(action)
+        case .file(let url):
+            hasActed = true
+            query = ""
+            updateMenuMatches()
+            touch()
+            NSWorkspace.shared.activateFileViewerSelecting([url])
         case .global(let doc):
             hasActed = true
             query = ""
