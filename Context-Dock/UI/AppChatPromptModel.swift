@@ -92,6 +92,7 @@ final class AppChatPromptModel: ObservableObject {
     private let conversation: AppChatConversation
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
+    private var messagesObservation: AnyCancellable?
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
 
@@ -100,6 +101,13 @@ final class AppChatPromptModel: ObservableObject {
         self.conversation = source
         conversationObservation = source.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
+        }
+        // The dock switches the conversation one hop after the corner asks it to, so a
+        // scope change reads the *outgoing* app's messages, goes to .chat, and is then
+        // left holding a full-height card with nothing in it. Watch the messages
+        // themselves and step back to the field when they go.
+        messagesObservation = source.$messages.sink { [weak self] incoming in
+            self?.dropChatPhaseWithoutAConversation(messages: incoming)
         }
     }
 
@@ -220,6 +228,16 @@ final class AppChatPromptModel: ObservableObject {
     /// can also arrive *after* typing, when the live menu read lands.
     func syncListPhase() {
         guard phase.isVisible, phase != .chat else { return }
+        set(restingInputPhase)
+    }
+
+    /// A conversation surface with no conversation and no turn running is a field.
+    ///
+    /// Guards the gap between asking for a scope change and the dock performing it, which
+    /// is where the empty card came from.
+    private func dropChatPhaseWithoutAConversation(messages incoming: [AIChatMessage]) {
+        guard phase == .chat, incoming.isEmpty, !isAnswering else { return }
+        hasPresentedConversation = false
         set(restingInputPhase)
     }
 

@@ -235,6 +235,29 @@ struct AppChatPromptTests {
         #expect(model.query.isEmpty)
     }
 
+    /// The empty card: run a command, switch app, and the corner showed a full-height
+    /// conversation with nothing in it.
+    ///
+    /// Scope changes are posted to the dock and answered later, so at the moment the app
+    /// changes the shared conversation still holds the *outgoing* app's messages. The
+    /// prompt read those, went to `.chat`, and then the dock emptied the conversation
+    /// underneath it.
+    @Test func aChatPhaseWithNoConversationFallsBackToTheField() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .user, content: "about Safari")]
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+
+        model.frontmostAppDidChange(
+            app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")
+        #expect(model.phase == .chat)
+
+        // The dock answers the scope change and the conversation empties.
+        conversation.messages = []
+
+        #expect(model.phase != .chat)
+    }
+
     @Test func switchingFrontmostAppKeepsThePromptAndUpdatesItsScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
