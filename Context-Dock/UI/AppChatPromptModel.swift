@@ -204,6 +204,9 @@ final class AppChatPromptModel: ObservableObject {
         if typed { return isBrowsingMenus ? .suggesting : .prompt }
         // A window snapshot occupies the board even with no rows to list.
         if showsWindowSnapshot { return .suggesting }
+        // A scope stepped into from Global shows only what it found. With nothing found the
+        // field rests alone rather than opening an empty board.
+        if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
         if hasActed { return .prompt }
         // Attaching a file is composing a question about it. Offering the app's opening
         // menu on top of that answers something the user has already stopped asking.

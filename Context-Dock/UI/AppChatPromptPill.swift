@@ -388,9 +388,9 @@ struct AppChatPromptPill: View {
             // the two things you do most here were invisible until found by accident, and
             // gone entirely once a conversation started.
             //
-            // Global Context is a search bar rather than a composer, and the dock's global
-            // bar carries none of this — so neither does this one.
-            if !model.isGlobalScope { attachMenu }
+            // Global Context and the scopes entered from it are search fields rather than
+            // composers, and the dock carries none of this there — so neither does this.
+            if !model.isSearchField { attachMenu }
 
             if model.isAnswering {
                 Button { model.cancelTurn() } label: {
@@ -399,7 +399,7 @@ struct AppChatPromptPill: View {
                 .buttonStyle(.plain)
                 .help("Stop")
                 .transition(.opacity)
-            } else if !model.isGlobalScope,
+            } else if !model.isSearchField,
                 !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
                 Button { model.submit() } label: {
@@ -418,7 +418,7 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat, !model.isGlobalScope {
+            if pointerInside, model.phase != .chat, !model.isSearchField {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -488,17 +488,35 @@ struct AppChatPromptPill: View {
     /// user stepped into, so there is nothing to step back from.
     private var scopeChipWithExit: some View {
         HStack(spacing: 6) {
-            appChip
+            if let icon = appIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            Text(model.appName)
+                .font(.system(size: 12.5, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
             Button { model.leaveScopeForGlobal() } label: {
                 Image(systemName: "minus")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
-                    .background(Color.primary.opacity(0.10), in: Circle())
+                    .frame(width: 16, height: 16)
+                    .background(Color.primary.opacity(0.12), in: Circle())
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Back to Global Context")
         }
+        .padding(.leading, 8)
+        .padding(.trailing, 5)
+        .padding(.vertical, 5)
+        .background(Color.primary.opacity(0.09), in: Capsule())
+        // The scope's name is the subject of everything else in this row, so it keeps its
+        // width and the placeholder gives way — truncating it to "F" said nothing at all.
+        .layoutPriority(1)
     }
 
     private var appChip: some View {

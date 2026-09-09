@@ -405,7 +405,13 @@ extension AppChatPromptModel {
     /// What the card's height is computed from. Falls back to the handed-in suggestions
     /// for an app with no adapter and no cached menus — otherwise the surface would open
     /// on an empty card.
-    var listRowCount: Int { rows.isEmpty ? suggestions.count : rows.count }
+    var listRowCount: Int {
+        // A scope stepped into from Global answers with what was asked for — files in
+        // Finder, a window elsewhere. Falling back to that app's menu list there filled the
+        // board with "About Finder" and "AirDrop", which is not what the user came for.
+        if returnsToGlobalScope { return rows.count }
+        return rows.isEmpty ? suggestions.count : rows.count
+    }
 
     /// The row the user has arrowed to. Nil until they do, which is what lets Enter mean
     /// "ask this question" by default.
@@ -495,6 +501,11 @@ extension AppChatPromptModel {
     /// which is the one case where it is a choice rather than a guess.
     /// The corner is in Global Context — the scope is the machine, not one app.
     var isGlobalScope: Bool { appBundleID.isEmpty && appName == Self.globalScopeName }
+
+    /// This field searches rather than composes: Global itself, and any scope stepped into
+    /// from it. Neither carries the composer's attach, send, expand or pin — the dock does
+    /// not show them there either.
+    var isSearchField: Bool { isGlobalScope || returnsToGlobalScope }
 
     /// The name the scope goes by, in one place so the chip and the check cannot disagree.
     static let globalScopeName = "Global Context"

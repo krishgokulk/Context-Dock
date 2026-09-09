@@ -97,7 +97,7 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 16)
                 .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
 
-            if model.rows.isEmpty {
+            if model.rows.isEmpty, !model.returnsToGlobalScope {
                 ForEach(model.suggestions.prefix(AppChatPromptModel.menuRowLimit)) { suggestion in
                     suggestionRow(suggestion)
                 }
