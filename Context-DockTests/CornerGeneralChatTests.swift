@@ -87,6 +87,34 @@ struct CornerGeneralChatTests {
         #expect(longThread == 620)
     }
 
+    /// The app filter has to work while a conversation is on screen — which is exactly
+    /// where it stopped working when the picker was moved into the board, because the
+    /// board holds the transcript once there is one.
+    @Test func theAppPickerOpensDuringAConversationWithoutTouchingTheTranscript() {
+        func height(messages: Int, matches: Int) -> CGFloat {
+            CornerGeneralChatMetrics.height(
+                messageCount: messages, isSending: false,
+                hasAttachments: false, slashMatchCount: matches)
+        }
+
+        let chatting = height(messages: 3, matches: 0)
+        let picking = height(messages: 3, matches: 2)
+
+        // The picker adds its own room…
+        #expect(picking > chatting)
+        // …and every point of it comes out of the composer, so the board — the transcript
+        // the user is reading — keeps exactly the height it had.
+        let board = CornerGeneralChatMetrics.boardHeight(messageCount: 3, isSending: false)
+        #expect(
+            picking
+                == board + CornerDockLayout.gap
+                    + CornerGeneralChatMetrics.composerHeight(
+                        hasAttachments: false, slashMatchCount: 2))
+        #expect(
+            picking - chatting
+                == ChatSlashAppList.height(for: 2) + CornerGeneralChatMetrics.dividerHeight)
+    }
+
     /// The matches are a list above the composer, so the card carries their exact height.
     /// A flat reservation was wrong in both directions: too tall for one match, and too
     /// short for four, which pushed the list out through the top of the card.
@@ -98,12 +126,10 @@ struct CornerGeneralChatTests {
         }
         let bare = height(0)
 
-        // The picker is a separate card above the field, so what separates it from the
-        // field is the corner's gap rather than a rule drawn inside one container.
         #expect(
             height(1) - bare
                 == ChatSlashAppList.rowHeight + ChatSlashAppList.verticalInset * 2
-                    + CornerDockLayout.gap)
+                    + CornerGeneralChatMetrics.dividerHeight)
         #expect(height(3) - height(1) == ChatSlashAppList.rowHeight * 2)
         // No list, no inset: an empty picker must not leave a gap above the field.
         #expect(ChatSlashAppList.height(for: 0) == 0)

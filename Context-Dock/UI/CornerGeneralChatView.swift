@@ -44,10 +44,19 @@ enum CornerGeneralChatMetrics {
     /// over the user's work.
     static let maximumCountedLiveSteps = 4
 
-    /// The composer card on its own: the row, plus attachments when there are any.
-    /// Identical to App mode's field by construction — the two modes are one surface.
-    static func composerHeight(hasAttachments: Bool) -> CGFloat {
-        compactHeight + (hasAttachments ? attachmentRowHeight : 0)
+    /// The composer card: the row, attachments, and the `/` picker when one is open.
+    ///
+    /// The picker belongs here rather than in the board above. The board holds the
+    /// conversation once there is one, so a picker placed there had nowhere to go the
+    /// moment a chat started — and pushing the transcript aside to make room would
+    /// disturb what the user is reading. A sheet over the field disturbs nothing.
+    static func composerHeight(hasAttachments: Bool, slashMatchCount: Int = 0) -> CGFloat {
+        var result = compactHeight
+        if slashMatchCount > 0 {
+            result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
+        }
+        if hasAttachments { result += attachmentRowHeight }
+        return result
     }
 
     /// The card above the field: the conversation, the start screen, or the `/` picker.
@@ -55,7 +64,6 @@ enum CornerGeneralChatMetrics {
     static func boardHeight(
         messageCount: Int,
         isSending: Bool,
-        slashMatchCount: Int,
         showsStarter: Bool = false,
         starterCount: Int = 0,
         starterHasConnections: Bool = false,
@@ -79,9 +87,6 @@ enum CornerGeneralChatMetrics {
             return GeneralChatStartView.Metrics.compactHeight(
                 starters: starterCount, hasConnections: starterHasConnections)
         }
-        if slashMatchCount > 0 {
-            return ChatSlashAppList.height(for: slashMatchCount)
-        }
         return 0
     }
 
@@ -101,13 +106,13 @@ enum CornerGeneralChatMetrics {
         let board = boardHeight(
             messageCount: messageCount,
             isSending: isSending,
-            slashMatchCount: slashMatchCount,
             showsStarter: showsStarter,
             starterCount: starterCount,
             starterHasConnections: starterHasConnections,
             liveStepCount: liveStepCount,
             clarificationOptionCount: clarificationOptionCount)
-        let composer = composerHeight(hasAttachments: hasAttachments)
+        let composer = composerHeight(
+            hasAttachments: hasAttachments, slashMatchCount: slashMatchCount)
         return board > 0 ? board + CornerDockLayout.gap + composer : composer
     }
 
@@ -138,12 +143,10 @@ enum CornerGeneralChatMetrics {
     /// The board's height for this model — read from the same places `size(for:)` reads,
     /// so the card drawn above the field and the room reserved for it stay one number.
     static func boardHeight(for model: GeneralChatWindowModel) -> CGFloat {
-        let slashMatches = ChatSlashAppPicker.matches(for: model.input)
         let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
         return boardHeight(
             messageCount: model.messages.count,
             isSending: model.isSending,
-            slashMatchCount: slashMatches.count,
             showsStarter: showsStarter(for: model),
             starterCount: connected.count,
             starterHasConnections: !connected.isEmpty,
@@ -208,7 +211,8 @@ struct CornerGeneralChatView: View {
                 .frame(
                     width: size.width,
                     height: CornerGeneralChatMetrics.composerHeight(
-                        hasAttachments: !model.attachments.isEmpty))
+                        hasAttachments: !model.attachments.isEmpty,
+                        slashMatchCount: slashMatches.count))
                 .background(GlassBackground(cornerRadius: 22, isDark: true))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
@@ -252,10 +256,6 @@ struct CornerGeneralChatView: View {
                     compact: true
                 )
                 .transition(.opacity)
-            } else if !slashMatches.isEmpty {
-                ChatSlashAppList(matches: slashMatches, selection: slashSelection) { app in
-                    pick(app)
-                }
             }
         }
     }
@@ -552,9 +552,15 @@ struct CornerGeneralChatView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The `/` picker is drawn in the board above, where every list in this corner
-            // lives now.
-            if let clarification, model.input.isEmpty, slashMatches.isEmpty {
+            // A sheet over the field, not a control inside it: list above, input below,
+            // the same shape the clipboard panel uses. It stays here rather than in the
+            // board so an open conversation is never pushed around by a picker.
+            if !slashMatches.isEmpty {
+                ChatSlashAppList(matches: slashMatches, selection: slashSelection) { app in
+                    pick(app)
+                }
+                Divider().opacity(0.18)
+            } else if let clarification, model.input.isEmpty {
                 // Typing replaces the card: the composer is the answer the model did not
                 // think of, and a list of its own guesses on top of that reads as a wall.
                 ChatClarificationCard(
