@@ -62,6 +62,9 @@ final class CornerDockController: NSObject {
     private var sinks: Set<AnyCancellable> = []
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
+    /// The selection, when the user has raised it. A corner surface like the others, not
+    /// the launcher wearing a smaller coat.
+    let selection = SelectionScopeModel()
     private var shelf: DropShelfPresentation { DropShelfController.shared.presentation }
     let chatPresentation = CornerChatPresentation.shared
     let keyboardState = CornerDockKeyboardState()
@@ -167,6 +170,9 @@ final class CornerDockController: NSObject {
         shelf.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
+        selection.$phase.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
         prompt.$phase.sink { [weak self] phase in
             Task { @MainActor in
                 self?.refresh()
@@ -221,7 +227,10 @@ final class CornerDockController: NSObject {
     func refresh() {
         guard let panel, let hostView else { return }
         let slots = currentSlots()
-        let rects = [slots.shelf, slots.preview, slots.clipboard, slots.list, slots.prompt]
+        let rects = [
+            slots.shelf, slots.preview, slots.clipboard, slots.selection, slots.list,
+            slots.prompt,
+        ]
             .compactMap { $0 }
 
         // Nothing moved, nothing to do. The models this follows republish on every
@@ -255,7 +264,8 @@ final class CornerDockController: NSObject {
     /// layout, so what is drawn and what is hit-tested cannot drift apart.
     private func currentSlots()
         -> (
-            shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, list: CGRect?, prompt: CGRect?
+            shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
+            list: CGRect?, prompt: CGRect?
         )
     {
         CornerDockLayout.slots(
@@ -264,6 +274,7 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
+            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: chatPresentation.isVisible ? promptSize : nil)
     }
@@ -302,6 +313,7 @@ final class CornerDockController: NSObject {
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
+            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil
         ).shelf
@@ -483,6 +495,10 @@ struct CornerDockSurface: View {
             }
             if clipboardModel.phase.isVisible {
                 ClipboardDockPill(model: clipboardModel)
+            }
+            if CornerDockController.shared.selection.phase.isVisible {
+                SelectionScopeCard(model: CornerDockController.shared.selection)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if chatPresentation.isVisible {
                 // Both modes are now the same shape — a board above a field — so the switch

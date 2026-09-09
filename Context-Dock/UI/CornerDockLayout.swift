@@ -30,14 +30,16 @@ enum CornerDockLayout {
     static let previewHeight: CGFloat = 232
     /// The commands card that stacks above the App Chat field while a list is showing.
     static let listHeight: CGFloat = 230
+    /// The selection card, when Selection Scope is up.
+    static let selectionHeight: CGFloat = 166
 
     static var panelSize: CGSize {
         // Worst case: one surface fully expanded, the preview above it, and both other
         // pills stacked above that.
         CGSize(
             width: cardWidth + pad * 2,
-            height: cardHeight + previewHeight + listHeight + gap * 2 + (gap + pillHeight) * 2
-                + pad * 2)
+            height: cardHeight + previewHeight + listHeight + selectionHeight + gap * 3
+                + (gap + pillHeight) * 2 + pad * 2)
     }
 
     /// Rects in the panel's coordinates, origin bottom-left. A nil size means that
@@ -50,9 +52,10 @@ enum CornerDockLayout {
     /// preview and the row it belongs to are next to each other.
     static func slots(
         shelf: CGSize? = nil, preview: CGSize? = nil, clipboard: CGSize? = nil,
-        list: CGSize? = nil, prompt: CGSize? = nil
+        selection: CGSize? = nil, list: CGSize? = nil, prompt: CGSize? = nil
     ) -> (
-        shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, list: CGRect?, prompt: CGRect?
+        shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
+        list: CGRect?, prompt: CGRect?
     ) {
         let rightEdge = panelSize.width - pad
         var baseline = pad
@@ -69,9 +72,11 @@ enum CornerDockLayout {
         // the clip preview sits directly above the list it was chosen from.
         let promptRect = place(prompt)
         let listRect = place(list)
+        // The selection sits above the chat that will act on it, and below the clipboard.
+        let selectionRect = place(selection)
         let clipboardRect = place(clipboard)
         let previewRect = place(preview)
         let shelfRect = place(shelf)
-        return (shelfRect, previewRect, clipboardRect, listRect, promptRect)
+        return (shelfRect, previewRect, clipboardRect, selectionRect, listRect, promptRect)
     }
 }

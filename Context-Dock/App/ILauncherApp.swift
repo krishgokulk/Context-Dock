@@ -2468,7 +2468,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         {
             AXContextReader.shared.refreshSelectionOnly(from: source)
         }
-        presentSmartScope(.activateSelectionScope, key: "selection")
+        // The selection is a corner surface, stacked with the clipboard, the shelf and the
+        // chat that will act on it. It used to open the launcher window drawn as a compact
+        // pill, which looked like a corner card without being one — it could not stack,
+        // and it pulled the whole launcher up behind it.
+        //
+        // Nothing selected leaves the corner alone rather than raising an empty card.
+        CornerDockController.shared.selection.toggle(from: AXContextReader.shared.current)
     }
 
     /// True while a compact scope (Clipboard / Notifications) is showing, so the
