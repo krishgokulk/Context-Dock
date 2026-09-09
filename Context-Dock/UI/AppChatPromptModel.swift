@@ -82,6 +82,9 @@ final class AppChatPromptModel: ObservableObject {
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
     private var hasPresentedConversation = false
+    /// The user has already done something here — asked, or run a command. What the app can
+    /// do is an opening offer, not a thing to re-present after every action.
+    var hasActed = false
     private let conversation: AppChatConversation
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
@@ -117,9 +120,11 @@ final class AppChatPromptModel: ObservableObject {
     /// guess what the app can do.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        // Typed: the app's matching commands sit under the field. Untyped: what it can do.
+        // Typed: the app's matching commands sit under the field. Untyped: what it can do,
+        // but only until the user has done something — running a command and being handed
+        // the opening menu again reads as the surface forgetting what just happened.
         if typed { return isBrowsingMenus ? .suggesting : .prompt }
-        return suggestions.isEmpty ? .prompt : .suggesting
+        return (suggestions.isEmpty || hasActed) ? .prompt : .suggesting
     }
 
     // MARK: - Controls
@@ -180,6 +185,7 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         attachments = []
         hasPresentedConversation = false
+        hasActed = false
         set(restingInputPhase)
         touch()
     }
@@ -293,6 +299,7 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         isPinned = false
         hasPresentedConversation = false
+        hasActed = false
         set(.hidden)
     }
 
@@ -309,6 +316,7 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         attachments = []
         hasPresentedConversation = true
+        hasActed = true
         set(.chat)
         touch()
         return true

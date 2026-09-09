@@ -139,6 +139,9 @@ extension AppChatPromptModel {
                 clearLiveDockMenuState: {},
                 refocusDockInput: {}))
 
+        // Running a command is using the surface: the opening list of what the app can do
+        // does not come back afterwards.
+        hasActed = true
         query = ""
         updateMenuMatches()
         touch()
