@@ -44,6 +44,7 @@ enum GlobalContextRow {
         case .cachedMenu(_, let appName, let path, _, _):
             return ([appName] + path.dropLast()).joined(separator: " › ")
         case .adapterAction(_, let appName, _): return "\(appName) · App action"
+        case .userExtension: return "Global Extension"
         case .browserURL(_, let browserName, _, _, let domain):
             return domain.isEmpty ? browserName : "\(domain) · \(browserName)"
         }
@@ -57,6 +58,7 @@ enum GlobalContextRow {
         case .systemCommandScope: return "switch.2"
         case .cachedMenu: return "command"
         case .adapterAction: return "bolt.fill"
+        case .userExtension: return "puzzlepiece.extension"
         case .browserURL: return "safari"
         }
     }
@@ -140,6 +142,14 @@ enum GlobalContextRow {
                 _ = await AppAdapterManager.shared.execute(
                     action, context: context, targetBundleId: bundleId)
             }
+
+        case .userExtension(let id):
+            // Opens its own panel, the same way the launcher opens it — the extension owns
+            // how it presents itself, and the corner is another place to reach it.
+            guard let ext = UserGlobalExtensionStore.shared.extensions.first(where: {
+                $0.id == id
+            }) else { return }
+            ExtensionPanelManager.shared.open(ext)
 
         case .cliScope, .systemCommandScope:
             // Entering a scope, not running a thing. The dock owns scopes.

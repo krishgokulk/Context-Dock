@@ -2935,6 +2935,8 @@ extension LauncherView {
             // Resolve icon: prefer live running icon, fall back to doc's pre-cached icon
             let icon: NSImage?
             switch doc.action {
+            case .userExtension:
+                icon = doc.icon
             case .activatePID(let pid, let bundleId, let path):
                 let app =
                     runningRegularApps.first { $0.processIdentifier == pid }
@@ -3209,6 +3211,10 @@ extension LauncherView {
             if !trimmedQuery.isEmpty {
                 AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
             }
+        case .userExtension:
+            if !trimmedQuery.isEmpty {
+                AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
+            }
         case .systemCommandScope, .cliScope, .adapterAction:
             AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
             AppUsageLearner.shared.recordAction(doc.title, inBundleID: usableBundleId)
@@ -3438,6 +3444,16 @@ extension LauncherView {
             )
             addIfNew(.init(browserURL: entry, icon: icon))
         }
+        // Global Extensions the user built. They reached the launcher's own list and no
+        // further, so Global Context and the corner could not find one by any name (#15).
+        for ext in UserGlobalExtensionStore.shared.enabledExtensions {
+            addIfNew(
+                .init(
+                    userExtension: ext,
+                    icon: NSImage(
+                        systemSymbolName: ext.icon, accessibilityDescription: ext.name)))
+        }
+
         GlobalSearchIndexStatus.shared.update(
             progress: 0.9,
             message: "Publishing search index..."

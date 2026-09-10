@@ -449,8 +449,11 @@ extension LauncherView {
                 return result
             }
             let displayResults: [SearchResult] = {
+                // A preset is a strong match, not the only one: it used to replace the
+                // whole list, so matching a Global Command by keyword hid every app and
+                // file that matched the same query (#15).
                 let presets = systemCommandPresetSearchResults(for: snap.query)
-                return presets.isEmpty ? sortedResults : presets
+                return SearchPresetMerge.merge(presets: presets, scored: sortedResults)
             }()
             let suggestedShortcutIDs = Set(
                 snap.candidates.filter(\.isSuggestedShortcut).map(\.id)

@@ -61,6 +61,11 @@ enum GeneralChatLocalEvidence {
                 let shortcut = (shortcutChar?.isEmpty == false) ? "  [⌘\(shortcutChar!)]" : ""
                 menus.append("\(appName): \(trail.isEmpty ? doc.title : trail)\(shortcut)")
 
+            case .userExtension:
+                // Named among the machine's capabilities, without a path or an app: it is
+                // something the user built, not something an app exposes.
+                continue
+
             case .browserURL(let url, _, let browserName, let kind, _):
                 guard browser.count < browserLimit else { continue }
                 browser.append(

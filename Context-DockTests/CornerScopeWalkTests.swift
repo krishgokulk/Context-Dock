@@ -4,6 +4,7 @@
 // Global Context is a scope of the corner chat, not a fourth board: the same field asks, and
 // the chip says which scope is answering. These pin the walk between the three.
 
+import Foundation
 import Testing
 
 @testable import Context_Dock
@@ -41,6 +42,21 @@ struct CornerScopeWalkTests {
         // one thing it cannot show. The dock's own global bar rests empty too.
         #expect(GlobalContextRow.documents(for: "", limit: 5).isEmpty)
         #expect(GlobalContextRow.documents(for: "   ", limit: 5).isEmpty)
+    }
+
+    @Test("A Global Extension is a kind of result the corner knows how to describe")
+    func globalExtensionRowIsDescribed() {
+        // #15: user-built extensions were in no index at all, so neither surface could find
+        // one by any name. Now they are documents like everything else.
+        let doc = GlobalSearchService.SearchDocument(
+            id: "userext://x", title: "Currency Converter", subtitle: "", bundleId: "userext://x",
+            filePath: nil, normalizedTitle: "currency converter",
+            titleWords: ["currency", "converter"], acronym: "cc", aliases: ["fx", "money"],
+            aliasWords: [["fx"], ["money"]], sourceKind: .systemCommand, rankingBoost: 0,
+            icon: nil, usageTrackingKey: "userext:x", action: .userExtension(id: UUID()))
+
+        #expect(GlobalContextRow.subtitle(for: doc) == "Global Extension")
+        #expect(GlobalContextRow.symbol(for: doc) == "puzzlepiece.extension")
     }
 
     @Test("Every kind of Global result says where it comes from")
