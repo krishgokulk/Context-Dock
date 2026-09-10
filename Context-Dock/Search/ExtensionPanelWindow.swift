@@ -86,6 +86,21 @@ final class ExtensionPanelManager: ObservableObject {
             }
         }
 
+        // One window holds every open extension, so the name on its pill is whichever one
+        // is active at the moment it is minimised.
+        MinimizedPanelRegistry.shared.watch(
+            p, id: "userext.panel", symbol: "puzzlepiece.extension",
+            title: { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let id = self?.activeExtensionID,
+                        let ext = UserGlobalExtensionStore.shared.extensions.first(where: {
+                            $0.id == id
+                        })
+                    else { return "Extensions" }
+                    return ext.name
+                }
+            })
+
         panel = p
         p.orderFrontRegardless()
     }

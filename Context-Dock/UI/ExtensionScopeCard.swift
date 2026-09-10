@@ -106,7 +106,8 @@ struct ExtensionScopeCard: View {
             // The same panel the pinned window shows, so a command that works there works
             // here: one view, two places to put it. Embedded, it leaves the title bar and
             // the assistant to the corner, which already has both.
-            ScopedListPanelContent(command: command, isEmbedded: true)
+            ScopedListPanelContent(
+                command: command, isEmbedded: true, externalQuery: model.query)
         }
     }
 
@@ -140,6 +141,10 @@ struct ExtensionScopeCard: View {
             Button {
                 if let ext { ExtensionPanelManager.shared.open(ext) }
                 if let command { ScopedListPanelManager.shared.pin(command) }
+                // The window *is* the panel now. Leaving the board behind it was the same
+                // extension drawn twice, the small copy still holding the corner's field —
+                // and closing that copy looked like closing the window it had just opened.
+                model.leaveScopeForGlobal()
             } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 10, weight: .semibold))

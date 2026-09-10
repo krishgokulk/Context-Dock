@@ -136,6 +136,11 @@ struct AppChatPromptPill: View {
         .onAppear { syncFocus() }
         .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
+        // A panel minimised or restored changes the pills without anything being typed, so
+        // the row has to be asked again rather than waiting for the next keystroke.
+        .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in
+            model.updateGlobalTyping(for: model.query)
+        }
     }
 
     private func syncFocus() {

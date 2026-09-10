@@ -108,6 +108,15 @@ final class AppChatPromptModel: ObservableObject {
     /// The user said "stay". Nothing times the surface out while this holds.
     @Published private(set) var isPinned = false
 
+    /// A question is out and its answer has not arrived. The transcript legitimately goes
+    /// empty in between, so the card holds rather than reading that as "nothing here".
+    private var awaitingAnswer = false
+    private var answerWatchdog: Task<Void, Never>?
+    /// How long a handed-over question may stay unanswered before the card gives up. Long
+    /// enough for a model to start speaking, short enough that a lost question is visibly
+    /// lost rather than a card that sits there.
+    private static let answerGrace: TimeInterval = 12
+
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
     private var hasPresentedConversation = false
@@ -135,7 +144,7 @@ final class AppChatPromptModel: ObservableObject {
         // left holding a full-height card with nothing in it. Watch the messages
         // themselves and step back to the field when they go.
         messagesObservation = source.$messages.sink { [weak self] incoming in
-            self?.dropChatPhaseWithoutAConversation(messages: incoming)
+            self?.followConversation(messages: incoming)
         }
         // The selection changes under the corner while it is open — the user highlights
         // something and then asks about it, which is the whole point of the surface.
@@ -170,6 +179,8 @@ final class AppChatPromptModel: ObservableObject {
         if outgoing != incoming {
             drafts[outgoing] = query
             query = drafts[incoming] ?? ""
+            // The answer being waited for belonged to the scope being left.
+            stopAwaitingAnswer()
         }
         appName = name
         appBundleID = bundleID
@@ -282,6 +293,7 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         hasPresentedConversation = false
         hasActed = false
+        stopAwaitingAnswer()
         set(restingInputPhase)
         touch()
     }
@@ -316,6 +328,31 @@ final class AppChatPromptModel: ObservableObject {
         set(restingInputPhase)
     }
 
+    /// The card follows the conversation in both directions.
+    ///
+    /// Only the drop existed, and it took the card away from the question that had just
+    /// been asked: entering a scope with no history of its own — a CLI tool, an app never
+    /// chatted with — makes the dock start a fresh session, and a fresh session publishes
+    /// an empty transcript one hop after the question is handed over. The card went back to
+    /// being a list of subcommands, and when the answer landed nothing put it back, so the
+    /// tool looked like it had ignored the question entirely.
+    private func followConversation(messages incoming: [AIChatMessage]) {
+        if incoming.isEmpty {
+            // Our own question emptied it. Hold the card until the turn either shows up or
+            // gives up, rather than treating the clear as "there is nothing here".
+            guard !awaitingAnswer else { return }
+            dropChatPhaseWithoutAConversation(messages: incoming)
+            return
+        }
+        guard awaitingAnswer else { return }
+        awaitingAnswer = false
+        answerWatchdog?.cancel()
+        answerWatchdog = nil
+        hasPresentedConversation = true
+        guard phase.isVisible else { return }
+        set(.chat)
+    }
+
     /// A conversation surface with no conversation and no turn running is a field.
     ///
     /// Guards the gap between asking for a scope change and the dock performing it, which
@@ -324,6 +361,24 @@ final class AppChatPromptModel: ObservableObject {
         guard phase == .chat, incoming.isEmpty, !isAnswering else { return }
         hasPresentedConversation = false
         set(restingInputPhase)
+    }
+
+    /// Stop waiting for an answer, and let the ordinary rules take the card back.
+    private func stopAwaitingAnswer() {
+        awaitingAnswer = false
+        answerWatchdog?.cancel()
+        answerWatchdog = nil
+    }
+
+    /// A question that never reaches a turn must not leave an empty card standing forever.
+    private func armAnswerWatchdog() {
+        answerWatchdog?.cancel()
+        answerWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.answerGrace * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.awaitingAnswer else { return }
+            self.awaitingAnswer = false
+            self.dropChatPhaseWithoutAConversation(messages: self.messages)
+        }
     }
 
     /// Any interaction puts the clock back, unless the surface is pinned.
@@ -371,6 +426,7 @@ final class AppChatPromptModel: ObservableObject {
         Self.changeScope(app: name, bundleID: bundleID)
         selection = AppChatSelectionScope.from(
             context: AXContextReader.shared.current, scopedTo: bundleID)
+        stopAwaitingAnswer()
         hasPresentedConversation = !messages.isEmpty
         set(hasPresentedConversation ? .chat : restingInputPhase)
         if isPinned || isPointerInside {
@@ -414,6 +470,7 @@ final class AppChatPromptModel: ObservableObject {
         isPinned = false
         hasPresentedConversation = false
         hasActed = false
+        stopAwaitingAnswer()
         set(.hidden)
     }
 
@@ -431,6 +488,8 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         hasPresentedConversation = true
         hasActed = true
+        awaitingAnswer = true
+        armAnswerWatchdog()
         set(.chat)
         touch()
         return true

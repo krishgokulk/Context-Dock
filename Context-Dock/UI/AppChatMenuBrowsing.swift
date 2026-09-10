@@ -178,6 +178,11 @@ extension AppChatPromptModel {
     static func pillIcons(excluding scopedBundleID: String = "") -> [MatchDockIcon] {
         var icons: [MatchDockIcon] = []
         if let clipboard = clipboardPill() { icons.append(clipboard) }
+        // A panel the user minimised is a thing they put down mid-use, so it sits with the
+        // clipboard at the front rather than at the end of a list of apps they never
+        // touched. macOS's own Dock has it too — but that is a different dock, and the
+        // corner is where they opened it.
+        icons += minimizedPanelPills()
         let apps = runningAppIcons()
             .filter { $0.bundleID != scopedBundleID || scopedBundleID.isEmpty }
         // Finder leads the apps, always. It is the one scope that is always there and
@@ -206,6 +211,30 @@ extension AppChatPromptModel {
     }
 
     static let clipboardPillID = "corner.clipboard"
+    /// Marks a pill as a minimised panel rather than an app, so opening it restores a
+    /// window instead of scoping into a bundle it does not have.
+    static let minimizedPillPrefix = "corner.panel."
+
+    /// The panels that are minimised, as pills.
+    static func minimizedPanelPills() -> [MatchDockIcon] {
+        MinimizedPanelRegistry.shared.entries.compactMap { entry in
+            guard
+                let icon = NSImage(
+                    systemSymbolName: entry.symbol, accessibilityDescription: entry.title)
+                    ?? NSImage(
+                        systemSymbolName: "macwindow", accessibilityDescription: entry.title)
+            else { return nil }
+            return MatchDockIcon(
+                id: minimizedPillPrefix + entry.id,
+                bundleID: nil,
+                title: entry.title,
+                icon: icon,
+                isRunning: true,
+                isExpandable: true,
+                score: 0,
+                isExactAppPrefix: false)
+        }
+    }
 
     /// The apps that are running, newest first, as the pill row draws them.
     static func runningAppIcons() -> [MatchDockIcon] {
@@ -527,6 +556,11 @@ extension AppChatPromptModel {
         touch()
         if icon.id == Self.clipboardPillID {
             ClipboardPanelController.shared.show()
+            return
+        }
+        if icon.id.hasPrefix(Self.minimizedPillPrefix) {
+            MinimizedPanelRegistry.shared.restore(
+                String(icon.id.dropFirst(Self.minimizedPillPrefix.count)))
             return
         }
         // An app pill scopes the field into that app rather than launching it: the pills

@@ -67,6 +67,11 @@ final class ScopedListPanelManager: ObservableObject {
 
         panels[id] = p
         if !pinnedCommandIDs.contains(id) { pinnedCommandIDs.append(id) }
+        // Minimising this window sends it to macOS's Dock; the registry is what brings it
+        // back within reach of the corner it was opened from.
+        MinimizedPanelRegistry.shared.watch(
+            p, id: "syscmd:\(command.id.uuidString)", symbol: command.icon,
+            title: { command.name })
         p.orderFrontRegardless()
     }
 
@@ -87,10 +92,13 @@ struct ScopedListPanelContent: View {
     /// already has one of each, and two of either is the surface arguing with itself about
     /// which bar closes what.
     var isEmbedded: Bool = false
+    /// What the host's field has typed, when embedded. Ignored otherwise.
+    var externalQuery: String = ""
 
-    init(command: SystemCommand, isEmbedded: Bool = false) {
+    init(command: SystemCommand, isEmbedded: Bool = false, externalQuery: String = "") {
         self.command = command
         self.isEmbedded = isEmbedded
+        self.externalQuery = externalQuery
         // Per-extension, so a gallery stays a gallery and a port list stays a list.
         _gridView = AppStorage(wrappedValue: false, "panelGridView.\(command.id.uuidString)")
     }
@@ -128,7 +136,11 @@ struct ScopedListPanelContent: View {
 
     /// The panel's own field filters rows. A computed extension takes its input from
     /// the dock, so a second box here would be a duplicate that does nothing useful.
-    private var showsFilterField: Bool { isPresetPicker || !isComputed }
+    ///
+    /// Embedded is that same case: the surface hosting this has a field directly under the
+    /// rows, and what the user types there is the filter. Drawing our own left two inputs
+    /// stacked, the top one belonging to a board the user never opened deliberately.
+    private var showsFilterField: Bool { !isEmbedded && (isPresetPicker || !isComputed) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -186,17 +198,26 @@ struct ScopedListPanelContent: View {
         // took the background with it and left the rows floating on the wallpaper.
         // Match the sticky note exactly: material plus the glass-darkness overlay.
         // Plain .ultraThinMaterial read as washed-out next to a note on the same desktop.
-        .background(
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        // In its own window the material has to come from the content, because the panel
+        // is transparent so Liquid Glass can show the desktop. Embedded there is already a
+        // board around this with its own glass and its own border — a second one inside it
+        // is the card-inside-a-card the user sees, not a panel.
+        .background(panelSurface)
+        .clipShape(RoundedRectangle(cornerRadius: isEmbedded ? 0 : 14, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                .strokeBorder(
+                    Color.primary.opacity(isEmbedded ? 0 : 0.12), lineWidth: isEmbedded ? 0 : 1)
         )
-        .onAppear { start() }
+        .onAppear {
+            if isEmbedded { query = externalQuery }
+            start()
+        }
+        .onChange(of: externalQuery) { _, typed in
+            guard isEmbedded else { return }
+            query = typed
+            refresh()
+        }
         .onDisappear { ticker?.invalidate() }
         .onChange(of: displayedRows.map(\.id)) { _, ids in
             if selectedID == nil || !(ids.contains(selectedID ?? "")) {
@@ -264,6 +285,17 @@ struct ScopedListPanelContent: View {
         Never state a figure that is not shown here or that you cannot derive from it — \
         rates and values change, and a plausible invention is worse than a refusal.\(listing)
         """
+    }
+
+    /// The glass this panel stands on when it is a window. Embedded, it stands on the
+    /// board's glass and adds none of its own.
+    @ViewBuilder
+    private var panelSurface: some View {
+        if !isEmbedded {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness))
+        }
     }
 
     private var header: some View {
