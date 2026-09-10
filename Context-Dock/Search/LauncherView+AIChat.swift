@@ -6166,14 +6166,10 @@ extension LauncherView {
     private func isSafariPageLinkOpenQuery(_ query: String, bundleID: String) -> Bool {
         guard bundleID == "com.apple.Safari" || bundleID.hasPrefix("com.apple.Safari.WebApp")
         else { return false }
-        let lower = query.lowercased()
-        guard lower.contains("open") || lower.contains("go to") || lower.contains("visit")
-        else { return false }
-        // A page-relative phrase is ideal, but named destinations such as GitHub, Twitter,
-        // documentation, guide, pricing, etc. are also resolved against the live link set.
-        return lower.contains("link") || lower.contains("this page") || lower.contains("from page")
-            || lower.contains("guide") || lower.contains("github") || lower.contains("twitter")
-            || lower.contains("documentation") || lower.contains("docs")
+        // The rule itself lives in `SafariPageLinkRules`, where it can be argued with in
+        // tests: it was three verbs long, and "launch troubleshoot page from this page"
+        // fell past it into the page-script author, which refuses to navigate.
+        return SafariPageLinkRules.opensAPageLink(query)
     }
 
     private func rankedSafariPageLinks(
@@ -6212,10 +6208,7 @@ extension LauncherView {
     ) -> [PageLinkAction] {
         let lower = query.lowercased()
         if lower.contains("social") {
-            let socialHosts = [
-                "github.", "twitter.", "x.com", "mastodon.", "patreon.", "facebook.",
-                "instagram.", "linkedin.", "youtube.", "discord.", "reddit.", "threads.",
-            ]
+            let socialHosts = SafariPageLinkRules.socialHosts
             return links.filter { link in
                 let haystack = "\(link.title) \(link.url)".lowercased()
                 return socialHosts.contains(where: haystack.contains)
@@ -6272,20 +6265,32 @@ extension LauncherView {
           return { title: text.slice(0, 100), url: url, pageTitle: document.title || '' };
         }).filter(Boolean).filter(function(item, index, rows) {
           return rows.findIndex(function(other) { return other.url === item.url; }) === index;
-        }).slice(0, 60)); })()
+        }).slice(0, 300)); })()
         """#
         guard let raw = await executeCurrentSafariReadJavaScript(expression: script),
             !raw.hasPrefix("JS error:"),
             let data = raw.data(using: .utf8),
             let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: String]]
         else { return [] }
-        return rows.compactMap { row in
+        let collected = rows.compactMap { row -> PageLinkAction? in
             guard let url = row["url"], !url.isEmpty else { return nil }
             return PageLinkAction(
                 title: row["title"]?.isEmpty == false ? row["title"]! : url,
                 url: url,
                 pageTitle: row["pageTitle"] ?? "")
         }
+        // Cutting the list in document order threw away the one link the question was
+        // about: on docs.brew.sh the single off-site link is the seventy-sixth anchor,
+        // behind a sidebar of internal docs. Rank first, cut second — the extension's own
+        // reader has always done it this way.
+        let pageURL = await MainActor.run {
+            self.axContext.currentURL ?? ""
+        }
+        let host = SafariPageLinkRules.host(of: pageURL)
+        let ranked = SafariPageLinkRules.prioritised(
+            collected.map { (text: $0.title, url: $0.url) }, pageHost: host, limit: 60)
+        let byURL = Dictionary(collected.map { ($0.url, $0) }, uniquingKeysWith: { a, _ in a })
+        return ranked.compactMap { byURL[$0.url] }
     }
 
     /// Full live-page recovery used for model context when the Safari extension payload is
@@ -6305,7 +6310,7 @@ extension LauncherView {
             return text ? { text: text.slice(0, 100), url: url } : null;
           }).filter(Boolean).filter(function(item, index, all) {
             return all.findIndex(function(other) { return other.url === item.url; }) === index;
-          }).slice(0, 60);
+          }).slice(0, 300);
           return JSON.stringify({
             title: document.title || '', url: location.href,
             text: (root ? root.innerText : '').trim().slice(0, 12000), links: rows
@@ -6321,11 +6326,19 @@ extension LauncherView {
         let url = payload["url"] as? String ?? ""
         let text = payload["text"] as? String ?? ""
         let compacted = MarkItDownService.compact(text, for: query, limit: 5_000)
-        let links = (payload["links"] as? [[String: Any]] ?? []).compactMap { row -> String? in
-            guard let target = row["url"] as? String, !target.isEmpty else { return nil }
-            let label = (row["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return "- [\((label?.isEmpty == false ? label : target) ?? target)](\(target))"
-        }.joined(separator: "\n")
+        let collected = (payload["links"] as? [[String: Any]] ?? [])
+            .compactMap { row -> (text: String, url: String)? in
+                guard let target = row["url"] as? String, !target.isEmpty else { return nil }
+                let label = (row["text"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return (text: label.isEmpty ? target : label, url: target)
+            }
+        // The model is given the links that answer questions, not the first sixty in the
+        // document — the same rank-then-cut the link reader uses.
+        let links = SafariPageLinkRules
+            .prioritised(collected, pageHost: SafariPageLinkRules.host(of: url), limit: 60)
+            .map { "- [\($0.text)](\($0.url))" }
+            .joined(separator: "\n")
         guard !compacted.isEmpty || !url.isEmpty || !links.isEmpty else { return nil }
         return """
             CURRENT PAGE TITLE: \(title.isEmpty ? "(unknown)" : title)
