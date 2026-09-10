@@ -12,6 +12,16 @@ import Testing
 
 @testable import Context_Dock
 
+/// Somewhere for a main-queue observer to put what it saw.
+@MainActor
+private final class Received {
+    private(set) var all: [[AnyHashable: Any]] = []
+    nonisolated func append(_ info: [AnyHashable: Any]?) {
+        guard let info else { return }
+        MainActor.assumeIsolated { all.append(info) }
+    }
+}
+
 @Suite("Selection scope submit")
 @MainActor
 struct SelectionScopeSubmitTests {
@@ -29,22 +39,27 @@ struct SelectionScopeSubmitTests {
     @Test("The selection travels with the question")
     func theSelectedTextIsSent() async throws {
         let model = summoned()
-        model.query = "summarise this"
 
-        var received: [AnyHashable: Any]?
+        // Every test in the process shares one NotificationCenter, and these run in
+        // parallel — watching for "the next notification" caught another test's question
+        // and compared it to this one's. Collect, then find our own.
+        let question = "summarise this \(UUID().uuidString)"
+        model.query = question
+
+        let received = Received()
         let token = NotificationCenter.default.addObserver(
             forName: .appChatPromptSubmitted, object: nil, queue: .main
-        ) { note in received = note.userInfo }
+        ) { note in received.append(note.userInfo) }
         defer { NotificationCenter.default.removeObserver(token) }
 
         #expect(model.submit())
         try await Task.sleep(nanoseconds: 100_000_000)
 
+        let ours = received.all.first { $0["query"] as? String == question }
         // By the time the turn runs, the frontmost app is Context Dock and the live
         // selection is gone — so the text has to be carried, not re-read.
-        #expect(received?["selectedText"] as? String == "the paragraph the user highlighted")
-        #expect(received?["query"] as? String == "summarise this")
-        #expect(received?["bundleId"] as? String == "com.microsoft.VSCode")
+        #expect(ours?["selectedText"] as? String == "the paragraph the user highlighted")
+        #expect(ours?["bundleId"] as? String == "com.microsoft.VSCode")
     }
 
     @Test("Asking opens somewhere for the answer to appear")

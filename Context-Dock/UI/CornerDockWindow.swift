@@ -181,20 +181,25 @@ final class CornerDockController: NSObject {
         }.store(in: &sinks)
         selection.$phase.sink { [weak self] _ in
             Task { @MainActor in
-                self?.refresh()
-                self?.publishKeyboardOwner()
+                guard let self else { return }
+                self.refresh()
+                // The selection card carries a field, and it is summoned by a hotkey — as
+                // explicit a request for the keyboard as the chat's own. Without arming,
+                // the panel keeps `.nonactivatingPanel`, never becomes key, and the field
+                // shows a caret that no keystroke can reach: `publishKeyboardOwner` names
+                // the selection the owner, the card focuses its field, and nothing types.
+                self.syncPanelKeyboard()
+                self.publishKeyboardOwner()
             }
         }.store(in: &sinks)
-        prompt.$phase.sink { [weak self] phase in
+        prompt.$phase.sink { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
                 // The prompt is a text field the user asked for by name, so unlike the
-                // ambient pills it takes focus the moment it appears.
-                if phase.showsInput {
-                    self?.armKeyboard()
-                } else {
-                    self?.disarmKeyboard()
-                }
+                // ambient pills it takes focus the moment it appears. Disarming is not its
+                // decision alone: a selection card or an armed clipboard may still need the
+                // keys after the chat closes.
+                self?.syncPanelKeyboard()
                 self?.publishKeyboardOwner()
             }
         }.store(in: &sinks)
@@ -418,6 +423,22 @@ final class CornerDockController: NSObject {
         else { return }
         chatPresentation.composerInteracted()
         keyboardState.composerInteracted()
+    }
+
+    /// Take or release the keyboard to match what is on screen.
+    ///
+    /// One place, because two surfaces answering it independently is how the selection card
+    /// ended up focused inside a window that could not become key.
+    func syncPanelKeyboard() {
+        if CornerKeyboardOwner.panelHoldsKeyboard(
+            clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
+            selectionVisible: selection.phase.isVisible,
+            chatShowsInput: prompt.phase.showsInput)
+        {
+            armKeyboard()
+        } else {
+            disarmKeyboard()
+        }
     }
 
     func disarmKeyboard() {

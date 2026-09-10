@@ -68,4 +68,42 @@ struct CornerKeyboardOwnerTests {
             CornerKeyboardOwner.chatFieldHoldsFocus(
                 clipboardArmed: false, selectionVisible: false, chatShowsInput: true))
     }
+
+    /// Naming an owner is only half of it. The corner is a `.nonactivatingPanel` — the very
+    /// thing that keeps its ambient pills harmless also stops it becoming key — and only
+    /// the chat field ever dropped that style. So a selection card summoned by hotkey was
+    /// named the owner, focused its field, and could not receive a keystroke: a caret sat
+    /// in a window the keyboard could not reach.
+    @Test("Any surface that owns the keyboard needs the panel to take it")
+    func thePanelTakesTheKeyboardForEveryClaimant() {
+        #expect(
+            CornerKeyboardOwner.panelHoldsKeyboard(
+                clipboardArmed: false, selectionVisible: true, chatShowsInput: false))
+        #expect(
+            CornerKeyboardOwner.panelHoldsKeyboard(
+                clipboardArmed: true, selectionVisible: false, chatShowsInput: false))
+        #expect(
+            CornerKeyboardOwner.panelHoldsKeyboard(
+                clipboardArmed: false, selectionVisible: false, chatShowsInput: true))
+    }
+
+    @Test("It gives the keyboard back when every surface is gone")
+    func thePanelReleasesWhenNobodyWantsIt() {
+        #expect(
+            CornerKeyboardOwner.panelHoldsKeyboard(
+                clipboardArmed: false, selectionVisible: false, chatShowsInput: false) == false)
+    }
+
+    @Test("The chat closing does not take the keys from a card still up")
+    func closingOneSurfaceDoesNotDisarmAnother() {
+        // The chat used to disarm on its own phase change, which would pull the keyboard
+        // out from under a selection card that was still on screen.
+        #expect(
+            CornerKeyboardOwner.panelHoldsKeyboard(
+                clipboardArmed: false, selectionVisible: true, chatShowsInput: false))
+        #expect(
+            CornerKeyboardOwner.owner(
+                clipboardArmed: false, selectionVisible: true, chatShowsInput: false)
+                == .selection)
+    }
 }

@@ -41,6 +41,24 @@ enum CornerKeyboardOwner {
         return .none
     }
 
+    /// Should the panel be able to take the keyboard at all?
+    ///
+    /// Separate from *which* surface owns it, and the half that was missing: the corner is
+    /// a `.nonactivatingPanel`, which is what keeps its ambient pills harmless and is also
+    /// exactly what stops it becoming key. Only the chat field ever dropped that style, so
+    /// a selection card summoned by hotkey named itself the keyboard's owner, focused its
+    /// field, and could not receive a single keystroke.
+    static func panelHoldsKeyboard(
+        clipboardArmed: Bool,
+        selectionVisible: Bool,
+        chatShowsInput: Bool
+    ) -> Bool {
+        owner(
+            clipboardArmed: clipboardArmed,
+            selectionVisible: selectionVisible,
+            chatShowsInput: chatShowsInput) != .none
+    }
+
     /// Should the App Chat field hold the caret right now?
     static func chatFieldHoldsFocus(
         clipboardArmed: Bool,
