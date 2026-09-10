@@ -93,6 +93,9 @@ final class AppChatPromptModel: ObservableObject {
     /// The Global Command this scope is showing — Quick Note, Currency Converter, the rest
     /// of Settings → Integrations → Global → Commands.
     @Published var scopedCommand: SystemCommand?
+    /// What the panel's assistant has been asked and has answered, while this scope is up.
+    @Published var panelConversation: [ChatMessage] = []
+    @Published var isAskingPanel = false
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 

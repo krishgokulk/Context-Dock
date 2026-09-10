@@ -372,6 +372,43 @@ extension AppChatPromptModel {
     /// The board is showing an extension's own interface.
     var showsExtensionPanel: Bool { scopedExtension != nil || scopedCommand != nil }
 
+    /// Ask the panel on screen, from the field under it.
+    ///
+    /// The panel's own assistant sat beside its rows in a second pane. In the corner there
+    /// is already a field, and two places to ask one question is one too many — so the
+    /// field asks, through the same prompt the pane used.
+    func askPanelAssistant() {
+        let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, showsExtensionPanel, !isAskingPanel else { return }
+
+        let title = scopedExtension?.name ?? scopedCommand?.name ?? ""
+        let subtitle = scopedExtension?.description ?? scopedCommand?.description ?? ""
+        let extra = scopedExtension?.aiPrompt ?? ""
+        let history = panelConversation
+        let provider = AppSettings.shared.selectedAIProvider
+
+        panelConversation.append(ChatMessage(role: .user, content: question))
+        query = ""
+        isAskingPanel = true
+        hasActed = true
+        syncListPhase()
+
+        Task { @MainActor [weak self] in
+            do {
+                let reply = try await PanelAssistant.ask(
+                    question, title: title, subtitle: subtitle, extraPrompt: extra,
+                    history: history, provider: provider)
+                self?.panelConversation.append(ChatMessage(role: .assistant, content: reply))
+            } catch {
+                self?.panelConversation.append(
+                    ChatMessage(role: .assistant, content: error.localizedDescription))
+            }
+            self?.isAskingPanel = false
+            self?.syncListPhase()
+            self?.touch()
+        }
+    }
+
     /// Step into a Global Command — the panel the pinned window shows, in the corner's
     /// board. These are what Settings calls Commands, and they carry `syscmd://` ids; the
     /// extension work before this one covered `userext://` and so never reached them.
@@ -479,6 +516,7 @@ extension AppChatPromptModel {
         returnsToGlobalScope = false
         scopedExtension = nil
         scopedCommand = nil
+        panelConversation = []
         summonGlobalContext()
         return true
     }

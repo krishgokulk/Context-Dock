@@ -36,6 +36,7 @@ struct ExtensionScopeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            conversation
             content
                 .frame(
                     width: ExtensionScopeMetrics.width,
@@ -61,14 +62,51 @@ struct ExtensionScopeCard: View {
         .onHover { _ in model.touch() }
     }
 
+    /// What the field has asked this panel, and what it answered. Only while there is
+    /// something to show: an empty transcript would take room the panel needs.
+    @ViewBuilder
+    private var conversation: some View {
+        if !model.panelConversation.isEmpty || model.isAskingPanel {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(model.panelConversation.enumerated()), id: \.offset) {
+                        _, message in
+                        Text(message.content)
+                            .font(.system(size: 11))
+                            .foregroundStyle(
+                                message.role == .user
+                                    ? Color.secondary : Color.primary.opacity(0.9))
+                            .frame(
+                                maxWidth: .infinity,
+                                alignment: message.role == .user ? .trailing : .leading)
+                            .textSelection(.enabled)
+                    }
+                    if model.isAskingPanel {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small).scaleEffect(0.6)
+                            Text("Asking \(title)…")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 6)
+            }
+            .frame(height: 92)
+            Divider().opacity(0.25)
+        }
+    }
+
     @ViewBuilder
     private var content: some View {
         if let ext {
-            ExtensionPanelContentView(ext: ext)
+            ExtensionPanelContentView(ext: ext, isEmbedded: true)
         } else if let command {
             // The same panel the pinned window shows, so a command that works there works
-            // here: one view, two places to put it.
-            ScopedListPanelContent(command: command)
+            // here: one view, two places to put it. Embedded, it leaves the title bar and
+            // the assistant to the corner, which already has both.
+            ScopedListPanelContent(command: command, isEmbedded: true)
         }
     }
 

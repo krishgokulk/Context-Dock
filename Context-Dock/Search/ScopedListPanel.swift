@@ -81,9 +81,16 @@ final class ScopedListPanelManager: ObservableObject {
 
 struct ScopedListPanelContent: View {
     let command: SystemCommand
+    /// Drawn inside another surface rather than in its own window.
+    ///
+    /// Embedded, it draws neither its own title bar nor its own assistant: the corner
+    /// already has one of each, and two of either is the surface arguing with itself about
+    /// which bar closes what.
+    var isEmbedded: Bool = false
 
-    init(command: SystemCommand) {
+    init(command: SystemCommand, isEmbedded: Bool = false) {
         self.command = command
+        self.isEmbedded = isEmbedded
         // Per-extension, so a gallery stays a gallery and a port list stays a list.
         _gridView = AppStorage(wrappedValue: false, "panelGridView.\(command.id.uuidString)")
     }
@@ -112,7 +119,11 @@ struct ScopedListPanelContent: View {
     private var presetValues: [String] { GlobalCommandCapabilities.presetValues(for: command) }
     private var isPresetPicker: Bool { !presetValues.isEmpty }
     private var aiVisible: Bool {
-        showAI ?? (isPresetPicker || CustomListProviderService.hasAIPanel(command))
+        // Embedded, the surface hosting this already has a field, and that field is the
+        // assistant. A second one beside the rows would be two places to ask the same
+        // question, with the narrower one winning the space the rows need.
+        if isEmbedded { return false }
+        return showAI ?? (isPresetPicker || CustomListProviderService.hasAIPanel(command))
     }
 
     /// The panel's own field filters rows. A computed extension takes its input from
@@ -121,8 +132,10 @@ struct ScopedListPanelContent: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.3)
+            if !isEmbedded {
+                header
+                Divider().opacity(0.3)
+            }
             // AI sits beside the content, not under it — the same split Quick Note
             // uses. Stacked, the assistant pushed the rows into a sliver and the
             // panel stopped being useful for the thing it was pinned for.

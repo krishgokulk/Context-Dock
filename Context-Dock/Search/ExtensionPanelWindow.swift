@@ -163,6 +163,8 @@ struct ExtensionPanelRootView: View {
 
 struct ExtensionPanelContentView: View {
     let ext: UserGlobalExtension
+    /// Drawn inside another surface, which brings its own assistant.
+    var isEmbedded: Bool = false
 
     @State private var rows: [UserExtensionRow] = []
     @State private var loadError: String?
@@ -173,7 +175,7 @@ struct ExtensionPanelContentView: View {
         VStack(spacing: 0) {
             rowsSection
 
-            if ext.aiEnabled {
+            if ext.aiEnabled && !isEmbedded {
                 Divider().opacity(0.3)
                 ExtensionPanelAIComposer(title: ext.name, subtitle: ext.description,
                                          extraPrompt: ext.aiPrompt)
@@ -470,19 +472,9 @@ struct ExtensionPanelAIComposer: View {
             // Scoped to this panel: without an identity of its own the model inherits
             // the launcher-wide persona and proposes shell commands it cannot run here.
             // Attached apps widen that scope deliberately — the user asked for them.
-            let scopedPrompt = """
-            You are the assistant inside the "\(panelIdentity)" panel in Context Dock.
-            \(panelSubtitle)
-
-            Stay within this panel's subject, plus anything the user has attached below. \
-            You cannot run commands, open apps or touch files — if a request needs that, \
-            say so plainly instead of emitting any bracketed command directive.
-
-            Attached context is a live reading taken just now. Answer from it; never \
-            invent a tab, link or file that is not listed.
-
-            \(panelPrompt)\(attachmentNote)
-            """.trimmingCharacters(in: .whitespacesAndNewlines)
+            let scopedPrompt = PanelAssistant.scopedPrompt(
+                title: panelIdentity, subtitle: panelSubtitle, extraPrompt: panelPrompt,
+                attachmentNote: attachmentNote)
 
             do {
                 let reply = try await AIProviderService.shared.sendMessage(
