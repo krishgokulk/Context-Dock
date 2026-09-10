@@ -136,14 +136,17 @@ existing skills to `.app` so nothing breaks. Teach each surface to read its own.
 **Done when:** a skill written for "clipboard" steers the clipboard scope and nothing else,
 and the Integrations UI can show it.
 
-### Todo 4 — `SKILL.md` on disk, and DoraX's own skills
+### Todo 4 — `SKILL.md` on disk, and DoraX's own skills ✅ done 2026-09-10
 `~/Library/Application Support/Context-Dock/skills/<name>/SKILL.md`, watched for changes,
 importable and exportable, using the existing parser. Ship starter skills — one per surface —
 that describe what that surface is, what it can do and what it must not do: Global Context,
 CLI tool scope, clipboard scope, corner Context Dock chat, General Chat, selection scope, app
 adapters.
 **Done when:** dropping a `SKILL.md` in the folder makes it available with no relaunch, and
-`skills.list` shows DoraX's own seven.
+`skills.list` shows DoraX's own seven. *(Shipped. Verified live: the seven seed on launch,
+a file added to the folder reached the store in under two seconds, and deleting it removed
+the skill. The file is the source of truth for anything it defines — a disk-backed skill
+edited in Settings is replaced by what the file says.)*
 
 ### Todo 5 — Progressive disclosure by default
 The prompt carries skill **names and summaries**; bodies arrive through `skills.read`. Keep

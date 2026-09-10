@@ -696,6 +696,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupFrontmostAppTracking()
         MenuWarmCacheService.shared.startIdleWarming()
         DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "launch")
+        // Skills the user can edit as files, plus DoraX's own description of each surface.
+        // Seeded once, watched thereafter, so an edit lands without a relaunch.
+        SkillFolder.start()
 
         // Start event-driven AX observer pipeline
         AXObserverManager.shared.startMonitoring()
