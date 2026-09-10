@@ -307,28 +307,36 @@ final class SafariTabManager {
     func executeJS(_ js: String) async -> String? {
         guard let tmpURL = writeTempJS(js) else { return nil }
         defer { try? FileManager.default.removeItem(at: tmpURL) }
-        let path = tmpURL.path
-        let script = """
-        set jsCode to (do shell script ("cat " & quoted form of "\(path)"))
-        tell application "Safari"
-            return execute JavaScript jsCode in current tab of front window
-        end tell
-        """
-        return await runAppleScript(script)
+        return await runAppleScript(
+            Self.pageScript(jsPath: tmpURL.path, target: "current tab of front window"))
     }
 
     /// Run JavaScript in a specific tab (by window/tab index) and return the result.
     func executeJS(_ js: String, windowIndex: Int, tabIndex: Int) async -> String? {
         guard let tmpURL = writeTempJS(js) else { return nil }
         defer { try? FileManager.default.removeItem(at: tmpURL) }
-        let path = tmpURL.path
-        let script = """
-        set jsCode to (do shell script ("cat " & quoted form of "\(path)"))
+        return await runAppleScript(
+            Self.pageScript(
+                jsPath: tmpURL.path, target: "tab \(tabIndex) of window \(windowIndex)"))
+    }
+
+    /// The AppleScript that runs a page script Safari's own way.
+    ///
+    /// Safari's dictionary spells this `do JavaScript`. It was written `execute JavaScript`,
+    /// which is not Safari terminology at all, so every page script died before it ran —
+    /// AppleScript failed to compile the tell block and returned "Expected end of line but
+    /// found identifier". That surfaced twice over: an authored page action reported the
+    /// compiler's words as if they were the script's, and a read-only page question fell
+    /// back to this same route, got the same error, read it as "no links" and told the user
+    /// Safari had delivered no snapshot. The JS itself is `cat`-ed from a temp file so that
+    /// nothing in it has to survive AppleScript quoting.
+    static func pageScript(jsPath: String, target: String) -> String {
+        """
+        set jsCode to (do shell script ("cat " & quoted form of "\(jsPath)"))
         tell application "Safari"
-            return execute JavaScript jsCode in tab \(tabIndex) of window \(windowIndex)
+            return do JavaScript jsCode in \(target)
         end tell
         """
-        return await runAppleScript(script)
     }
 
     // MARK: - Private helpers

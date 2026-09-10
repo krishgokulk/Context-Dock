@@ -19,6 +19,18 @@ struct BrowserActionAuthorRoutingTests {
             "highlight all prices on this page"))
     }
 
+    /// "short 4 line summary of this page." opens with none of the question words, so it
+    /// reached the imperative fallback — mentions "page", under ten words — and the dock
+    /// wrote a JavaScript panel for a request that only wanted the page read back.
+    @Test func summarisingThePageIsAReadNotAPageScript() {
+        #expect(!BrowserActionAuthor.looksLikePageAction(
+            "short 4 line summary of this page."))
+        #expect(!BrowserActionAuthor.looksLikePageAction(
+            "tldr this page"))
+        #expect(!BrowserActionAuthor.looksLikePageAction(
+            "translate this page to tamil"))
+    }
+
     @Test func workflowGuidanceRequiresPageFindingBeforeClarification() {
         let guidance = BrowserActionAuthor.crossAppProjectGuidance(
             "install this in my VS Code project")

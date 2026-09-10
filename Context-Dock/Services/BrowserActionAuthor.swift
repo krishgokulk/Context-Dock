@@ -83,6 +83,14 @@ final class BrowserActionAuthor {
         ]
         if questionOpeners.contains(where: { q.hasPrefix($0) }) { return false }
 
+        // Reading the page is not acting on it, wherever the word sits in the sentence.
+        // "short 4 line summary of this page" opens with none of the question words, so it
+        // fell through to the imperative fallback below — it mentions "page" and is under
+        // ten words — and the dock wrote a JavaScript panel for a request that only ever
+        // wanted the page read back to it.
+        let readIntent = ["summar", "tldr", "tl;dr", "explain", "describe", "translate"]
+        if readIntent.contains(where: q.contains) { return false }
+
         // Verbs that act on a rendered page.
         let actionVerbs = [
             "dark mode", "light mode", "night mode", "hide", "show", "remove", "block",
