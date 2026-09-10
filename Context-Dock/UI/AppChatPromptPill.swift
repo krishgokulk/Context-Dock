@@ -435,19 +435,18 @@ struct AppChatPromptPill: View {
             } else if model.isCLIScope,
                 !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
-                // A tool's scope runs rather than sends, and it says so: the arrow means
-                // "ask", and this does not ask anything.
-                Button { model.runCLICommand() } label: {
-                    Image(systemName: model.isRunningCommand ? "stop.fill" : "play.fill")
-                        .font(.system(size: 11, weight: .bold))
+                // Asking the tool, through the pipeline — which decides what to run and
+                // asks before running it.
+                Button { model.submit() } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(Color.white.opacity(0.92))
                         .frame(width: 26, height: 26)
                         .background(Color.accentColor, in: Circle())
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help("Run \(model.cliCommand)")
-                .disabled(model.isRunningCommand)
+                .help("Ask \(model.cliCommand)")
                 .transition(.opacity)
             } else if !model.isSearchField,
                 !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

@@ -143,13 +143,10 @@ enum GlobalContextRow {
                     action, context: context, targetBundleId: bundleId)
             }
 
-        case .userExtension(let id):
-            // Opens its own panel, the same way the launcher opens it — the extension owns
-            // how it presents itself, and the corner is another place to reach it.
-            guard let ext = UserGlobalExtensionStore.shared.extensions.first(where: {
-                $0.id == id
-            }) else { return }
-            ExtensionPanelManager.shared.open(ext)
+        case .userExtension:
+            // Handled by the field that ran the row: in the corner the extension opens in
+            // the board, not in a window of its own beside it.
+            break
 
         case .cliScope:
             // Handled by the field that ran the row — stepping into a tool changes that

@@ -88,10 +88,8 @@ final class AppChatPromptModel: ObservableObject {
     @Published var returnsToGlobalScope = false
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
-    /// What a command in this CLI scope printed, and whether it failed.
-    @Published var cliOutput: CLIScopeRunner.Output?
-    /// A command is running: the surface says so rather than looking idle.
-    @Published var isRunningCommand = false
+    /// The Global Extension this scope is showing, drawn in the board above the field.
+    @Published var scopedExtension: UserGlobalExtension?
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
@@ -206,10 +204,9 @@ final class AppChatPromptModel: ObservableObject {
         // but only until the user has done something — running a command and being handed
         // the opening menu again reads as the surface forgetting what just happened.
         if typed { return isBrowsingMenus ? .suggesting : .prompt }
-        // A window snapshot occupies the board even with no rows to list, and so does a
-        // command's output.
-        if showsWindowSnapshot { return .suggesting }
-        if isCLIScope, cliOutput != nil || isRunningCommand { return .suggesting }
+        // A window snapshot occupies the board even with no rows to list, and so does an
+        // extension's own interface.
+        if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
         // A scope stepped into from Global shows only what it found. With nothing found the
         // field rests alone rather than opening an empty board.
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
@@ -325,7 +322,7 @@ final class AppChatPromptModel: ObservableObject {
 
     /// Any interaction puts the clock back, unless the surface is pinned.
     func touch() {
-        guard !isPinned, !isRunningCommand, phase.isVisible else { return }
+        guard !isPinned, !isAnswering, phase.isVisible else { return }
         arm(after: Self.idleDwell)
     }
 

@@ -334,14 +334,36 @@ extension AppChatPromptModel {
         touch()
     }
 
+    /// Whether a Global result is a Global Extension, which the corner steps into.
+    func isUserExtensionAction(_ action: GlobalSearchService.ActionSpec) -> Bool {
+        if case .userExtension = action { return true }
+        return false
+    }
+
     /// Whether a Global result is a CLI tool, which the corner steps into rather than runs.
     func isCLIScopeAction(_ action: GlobalSearchService.ActionSpec) -> Bool {
         if case .cliScope = action { return true }
         return false
     }
 
-    /// The board is carrying a command's result.
-    var showsCommandOutput: Bool { isCLIScope && (cliOutput != nil || isRunningCommand) }
+    /// Step into a Global Extension: its own panel, in the corner's board.
+    ///
+    /// The launcher opens these in a window of their own. In the corner that would be a
+    /// second floating container beside the one the user is already in, which is the thing
+    /// the shell's whole design refuses — so the extension's view is mounted here instead.
+    func scopeIntoExtension(_ ext: UserGlobalExtension) {
+        scopedExtension = ext
+        returnsToGlobalScope = true
+        adoptScope(name: ext.name, bundleID: "userext://\(ext.id.uuidString)")
+        hasActed = false
+        rows = []
+        updateGlobalTyping(for: "")
+        syncListPhase()
+        touch()
+    }
+
+    /// The board is showing an extension's own interface.
+    var showsExtensionPanel: Bool { scopedExtension != nil }
 
     /// The corner is inside a command-line tool's scope.
     var isCLIScope: Bool { appBundleID.hasPrefix("cli://") }
@@ -354,8 +376,6 @@ extension AppChatPromptModel {
     /// Step into a CLI tool. The dock scopes to `cli://<tool>` for this, so the corner uses
     /// the same identity — one scope, described the same way in both surfaces.
     func scopeIntoCLI(command: String, displayName: String) {
-        cliOutput = nil
-        isRunningCommand = false
         scopeIntoApp(name: displayName.isEmpty ? command : displayName, bundleID: "cli://\(command)")
     }
 
@@ -374,24 +394,17 @@ extension AppChatPromptModel {
         return Array(matches.prefix(Self.menuRowLimit)).map { AppChatRow.cliSuggestion($0) }
     }
 
-    /// Run what is typed against this scope's tool.
+    /// Ask this tool something, through the pipeline that already knows how.
+    ///
+    /// The dock's CLI scope is a chat with the tool: it works out what to run, asks for
+    /// approval when the command deserves one, and shows the steps. Running the binary
+    /// directly from here was a second, quieter path to the same machine — no approval, no
+    /// reasoning, and no way for the two surfaces to agree. This hands the question to the
+    /// same pipeline with the same `cli://` scope, so the corner behaves like the dock
+    /// because it *is* the dock's behaviour.
     func runCLICommand() {
-        guard isCLIScope, !isRunningCommand else { return }
-        let command = cliCommand
-        let line = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        isRunningCommand = true
-        hasActed = true
-        cliOutput = nil
-        syncListPhase()
-
-        Task { @MainActor [weak self] in
-            let output = await CLIScopeRunner.run(command: command, line: line)
-            guard let self, self.cliCommand == command else { return }
-            self.isRunningCommand = false
-            self.cliOutput = output
-            self.syncListPhase()
-            self.touch()
-        }
+        guard isCLIScope else { return }
+        submit()
     }
 
     /// The Finder scope searches the disk rather than Finder's menus — the question there
@@ -434,7 +447,7 @@ extension AppChatPromptModel {
     var showsWindowSnapshot: Bool {
         returnsToGlobalScope && !appBundleID.isEmpty
             && appBundleID != "com.apple.finder"
-            && !isCLIScope
+            && !isCLIScope && !showsExtensionPanel
     }
 
     /// Leave a scope entered from Global and go back to it.
@@ -442,6 +455,7 @@ extension AppChatPromptModel {
     func leaveScopeForGlobal() -> Bool {
         guard returnsToGlobalScope else { return false }
         returnsToGlobalScope = false
+        scopedExtension = nil
         summonGlobalContext()
         return true
     }
@@ -614,6 +628,15 @@ extension AppChatPromptModel {
             updateMenuMatches()
             touch()
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .global(let doc) where isUserExtensionAction(doc.action):
+            // Stepping into the extension, in this field's board.
+            if case .userExtension(let id) = doc.action,
+                let ext = UserGlobalExtensionStore.shared.extensions.first(where: {
+                    $0.id == id
+                })
+            {
+                scopeIntoExtension(ext)
+            }
         case .global(let doc) where isCLIScopeAction(doc.action):
             // Stepping into a tool changes *this* field's scope, so it is done here rather
             // than through the shared controller — which is also what makes it testable.

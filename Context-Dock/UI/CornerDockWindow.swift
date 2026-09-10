@@ -314,12 +314,12 @@ final class CornerDockController: NSObject {
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
-            list: showsAppSnapshot
-                ? AppSnapshotMetrics.size
-                : (showsAppChatList
-                    ? AppChatListMetrics.size(
-                        rows: prompt.listRowCount, output: prompt.showsCommandOutput)
-                    : nil),
+            list: showsExtensionPanel
+                ? ExtensionScopeMetrics.size
+                : (showsAppSnapshot
+                    ? AppSnapshotMetrics.size
+                    : (showsAppChatList
+                        ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil)),
             prompt: chatPresentation.isVisible ? promptSize : nil,
             anchor: anchor)
     }
@@ -330,7 +330,14 @@ final class CornerDockController: NSObject {
         chatPresentation.isVisible
             && chatPresentation.mode != .general
             && prompt.phase == .suggesting
-            && (prompt.listRowCount > 0 || prompt.showsCommandOutput)
+            && prompt.listRowCount > 0
+    }
+
+    /// An extension's own interface, in the board slot.
+    var showsExtensionPanel: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && prompt.showsExtensionPanel
     }
 
     /// The scoped app's window, in the same slot the list uses — the two are never both up,
@@ -645,7 +652,12 @@ struct CornerDockSurface: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         if chatPresentation.isVisible, chatPresentation.mode != .general {
-            if CornerDockController.shared.showsAppSnapshot {
+            if CornerDockController.shared.showsExtensionPanel,
+                let ext = prompt.scopedExtension
+            {
+                ExtensionScopeCard(model: prompt, ext: ext)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsAppSnapshot {
                 AppSnapshotCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppChatList {
