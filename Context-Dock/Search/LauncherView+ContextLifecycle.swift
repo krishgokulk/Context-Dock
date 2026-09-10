@@ -2071,6 +2071,15 @@ extension LauncherView {
         // them as chips on the message.
         let attached = (info["attachments"] as? [String] ?? [])
             .map(URL.init(fileURLWithPath:))
+        // Selection Scope sends the text it was opened on. Without it the turn falls back
+        // to `liveSelectionForChat()`, which reads whatever is selected *now* — and by the
+        // time a question is submitted the frontmost app is Context Dock, whose own window
+        // has no selection at all.
+        if let selected = (info["selectedText"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !selected.isEmpty
+        {
+            contextDockChatCapturedText = selected
+        }
         for url in attached where !aiMode.attachments.contains(url) {
             aiMode.attachments.append(url)
         }

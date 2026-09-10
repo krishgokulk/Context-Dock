@@ -495,6 +495,20 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// A question was asked elsewhere and its answer belongs here.
+    ///
+    /// The same state `submit()` enters, for the case where another corner surface —
+    /// Selection Scope — owns the question. Without it the transcript would open empty,
+    /// see the dock clear the session for the new scope, and step straight back to a field.
+    func expectAnswer() {
+        hasPresentedConversation = true
+        hasActed = true
+        awaitingAnswer = true
+        armAnswerWatchdog()
+        set(.chat)
+        touch()
+    }
+
     private static func handOff(
         app: String, bundleID: String, query: String, attachments: [URL]
     ) {

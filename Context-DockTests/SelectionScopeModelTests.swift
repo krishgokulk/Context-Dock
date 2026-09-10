@@ -66,14 +66,18 @@ struct SelectionScopeModelTests {
         #expect(model.phase == .showing)
     }
 
-    @Test("Asking sends the turn and puts the card away")
-    func submitDismisses() {
+    /// This asserted the opposite — that asking put the card away — with no reason given
+    /// for it. From the user's side that reads as Return doing nothing: the card vanishes
+    /// and the answer lands in a chat that was never on screen. The card is what says which
+    /// selection the answer is about, so it stays while the turn runs.
+    @Test("Asking sends the turn and keeps the card up")
+    func submitKeepsTheCardUp() {
         let model = SelectionScopeModel()
         model.summon(from: context(text: "hello"))
         model.query = "translate this"
 
         #expect(model.submit())
-        #expect(model.phase == .hidden)
+        #expect(model.phase == .showing)
         #expect(model.query.isEmpty)
     }
 

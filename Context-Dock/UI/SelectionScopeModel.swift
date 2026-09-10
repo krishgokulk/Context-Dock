@@ -93,6 +93,10 @@ final class SelectionScopeModel: ObservableObject {
     func submit() -> Bool {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return false }
+        // The selected text travels with the question. The pipeline otherwise falls back to
+        // reading the live selection, and by the time the turn runs the frontmost app is
+        // Context Dock, whose window has nothing selected — so the question about the
+        // user's paragraph was asked without the paragraph.
         NotificationCenter.default.post(
             name: .appChatPromptSubmitted,
             object: nil,
@@ -101,9 +105,16 @@ final class SelectionScopeModel: ObservableObject {
                 "bundleId": appBundleID,
                 "query": question,
                 "attachments": files.map(\.path),
+                "selectedText": text,
             ])
         query = ""
-        dismiss()
+        // This surface chooses a subject; the corner's chat is where an answer is shown. It
+        // used to hide itself here and hand over to a chat that was not on screen, so the
+        // answer arrived nowhere and pressing Return looked like it had done nothing.
+        CornerDockController.shared.chatPresentation.presentAnswer(
+            forSelectionIn: appName, bundleID: appBundleID)
+        // Stay up while the turn runs: the card is what says which selection this is about.
+        cancel()
         return true
     }
 

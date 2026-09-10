@@ -143,6 +143,19 @@ final class CornerChatPresentation: ObservableObject {
             userInfo: ["appName": target.name, "bundleId": target.bundleID])
     }
 
+    /// Open the app chat so an answer asked from another corner surface has somewhere to
+    /// appear, and tell it one is coming.
+    ///
+    /// Selection Scope asks its question through the same pipeline the app chat renders. It
+    /// used to post the question and hide itself, leaving the answer to land in a surface
+    /// that was not on screen — from the user's side, Return did nothing at all.
+    func presentAnswer(forSelectionIn appName: String, bundleID: String) {
+        showFrontmostApp(
+            target: CornerChatTarget(
+                name: appName, bundleID: bundleID, suggestions: [], summary: ""))
+        appChat.expectAnswer()
+    }
+
     @discardableResult
     func handleLeftArrow(draft: String) -> Bool {
         guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
