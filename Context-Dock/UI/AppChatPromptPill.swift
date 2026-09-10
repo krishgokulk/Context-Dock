@@ -331,9 +331,11 @@ struct AppChatPromptPill: View {
                     .onKeyPress(.upArrow) {
                         model.moveMenuFocus(by: -1) ? .handled : .ignored
                     }
-                    .onKeyPress(.delete) {
+                    .onKeyPress(keys: [.delete, .deleteForward]) { _ in
                         // Backspace on an empty field leaves the scope — the dock's way out,
-                        // and the one most people reach for before they find the "−".
+                        // and the one most people reach for before they find the "−". Both
+                        // delete keys, because `.delete` alone did not match the backspace
+                        // this field actually receives.
                         if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
                         return .ignored
                     }
@@ -361,8 +363,11 @@ struct AppChatPromptPill: View {
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
                     .onKeyPress(.rightArrow) {
-                        // In Global, right on an empty field scopes into the first running
-                        // app. Everywhere else it walks back through the scopes.
+                        // With something typed and a completion showing, → takes the ghost
+                        // — the same thing Tab does, and what the key means in a search
+                        // field. On an empty field it steps into an app instead, and
+                        // otherwise it walks back through the scopes.
+                        if model.acceptGhostCompletion() { return .handled }
                         if model.scopeIntoFirstRunningApp() { return .handled }
                         return CornerDockController.shared.chatPresentation
                             .handleRightArrow(draft: model.query) ? .handled : .ignored

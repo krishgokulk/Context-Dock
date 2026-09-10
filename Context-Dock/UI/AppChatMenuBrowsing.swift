@@ -438,6 +438,18 @@ extension AppChatPromptModel {
         }
     }
 
+    /// Right arrow takes the ghost, the way a shell completes a path: with something typed
+    /// and a completion showing, → fills it in rather than walking scopes. Returns false
+    /// when there is no ghost, so the key keeps its other meanings.
+    @discardableResult
+    func acceptGhostCompletion() -> Bool {
+        let ghost = globalGhostCompletion
+        guard !ghost.isEmpty else { return false }
+        query += ghost
+        queryChanged()
+        return true
+    }
+
     /// What the rest of the top match would be, if the user accepted it: the ghost the dock
     /// shows after what they have typed.
     var globalGhostCompletion: String {

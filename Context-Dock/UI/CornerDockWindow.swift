@@ -591,6 +591,95 @@ struct CornerDockSurface: View {
     }
 
     var body: some View {
+        // Centred, the shell is a row: shelf, field, clipboard side by side, with what
+        // answers the field stacked over the field itself. Anchored to an edge it stays a
+        // column, because a row against the screen's corner would run off it.
+        if anchor == .center {
+            centredRow
+        } else {
+            column
+        }
+    }
+
+    /// What answers the field: the selection, the app's commands, or its window.
+    @ViewBuilder
+    private var chatBoards: some View {
+        if CornerDockController.shared.selection.phase.isVisible {
+            SelectionScopeCard(model: CornerDockController.shared.selection)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+        }
+        if chatPresentation.isVisible, chatPresentation.mode != .general {
+            if CornerDockController.shared.showsAppSnapshot {
+                AppSnapshotCard(model: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsAppChatList {
+                AppChatListCard(model: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+    }
+
+    /// The field itself, in whichever mode is showing.
+    ///
+    /// Both chat modes are the same shape — a board above a field — so switching scope is a
+    /// cross-fade of what the board holds, not one container torn down and a differently
+    /// built one put up. That teardown is what used to flicker.
+    @ViewBuilder
+    private var chatSurface: some View {
+        if chatPresentation.isVisible {
+            if chatPresentation.mode == .general {
+                if chatPresentation.generalPhase == .mini {
+                    CornerGeneralChatMini().transition(.opacity)
+                } else {
+                    CornerGeneralChatView(model: chatPresentation.generalChat)
+                        .transition(.opacity)
+                }
+            } else {
+                AppChatPromptPill(model: prompt).transition(.opacity)
+            }
+        }
+    }
+
+    /// Shelf | field-and-its-boards | clipboard-and-its-preview — the same arithmetic
+    /// `CornerDockLayout.slots` measures, so what is drawn is what is hit-tested.
+    private var centredRow: some View {
+        HStack(alignment: .bottom, spacing: CornerDockLayout.gap) {
+            if shelf.phase.isVisible {
+                DropShelfPill(presentation: shelf, store: shelfStore)
+            }
+
+            VStack(alignment: .center, spacing: CornerDockLayout.gap) {
+                chatBoards
+                chatSurface
+            }
+
+            VStack(alignment: .center, spacing: CornerDockLayout.gap) {
+                if CornerDockController.shared.showsClipPreview,
+                    let focused = clipboardModel.focusedEntry
+                {
+                    ClipboardPreviewCard(
+                        model: clipboardModel,
+                        entry: focused,
+                        isPinned: clipboardModel.isPreviewPinned,
+                        onTogglePin: { clipboardModel.togglePreviewPin() }
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                }
+                if clipboardModel.phase.isVisible {
+                    ClipboardDockPill(model: clipboardModel)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .padding(CornerDockLayout.pad)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isVisible)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84), value: clipboardModel.phase.isVisible)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
+    }
+
+    private var column: some View {
         VStack(alignment: anchor.horizontalAlignment, spacing: CornerDockLayout.gap) {
             if shelf.phase.isVisible {
                 DropShelfPill(presentation: shelf, store: shelfStore)
@@ -609,34 +698,8 @@ struct CornerDockSurface: View {
             if clipboardModel.phase.isVisible {
                 ClipboardDockPill(model: clipboardModel)
             }
-            if CornerDockController.shared.selection.phase.isVisible {
-                SelectionScopeCard(model: CornerDockController.shared.selection)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-            if chatPresentation.isVisible {
-                // Both modes are now the same shape — a board above a field — so the switch
-                // is a cross-fade of what the board holds, not one container being torn down
-                // and a differently-built one going up. That teardown is what flickered.
-                if chatPresentation.mode == .general {
-                    if chatPresentation.generalPhase == .mini {
-                        CornerGeneralChatMini()
-                            .transition(.opacity)
-                    } else {
-                        CornerGeneralChatView(model: chatPresentation.generalChat)
-                            .transition(.opacity)
-                    }
-                } else {
-                    if CornerDockController.shared.showsAppSnapshot {
-                        AppSnapshotCard(model: prompt)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    } else if CornerDockController.shared.showsAppChatList {
-                        AppChatListCard(model: prompt)
-                            .transition(.opacity.combined(with: .move(edge: .bottom)))
-                    }
-                    AppChatPromptPill(model: prompt)
-                        .transition(.opacity)
-                }
-            }
+            chatBoards
+            chatSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: anchor.frameAlignment)
         .padding(CornerDockLayout.pad)

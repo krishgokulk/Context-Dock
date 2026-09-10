@@ -120,6 +120,57 @@ enum CornerDockLayout {
         let listRect = place(list)
         // The selection sits above the chat that will act on it, and below the clipboard.
         let selectionRect = place(selection)
+
+        // Centred, the shell reads as a dock: the ambient pills stand beside the field on
+        // the same baseline rather than stacking over it, so the row grows sideways the way
+        // the Dock does instead of climbing the screen in front of the user's work. What a
+        // question is being answered with — the list, the selection — still sits above,
+        // because that belongs to the field and not to the row.
+        if anchor == .center, let prompt {
+            // One row, centred as a whole: shelf, field, clipboard. Measured the way the
+            // view stacks it, so the rect drawn and the rect hit-tested are the same
+            // arithmetic rather than two guesses that agree most of the time.
+            let widths = [shelf?.width, prompt.width, clipboard?.width].compactMap { $0 }
+            let total = widths.reduce(0, +) + CGFloat(widths.count - 1) * gap
+            var cursor = (panelSize.width - total) / 2
+
+            func placeInRow(_ size: CGSize?) -> CGRect? {
+                guard let size else { return nil }
+                let rect = CGRect(x: cursor, y: pad, width: size.width, height: size.height)
+                cursor = rect.maxX + gap
+                return rect
+            }
+
+            let shelfRect = placeInRow(shelf)
+            let rowPromptRect = placeInRow(prompt)!
+            let clipboardRect = placeInRow(clipboard)
+
+            // What answers the field sits above the field, centred on it.
+            func placeAbovePrompt(_ size: CGSize?, y: CGFloat) -> CGRect? {
+                guard let size else { return nil }
+                return CGRect(
+                    x: rowPromptRect.midX - size.width / 2, y: y,
+                    width: size.width, height: size.height)
+            }
+            var above = rowPromptRect.maxY + gap
+            let rowListRect = placeAbovePrompt(list, y: above)
+            if let rowListRect { above = rowListRect.maxY + gap }
+            let rowSelectionRect = placeAbovePrompt(selection, y: above)
+
+            // The clip being looked at stays directly above the clipboard it came from.
+            let previewRect: CGRect? = {
+                guard let preview, let clipboardRect else { return nil }
+                return CGRect(
+                    x: clipboardRect.midX - preview.width / 2,
+                    y: clipboardRect.maxY + gap,
+                    width: preview.width, height: preview.height)
+            }()
+            return (
+                shelfRect, previewRect, clipboardRect, rowSelectionRect, rowListRect,
+                rowPromptRect
+            )
+        }
+
         let clipboardRect = place(clipboard)
         let previewRect = place(preview)
         let shelfRect = place(shelf)

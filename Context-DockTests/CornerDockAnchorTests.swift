@@ -32,17 +32,39 @@ struct CornerDockAnchorTests {
         #expect(slots.clipboard?.minX == CornerDockLayout.pad)
     }
 
-    @Test("Centred, a narrow pill sits under the middle of the card above it")
-    func centreAlignsMidpoints() {
+    @Test("Centred, the shell is a row: the clipboard stands beside the field, not over it")
+    func centreLaysOutSideways() {
         let slots = CornerDockLayout.slots(clipboard: pill, prompt: card, anchor: .center)
 
-        #expect(slots.prompt?.midX == slots.clipboard?.midX)
-        #expect(slots.prompt?.midX == CornerDockLayout.panelSize.width / 2)
+        // Same baseline, clipboard to the right of the field, one gap between them.
+        #expect(slots.clipboard?.minY == slots.prompt?.minY)
+        #expect(slots.clipboard?.minX == (slots.prompt?.maxX ?? 0) + CornerDockLayout.gap)
     }
 
-    @Test("The stack order and heights do not depend on which edge it is against")
+    @Test("Centred, the whole row is centred — not the field with things hanging off it")
+    func centreCentresTheRow() {
+        let slots = CornerDockLayout.slots(
+            shelf: pill, clipboard: pill, prompt: card, anchor: .center)
+        let left = slots.shelf!.minX
+        let right = slots.clipboard!.maxX
+
+        #expect(abs((left + right) / 2 - CornerDockLayout.panelSize.width / 2) < 0.5)
+    }
+
+    @Test("Centred, what answers the field still sits above the field")
+    func centreKeepsBoardsAboveTheField() {
+        let board = CGSize(width: 372, height: 160)
+        let slots = CornerDockLayout.slots(
+            clipboard: pill, list: board, prompt: card, anchor: .center)
+
+        #expect(slots.list?.midX == slots.prompt?.midX)
+        #expect(slots.list?.minY == (slots.prompt?.maxY ?? 0) + CornerDockLayout.gap)
+    }
+
+    @Test("Anchored to an edge, the surfaces stack in one order")
     func anchorMovesNothingVertically() {
-        for anchor in CornerDockAnchor.allCases {
+        // Centred is deliberately not a column — it is a row, covered above.
+        for anchor in [CornerDockAnchor.left, .right] {
             let slots = CornerDockLayout.slots(clipboard: pill, prompt: card, anchor: anchor)
             // The prompt takes the bottom; the clipboard sits a gap above it.
             #expect(slots.prompt?.minY == CornerDockLayout.pad)
