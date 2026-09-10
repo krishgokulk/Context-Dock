@@ -563,9 +563,17 @@ enum LocalDataCapabilities {
                 id: "browser.tabs",
                 title: "List Open Browser Tabs",
                 appBundleID: nil,
-                inputSchema: .init(fields: []),
+                inputSchema: .init(fields: [
+                    // "Which tab has the invoice open" is the question people actually ask,
+                    // and answering it by returning sixty rows makes the model do the
+                    // matching against a list that may have been truncated first.
+                    .init(
+                        name: "matching",
+                        description: "Optional text to match against tab titles and URLs",
+                        required: false)
+                ]),
                 riskLevel: .low
-            ) { _ in
+            ) { request in
                 // Live app state, not library data — a tab open right now may never have
                 // been written to history, and history holds pages closed hours ago.
                 let tabs = ContextDetector.shared.getAllSafariTabs()
@@ -574,12 +582,27 @@ enum LocalDataCapabilities {
                         success: true,
                         output: "No open Safari tabs (or Safari isn't running).")
                 }
-                let lines = tabs.prefix(60).map { tab in
+                let filter = (request.input["matching"] ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let matched = filter.isEmpty
+                    ? tabs
+                    : tabs.filter {
+                        $0.title.lowercased().contains(filter)
+                            || $0.url.lowercased().contains(filter)
+                    }
+                guard !matched.isEmpty else {
+                    return .init(
+                        success: true,
+                        output: "None of the \(tabs.count) open tabs match "
+                            + "\"\(filter)\". They are open; none mentions it.")
+                }
+                let lines = matched.prefix(60).map { tab in
                     "- \(tab.title.isEmpty ? tab.url : tab.title) — \(tab.url)"
                 }
                 return .init(
                     success: true,
-                    output: "\(tabs.count) open tab\(tabs.count == 1 ? "" : "s"):\n"
+                    output: "\(matched.count) open tab\(matched.count == 1 ? "" : "s")"
+                        + "\(filter.isEmpty ? "" : " matching \"\(filter)\"") :\n"
                         + lines.joined(separator: "\n"))
             }
         )
@@ -594,24 +617,41 @@ enum LocalDataCapabilities {
                 id: "browser.currentPage",
                 title: "Read Current Browser Page",
                 appBundleID: nil,
-                inputSchema: .init(fields: []),
+                inputSchema: .init(fields: [
+                    // Compacting around what the answer needs beats the first five
+                    // thousand characters, which is where the answer usually was not.
+                    .init(
+                        name: "about",
+                        description: "What the answer needs from the page. Optional.",
+                        required: false)
+                ]),
                 riskLevel: .low
-            ) { _ in
+            ) { request in
                 let detector = ContextDetector.shared
                 if let page = detector.getSafariContext() {
                     let domain = URL(string: page.url)?.host ?? "Unknown domain"
-                    let pageText = SafariBrowserBridge.shared.isFresh
-                        ? (SafariBrowserBridge.shared.currentContext()?.pageText ?? "")
-                        : ""
+                    let about = (request.input["about"] ?? "").isEmpty
+                        ? request.userRequest
+                        : (request.input["about"] ?? "")
+                    // The grounded block, not a second reader: it takes the extension
+                    // payload when fresh, falls back to the accessibility snapshot when it
+                    // is not, and carries the page's links. Reading only the extension's
+                    // text meant a stale bridge reported "unavailable" about a page the AX
+                    // reader could see — and dropped every href either way, so a question
+                    // about where the page can take you had nothing to answer from.
+                    let block = ScopedGroundingBlocks.browserPage(
+                        bundleId: "com.apple.Safari",
+                        query: about.isEmpty ? nil : about,
+                        liveURL: page.url)
                     var output = "Current Safari page (read just now):\n"
                         + "Title: \(page.title)\nDomain: \(domain)\nURL: \(page.url)"
-                    if pageText.isEmpty {
+                    if block.isEmpty {
                         output += "\nPage text: unavailable because the Context Dock Safari "
-                            + "Extension has not supplied fresh page content. Report the title "
-                            + "and domain, and say a content summary is unavailable."
+                            + "Extension has not supplied fresh page content and the page "
+                            + "exposes no accessible text. Report the title and domain, and "
+                            + "say a content summary is unavailable."
                     } else {
-                        output += "\nPage content:\n" + MarkItDownService.compact(
-                            pageText, for: "summarize current page", limit: 5_000)
+                        output += "\n" + block
                     }
                     return .init(success: true, output: output)
                 }

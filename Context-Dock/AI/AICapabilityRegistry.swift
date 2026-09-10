@@ -271,6 +271,10 @@ final class CapabilityRegistry {
 
     private func registerBuiltIns() {
         DoraXSurfaceCapabilities.register(in: self)
+        // The browser was the one surface with no capabilities at all: every page read,
+        // tab list and link open was a keyword-chosen Swift branch, so a phrasing nobody
+        // predicted made the whole thing impossible rather than slower.
+        BrowserCapabilities.register(in: self)
         GitCapabilities.register(in: self)
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
