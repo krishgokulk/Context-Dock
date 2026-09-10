@@ -151,10 +151,10 @@ enum GlobalContextRow {
             }) else { return }
             ExtensionPanelManager.shared.open(ext)
 
-        case .cliScope(let command, let displayName):
-            // Stepping into the tool, where its subcommands are offered and Return runs one.
-            CornerDockController.shared.prompt.scopeIntoCLI(
-                command: command, displayName: displayName)
+        case .cliScope:
+            // Handled by the field that ran the row — stepping into a tool changes that
+            // field's scope, and this function does not know which field asked.
+            break
 
         case .systemCommandScope:
             // Still a scope the dock owns; nothing in the corner runs one yet.

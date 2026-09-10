@@ -318,6 +318,10 @@ extension AppChatPromptModel {
             summary: AppChatSuggestionProvider.summary(for: app))
         hasActed = false
         loadMenuItems()
+        // `loadMenuItems` returns early when the scope is not a running app — a CLI tool
+        // never is — so the rows have to be rebuilt here or the scope opens still showing
+        // the Global results it was entered from.
+        updateMenuMatches()
         updateGlobalTyping(for: "")
 
         // Scoping in from Global asks "what is this app doing?", and a list of its menu
@@ -328,6 +332,12 @@ extension AppChatPromptModel {
         }
         syncListPhase()
         touch()
+    }
+
+    /// Whether a Global result is a CLI tool, which the corner steps into rather than runs.
+    func isCLIScopeAction(_ action: GlobalSearchService.ActionSpec) -> Bool {
+        if case .cliScope = action { return true }
+        return false
     }
 
     /// The corner is inside a command-line tool's scope.
@@ -563,6 +573,19 @@ extension AppChatPromptModel {
         return true
     }
 
+    /// Take the row the arrows landed on — enter its scope, or run it.
+    ///
+    /// Tab and right arrow used to ignore the focused row entirely: Tab acted on the top
+    /// match and right arrow completed the ghost, so arrowing down to a CLI tool and
+    /// pressing either did nothing to that row. The row under the highlight is what the
+    /// user is pointing at, and it wins over both.
+    @discardableResult
+    func enterFocusedRow() -> Bool {
+        guard let row = focusedRow else { return false }
+        run(row)
+        return true
+    }
+
     /// Runs whichever row the keyboard is on. Returns false when there is none, so Enter
     /// falls through to asking the question the user typed.
     @discardableResult
@@ -588,6 +611,12 @@ extension AppChatPromptModel {
             updateMenuMatches()
             touch()
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .global(let doc) where isCLIScopeAction(doc.action):
+            // Stepping into a tool changes *this* field's scope, so it is done here rather
+            // than through the shared controller — which is also what makes it testable.
+            if case .cliScope(let command, let displayName) = doc.action {
+                scopeIntoCLI(command: command, displayName: displayName)
+            }
         case .global(let doc):
             hasActed = true
             query = ""

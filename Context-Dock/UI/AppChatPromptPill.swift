@@ -328,8 +328,10 @@ struct AppChatPromptPill: View {
                         model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
-                        // Tab takes the top match in Global, the way it does in the dock.
-                        model.acceptGlobalTopMatch() ? .handled : .ignored
+                        // The row the arrows landed on first; the top match only when the
+                        // user has not chosen one.
+                        if model.enterFocusedRow() { return .handled }
+                        return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
                     .onKeyPress(.downArrow) {
                         model.moveMenuFocus(by: 1) ? .handled : .ignored
@@ -369,10 +371,11 @@ struct AppChatPromptPill: View {
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
                     .onKeyPress(.rightArrow) {
-                        // With something typed and a completion showing, → takes the ghost
-                        // — the same thing Tab does, and what the key means in a search
-                        // field. On an empty field it steps into an app instead, and
-                        // otherwise it walks back through the scopes.
+                        // A chosen row is what the user is pointing at, so → steps into it
+                        // before anything else. Otherwise it takes the ghost completion, and
+                        // on an empty field it steps into an app; failing all of that it
+                        // walks back through the scopes.
+                        if model.enterFocusedRow() { return .handled }
                         if model.acceptGhostCompletion() { return .handled }
                         if model.scopeIntoFirstRunningApp() { return .handled }
                         return CornerDockController.shared.chatPresentation

@@ -506,6 +506,19 @@ final class CornerDockController: NSObject {
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
         // A key pressed while Command is down means this was a shortcut, not a tap.
         commandTapStarted = nil
+
+        // Tab: the focus system claims it inside a text field, so `onKeyPress(.tab)` never
+        // sees it and the row under the highlight could not be entered with the key the
+        // dock uses for exactly that.
+        if event.keyCode == 48,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            chatPresentation.isVisible, prompt.phase.showsInput
+        {
+            if prompt.enterFocusedRow() { return nil }
+            if prompt.acceptGlobalTopMatch() { return nil }
+            return event
+        }
         guard let panel, event.window === panel,
               event.keyCode == 123,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
