@@ -399,6 +399,56 @@ extension AppChatPromptModel {
             at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 
+    /// The file a row stands for, when it stands for one: an app bundle, a folder, a
+    /// document. Quick Look needs a path, and rows that have none simply do not preview.
+    func previewPath(for row: AppChatRow) -> String? {
+        switch row {
+        case .file(let url): return url.path
+        case .global(let doc):
+            if let path = doc.filePath, !path.isEmpty { return path }
+            switch doc.action {
+            case .launchPath(let path): return path
+            case .launchBundleId(_, let path): return path
+            case .activatePID(_, _, let path): return path
+            default: return nil
+            }
+        case .command, .action: return nil
+        }
+    }
+
+    /// Space previews the focused row, the way it does in the dock — but only once the user
+    /// has arrowed into the list. With the caret still in the field, space is a space.
+    @discardableResult
+    func previewFocusedRow() -> Bool {
+        guard focusedMenuIndex != nil, let row = focusedRow,
+            let path = previewPath(for: row)
+        else { return false }
+        FileQuickLookPanel.shared.toggle(path: path)
+        touch()
+        return true
+    }
+
+    /// The icon of whatever the field is pointing at — the focused row, or the first one.
+    var leadingResultIcon: NSImage? {
+        let row = focusedRow ?? rows.first
+        switch row {
+        case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
+        case .global(let doc): return doc.icon
+        default: return nil
+        }
+    }
+
+    /// What the rest of the top match would be, if the user accepted it: the ghost the dock
+    /// shows after what they have typed.
+    var globalGhostCompletion: String {
+        guard isGlobalScope, let title = globalTopMatch?.title else { return "" }
+        let typed = query
+        guard !typed.isEmpty, title.count > typed.count,
+            title.lowercased().hasPrefix(typed.lowercased())
+        else { return "" }
+        return String(title.dropFirst(typed.count))
+    }
+
     /// The list has something to show.
     var isBrowsingMenus: Bool { !rows.isEmpty }
 

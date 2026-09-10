@@ -289,6 +289,20 @@ struct AppChatPromptPill: View {
                 if model.query.isEmpty {
                     placeholder
                 }
+                // What Tab would complete to, greyed behind the caret. Drawn in the field's
+                // own metrics with the typed part transparent, so the ghost lines up with
+                // the text instead of floating near it.
+                if !model.globalGhostCompletion.isEmpty {
+                    HStack(spacing: 0) {
+                        Text(model.query).foregroundStyle(.clear)
+                        Text(model.globalGhostCompletion)
+                            .foregroundStyle(.secondary.opacity(0.45))
+                        Spacer(minLength: 0)
+                    }
+                    .font(.system(size: 14, weight: .medium))
+                    .lineLimit(1)
+                    .allowsHitTesting(false)
+                }
                 TextField("", text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .medium))
@@ -301,6 +315,11 @@ struct AppChatPromptPill: View {
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
                         model.submit()
+                    }
+                    .onKeyPress(.space) {
+                        // Only once the user has arrowed into the list; with the caret in
+                        // the field, a space is a space.
+                        model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
                         // Tab takes the top match in Global, the way it does in the dock.
@@ -456,9 +475,18 @@ struct AppChatPromptPill: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(0.10))
                 .frame(width: 26, height: 26)
-            Image(systemName: model.globalTopMatch == nil ? "magnifyingglass" : "return")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(model.globalTopMatch == nil ? .secondary : Color.accentColor)
+            // The thing the field is pointing at, so the icon answers "what happens if I
+            // press Return" without the user reading a row.
+            if let icon = model.leadingResultIcon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 18, height: 18)
+            } else {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(width: 28, height: 28)
         .help(model.globalTopMatch.map { "Tab to open \($0.title)" } ?? "Search everything")
