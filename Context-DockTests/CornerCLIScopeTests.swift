@@ -59,6 +59,32 @@ struct CornerCLIScopeTests {
         #expect(model.isCLIScope == false)
     }
 
+    @Test("A chosen scope survives the frontmost app changing under it")
+    func aChosenScopeIsNotTakenByTheFrontmostApp() {
+        let model = globalModel()
+        model.rows = [.global(cliDocument("tailscale"))]
+        model.moveMenuFocus(by: 1)
+        model.enterFocusedRow()
+
+        // Clicking away used to swap the field to whatever came forward, losing the tool
+        // the user had just stepped into.
+        model.frontmostAppDidChange(
+            app: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+
+        #expect(model.isCLIScope)
+        #expect(model.cliCommand == "tailscale")
+    }
+
+    @Test("Global Context is not taken by the frontmost app either")
+    func globalSurvivesAnAppSwitch() {
+        let model = globalModel()
+
+        model.frontmostAppDidChange(
+            app: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+
+        #expect(model.isGlobalScope)
+    }
+
     @Test("A tool's scope shows no window snapshot — it has no window")
     func toolsHaveNoSnapshot() {
         let model = globalModel()

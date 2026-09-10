@@ -432,6 +432,23 @@ struct AppChatPromptPill: View {
                 .buttonStyle(.plain)
                 .help("Stop")
                 .transition(.opacity)
+            } else if model.isCLIScope,
+                !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                // A tool's scope runs rather than sends, and it says so: the arrow means
+                // "ask", and this does not ask anything.
+                Button { model.runCLICommand() } label: {
+                    Image(systemName: model.isRunningCommand ? "stop.fill" : "play.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 26, height: 26)
+                        .background(Color.accentColor, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Run \(model.cliCommand)")
+                .disabled(model.isRunningCommand)
+                .transition(.opacity)
             } else if !model.isSearchField,
                 !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             {
@@ -451,7 +468,7 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat, !model.isSearchField {
+            if pointerInside, model.phase != .chat, !model.isGlobalScope {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }

@@ -507,6 +507,19 @@ final class CornerDockController: NSObject {
         // A key pressed while Command is down means this was a shortcut, not a tap.
         commandTapStarted = nil
 
+        // Backspace on an empty field leaves the scope. Like Tab, the field's own handler
+        // never saw it — `onKeyPress` competes with the text system for the delete keys,
+        // and the text system wins even when there is nothing to delete.
+        if event.keyCode == 51,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            chatPresentation.isVisible, prompt.phase.showsInput,
+            prompt.query.isEmpty,
+            prompt.leaveScopeForGlobal()
+        {
+            return nil
+        }
+
         // Tab: the focus system claims it inside a text field, so `onKeyPress(.tab)` never
         // sees it and the row under the highlight could not be entered with the key the
         // dock uses for exactly that.

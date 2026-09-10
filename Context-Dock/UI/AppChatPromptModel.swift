@@ -325,7 +325,7 @@ final class AppChatPromptModel: ObservableObject {
 
     /// Any interaction puts the clock back, unless the surface is pinned.
     func touch() {
-        guard !isPinned, phase.isVisible else { return }
+        guard !isPinned, !isRunningCommand, phase.isVisible else { return }
         arm(after: Self.idleDwell)
     }
 
@@ -355,6 +355,10 @@ final class AppChatPromptModel: ObservableObject {
         summary: String
     ) {
         guard phase.isVisible, !bundleID.isEmpty, bundleID != appBundleID else { return }
+        // A scope the user chose is not the frontmost app's to take. Global Context, a tool,
+        // an app stepped into from Global — clicking away from any of them used to swap the
+        // field to whatever came forward, losing the place the user had picked.
+        guard !isGlobalScope, !returnsToGlobalScope else { return }
         query = ""
         attachments = []
         appName = name
