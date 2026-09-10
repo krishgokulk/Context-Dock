@@ -21,6 +21,10 @@ enum CLIScopeRunner {
         let command: String
         let text: String
         let failed: Bool
+        /// What the tool returned. Shown, because a tool can exit 0 and still print that it
+        /// could not do the thing — a green tick over that text is the surface lying about
+        /// an outcome it did not check.
+        var exitCode: Int32 = 0
     }
 
     /// How long a command may take before it is killed. Long enough for a status call,
@@ -61,16 +65,29 @@ enum CLIScopeRunner {
     /// Where a tool lives, if it is installed. Looked up rather than assumed, because the
     /// path differs between Homebrew, /usr/bin and a user's own bin directory.
     static func executablePath(for command: String) -> String? {
-        let candidates = [
-            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-            NSHomeDirectory() + "/.local/bin",
-        ]
-        for directory in candidates {
+        // What the app already found when it scanned this tool. Trusted first: it knows
+        // about installs the standard directories do not cover.
+        if let known = TerminalPackageManager.shared.packages.first(where: {
+            $0.command == command
+        })?.installedPath, FileManager.default.isExecutableFile(atPath: known) {
+            return known
+        }
+        for directory in searchPath {
             let path = directory + "/" + command
             if FileManager.default.isExecutableFile(atPath: path) { return path }
         }
         return nil
     }
+
+    /// Where tools live, and what a tool's own PATH should be while it runs.
+    ///
+    /// This app launches without a login shell, so its environment carries almost no PATH.
+    /// A wrapper script — `/usr/local/bin/tailscale` is one — then fails in ways that read
+    /// like the tool is broken rather than unfound.
+    static let searchPath = [
+        "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+        NSHomeDirectory() + "/.local/bin",
+    ]
 
     /// Run `command` with the arguments typed after it.
     static func run(command: String, line: String) async -> Output {
@@ -81,13 +98,21 @@ enum CLIScopeRunner {
             return Output(
                 command: display,
                 text: "\(command) is not installed, or is not on the usual paths.",
-                failed: true)
+                failed: true, exitCode: -1)
         }
 
         return await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = args
+
+            var environment = ProcessInfo.processInfo.environment
+            let inherited = environment["PATH"] ?? ""
+            environment["PATH"] = (searchPath + [inherited])
+                .filter { !$0.isEmpty }
+                .joined(separator: ":")
+            environment["HOME"] = NSHomeDirectory()
+            process.environment = environment
 
             let pipe = Pipe()
             process.standardOutput = pipe
@@ -114,7 +139,8 @@ enum CLIScopeRunner {
                     Output(
                         command: display,
                         text: text.isEmpty ? "(no output)" : text,
-                        failed: proc.terminationStatus != 0))
+                        failed: proc.terminationStatus != 0,
+                        exitCode: proc.terminationStatus))
             }
 
             do {
@@ -123,7 +149,7 @@ enum CLIScopeRunner {
                 finish(
                     Output(
                         command: display, text: "Could not run \(command): \(error)",
-                        failed: true))
+                        failed: true, exitCode: -1))
                 return
             }
 
@@ -134,7 +160,7 @@ enum CLIScopeRunner {
                     Output(
                         command: display,
                         text: "Timed out after \(Int(timeout))s — no output.",
-                        failed: true))
+                        failed: true, exitCode: -1))
             }
         }
     }

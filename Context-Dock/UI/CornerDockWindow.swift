@@ -314,12 +314,12 @@ final class CornerDockController: NSObject {
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
-            list: showsCLIOutput
-                ? CLIOutputMetrics.size
-                : (showsAppSnapshot
-                    ? AppSnapshotMetrics.size
-                    : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil)),
+            list: showsAppSnapshot
+                ? AppSnapshotMetrics.size
+                : (showsAppChatList
+                    ? AppChatListMetrics.size(
+                        rows: prompt.listRowCount, output: prompt.showsCommandOutput)
+                    : nil),
             prompt: chatPresentation.isVisible ? promptSize : nil,
             anchor: anchor)
     }
@@ -330,19 +330,11 @@ final class CornerDockController: NSObject {
         chatPresentation.isVisible
             && chatPresentation.mode != .general
             && prompt.phase == .suggesting
-            && prompt.listRowCount > 0
+            && (prompt.listRowCount > 0 || prompt.showsCommandOutput)
     }
 
     /// The scoped app's window, in the same slot the list uses — the two are never both up,
     /// because one is what the app is doing and the other is what it can do.
-    /// A command's output, in the board slot, while a CLI scope has one to show.
-    var showsCLIOutput: Bool {
-        chatPresentation.isVisible
-            && chatPresentation.mode != .general
-            && prompt.isCLIScope
-            && (prompt.cliOutput != nil || prompt.isRunningCommand)
-    }
-
     var showsAppSnapshot: Bool {
         chatPresentation.isVisible
             && chatPresentation.mode != .general
@@ -653,10 +645,7 @@ struct CornerDockSurface: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         if chatPresentation.isVisible, chatPresentation.mode != .general {
-            if CornerDockController.shared.showsCLIOutput {
-                CLIOutputCard(model: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            } else if CornerDockController.shared.showsAppSnapshot {
+            if CornerDockController.shared.showsAppSnapshot {
                 AppSnapshotCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppChatList {

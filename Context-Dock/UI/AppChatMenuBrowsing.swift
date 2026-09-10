@@ -340,6 +340,9 @@ extension AppChatPromptModel {
         return false
     }
 
+    /// The board is carrying a command's result.
+    var showsCommandOutput: Bool { isCLIScope && (cliOutput != nil || isRunningCommand) }
+
     /// The corner is inside a command-line tool's scope.
     var isCLIScope: Bool { appBundleID.hasPrefix("cli://") }
 

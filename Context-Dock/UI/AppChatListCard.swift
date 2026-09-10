@@ -24,10 +24,15 @@ enum AppChatListMetrics {
 
     /// A pure function of how many rows there are — the corner draws this frame and
     /// hit-tests the same number, so a measured height would leave the two disagreeing.
-    static func size(rows: Int) -> CGSize {
+    /// A command's output, when the board is carrying one. Enough to read a status without
+    /// becoming a terminal — a real PTY flow is a different surface, and this is not it.
+    static let outputHeight: CGFloat = 150
+
+    static func size(rows: Int, output: Bool = false) -> CGSize {
         CGSize(
             width: width,
-            height: headerHeight + CGFloat(rows) * rowHeight + verticalPadding * 2)
+            height: headerHeight + CGFloat(rows) * rowHeight
+                + (output ? outputHeight : 0) + verticalPadding * 2)
     }
 }
 
@@ -96,6 +101,13 @@ struct AppChatListCard: View {
                 .lineLimit(1)
                 .padding(.horizontal, 16)
                 .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
+
+            // A command's result belongs with what asked for it, above the rows that offered
+            // it — the same board, the way a turn shows its own reasoning. A second card is
+            // for a terminal that needs one, and nothing here needs one yet.
+            if model.isRunningCommand || model.cliOutput != nil {
+                commandOutput
+            }
 
             if model.rows.isEmpty, !model.returnsToGlobalScope {
                 ForEach(model.suggestions.prefix(AppChatPromptModel.menuRowLimit)) { suggestion in
@@ -197,6 +209,60 @@ struct AppChatListCard: View {
         if app.isEmpty { return menu }
         return menu.isEmpty ? app : "\(app) > \(menu)"
     }
+    /// What the last command printed, with what it returned.
+    private var commandOutput: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                if model.isRunningCommand {
+                    ProgressView().controlSize(.small).scaleEffect(0.65)
+                } else if let output = model.cliOutput {
+                    Image(
+                        systemName: output.failed
+                            ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                    )
+                    .font(.system(size: 10))
+                    .foregroundStyle(output.failed ? Color.orange : Color.green.opacity(0.8))
+                }
+                Text(model.cliOutput?.command ?? "\(model.cliCommand)…")
+                    .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let output = model.cliOutput, output.exitCode != 0 {
+                    // Said plainly: a tool can exit non-zero while printing something that
+                    // reads like success, and the reverse.
+                    Text("exit \(output.exitCode)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary.opacity(0.7))
+                }
+                if model.cliOutput != nil {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(
+                            model.cliOutput?.text ?? "", forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Copy output")
+                }
+            }
+
+            ScrollView {
+                Text(model.isRunningCommand ? "Running…" : (model.cliOutput?.text ?? ""))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(height: AppChatListMetrics.outputHeight - 22)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
     /// A subcommand the scoped tool takes. Choosing it fills the field rather than running
     /// it, because most subcommands still want an argument.
     private func cliSuggestionRow(_ word: String, isFocused: Bool) -> some View {
