@@ -652,10 +652,10 @@ struct CornerDockSurface: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         if chatPresentation.isVisible, chatPresentation.mode != .general {
-            if CornerDockController.shared.showsExtensionPanel,
-                let ext = prompt.scopedExtension
-            {
-                ExtensionScopeCard(model: prompt, ext: ext)
+            if CornerDockController.shared.showsExtensionPanel {
+                ExtensionScopeCard(
+                    model: prompt, ext: prompt.scopedExtension,
+                    command: prompt.scopedCommand)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppSnapshot {
                 AppSnapshotCard(model: prompt)

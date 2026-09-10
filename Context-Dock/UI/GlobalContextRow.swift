@@ -154,8 +154,9 @@ enum GlobalContextRow {
             break
 
         case .systemCommandScope:
-            // Still a scope the dock owns; nothing in the corner runs one yet.
-            NotificationCenter.default.post(name: .activateGlobalContext, object: nil)
+            // Handled by the field that ran the row, which opens the command's panel in its
+            // own board rather than in a window beside it.
+            break
         }
     }
 }

@@ -27,12 +27,16 @@ enum ExtensionScopeMetrics {
 
 struct ExtensionScopeCard: View {
     @ObservedObject var model: AppChatPromptModel
-    let ext: UserGlobalExtension
+    /// One of the two: a Global Extension the user built, or a Global Command from the
+    /// registry. They look the same to the user — something global with its own interface —
+    /// and so they get one board rather than two that drift.
+    var ext: UserGlobalExtension?
+    var command: SystemCommand?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            ExtensionPanelContentView(ext: ext)
+            content
                 .frame(
                     width: ExtensionScopeMetrics.width,
                     height: ExtensionScopeMetrics.bodyHeight)
@@ -57,14 +61,31 @@ struct ExtensionScopeCard: View {
         .onHover { _ in model.touch() }
     }
 
-    /// The extension's name, and the controls that belong to the board rather than to the
-    /// field: keep it open, open it larger, leave it.
+    @ViewBuilder
+    private var content: some View {
+        if let ext {
+            ExtensionPanelContentView(ext: ext)
+        } else if let command {
+            // The same panel the pinned window shows, so a command that works there works
+            // here: one view, two places to put it.
+            ScopedListPanelContent(command: command)
+        }
+    }
+
+    private var title: String { ext?.name ?? command?.name ?? "" }
+    private var symbol: String {
+        let icon = ext?.icon ?? command?.icon ?? ""
+        return icon.isEmpty ? "puzzlepiece.extension" : icon
+    }
+
+    /// The name, and the controls that belong to the board rather than to the field: keep it
+    /// open, open it larger, leave it.
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: ext.icon.isEmpty ? "puzzlepiece.extension" : ext.icon)
+            Image(systemName: symbol)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text(ext.name)
+            Text(title)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -78,7 +99,10 @@ struct ExtensionScopeCard: View {
             .buttonStyle(.plain)
             .help(model.isPinned ? "Unpin" : "Keep this open")
 
-            Button { ExtensionPanelManager.shared.open(ext) } label: {
+            Button {
+                if let ext { ExtensionPanelManager.shared.open(ext) }
+                if let command { ScopedListPanelManager.shared.pin(command) }
+            } label: {
                 Image(systemName: "arrow.up.left.and.arrow.down.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)

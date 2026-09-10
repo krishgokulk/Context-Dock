@@ -85,6 +85,22 @@ struct CornerCLIScopeTests {
         #expect(model.isGlobalScope)
     }
 
+    @Test("A Global Command opens its panel in the board, not a window")
+    func globalCommandOpensInTheBoard() {
+        // Quick Note and Currency Converter are `syscmd://` — the extension work before
+        // this covered `userext://` only, so Tab on one of these did nothing at all.
+        let model = globalModel()
+        let command = SystemCommand(
+            name: "Quick Note", icon: "note.text", keywords: ["note"],
+            scriptType: "url", script: "x-note://new")
+
+        model.scopeIntoCommand(command)
+
+        #expect(model.showsExtensionPanel)
+        #expect(model.scopedCommand?.name == "Quick Note")
+        #expect(model.returnsToGlobalScope)
+    }
+
     @Test("A tool's scope shows no window snapshot — it has no window")
     func toolsHaveNoSnapshot() {
         let model = globalModel()

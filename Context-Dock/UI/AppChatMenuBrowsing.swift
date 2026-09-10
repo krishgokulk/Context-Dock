@@ -334,6 +334,12 @@ extension AppChatPromptModel {
         touch()
     }
 
+    /// Whether a Global result is a Global Command — the `syscmd://` kind.
+    func isSystemCommandAction(_ action: GlobalSearchService.ActionSpec) -> Bool {
+        if case .systemCommandScope = action { return true }
+        return false
+    }
+
     /// Whether a Global result is a Global Extension, which the corner steps into.
     func isUserExtensionAction(_ action: GlobalSearchService.ActionSpec) -> Bool {
         if case .userExtension = action { return true }
@@ -352,6 +358,7 @@ extension AppChatPromptModel {
     /// second floating container beside the one the user is already in, which is the thing
     /// the shell's whole design refuses — so the extension's view is mounted here instead.
     func scopeIntoExtension(_ ext: UserGlobalExtension) {
+        scopedCommand = nil
         scopedExtension = ext
         returnsToGlobalScope = true
         adoptScope(name: ext.name, bundleID: "userext://\(ext.id.uuidString)")
@@ -363,7 +370,22 @@ extension AppChatPromptModel {
     }
 
     /// The board is showing an extension's own interface.
-    var showsExtensionPanel: Bool { scopedExtension != nil }
+    var showsExtensionPanel: Bool { scopedExtension != nil || scopedCommand != nil }
+
+    /// Step into a Global Command — the panel the pinned window shows, in the corner's
+    /// board. These are what Settings calls Commands, and they carry `syscmd://` ids; the
+    /// extension work before this one covered `userext://` and so never reached them.
+    func scopeIntoCommand(_ command: SystemCommand) {
+        scopedExtension = nil
+        scopedCommand = command
+        returnsToGlobalScope = true
+        adoptScope(name: command.name, bundleID: "syscmd://\(command.id.uuidString)")
+        hasActed = false
+        rows = []
+        updateGlobalTyping(for: "")
+        syncListPhase()
+        touch()
+    }
 
     /// The corner is inside a command-line tool's scope.
     var isCLIScope: Bool { appBundleID.hasPrefix("cli://") }
@@ -456,6 +478,7 @@ extension AppChatPromptModel {
         guard returnsToGlobalScope else { return false }
         returnsToGlobalScope = false
         scopedExtension = nil
+        scopedCommand = nil
         summonGlobalContext()
         return true
     }
@@ -628,6 +651,18 @@ extension AppChatPromptModel {
             updateMenuMatches()
             touch()
             NSWorkspace.shared.activateFileViewerSelecting([url])
+        case .global(let doc) where isSystemCommandAction(doc.action):
+            // A Global Command opens its panel in the board. Running it outright is what
+            // the launcher does, and it is the wrong move here: the corner is where the
+            // user is working, and a command with an interface has one for a reason.
+            if case .systemCommandScope(let key) = doc.action,
+                let id = UUID(uuidString: key),
+                let command = SystemCommandsRegistry.shared.commands.first(where: {
+                    $0.id == id
+                })
+            {
+                scopeIntoCommand(command)
+            }
         case .global(let doc) where isUserExtensionAction(doc.action):
             // Stepping into the extension, in this field's board.
             if case .userExtension(let id) = doc.action,

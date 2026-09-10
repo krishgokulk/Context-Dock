@@ -90,6 +90,9 @@ final class AppChatPromptModel: ObservableObject {
     var finderSearchGeneration = 0
     /// The Global Extension this scope is showing, drawn in the board above the field.
     @Published var scopedExtension: UserGlobalExtension?
+    /// The Global Command this scope is showing — Quick Note, Currency Converter, the rest
+    /// of Settings → Integrations → Global → Commands.
+    @Published var scopedCommand: SystemCommand?
     /// The line above them: "5 actions · 2 skills · 1 built-in tools · 3 cli tools".
     @Published private(set) var capabilitySummary = ""
 
