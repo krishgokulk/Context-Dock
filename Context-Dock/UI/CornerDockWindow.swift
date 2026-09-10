@@ -84,7 +84,8 @@ final class CornerDockController: NSObject {
     private func ensurePanel() {
         guard panel == nil else { return }
         let p = CornerDockPanel(
-            contentRect: NSRect(origin: .zero, size: CornerDockLayout.panelSize),
+            contentRect: NSRect(
+                origin: .zero, size: CornerDockLayout.panelSize(for: anchor)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false)
         p.isOpaque = false
@@ -102,7 +103,7 @@ final class CornerDockController: NSObject {
         p.identifier = GlassFloatingPanel.identifier
 
         let host = CornerDockHostView(
-            frame: NSRect(origin: .zero, size: CornerDockLayout.panelSize))
+            frame: NSRect(origin: .zero, size: CornerDockLayout.panelSize(for: anchor)))
         host.controller = self
         host.autoresizingMask = [.width, .height]
         let hosting = NSHostingView(rootView: CornerDockSurface())
@@ -237,6 +238,13 @@ final class CornerDockController: NSObject {
 
     private func position() {
         guard let panel else { return }
+        // Moving between an edge and the centre changes the shape of the window, not only
+        // where it sits: a row needs three cards' width, a column needs one.
+        let wanted = CornerDockLayout.panelSize(for: anchor)
+        if panel.frame.size != wanted {
+            panel.setContentSize(wanted)
+            hostView?.frame = CGRect(origin: .zero, size: wanted)
+        }
         let screen =
             NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
             ?? NSScreen.main

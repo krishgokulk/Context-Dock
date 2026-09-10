@@ -48,7 +48,8 @@ struct CornerDockAnchorTests {
         let left = slots.shelf!.minX
         let right = slots.clipboard!.maxX
 
-        #expect(abs((left + right) / 2 - CornerDockLayout.panelSize.width / 2) < 0.5)
+        #expect(
+            abs((left + right) / 2 - CornerDockLayout.panelSize(for: .center).width / 2) < 0.5)
     }
 
     @Test("Centred, what answers the field still sits above the field")
@@ -83,13 +84,28 @@ struct CornerDockAnchorTests {
         }
     }
 
+    @Test("The centred row fits the window it is drawn into")
+    func centredRowFitsItsPanel() {
+        // The row was being drawn into a column's window — 428 points for three cards —
+        // so the surfaces landed on top of each other.
+        let slots = CornerDockLayout.slots(
+            shelf: card, clipboard: card, prompt: card, anchor: .center)
+        let panel = CornerDockLayout.panelSize(for: .center)
+
+        #expect(slots.shelf!.minX >= 0)
+        #expect(slots.clipboard!.maxX <= panel.width)
+        #expect(panel.width > CornerDockLayout.panelSize(for: .right).width)
+    }
+
     @Test("Every anchor keeps the whole card inside the panel")
     func nothingHangsOutside() {
         for anchor in CornerDockAnchor.allCases {
             let slots = CornerDockLayout.slots(prompt: card, anchor: anchor)
             let rect = slots.prompt!
+            // Measured against the window that anchor actually draws into: centred is a
+            // row and gets a wider one.
             #expect(rect.minX >= 0)
-            #expect(rect.maxX <= CornerDockLayout.panelSize.width)
+            #expect(rect.maxX <= CornerDockLayout.panelSize(for: anchor).width)
         }
     }
 }

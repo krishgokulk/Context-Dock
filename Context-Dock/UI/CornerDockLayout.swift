@@ -69,14 +69,31 @@ enum CornerDockLayout {
     /// The selection card, when Selection Scope is up.
     static let selectionHeight: CGFloat = 166
 
-    static var panelSize: CGSize {
+    /// The window the shell draws into, which depends on how it is anchored.
+    ///
+    /// Against an edge it is one card wide. Centred it is a row — shelf, field, clipboard
+    /// side by side — and a row does not fit in a column's window: the surfaces were being
+    /// drawn into 428 points and landing on top of each other, which is what "the clipboard
+    /// interrupts the panel" was.
+    ///
+    /// The window stays no wider than it needs to be. It is transparent but not inert:
+    /// every point of it is a point the pointer cannot use for the app underneath.
+    static func panelSize(for anchor: CornerDockAnchor) -> CGSize {
         // Worst case: one surface fully expanded, the preview above it, and both other
         // pills stacked above that.
-        CGSize(
-            width: cardWidth + pad * 2,
-            height: cardHeight + previewHeight + listHeight + selectionHeight + gap * 3
-                + (gap + pillHeight) * 2 + pad * 2)
+        let height =
+            cardHeight + previewHeight + listHeight + selectionHeight + gap * 3
+            + (gap + pillHeight) * 2 + pad * 2
+        switch anchor {
+        case .left, .right:
+            return CGSize(width: cardWidth + pad * 2, height: height)
+        case .center:
+            // Three cards abreast, which is the widest the row can be.
+            return CGSize(width: cardWidth * 3 + gap * 2 + pad * 2, height: height)
+        }
     }
+
+    static var panelSize: CGSize { panelSize(for: .right) }
 
     /// Rects in the panel's coordinates, origin bottom-left. A nil size means that
     /// surface is showing nothing, and it takes no space: with no clipboard pill below
@@ -96,13 +113,15 @@ enum CornerDockLayout {
     ) {
         var baseline = pad
 
+        let panel = panelSize(for: anchor)
+
         /// Cards line up with each other along the anchored edge, so a narrow pill sits
         /// under the wide card it belongs to rather than drifting away from it.
         func x(for width: CGFloat) -> CGFloat {
             switch anchor {
-            case .right: return panelSize.width - pad - width
+            case .right: return panel.width - pad - width
             case .left: return pad
-            case .center: return (panelSize.width - width) / 2
+            case .center: return (panel.width - width) / 2
             }
         }
 
@@ -132,7 +151,7 @@ enum CornerDockLayout {
             // arithmetic rather than two guesses that agree most of the time.
             let widths = [shelf?.width, prompt.width, clipboard?.width].compactMap { $0 }
             let total = widths.reduce(0, +) + CGFloat(widths.count - 1) * gap
-            var cursor = (panelSize.width - total) / 2
+            var cursor = (panel.width - total) / 2
 
             func placeInRow(_ size: CGSize?) -> CGRect? {
                 guard let size else { return nil }
