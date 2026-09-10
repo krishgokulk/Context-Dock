@@ -314,6 +314,12 @@ struct AppChatPromptPill: View {
                         // that is what the switcher is for. Anything else is a question.
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
+                        // Inside a CLI scope, Return runs the line against that tool rather
+                        // than asking the model about it.
+                        if model.isCLIScope {
+                            model.runCLICommand()
+                            return
+                        }
                         model.submit()
                     }
                     .onKeyPress(.space) {

@@ -23,6 +23,8 @@ enum AppChatRow: Identifiable {
     case global(GlobalSearchService.SearchDocument)
     /// A file or folder, from the Finder scope's Spotlight search.
     case file(URL)
+    /// A subcommand this CLI tool takes, offered inside its scope.
+    case cliSuggestion(String)
 
     var id: String {
         switch self {
@@ -30,6 +32,7 @@ enum AppChatRow: Identifiable {
         case .action(let action): return "action:" + action.id
         case .global(let doc): return "global:" + doc.id
         case .file(let url): return "file:" + url.path
+        case .cliSuggestion(let word): return "cli:" + word
         }
     }
 
@@ -39,6 +42,7 @@ enum AppChatRow: Identifiable {
         case .action(let action): return action.name
         case .global(let doc): return doc.title
         case .file(let url): return url.lastPathComponent
+        case .cliSuggestion(let word): return word
         }
     }
 

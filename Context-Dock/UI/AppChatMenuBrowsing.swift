@@ -72,6 +72,15 @@ extension AppChatPromptModel {
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A CLI scope offers the tool's own subcommands, and Return runs the line.
+        if isCLIScope {
+            rows = cliSubcommandRows(for: typed)
+            menuMatches = []
+            focusedMenuIndex = nil
+            updateGlobalTyping(for: typed)
+            syncListPhase()
+            return
+        }
         // Finder searches the disk instead of its own menus.
         if isFinderScope {
             updateFinderResults(for: typed)
@@ -321,6 +330,57 @@ extension AppChatPromptModel {
         touch()
     }
 
+    /// The corner is inside a command-line tool's scope.
+    var isCLIScope: Bool { appBundleID.hasPrefix("cli://") }
+
+    /// The tool this scope runs, without the `cli://`.
+    var cliCommand: String {
+        isCLIScope ? String(appBundleID.dropFirst("cli://".count)) : ""
+    }
+
+    /// Step into a CLI tool. The dock scopes to `cli://<tool>` for this, so the corner uses
+    /// the same identity — one scope, described the same way in both surfaces.
+    func scopeIntoCLI(command: String, displayName: String) {
+        cliOutput = nil
+        isRunningCommand = false
+        scopeIntoApp(name: displayName.isEmpty ? command : displayName, bundleID: "cli://\(command)")
+    }
+
+    /// The subcommands this tool is known to take, filtered by what has been typed. Read
+    /// from the package the app already scanned — no help text is run to find them.
+    func cliSubcommandRows(for typed: String) -> [AppChatRow] {
+        guard let package = TerminalPackageManager.shared.packages.first(where: {
+            $0.command == cliCommand
+        }) else { return [] }
+
+        let words = package.subcommands + package.usageExamples
+        let query = DockTextMatch.normalized(typed)
+        let matches = query.isEmpty
+            ? words
+            : words.filter { DockTextMatch.normalized($0).contains(query) }
+        return Array(matches.prefix(Self.menuRowLimit)).map { AppChatRow.cliSuggestion($0) }
+    }
+
+    /// Run what is typed against this scope's tool.
+    func runCLICommand() {
+        guard isCLIScope, !isRunningCommand else { return }
+        let command = cliCommand
+        let line = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        isRunningCommand = true
+        hasActed = true
+        cliOutput = nil
+        syncListPhase()
+
+        Task { @MainActor [weak self] in
+            let output = await CLIScopeRunner.run(command: command, line: line)
+            guard let self, self.cliCommand == command else { return }
+            self.isRunningCommand = false
+            self.cliOutput = output
+            self.syncListPhase()
+            self.touch()
+        }
+    }
+
     /// The Finder scope searches the disk rather than Finder's menus — the question there
     /// is about files, which is why the user carved it out of the snapshot behaviour.
     var isFinderScope: Bool {
@@ -361,6 +421,7 @@ extension AppChatPromptModel {
     var showsWindowSnapshot: Bool {
         returnsToGlobalScope && !appBundleID.isEmpty
             && appBundleID != "com.apple.finder"
+            && !isCLIScope
     }
 
     /// Leave a scope entered from Global and go back to it.
@@ -412,7 +473,7 @@ extension AppChatPromptModel {
             case .activatePID(_, _, let path): return path
             default: return nil
             }
-        case .command, .action: return nil
+        case .command, .action, .cliSuggestion: return nil
         }
     }
 
@@ -515,6 +576,12 @@ extension AppChatPromptModel {
         switch row {
         case .command(let item): runMenuItem(item)
         case .action(let action): runAdapterAction(action)
+        case .cliSuggestion(let word):
+            // Fills the field rather than running: a subcommand usually needs an argument,
+            // and running it half-written would be a guess at what the user meant.
+            query = word
+            queryChanged()
+            touch()
         case .file(let url):
             hasActed = true
             query = ""

@@ -112,6 +112,8 @@ struct AppChatListCard: View {
                         globalRow(doc, isFocused: index == model.focusedMenuIndex)
                     case .file(let url):
                         fileRow(url, isFocused: index == model.focusedMenuIndex)
+                    case .cliSuggestion(let word):
+                        cliSuggestionRow(word, isFocused: index == model.focusedMenuIndex)
                     }
                 }
             }
@@ -195,6 +197,33 @@ struct AppChatListCard: View {
         if app.isEmpty { return menu }
         return menu.isEmpty ? app : "\(app) > \(menu)"
     }
+    /// A subcommand the scoped tool takes. Choosing it fills the field rather than running
+    /// it, because most subcommands still want an argument.
+    private func cliSuggestionRow(_ word: String, isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 28)
+            Text(word)
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Text("\(model.cliCommand) \(word)")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary.opacity(0.5))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.run(.cliSuggestion(word)) }
+    }
+
     /// A file or folder from the Finder scope, with the path it lives at — two files called
     /// "Downloads" are told apart by where they are, not by their name.
     private func fileRow(_ url: URL, isFocused: Bool) -> some View {

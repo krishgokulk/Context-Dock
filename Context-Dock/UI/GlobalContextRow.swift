@@ -151,8 +151,13 @@ enum GlobalContextRow {
             }) else { return }
             ExtensionPanelManager.shared.open(ext)
 
-        case .cliScope, .systemCommandScope:
-            // Entering a scope, not running a thing. The dock owns scopes.
+        case .cliScope(let command, let displayName):
+            // Stepping into the tool, where its subcommands are offered and Return runs one.
+            CornerDockController.shared.prompt.scopeIntoCLI(
+                command: command, displayName: displayName)
+
+        case .systemCommandScope:
+            // Still a scope the dock owns; nothing in the corner runs one yet.
             NotificationCenter.default.post(name: .activateGlobalContext, object: nil)
         }
     }
