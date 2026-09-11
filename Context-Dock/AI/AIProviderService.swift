@@ -1220,6 +1220,9 @@ class AIProviderService: ObservableObject {
         grantedApps: [String: String] = [:],
         /// A task-planning authority boundary. Nil preserves unscoped General Chat.
         allowedToolNames: Set<String>? = nil,
+        /// This turn may read and must not change anything. Panels declare it: their own
+        /// prompt promises it, and a promise in a prompt is not a boundary.
+        refusesChanges: Bool = false,
         simulateAllTools: Bool = false,
         /// Called as the answer is written, when the provider supports it. Nil keeps the
         /// buffered behaviour — a caller that has nowhere to put a partial answer should not
@@ -1234,7 +1237,8 @@ class AIProviderService: ObservableObject {
         let resume = TaskRunStore.shared.resolve(message)
         let effectiveMessage = resume.message
         AgentToolRegistry.shared.prepareTurnBudget(
-            query: effectiveMessage, provider: provider, allowedToolNames: allowedToolNames)
+            query: effectiveMessage, provider: provider, allowedToolNames: allowedToolNames,
+            refusesChanges: refusesChanges)
         onStatus?("Looking through the available app adapters and tools…")
         let guardedCommandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
             command, purpose, approval in

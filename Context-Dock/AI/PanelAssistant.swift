@@ -25,8 +25,11 @@ enum PanelAssistant {
         You are the assistant inside the "\(title)" panel in Context Dock.
         \(subtitle)
         Stay within this panel's subject, plus anything the user has attached below. \
-        You cannot run commands, open apps or touch files — if a request needs that, \
-        say so plainly instead of emitting any bracketed command directive.
+        You may READ through DoraX capabilities — find_capability to see what exists, \
+        run_capability to run one that reports something. You cannot run shell commands, \
+        drive apps or write files here: anything that would change something is refused \
+        on this surface, so say plainly what you would change instead of attempting it, \
+        and never emit a bracketed command directive.
 
         Attached context is a live reading taken just now. Answer from it; never \
         invent a tab, link or file that is not listed.
@@ -35,23 +38,48 @@ enum PanelAssistant {
         """.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// What a panel's assistant may reach.
+    ///
+    /// Discovery and reading, and nothing that acts. The panel used to be handed no tools
+    /// at all, so a question it could have answered from the clipboard, the current page or
+    /// one of DoraX's own skills was answered with a refusal — the model was not wrong, it
+    /// simply had nothing to look with.
+    static let tools: Set<String> = ["find_capability", "run_capability", "read_tool_result"]
+
     /// Ask that panel's assistant a question.
+    ///
+    /// `refusesChanges` is the half that makes the prompt above true. Narrowing the tool
+    /// list keeps the shell, the menus and the keystrokes away, but `run_capability` reaches
+    /// every registered capability by id, so the boundary is enforced where the call lands
+    /// rather than trusted to a sentence.
     static func ask(
         _ question: String,
         title: String,
         subtitle: String,
         extraPrompt: String,
+        attachmentNote: String = "",
         history: [ChatMessage],
         provider: AIProvider
     ) async throws -> String {
-        try await AIProviderService.shared.sendMessage(
+        let rawKey = AppSettings.shared.getAPIKey(for: provider)
+        let (reply, _) = try await AIProviderService.shared.sendWithTools(
             question,
             context: .none,
             provider: provider,
+            apiKey: rawKey.isEmpty ? nil : rawKey,
             conversationHistory: history,
-            additionalContextPrompt: scopedPrompt(
-                title: title, subtitle: subtitle, extraPrompt: extraPrompt),
-            surfaceScoped: true
+            // A panel never runs a command. The executor exists because the signature wants
+            // one; refusing here means a model that tries anyway is told no by the surface
+            // rather than by a sheet the user has to read and dismiss.
+            commandExecutor: { command, _, _ in
+                (false, "This panel cannot run commands. Nothing ran: \(command)", 1)
+            },
+            additionalSystemPrompt: scopedPrompt(
+                title: title, subtitle: subtitle, extraPrompt: extraPrompt,
+                attachmentNote: attachmentNote),
+            allowedToolNames: tools,
+            refusesChanges: true
         )
+        return reply
     }
 }

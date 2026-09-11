@@ -484,22 +484,23 @@ struct ExtensionPanelAIComposer: View {
                 ? ""
                 : "\n\n# Attached context\n\n" + knowledge.joined(separator: "\n\n")
 
-            // Scoped to this panel: without an identity of its own the model inherits
-            // the launcher-wide persona and proposes shell commands it cannot run here.
-            // Attached apps widen that scope deliberately — the user asked for them.
-            let scopedPrompt = PanelAssistant.scopedPrompt(
-                title: panelIdentity, subtitle: panelSubtitle, extraPrompt: panelPrompt,
-                attachmentNote: attachmentNote)
-
             do {
-                let reply = try await AIProviderService.shared.sendMessage(
+                // Scoped to this panel: without an identity of its own the model inherits
+                // the launcher-wide persona and proposes shell commands it cannot run here.
+                // Attached apps widen that scope deliberately — the user asked for them.
+                //
+                // Through `PanelAssistant` rather than straight to the provider, so this
+                // composer and the corner's field are the same assistant with the same
+                // authority: readers yes, changes no. It used to be handed no tools at all,
+                // and answered "I can't see that" to questions a reader could have settled.
+                let reply = try await PanelAssistant.ask(
                     text,
-                    context: .none,
-                    provider: settings.selectedAIProvider,
-                    conversationHistory: priorHistory,
-                    additionalContextPrompt: scopedPrompt,
-                    surfaceScoped: true
-                )
+                    title: panelIdentity,
+                    subtitle: panelSubtitle,
+                    extraPrompt: panelPrompt,
+                    attachmentNote: attachmentNote,
+                    history: priorHistory,
+                    provider: settings.selectedAIProvider)
                 history.append(ChatMessage(role: .assistant, content: reply))
             } catch {
                 errorText = error.localizedDescription

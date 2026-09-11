@@ -446,6 +446,25 @@ final class AgentToolRegistry {
         return name + "|" + String(describing: signatureArguments)
     }
 
+    /// Whether running this id would change something rather than report something.
+    ///
+    /// An unregistered id is treated as a change: `run_capability` falls through to an app
+    /// adapter's action for those, and an action is a thing that does something.
+    @MainActor
+    static func changesSomething(capabilityID: String) -> Bool {
+        guard let capability = CapabilityRegistry.shared.capability(id: capabilityID) else {
+            return true
+        }
+        return capability.riskLevel.requiresApproval
+            || capability.riskLevel == .critical
+    }
+
+    static func readsOnlyRefusal(capabilityID: String) -> String {
+        "This surface can read but not change anything, so \(capabilityID) was not run. "
+            + "Say what you would change and the user can do it from a chat that has the "
+            + "authority for it."
+    }
+
     /// Reads must be fresh after resume. Writes and screen-driving actions must not be
     /// replayed merely because the provider/session restarted after their side effect landed.
     static func isReplaySensitive(name: String, arguments: [String: Any]) -> Bool {
@@ -598,6 +617,15 @@ final class AgentToolRegistry {
     private var turnQuery: String = ""
     private var turnProvider: AIProvider?
     private var turnAllowedToolNames: Set<String>?
+    private var turnRefusesChanges = false
+
+    /// This turn may read and must not change anything.
+    ///
+    /// A panel's assistant says so in its own prompt — "you cannot run commands, open apps
+    /// or touch files" — and a sentence is not an authority boundary. Narrowing the tool
+    /// list is most of the answer, but `run_capability` reaches every registered capability
+    /// by id, so the promise has to be enforced where the call lands.
+    var refusesChanges: Bool { turnRefusesChanges }
 
     /// Told before the turn starts, separately from beginTurn, which the provider loops
     /// own and call themselves.
@@ -606,14 +634,17 @@ final class AgentToolRegistry {
     /// forget to set is a budget that silently stops applying, and the preview did briefly
     /// set its own alongside this one.
     func prepareTurnBudget(
-        query: String, provider: AIProvider, allowedToolNames: Set<String>? = nil
+        query: String, provider: AIProvider, allowedToolNames: Set<String>? = nil,
+        refusesChanges: Bool = false
     ) {
         turnQuery = query
         turnProvider = provider
         turnAllowedToolNames = allowedToolNames
+        turnRefusesChanges = refusesChanges
         DoraXTurnLog.record(
             "turn prepared — provider=\(provider.rawValue) "
             + "nativeTools=\(provider.supportsNativeTools) "
+            + "readsOnly=\(refusesChanges) "
             + "allowed=\(allowedToolNames.map { $0.sorted().joined(separator: ",") } ?? "all")")
     }
 
@@ -1923,6 +1954,18 @@ final class AgentToolRegistry {
                 }
             }
             let explanation = arguments["explanation"] as? String ?? "Requested from AI chat"
+
+            // A surface that promised to read only. Refused here rather than left to the
+            // approval sheet: the sheet is the user's decision about a thing this surface
+            // said it would never ask for.
+            if await MainActor.run(body: { AgentToolRegistry.shared.refusesChanges }),
+                Self.changesSomething(capabilityID: capabilityID)
+            {
+                return AgentToolResult(
+                    success: false,
+                    output: Self.readsOnlyRefusal(capabilityID: capabilityID),
+                    displayCommand: "run_capability(\(capabilityID)) — reads only here")
+            }
 
             // The thread's boundary, enforced where it is crossed rather than only where it
             // is listed. find_capability no longer offers another app's capabilities, but a
