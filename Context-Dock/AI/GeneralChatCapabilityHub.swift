@@ -84,14 +84,27 @@ final class GeneralChatCapabilityHub {
         // Discovery reaches into the MCP actor for cached tools. Bounded, because "cached"
         // only means it opens no connection — it still queues behind whatever that actor is
         // doing, and waiting on it is not worth an unanswerable chat.
-        Self.log.notice("hub: discovery")
-        let discovery = await Self.withTimeout(
+        // Discovery and local evidence are independent of each other, and each is capped at
+        // five seconds. Run in series that is ten seconds of waiting before the model is
+        // asked anything — on every message, cache hit included, because the cache is
+        // checked further down and only covers the MCP section. Started together, the wait
+        // is the slower of the two rather than their sum.
+        Self.log.notice("hub: discovery + evidence")
+        async let discoveryTask = Self.withTimeout(
             seconds: 5,
             fallback: CapabilityDiscoveryResult(
                 scope: scope, query: query, candidates: [], generatedAt: Date())
         ) {
             await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
         }
+        // Retrieved evidence for THIS question, not just an inventory of what exists.
+        // The inventory says which apps are installed; this says which cached menu command,
+        // history entry, recent document or indexed file actually matches what was asked —
+        // and that grounding is what stops the model answering app questions from memory.
+        async let evidenceTask = Self.withTimeout(seconds: 5, fallback: [String]()) {
+            await GeneralChatLocalEvidence.promptLines(query: query)
+        }
+        let discovery = await discoveryTask
         let discoveryLines = discovery.promptLines
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
@@ -131,16 +144,10 @@ final class GeneralChatCapabilityHub {
             // Chat, or General Chat's full inventory to a Code thread — the second being the
             // leak this scoping exists to close.
             + "##" + (scopedBundleID(for: scope) ?? "general")
-        // Retrieved evidence for THIS question, not just an inventory of what exists.
-        // The inventory says which apps are installed; this says which cached menu command,
-        // history entry, recent document or indexed file actually matches what was asked —
-        // and that grounding is what stops the model answering app questions from memory.
         // Ranked best-first, capped per source, and appended last so it sits closest to the
         // question in the prompt.
         Self.log.notice("hub: evidence")
-        let evidenceLines = await Self.withTimeout(seconds: 5, fallback: [String]()) {
-            await GeneralChatLocalEvidence.promptLines(query: query)
-        }
+        let evidenceLines = await evidenceTask
         Self.log.notice("hub: inventory")
         // The cross-app inventory is General Chat's whole point and a scoped thread's
         // opposite: a Code conversation does not need a list of every app on the Mac, and
