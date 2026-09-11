@@ -36,6 +36,12 @@ final class SelectionScopeModel: ObservableObject {
     @Published private(set) var appName = ""
     @Published private(set) var appBundleID = ""
     @Published private(set) var isPinned = false
+    /// A question has been asked from this card and its answer is being written elsewhere.
+    ///
+    /// The card stays up as the subject of that answer, but it stops claiming the keyboard:
+    /// the conversation is in the chat now, and a follow-up should be typeable there without
+    /// the user having to dismiss the thing their question was about.
+    @Published private(set) var hasAsked = false
 
     private var standDownTask: Task<Void, Never>?
 
@@ -71,6 +77,7 @@ final class SelectionScopeModel: ObservableObject {
         appName = context.appName
         appBundleID = context.bundleId
         query = ""
+        hasAsked = false
         set(.showing)
         arm(after: Self.idleDwell)
         return true
@@ -108,6 +115,7 @@ final class SelectionScopeModel: ObservableObject {
                 "selectedText": text,
             ])
         query = ""
+        hasAsked = true
         // This surface chooses a subject; the corner's chat is where an answer is shown. It
         // used to hide itself here and hand over to a chat that was not on screen, so the
         // answer arrived nowhere and pressing Return looked like it had done nothing.
@@ -133,6 +141,7 @@ final class SelectionScopeModel: ObservableObject {
     func dismiss() {
         cancel()
         isPinned = false
+        hasAsked = false
         set(.hidden)
     }
 

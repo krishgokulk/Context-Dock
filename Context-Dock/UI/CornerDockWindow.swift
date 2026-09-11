@@ -405,7 +405,7 @@ final class CornerDockController: NSObject {
     func publishKeyboardOwner() {
         keyboardState.ownerChanged(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-            selectionVisible: selection.phase.isVisible,
+            selectionWantsKeyboard: selection.phase.isVisible && !selection.hasAsked,
             chatShowsInput: prompt.phase.showsInput)
     }
 
@@ -418,7 +418,7 @@ final class CornerDockController: NSObject {
         guard
             CornerKeyboardOwner.owner(
                 clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-                selectionVisible: selection.phase.isVisible,
+                selectionWantsKeyboard: selection.phase.isVisible && !selection.hasAsked,
                 chatShowsInput: prompt.phase.showsInput) == .chat
         else { return }
         chatPresentation.composerInteracted()
@@ -432,7 +432,7 @@ final class CornerDockController: NSObject {
     func syncPanelKeyboard() {
         if CornerKeyboardOwner.panelHoldsKeyboard(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-            selectionVisible: selection.phase.isVisible,
+            selectionWantsKeyboard: selection.phase.isVisible && !selection.hasAsked,
             chatShowsInput: prompt.phase.showsInput)
         {
             armKeyboard()

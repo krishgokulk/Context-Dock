@@ -17,29 +17,29 @@ struct CornerKeyboardOwnerTests {
     func chatIsTheRestingOwner() {
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: false, selectionVisible: false, chatShowsInput: true) == .chat)
+                clipboardArmed: false, selectionWantsKeyboard: false, chatShowsInput: true) == .chat)
     }
 
     @Test("An armed clipboard takes it, even with the chat field on screen")
     func armedClipboardOutranksTheChat() {
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: true, selectionVisible: false, chatShowsInput: true)
+                clipboardArmed: true, selectionWantsKeyboard: false, chatShowsInput: true)
                 == .clipboard)
         #expect(
             CornerKeyboardOwner.chatFieldHoldsFocus(
-                clipboardArmed: true, selectionVisible: false, chatShowsInput: true) == false)
+                clipboardArmed: true, selectionWantsKeyboard: false, chatShowsInput: true) == false)
     }
 
     @Test("The selection card outranks the chat, and yields to an armed clipboard")
     func selectionSitsBetween() {
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: false, selectionVisible: true, chatShowsInput: true)
+                clipboardArmed: false, selectionWantsKeyboard: true, chatShowsInput: true)
                 == .selection)
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: true, selectionVisible: true, chatShowsInput: true)
+                clipboardArmed: true, selectionWantsKeyboard: true, chatShowsInput: true)
                 == .clipboard)
     }
 
@@ -49,24 +49,24 @@ struct CornerKeyboardOwnerTests {
         // would steal keys mid-sentence.
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: false, selectionVisible: false, chatShowsInput: true) == .chat)
+                clipboardArmed: false, selectionWantsKeyboard: false, chatShowsInput: true) == .chat)
     }
 
     @Test("With nothing up, nobody holds it")
     func nothingUpNoOwner() {
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: false, selectionVisible: false, chatShowsInput: false) == .none)
+                clipboardArmed: false, selectionWantsKeyboard: false, chatShowsInput: false) == .none)
     }
 
     @Test("The chat gets it back the moment the clipboard disarms")
     func chatRecoversOnDisarm() {
         #expect(
             CornerKeyboardOwner.chatFieldHoldsFocus(
-                clipboardArmed: true, selectionVisible: false, chatShowsInput: true) == false)
+                clipboardArmed: true, selectionWantsKeyboard: false, chatShowsInput: true) == false)
         #expect(
             CornerKeyboardOwner.chatFieldHoldsFocus(
-                clipboardArmed: false, selectionVisible: false, chatShowsInput: true))
+                clipboardArmed: false, selectionWantsKeyboard: false, chatShowsInput: true))
     }
 
     /// Naming an owner is only half of it. The corner is a `.nonactivatingPanel` — the very
@@ -78,20 +78,20 @@ struct CornerKeyboardOwnerTests {
     func thePanelTakesTheKeyboardForEveryClaimant() {
         #expect(
             CornerKeyboardOwner.panelHoldsKeyboard(
-                clipboardArmed: false, selectionVisible: true, chatShowsInput: false))
+                clipboardArmed: false, selectionWantsKeyboard: true, chatShowsInput: false))
         #expect(
             CornerKeyboardOwner.panelHoldsKeyboard(
-                clipboardArmed: true, selectionVisible: false, chatShowsInput: false))
+                clipboardArmed: true, selectionWantsKeyboard: false, chatShowsInput: false))
         #expect(
             CornerKeyboardOwner.panelHoldsKeyboard(
-                clipboardArmed: false, selectionVisible: false, chatShowsInput: true))
+                clipboardArmed: false, selectionWantsKeyboard: false, chatShowsInput: true))
     }
 
     @Test("It gives the keyboard back when every surface is gone")
     func thePanelReleasesWhenNobodyWantsIt() {
         #expect(
             CornerKeyboardOwner.panelHoldsKeyboard(
-                clipboardArmed: false, selectionVisible: false, chatShowsInput: false) == false)
+                clipboardArmed: false, selectionWantsKeyboard: false, chatShowsInput: false) == false)
     }
 
     @Test("The chat closing does not take the keys from a card still up")
@@ -100,10 +100,10 @@ struct CornerKeyboardOwnerTests {
         // out from under a selection card that was still on screen.
         #expect(
             CornerKeyboardOwner.panelHoldsKeyboard(
-                clipboardArmed: false, selectionVisible: true, chatShowsInput: false))
+                clipboardArmed: false, selectionWantsKeyboard: true, chatShowsInput: false))
         #expect(
             CornerKeyboardOwner.owner(
-                clipboardArmed: false, selectionVisible: true, chatShowsInput: false)
+                clipboardArmed: false, selectionWantsKeyboard: true, chatShowsInput: false)
                 == .selection)
     }
 }

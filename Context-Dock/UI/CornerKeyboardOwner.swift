@@ -25,6 +25,10 @@ enum CornerKeyboardOwner {
 
     /// Who should hold the keyboard, given what is on screen.
     ///
+    /// A card that has already asked its question no longer wants the keyboard — the
+    /// conversation moved to the chat, and a follow-up must be typeable there without
+    /// dismissing the thing the question was about.
+    ///
     /// Precedence is by how explicitly the user asked for it. Arming the clipboard is a
     /// deliberate "I am working in the clips now" — a hotkey, or a click on the card — so it
     /// outranks a chat field that is merely present. The selection card is summoned the same
@@ -32,11 +36,11 @@ enum CornerKeyboardOwner {
     /// it holds the keyboard whenever nothing louder is up, which is most of the time.
     static func owner(
         clipboardArmed: Bool,
-        selectionVisible: Bool,
+        selectionWantsKeyboard: Bool,
         chatShowsInput: Bool
     ) -> CornerKeyboardClaimant {
         if clipboardArmed { return .clipboard }
-        if selectionVisible { return .selection }
+        if selectionWantsKeyboard { return .selection }
         if chatShowsInput { return .chat }
         return .none
     }
@@ -50,24 +54,24 @@ enum CornerKeyboardOwner {
     /// field, and could not receive a single keystroke.
     static func panelHoldsKeyboard(
         clipboardArmed: Bool,
-        selectionVisible: Bool,
+        selectionWantsKeyboard: Bool,
         chatShowsInput: Bool
     ) -> Bool {
         owner(
             clipboardArmed: clipboardArmed,
-            selectionVisible: selectionVisible,
+            selectionWantsKeyboard: selectionWantsKeyboard,
             chatShowsInput: chatShowsInput) != .none
     }
 
     /// Should the App Chat field hold the caret right now?
     static func chatFieldHoldsFocus(
         clipboardArmed: Bool,
-        selectionVisible: Bool,
+        selectionWantsKeyboard: Bool,
         chatShowsInput: Bool
     ) -> Bool {
         owner(
             clipboardArmed: clipboardArmed,
-            selectionVisible: selectionVisible,
+            selectionWantsKeyboard: selectionWantsKeyboard,
             chatShowsInput: chatShowsInput) == .chat
     }
 }

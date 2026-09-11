@@ -62,6 +62,32 @@ struct SelectionScopeSubmitTests {
         #expect(ours?["bundleId"] as? String == "com.microsoft.VSCode")
     }
 
+    @Test("Asking hands the keyboard to the chat the answer is in")
+    func theCardStopsClaimingTheCaret() {
+        let model = summoned()
+        model.query = "explain this"
+
+        // Before asking, the card owns the keyboard: it was summoned by hotkey and it has
+        // the field the user is typing into.
+        #expect(
+            CornerKeyboardOwner.owner(
+                clipboardArmed: false,
+                selectionWantsKeyboard: model.phase.isVisible && !model.hasAsked,
+                chatShowsInput: true) == .selection)
+
+        #expect(model.submit())
+
+        // After, the card is still on screen as the subject of the answer — but a follow-up
+        // must be typeable in the chat without dismissing it first.
+        #expect(model.hasAsked)
+        #expect(model.phase == .showing)
+        #expect(
+            CornerKeyboardOwner.owner(
+                clipboardArmed: false,
+                selectionWantsKeyboard: model.phase.isVisible && !model.hasAsked,
+                chatShowsInput: true) == .chat)
+    }
+
     @Test("Asking opens somewhere for the answer to appear")
     func anAnswerSurfaceIsOpened() {
         let model = summoned()

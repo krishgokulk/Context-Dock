@@ -26,12 +26,12 @@ final class CornerDockKeyboardState: ObservableObject {
     /// owner is unchanged, so a board that has just mounted still gets told to take focus.
     func ownerChanged(
         clipboardArmed: Bool,
-        selectionVisible: Bool,
+        selectionWantsKeyboard: Bool,
         chatShowsInput: Bool
     ) {
         owner = CornerKeyboardOwner.owner(
             clipboardArmed: clipboardArmed,
-            selectionVisible: selectionVisible,
+            selectionWantsKeyboard: selectionWantsKeyboard,
             chatShowsInput: chatShowsInput)
         focusRequestToken &+= 1
     }
