@@ -226,6 +226,10 @@ final class AppChatPromptModel: ObservableObject {
         selection = AppChatSelectionScope.from(
             context: AXContextReader.shared.current, scopedTo: bundleID)
         loadMenuItems()
+        // The running-app pills used to be a Global Context-only concept. They are really
+        // "what else is running, and where can this field take me next" — true of this
+        // scope too, and the dock's own equivalent shows them here as well.
+        updateGlobalTyping(for: "")
         set(restingInputPhase)
         arm(after: Self.idleDwell)
     }

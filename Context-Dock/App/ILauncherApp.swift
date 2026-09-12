@@ -2469,7 +2469,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         CornerDockController.shared.armKeyboard()
     }
 
-    func activateSelectionScope() {
+    /// `sourceBundleID`: when the caller already knows exactly which app the selection
+    /// belongs to — a button inside that app's own corner chat, say — name it explicitly
+    /// rather than asking "whatever is frontmost right now". Reading frontmostApplication
+    /// at that point returns *this app*, since a click on our own button requires our own
+    /// window to be key: the guard below would then skip the refresh and quietly fall back
+    /// to whatever AXContextReader last happened to hold, which is correct only by luck.
+    /// The global hotkey path keeps asking "whatever is frontmost" because there it is
+    /// genuinely true — the hotkey fires while some other app still holds the key window.
+    func activateSelectionScope(sourceBundleID: String? = nil) {
         guard settings.enableLayer2 else { return }
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
@@ -2478,7 +2486,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Read the selection BEFORE the panel appears, while the source app is still frontmost.
         // The launcher then paints Selection Scope on its first frame instead of showing Context
         // Dock and swapping once an async AX read lands.
-        if let source = NSWorkspace.shared.frontmostApplication,
+        if let bundleID = sourceBundleID, !bundleID.isEmpty,
+            let named = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleID && !$0.isTerminated
+            })
+        {
+            AXContextReader.shared.refreshSelectionOnly(from: named)
+        } else if let source = NSWorkspace.shared.frontmostApplication,
             source.bundleIdentifier != Bundle.main.bundleIdentifier
         {
             AXContextReader.shared.refreshSelectionOnly(from: source)

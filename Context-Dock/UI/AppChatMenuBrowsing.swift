@@ -653,6 +653,10 @@ extension AppChatPromptModel {
             $0.bundleIdentifier == bundleID && !$0.isTerminated
         }) {
             running.activate()
+            // Clicking a pill is the same explicit "take me there" as running a Global
+            // Context row — the corner follows rather than sitting on whichever app it
+            // was showing before this click.
+            onAppLaunchedFromGlobalContext?(icon.title, bundleID)
             return
         }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)

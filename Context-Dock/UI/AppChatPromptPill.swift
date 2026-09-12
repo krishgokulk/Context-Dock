@@ -417,8 +417,13 @@ struct AppChatPromptPill: View {
             // matched, and two answers to one question is the clutter the dock avoids. An
             // untyped field is not that case — there the pills are the only thing offering
             // anywhere to go, so they stay through a scope change.
-            if model.isGlobalScope || model.returnsToGlobalScope,
-                model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            // Global Context always had these; the plain frontmost-app chat never did,
+            // even though the dock's own equivalent shows the same running-app row while
+            // scoped to one app — the corner's mode split (frontmost/global/general) has
+            // no dock equivalent, and this pill row is not actually about which of those
+            // three is active. It is about whether the field is empty and there is
+            // somewhere else to go.
+            if model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 ContextMatchDock(
@@ -506,7 +511,9 @@ struct AppChatPromptPill: View {
     /// off the screen instead of picking a file.
     private var selectionScopeButton: some View {
         Button {
-            AppDelegate.shared?.activateSelectionScope()
+            // Named explicitly: at the moment of this click the corner's own panel is key,
+            // so "whatever is frontmost" would mean us, not the app this chat is about.
+            AppDelegate.shared?.activateSelectionScope(sourceBundleID: model.appBundleID)
         } label: {
             controlGlyph("text.cursor")
         }
