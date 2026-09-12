@@ -59,6 +59,10 @@ final class CornerDockController: NSObject {
     private var hoverMonitors: [Any] = []
     /// When Command went down alone, for the tap gesture above.
     private var commandTapStarted: Date?
+    /// A switch waiting to see whether this tap turns into the system-wide double-Command
+    /// gesture instead. Cancelled by the next Command press, so a real double-tap always
+    /// wins the ambiguity rather than this firing first and the double-tap undoing it.
+    private var pendingCommandSwitch: DispatchWorkItem?
     private var accumulatedChatSwipeX: CGFloat = 0
     private var accumulatedChatSwipeY: CGFloat = 0
     private var sinks: Set<AnyCancellable> = []
@@ -396,7 +400,14 @@ final class CornerDockController: NSObject {
     func armKeyboard() {
         guard let panel else { return }
         panel.styleMask = [.borderless]
-        NSApp.activate()
+        // The plain, no-argument activate() is cooperative — macOS can decline or defer it,
+        // and silently did exactly that when this ran from a global hotkey/event-monitor
+        // callback (the double-Command launch, a Carbon-registered hotkey) rather than from
+        // a click on our own window: the panel reordered to the front and looked open, but
+        // the app never actually became the active application, so every keystroke kept
+        // going to whatever was frontmost before. Every other hotkey path in this app already
+        // uses the forceful, unconditional form for exactly this reason.
+        NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
     }
 
@@ -499,18 +510,17 @@ final class CornerDockController: NSObject {
     /// disqualifies the tap, because ⌘ is half the shortcuts on the machine and stealing it
     /// would be worse than not having the gesture.
     private func handleCommandTap(_ event: NSEvent) -> NSEvent? {
-        // The global double-tap recognizer owns Command while enabled. Switching modes
-        // on its first release would turn the second tap into an unexpected dismissal.
-        guard !AppSettings.shared.useDoubleCommandGlobalContext else {
-            commandTapStarted = nil
-            return event
-        }
         guard let panel, event.window === panel else { return event }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isCommandDown = flags.contains(.command)
         let hasOtherModifier = !flags.subtracting([.command]).isEmpty
 
         if isCommandDown {
+            // A fresh press means the previous release might not have been an isolated tap
+            // after all — it could be completing the system-wide double-Command gesture,
+            // which reads this exact key from a monitor of its own. Let that decide first.
+            pendingCommandSwitch?.cancel()
+            pendingCommandSwitch = nil
             commandTapStarted = hasOtherModifier ? nil : Date()
             return event
         }
@@ -521,17 +531,33 @@ final class CornerDockController: NSObject {
               prompt.phase.showsInput
         else { return event }
 
-        switch chatPresentation.mode {
-        case .frontmostApp: chatPresentation.show(.globalContext)
-        case .globalContext: chatPresentation.show(.frontmostApp)
-        case .general: return event
+        // Held slightly past the system-wide double-tap's own window before acting, rather
+        // than switching immediately: a genuine double-tap landing while the corner is
+        // already open used to switch modes on the first release and then have the
+        // double-tap dismiss the corner out from under that switch, on its second. Waiting
+        // this long costs nothing on an isolated tap, which is not a fast gesture to begin
+        // with, and the event itself is left alone either way — this only defers *acting*
+        // on it, never whether some other monitor gets to see it.
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.pendingCommandSwitch != nil, self.chatPresentation.isVisible
+            else { return }
+            self.pendingCommandSwitch = nil
+            switch self.chatPresentation.mode {
+            case .frontmostApp: self.chatPresentation.show(.globalContext)
+            case .globalContext: self.chatPresentation.show(.frontmostApp)
+            case .general: break
+            }
         }
-        return nil
+        pendingCommandSwitch = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+        return event
     }
 
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
         // A key pressed while Command is down means this was a shortcut, not a tap.
         commandTapStarted = nil
+        pendingCommandSwitch?.cancel()
+        pendingCommandSwitch = nil
 
         // Backspace on an empty field leaves the scope. Like Tab, the field's own handler
         // never saw it — `onKeyPress` competes with the text system for the delete keys,

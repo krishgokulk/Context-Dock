@@ -437,7 +437,10 @@ struct AppChatPromptPill: View {
             //
             // Global Context and the scopes entered from it are search fields rather than
             // composers, and the dock carries none of this there — so neither does this.
-            if !model.isSearchField { attachMenu }
+            if !model.isSearchField {
+                attachMenu
+                selectionScopeButton
+            }
 
             if model.isAnswering {
                 Button { model.cancelTurn() } label: {
@@ -491,6 +494,20 @@ struct AppChatPromptPill: View {
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
+    }
+
+    /// Opens the frontmost app's selection as its own corner card — the same surface the
+    /// Selection Scope hotkey opens, reached here without leaving the keyboard to find it in
+    /// Settings. Sits beside "+" because both add something to work with; this one reads it
+    /// off the screen instead of picking a file.
+    private var selectionScopeButton: some View {
+        Button {
+            AppDelegate.shared?.activateSelectionScope()
+        } label: {
+            controlGlyph("text.cursor")
+        }
+        .buttonStyle(.plain)
+        .help("Open the current selection")
     }
 
     private var attachMenu: some View {
