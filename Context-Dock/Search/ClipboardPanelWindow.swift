@@ -118,30 +118,16 @@ final class ClipboardPanelController: NSObject {
         startOutsideClickWatch()
     }
 
-    /// Space on the focused row. Text has no file of its own, so it gets a scratch one.
-    ///
-    /// The scratch file used to have one fixed name, reused for every clip. `PreviewItem.id`
-    /// is the URL, so two different clips previewed one after another looked identical to
-    /// the preview panel: `toggleIfSame` read the second press as "close the one already
-    /// open" instead of "show different text", and on the rare occasion the window did stay
-    /// open, SwiftUI's `.id(item.id)` never changed either, so `PreviewTextEditor` kept
-    /// showing whatever it had already loaded — the panel looked blank or stuck on stale
-    /// text. Naming the file by a hash of its content fixes both: identical text still
-    /// toggles the same window shut (the one case where that behaviour is actually wanted),
-    /// and different text always gets a fresh id.
+    /// Space on the focused row. Text has no file of its own, so it gets a scratch one —
+    /// see `ClipboardPreviewScratchFile` for why it is named the way it is.
     func preview() {
         guard let target = model.previewTarget else { return }
         switch target {
         case .file(let url):
             PreviewController.shared.present(url: url, toggleIfSame: true)
         case .text(let text):
-            let digest = String(format: "%016x", text.hashValue)
-            let url = FileManager.default.temporaryDirectory
-                .appendingPathComponent("context-dock-clip-preview-\(digest).txt")
-            guard (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil else {
-                return
-            }
-            Self.pruneStaleClipPreviewScratchFiles(keeping: url)
+            guard let url = ClipboardPreviewScratchFile.write(text) else { return }
+            ClipboardPreviewScratchFile.pruneStale(keeping: url)
             PreviewController.shared.present(url: url, toggleIfSame: true)
         }
     }
@@ -254,22 +240,6 @@ final class ClipboardPanelController: NSObject {
         outsideClickMonitor = nil
     }
 
-    /// Every earlier content-hashed scratch file except the one just written. Best-effort:
-    /// a file the preview panel still has open fails to delete on some platforms and that
-    /// failure is silently swallowed, because leaving one extra file behind is nothing next
-    /// to the bug this replaced.
-    private static func pruneStaleClipPreviewScratchFiles(keeping current: URL) {
-        let dir = FileManager.default.temporaryDirectory
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
-        else { return }
-        for entry in entries
-        where entry.lastPathComponent.hasPrefix("context-dock-clip-preview-")
-            && entry != current
-        {
-            try? FileManager.default.removeItem(at: entry)
-        }
-    }
 }
 
 @MainActor
