@@ -27,8 +27,28 @@ enum AIWorkerVerification {
     static func assess(
         report: String,
         task: AIWorkerTask,
-        readings: [Reading]
+        readings: [Reading],
+        /// Whether the workspace itself stayed as promised, checked independently of
+        /// anything the report says. `nil` when there was nothing to check — a workspace
+        /// that was never a git repository, or no workspace at all.
+        workspaceIntegrity: AIWorkerWorkspaceIntegrity.Verdict? = nil
     ) -> Outcome {
+        // Checked first and unconditionally: a workspace that moved under a task promising
+        // `allowsWrites: false` is a broken authority envelope, which matters whatever the
+        // report itself claims — a correct-sounding report is not evidence the boundary
+        // held, and this is the one check here that needs no cooperation from the report's
+        // wording to be meaningful.
+        if let workspaceIntegrity, !workspaceIntegrity.held, let integrityNote = workspaceIntegrity.note {
+            return Outcome(
+                status: .unverified,
+                note: integrityNote,
+                receipt: DoraXActionReceipt(
+                    command: "verify_worker_report(\(task.goal.prefix(60)))",
+                    output: integrityNote,
+                    success: false,
+                    isVerification: true))
+        }
+
         let usable = readings.filter(\.succeeded)
 
         let status: AIVerificationStatus

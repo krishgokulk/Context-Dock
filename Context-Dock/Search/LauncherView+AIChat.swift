@@ -2349,9 +2349,17 @@ extension LauncherView {
                             isError: true))
                     return
                 }
+                // Taken before and after, unattended: the promise a read-only worker
+                // task makes is that the workspace does not move, and that is a fact about
+                // the machine rather than something the model's own report can attest to.
+                let workspaceBefore = AIWorkerWorkspaceIntegrity.snapshot(
+                    of: task.authority.allowedPaths.first)
                 let report = await AIWorkerRunner.run(task, on: kind)
+                let workspaceAfter = AIWorkerWorkspaceIntegrity.snapshot(
+                    of: task.authority.allowedPaths.first)
                 let outcome = AIWorkerVerification.assess(
-                    report: report, task: task, readings: [])
+                    report: report, task: task, readings: [],
+                    workspaceIntegrity: .init(before: workspaceBefore, after: workspaceAfter))
                 l2.chatMessages.append(
                     AIChatMessage(
                         role: .assistant,
