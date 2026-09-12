@@ -209,6 +209,7 @@ extension AppChatPromptModel {
         adapterActions = []
         allMenuItems = []
         hasActed = false
+        refreshSelectionForCurrentScope()
         updateMenuMatches()
         set(.prompt)
         syncListPhase()

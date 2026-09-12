@@ -172,8 +172,19 @@ final class AppChatPromptModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] context in
                 guard let self else { return }
+                // Global Context is scoped to no app in particular — `adoptScope` gives it
+                // an empty bundle id on purpose — so matching against `appBundleID` the way
+                // every other scope does could never pass, and the selection button had no
+                // way to be anything but permanently nil there. What it means instead is
+                // "whatever is selected in whichever real app is out there right now" — so
+                // it trusts the reader's own bundle id, the same one `.appActivated`
+                // already keeps pointed at a real app and never at us.
+                let scopedTo =
+                    self.isGlobalScope
+                    ? (context.bundleId == Bundle.main.bundleIdentifier ? "" : context.bundleId)
+                    : self.appBundleID
                 self.selection = AppChatSelectionScope.from(
-                    context: context, scopedTo: self.appBundleID)
+                    context: context, scopedTo: scopedTo)
             }
         // The dock's own running-app row refreshes the instant an app launches or quits —
         // it watches `NSWorkspace` directly rather than waiting for the next keystroke.
@@ -249,22 +260,7 @@ final class AppChatPromptModel: ObservableObject {
     ) {
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
-        // The reader's snapshot, refreshed against the app this corner session is about —
-        // opening it is itself an app switch, so without this the snapshot could still be
-        // of whatever the reader last saw, and the selection button either showed a stale
-        // selection or none at all until the next unrelated AX event happened to refresh
-        // it. `runAdapterAction` already does this for the same reason; the selection
-        // read here never did.
-        if !bundleID.isEmpty,
-            let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == bundleID && !$0.isTerminated
-            })
-        {
-            AXContextReader.shared.refreshLightweight(from: app)
-            AXContextReader.shared.refreshSelectionOnly(from: app)
-        }
-        selection = AppChatSelectionScope.from(
-            context: AXContextReader.shared.current, scopedTo: bundleID)
+        refreshSelectionForCurrentScope()
         loadMenuItems()
         // The running-app pills used to be a Global Context-only concept. They are really
         // "what else is running, and where can this field take me next" — true of this
@@ -272,6 +268,42 @@ final class AppChatPromptModel: ObservableObject {
         updateGlobalTyping(for: "")
         set(restingInputPhase)
         arm(after: Self.idleDwell)
+    }
+
+    /// The reader's snapshot, refreshed against whichever app this session's selection
+    /// should reflect right now — opening a scope is itself an app switch, so without this
+    /// the snapshot could still be of whatever the reader last saw, and the selection
+    /// button either showed a stale selection or none at all until the next unrelated AX
+    /// event happened to refresh it. `runAdapterAction` already does this for the same
+    /// reason; nothing that opens a scope did before this.
+    ///
+    /// Global Context has no one app to refresh against — `adoptScope` gives it an empty
+    /// bundle id on purpose — so it reads whichever real app the menu bar says owns the
+    /// screen right now instead, the same resolver the hotkey path already trusts to never
+    /// resolve to us.
+    func refreshSelectionForCurrentScope() {
+        let ownBundleID = Bundle.main.bundleIdentifier ?? ""
+        if isGlobalScope {
+            if let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+                app.bundleIdentifier != ownBundleID
+            {
+                AXContextReader.shared.refreshLightweight(from: app)
+                AXContextReader.shared.refreshSelectionOnly(from: app)
+            }
+        } else if !appBundleID.isEmpty,
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == appBundleID && !$0.isTerminated
+            })
+        {
+            AXContextReader.shared.refreshLightweight(from: app)
+            AXContextReader.shared.refreshSelectionOnly(from: app)
+        }
+        let context = AXContextReader.shared.current
+        let scopedTo =
+            isGlobalScope
+            ? (context.bundleId == ownBundleID ? "" : context.bundleId)
+            : appBundleID
+        selection = AppChatSelectionScope.from(context: context, scopedTo: scopedTo)
     }
 
     /// Opens on suggestions when there are any, because a blank field asks the user to
