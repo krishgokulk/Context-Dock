@@ -222,7 +222,22 @@ final class AXContextReader {
         guard current.pid == pid else { return }
         let axApp = AXUIElementCreateApplication(pid)
         var updated = current
-        updated.selectedText       = readSelectedText(axApp)
+        // A focus/selection notification for an app that has just stopped being active —
+        // exactly what our own corner taking key focus right after causes — often reads
+        // back an empty selection even though the user never deselected anything.
+        // `refreshSelectionOnly` already knows not to trust that read in that case; this
+        // path read it unconditionally and blindly erased the selection a fresh open had
+        // just correctly captured a moment earlier — the selection pill would appear on
+        // the hotkey and vanish, debounced, before the user finished reading it.
+        let freshSelection = readSelectedText(axApp)
+        let isActive = NSRunningApplication(processIdentifier: pid)?.isActive ?? true
+        if let freshSelection, !freshSelection.isEmpty {
+            updated.selectedText = freshSelection
+        } else if !isActive, updated.selectedText?.isEmpty == false {
+            // keep the previously captured selection
+        } else {
+            updated.selectedText = nil
+        }
         updated.focusedElementRole = readFocusedRole(axApp)
         updated.windowTitle        = readWindowTitle(axApp)
         if updated.bundleId == "com.apple.Preview" {

@@ -249,6 +249,20 @@ final class AppChatPromptModel: ObservableObject {
     ) {
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
+        // The reader's snapshot, refreshed against the app this corner session is about —
+        // opening it is itself an app switch, so without this the snapshot could still be
+        // of whatever the reader last saw, and the selection button either showed a stale
+        // selection or none at all until the next unrelated AX event happened to refresh
+        // it. `runAdapterAction` already does this for the same reason; the selection
+        // read here never did.
+        if !bundleID.isEmpty,
+            let app = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleID && !$0.isTerminated
+            })
+        {
+            AXContextReader.shared.refreshLightweight(from: app)
+            AXContextReader.shared.refreshSelectionOnly(from: app)
+        }
         selection = AppChatSelectionScope.from(
             context: AXContextReader.shared.current, scopedTo: bundleID)
         loadMenuItems()

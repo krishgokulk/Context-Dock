@@ -455,6 +455,21 @@ final class CornerDockController: NSObject {
     func disarmKeyboard() {
         panel?.styleMask = [.borderless, .nonactivatingPanel]
         keyboardState.stoodDown()
+        // `NSApp` has no "give back active status" of its own — the only way is
+        // explicitly activating whoever had it before `armKeyboard`'s forceful
+        // `ignoringOtherApps` took it. Skipping that left Context-Dock the active
+        // application long after the corner had stopped needing keys at all, which is
+        // what silently broke the double-Command launch some of the time: its global
+        // monitor only fires while some *other* app is active, by NSEvent's own design,
+        // and nothing here ever gave that back on its own. Switching Spaces "fixed" it
+        // by accident, since macOS reactivates whichever real app owns the space you
+        // land on — the same rescue this now does on purpose, immediately.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
+            guard self?.panel?.isKeyWindow != true else { return }
+            AppDelegate.shared?.previousFrontmostApp?.activate(options: [
+                .activateIgnoringOtherApps
+            ])
+        }
     }
 
     // MARK: - Hover
@@ -686,6 +701,14 @@ struct CornerDockSurface: View {
         CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
     }
 
+    /// The composer already carries its own "you just copied something" icon next to its
+    /// "+" whenever it is showing one — the same transient `phase` this ambient pill reads.
+    /// Drawing both said the same thing twice, closer together the more the shell's own
+    /// anchor pushed them toward each other.
+    private var clipboardAlreadyShownInComposer: Bool {
+        chatPresentation.isVisible && chatPresentation.mode != .general && !prompt.isSearchField
+    }
+
     var body: some View {
         // Centred, the shell is a row: shelf, field, clipboard side by side, with what
         // answers the field stacked over the field itself. Anchored to an edge it stays a
@@ -775,7 +798,7 @@ struct CornerDockSurface: View {
                     )
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-                if clipboardModel.phase.isVisible {
+                if clipboardModel.phase.isVisible, !clipboardAlreadyShownInComposer {
                     ClipboardDockPill(model: clipboardModel)
                 }
             }
@@ -805,7 +828,7 @@ struct CornerDockSurface: View {
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            if clipboardModel.phase.isVisible {
+            if clipboardModel.phase.isVisible, !clipboardAlreadyShownInComposer {
                 ClipboardDockPill(model: clipboardModel)
             }
             chatBoards

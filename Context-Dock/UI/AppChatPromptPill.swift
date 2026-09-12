@@ -461,6 +461,16 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
+                // Gated on `entries.isEmpty` this stayed forever after the first copy of
+                // the session — not what the dock does. The dock's own trailing button
+                // reads a transient flag a fresh copy sets and a timer clears a few
+                // seconds later; `phase` is the corner's version of that same transient
+                // signal, already driving the ambient clipboard pill's own collapse-then-
+                // vanish, so reading it here says "a copy just happened" rather than
+                // "a clipboard exists somewhere," and needs no timer of its own.
+                if clipboard.phase.isVisible {
+                    clipboardTrailingButton
+                }
                 // Only when there is something to open: an icon that does nothing on a
                 // blank selection is a button shaped like a promise it cannot keep.
                 if model.selection != nil {
@@ -536,6 +546,20 @@ struct AppChatPromptPill: View {
         }
         .buttonStyle(.plain)
         .help("Open the current selection")
+        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+    }
+
+    /// The dock's own clipboard affordance, mounted here rather than imitated: same
+    /// controller, same toggle, so opening it here and opening it from the dock's search
+    /// bar land in the exact same panel rather than two that happen to look alike.
+    private var clipboardTrailingButton: some View {
+        Button {
+            AppDelegate.shared?.activateClipboardScope()
+        } label: {
+            controlGlyph("doc.on.clipboard")
+        }
+        .buttonStyle(.plain)
+        .help("Open the clipboard")
         .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
