@@ -284,12 +284,6 @@ struct AppChatPromptPill: View {
                 appChip
             }
 
-            // What the question will carry besides the words. Next to the scope chip
-            // because the two together are the subject: this app, this selection.
-            if let selection = model.selection {
-                selectionChip(selection)
-            }
-
             ZStack(alignment: .leading) {
                 if model.query.isEmpty {
                     placeholder
@@ -432,6 +426,13 @@ struct AppChatPromptPill: View {
                     isSearching: false,
                     onSelect: { icon in model.openGlobalMatchIcon(icon) })
                     .transition(.opacity)
+                // Beside the running-app capsule, not inside it: the clipboard used to
+                // lead that list as one of its icons, which put a permanent member in a
+                // row meant to be "what's running" and made a stale old copy look as
+                // current as a fresh one. Same transient signal as the composer's own.
+                if clipboard.phase.isVisible {
+                    clipboardTrailingButton
+                }
             }
 
             // What Return does, shown rather than left to the row below to explain: the
@@ -604,25 +605,6 @@ struct AppChatPromptPill: View {
         }
         .frame(width: 28, height: 28)
         .help(model.globalTopMatch.map { "Tab to open \($0.title)" } ?? "Search everything")
-    }
-
-    /// The app's current selection, shown because the turn carries it. Read from the same
-    /// snapshot the turn is built from, so it cannot promise something the turn will not
-    /// send.
-    private func selectionChip(_ selection: AppChatSelectionScope) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: selection.icon)
-                .font(.system(size: 10, weight: .semibold))
-            Text(selection.label)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-        }
-        .foregroundStyle(Color.accentColor)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Color.accentColor.opacity(0.14), in: Capsule())
-        .transition(.opacity)
-        .help("This question will carry the app's current selection")
     }
 
     /// The scope chip with a way out of it — the "−" the dock's scope chip carries. Only

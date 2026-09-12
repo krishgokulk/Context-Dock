@@ -701,12 +701,13 @@ struct CornerDockSurface: View {
         CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
     }
 
-    /// The composer already carries its own "you just copied something" icon next to its
-    /// "+" whenever it is showing one — the same transient `phase` this ambient pill reads.
-    /// Drawing both said the same thing twice, closer together the more the shell's own
-    /// anchor pushed them toward each other.
+    /// The composer and Global Context both carry their own "you just copied something"
+    /// icon now — next to "+" in one, next to the running-app capsule in the other — the
+    /// same transient `phase` this ambient pill reads. Drawing both said the same thing
+    /// twice, closer together the more the shell's own anchor pushed them toward each
+    /// other. General has no clipboard icon of its own yet, so it keeps this one.
     private var clipboardAlreadyShownInComposer: Bool {
-        chatPresentation.isVisible && chatPresentation.mode != .general && !prompt.isSearchField
+        chatPresentation.isVisible && chatPresentation.mode != .general
     }
 
     var body: some View {

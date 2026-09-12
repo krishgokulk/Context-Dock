@@ -252,11 +252,16 @@ extension AppChatPromptModel {
     /// they are doing.
     static func pillIcons(excluding scopedBundleID: String = "") -> [MatchDockIcon] {
         var icons: [MatchDockIcon] = []
-        if let clipboard = clipboardPill() { icons.append(clipboard) }
-        // A panel the user minimised is a thing they put down mid-use, so it sits with the
-        // clipboard at the front rather than at the end of a list of apps they never
-        // touched. macOS's own Dock has it too — but that is a different dock, and the
-        // corner is where they opened it.
+        // The clipboard used to lead this list as a `MatchDockIcon`, mixed in with the
+        // running apps. The dock's own equivalent row is apps only — its clipboard
+        // indicator is a separate button next to it, not a member of the list — so
+        // mixing it in here was a corner-only invention, not parity with anything. It is
+        // drawn separately now, next to this capsule, reading the same transient signal.
+        //
+        // A panel the user minimised is a thing they put down mid-use, so it sits at the
+        // front of the apps rather than the end of a list of ones they never touched.
+        // macOS's own Dock has it too — but that is a different dock, and the corner is
+        // where they opened it.
         icons += minimizedPanelPills()
         let apps = runningAppIcons()
             .filter { $0.bundleID != scopedBundleID || scopedBundleID.isEmpty }
