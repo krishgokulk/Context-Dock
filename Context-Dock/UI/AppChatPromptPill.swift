@@ -330,6 +330,10 @@ struct AppChatPromptPill: View {
                             model.runCLICommand()
                             return
                         }
+                        if model.isSearchField {
+                            if let first = model.rows.first { model.run(first) }
+                            return
+                        }
                         model.submit()
                     }
                     .onKeyPress(.space) {

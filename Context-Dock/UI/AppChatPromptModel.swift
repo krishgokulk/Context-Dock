@@ -124,18 +124,27 @@ final class AppChatPromptModel: ObservableObject {
     /// do is an opening offer, not a thing to re-present after every action.
     var hasActed = false
     private let conversation: AppChatConversation
+    let globalResultSource: GlobalContextResultSource
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
     private var messagesObservation: AnyCancellable?
     private var selectionObservation: AnyCancellable?
+    private var globalResultsObservation: AnyCancellable?
     /// Half-written questions, kept per scope so a walk between them loses nothing.
     private var drafts: [String: String] = [:]
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
 
-    init(conversation: AppChatConversation? = nil) {
+    init(conversation: AppChatConversation? = nil, globalResultSource: GlobalContextResultSource? = nil) {
         let source = conversation ?? AppChatConversation.shared
         self.conversation = source
+        self.globalResultSource = globalResultSource ?? .shared
+        globalResultsObservation = self.globalResultSource.updates.sink { [weak self] in
+            guard let self, self.isSearchField, self.phase.showsInput else { return }
+            let focusedID = self.focusedRow?.id
+            self.updateMenuMatches()
+            self.focusedMenuIndex = focusedID.flatMap { id in self.rows.firstIndex { $0.id == id } }
+        }
         conversationObservation = source.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }

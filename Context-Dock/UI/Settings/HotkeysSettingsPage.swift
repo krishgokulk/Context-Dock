@@ -9,6 +9,30 @@ struct HotkeysSettingsPage: View {
             VStack(spacing: 20) {
                 CardSection(title: "Launch Shortcut", systemImage: "bolt.fill") {
                     HStack(spacing: 12) {
+                        Text("⌘⌘")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.teal)
+                            .frame(width: 38, height: 30)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Double-press Command")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Tap Command twice from anywhere to open Global Context in the corner.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("Double-press Command", isOn: Binding(
+                            get: { settings.useDoubleCommandGlobalContext },
+                            set: {
+                                settings.useDoubleCommandGlobalContext = $0
+                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                            }
+                        ))
+                        .labelsHidden()
+                    }
+                    .padding(.vertical, 12)
+                    Divider()
+                    HStack(spacing: 12) {
                         Text("⌥⌥")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(.orange)
@@ -100,7 +124,7 @@ struct HotkeysSettingsPage: View {
                             icon: "globe", color: .teal,
                             title: "Global Context",
                             subtitle:
-                                "Every running app's commands in the corner, in one ranked list",
+                                "Search everything in the corner. Double-press Command is the default; add another shortcut here.",
                             display: settings.globalContextHotkeyDisplayString,
                             clear: {
                                 settings.globalContextHotkeyKeyCode = 0

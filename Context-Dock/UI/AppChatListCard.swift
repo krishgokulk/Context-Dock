@@ -111,18 +111,35 @@ struct AppChatListCard: View {
                     suggestionRow(suggestion)
                 }
             } else {
-                ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
-                    switch row {
-                    case .command(let item):
-                        commandRow(item, isFocused: index == model.focusedMenuIndex)
-                    case .action(let action):
-                        actionRow(action, isFocused: index == model.focusedMenuIndex)
-                    case .global(let doc):
-                        globalRow(doc, isFocused: index == model.focusedMenuIndex)
-                    case .file(let url):
-                        fileRow(url, isFocused: index == model.focusedMenuIndex)
-                    case .cliSuggestion(let word):
-                        cliSuggestionRow(word, isFocused: index == model.focusedMenuIndex)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                                Group {
+                                    switch row {
+                                    case .dock(let pill):
+                                        dockRow(pill, isFocused: index == model.focusedMenuIndex)
+                                    case .command(let item):
+                                        commandRow(item, isFocused: index == model.focusedMenuIndex)
+                                    case .action(let action):
+                                        actionRow(action, isFocused: index == model.focusedMenuIndex)
+                                    case .global(let doc):
+                                        globalRow(doc, isFocused: index == model.focusedMenuIndex)
+                                    case .file(let url):
+                                        fileRow(url, isFocused: index == model.focusedMenuIndex)
+                                    case .cliSuggestion(let word):
+                                        cliSuggestionRow(word, isFocused: index == model.focusedMenuIndex)
+                                    }
+                                }
+                                .id(row.id)
+                            }
+                        }
+                    }
+                    .onChange(of: model.focusedMenuIndex) { _, _ in
+                        if let row = model.focusedRow { proxy.scrollTo(row.id) }
+                    }
+                    .onChange(of: model.query) { _, _ in
+                        if let row = model.rows.first { proxy.scrollTo(row.id, anchor: .top) }
                     }
                 }
             }
@@ -277,16 +294,8 @@ struct AppChatListCard: View {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(Color.primary.opacity(0.08))
                     .frame(width: 26, height: 26)
-                if let icon = doc.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 18)
-                } else {
-                    Image(systemName: GlobalContextRow.symbol(for: doc))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.primary.opacity(0.85))
-                }
+                CornerResultIcon(url: pageURL(doc), fallback: doc.icon,
+                    symbol: GlobalContextRow.symbol(for: doc))
             }
             .frame(width: 28, height: 28)
 
@@ -309,6 +318,46 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.run(.global(doc)) }
+    }
+
+    private func pageURL(_ doc: GlobalSearchService.SearchDocument) -> URL? {
+        if case .browserURL(let url, _, _, _, _) = doc.action { return url }
+        return nil
+    }
+
+    private func dockRow(_ pill: DockPill, isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            CornerResultIcon(url: pill.resolvedURL, fallback: pill.menuItemImage, symbol: pill.icon)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(pill.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(pill.menuContext ?? pill.badge ?? pill.sourceAppName)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text(pill.sourceAppName).font(.system(size: 10)).foregroundStyle(.secondary)
+                Image(systemName: "return").font(.system(size: 10)).foregroundStyle(.secondary)
+            } else if let shortcut = pill.keyboardShortcutLabel {
+                Text(shortcut).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18)
+                        .strokeBorder(Color.primary.opacity(isFocused ? 0.2 : 0), lineWidth: 1)
+                }
+                .padding(.horizontal, 8)
+        }
+        .opacity(pill.isEnabled ? 1 : 0.45)
+        .contentShape(Rectangle())
+        .onTapGesture { model.run(.dock(pill)) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     /// The opening offer for an app with no adapter and nothing cached yet.
@@ -360,5 +409,29 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.runAdapterAction(action) }
+    }
+}
+
+/// Observing the cache redraws a page icon as soon as it arrives, without another keypress.
+private struct CornerResultIcon: View {
+    @ObservedObject private var favicons = FaviconStore.shared
+    let url: URL?
+    let fallback: NSImage?
+    let symbol: String
+
+    var body: some View {
+        Group {
+            if let image = url.flatMap({ favicons.icon(for: $0) }) ?? (url == nil ? fallback : nil) {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: url == nil ? symbol : "globe")
+                    .resizable().aspectRatio(contentMode: .fit)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 20, height: 20)
+        .task(id: url) {
+            if let url { favicons.fetchIfNeeded(for: url) }
+        }
     }
 }

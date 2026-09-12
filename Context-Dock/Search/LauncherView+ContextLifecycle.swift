@@ -83,6 +83,7 @@ extension LauncherView {
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
             .onAppear {
+                connectCornerGlobalResults()
                 if renderedDockHeight == nil {
                     renderedDockHeight = calculatedHeight
                 }

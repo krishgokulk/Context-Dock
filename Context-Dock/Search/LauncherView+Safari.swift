@@ -40,6 +40,7 @@ extension LauncherView {
         guard pid > 0 else { return [] }
 
         LiveMenuHistoryCache.shared.refreshIfNeeded(bundleId: bundleId, pid: pid) {
+            GlobalContextResultSource.shared.refresh()
             scheduleDockPillRebuild(
                 query: searchState.query, delayNanoseconds: 0, refreshContext: false)
         }

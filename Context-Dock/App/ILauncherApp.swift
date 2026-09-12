@@ -2132,49 +2132,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(m)
             singleOptionLocalCancelMonitor = nil
         }
-        guard settings.useDoubleOptionLaunch else { return }
+        guard settings.useDoubleOptionLaunch || settings.useDoubleCommandGlobalContext else { return }
+
+        var optionTap = DoubleModifierTap()
+        var commandTap = DoubleModifierTap()
 
         let cancelOptionTap: () -> Void = { [weak self] in
             guard let self else { return }
             self.optionTapContaminated = true
             self.lastOptionPressTime = 0
+            optionTap.cancel()
+            commandTap.cancel()
         }
 
         let handle: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let optionNow = flags.contains(.option)
-            let extraModifiers = flags.intersection([.command, .control, .shift])
-
-            if !extraModifiers.isEmpty {
-                self.optionTapContaminated = true
-                self.lastOptionPressTime = 0
-                return
+            if commandTap.update(
+                isDown: flags.contains(.command),
+                hasOtherModifiers: !flags.intersection([.option, .control, .shift, .function]).isEmpty,
+                time: event.timestamp), self.settings.useDoubleCommandGlobalContext {
+                DispatchQueue.main.async { self.activateGlobalContextScope() }
             }
-
-            if optionNow && !self.optionKeyDown {
-                self.optionKeyDown = true
-                self.optionTapContaminated = false
-                return
-            }
-
-            if !optionNow && self.optionKeyDown {
-                self.optionKeyDown = false
-                guard !self.optionTapContaminated else {
-                    self.optionTapContaminated = false
-                    return
-                }
-
-                let now = Date().timeIntervalSinceReferenceDate
-                let gap = now - self.lastOptionPressTime
-                if gap > 0.04 && gap < 0.40 {
-                    self.lastOptionPressTime = 0
-                    DispatchQueue.main.async { self.toggleLauncher() }
-                } else {
-                    self.lastOptionPressTime = now
-                }
-            } else if !optionNow {
-                self.lastOptionPressTime = 0
+            if optionTap.update(
+                isDown: flags.contains(.option),
+                hasOtherModifiers: !flags.intersection([.command, .control, .shift, .function]).isEmpty,
+                time: event.timestamp), self.settings.useDoubleOptionLaunch {
+                DispatchQueue.main.async { self.toggleLauncher() }
             }
         }
 

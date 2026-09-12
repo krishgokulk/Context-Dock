@@ -911,6 +911,7 @@ class AppSettings: ObservableObject {
     @AppStorage("enableL1FileSearch") var enableL1FileSearch: Bool = true
     @AppStorage("useCustomSearchDirectories") var useCustomSearchDirectories: Bool = false
     @AppStorage("useDoubleOptionLaunch") var useDoubleOptionLaunch: Bool = true
+    @AppStorage("useDoubleCommandGlobalContext") var useDoubleCommandGlobalContext: Bool = true
     @AppStorage("hotkeyKeyCode") private var _hotkeyKeyCode: Int = 49  // Space bar
     @AppStorage("hotkeyModifiers") private var _hotkeyModifiers: Int = Int(optionKey)
     @AppStorage("contextDockHotkeyKeyCode") private var _contextDockHotkeyKeyCode: Int = 0

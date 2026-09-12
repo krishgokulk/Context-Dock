@@ -99,12 +99,26 @@ extension AppChatPromptModel {
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
-            rows = GlobalContextRow
-                .documents(for: typed, limit: Self.menuRowLimit)
-                .map(AppChatRow.global)
+            if let global = globalResultSource.pureGlobalResults?(typed), !global.isEmpty {
+                rows = global.map(AppChatRow.dock)
+            } else if let local = localGlobalQuitRows(for: typed), !local.isEmpty {
+                rows = local.map(AppChatRow.dock)
+            } else if let scoped = globalResultSource.scopedResults?(typed, nil, nil) {
+                rows = scoped.map(AppChatRow.dock)
+            } else {
+                rows = GlobalContextRow.documents(for: typed, limit: 48).map(AppChatRow.global)
+            }
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
+            syncListPhase()
+            return
+        }
+        if returnsToGlobalScope, !typed.isEmpty,
+            let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName) {
+            rows = scoped.map(AppChatRow.dock)
+            menuMatches = []
+            focusedMenuIndex = nil
             syncListPhase()
             return
         }
@@ -124,12 +138,73 @@ extension AppChatPromptModel {
         syncListPhase()
     }
 
+    func localGlobalQuitRows(for query: String) -> [DockPill]? {
+        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard normalized == "quit" || normalized.hasPrefix("quit ") else { return nil }
+
+        let appQuery = normalized
+            .dropFirst("quit".count)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let frontmostID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        var seen = Set<String>()
+        let apps = NSWorkspace.shared.runningApplications.compactMap { app -> NSRunningApplication? in
+            guard app.activationPolicy == .regular,
+                !app.isTerminated,
+                let name = app.localizedName,
+                !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                app.bundleIdentifier != Bundle.main.bundleIdentifier,
+                app.bundleIdentifier != "com.apple.finder"
+            else { return nil }
+            let key = app.bundleIdentifier ?? app.bundleURL?.path ?? name
+            guard seen.insert(key).inserted else { return nil }
+            let normalizedName = name.lowercased()
+            let bundleTail =
+                app.bundleIdentifier?.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
+            guard appQuery.isEmpty || normalizedName.contains(appQuery) || bundleTail.contains(appQuery)
+            else { return nil }
+            return app
+        }
+        let sorted = apps.sorted {
+            if $0.bundleIdentifier == frontmostID { return true }
+            if $1.bundleIdentifier == frontmostID { return false }
+            return ($0.localizedName ?? "").localizedCaseInsensitiveCompare($1.localizedName ?? "")
+                == .orderedAscending
+        }
+        return sorted.prefix(12).map { app in
+            let name = app.localizedName ?? "App"
+            var pill = DockPill(
+                id: "corner-quit-\(app.bundleIdentifier ?? app.bundleURL?.path ?? name)",
+                name: "Quit \(name)",
+                icon: "xmark.circle",
+                badge: name,
+                execute: {
+                    app.terminate()
+                    GlobalContextResultSource.shared.refresh()
+                }
+            )
+            pill.menuItemImage = app.bundleURL.map { NSWorkspace.shared.icon(forFile: $0.path) }
+            pill.menuContext = name
+            pill.sourceAppName = name
+            pill.sourceBundleId = app.bundleIdentifier ?? ""
+            pill.rankingKind = "runningAppQuit"
+            pill.trackingIdentifier = "quit:\(app.bundleIdentifier ?? app.bundleURL?.path ?? name)"
+            pill.searchTerms = ["quit", name]
+            pill.keyboardShortcutLabel = "Running App"
+            pill.previewPath = app.bundleURL?.path
+            return pill
+        }
+    }
+
     /// Every running app at once, in the same field the app scope uses.
     ///
     /// Global Context is the frontmost app's scope widened to the machine, so it reuses this
     /// surface rather than introducing a third one: the chip says which scope is answering
     /// and the list underneath changes with it.
     func summonGlobalContext() {
+        returnsToGlobalScope = false
+        scopedExtension = nil
+        scopedCommand = nil
         adoptScope(name: Self.globalScopeName, bundleID: "")
         adapterActions = []
         allMenuItems = []
@@ -265,6 +340,10 @@ extension AppChatPromptModel {
     /// key falls through rather than eating a keystroke silently.
     @discardableResult
     func acceptGlobalTopMatch() -> Bool {
+        if isGlobalScope, let first = rows.first, case .dock = first {
+            run(first)
+            return true
+        }
         guard isGlobalScope, let top = globalTopMatch else { return false }
         // The top match is a document in the same list the rows come from, so taking it is
         // running that row — not a second code path that might do something else.
@@ -586,6 +665,7 @@ extension AppChatPromptModel {
     /// document. Quick Look needs a path, and rows that have none simply do not preview.
     func previewPath(for row: AppChatRow) -> String? {
         switch row {
+        case .dock(let pill): return pill.previewPath ?? pill.quickLookURL?.path
         case .file(let url): return url.path
         case .global(let doc):
             if let path = doc.filePath, !path.isEmpty { return path }
@@ -615,6 +695,8 @@ extension AppChatPromptModel {
     var leadingResultIcon: NSImage? {
         let row = focusedRow ?? rows.first
         switch row {
+        case .dock(let pill):
+            return pill.resolvedURL.flatMap { FaviconStore.shared.icon(for: $0) } ?? pill.menuItemImage
         case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
         case .global(let doc): return doc.icon
         default: return nil
@@ -636,7 +718,11 @@ extension AppChatPromptModel {
     /// What the rest of the top match would be, if the user accepted it: the ghost the dock
     /// shows after what they have typed.
     var globalGhostCompletion: String {
-        guard isGlobalScope, let title = globalTopMatch?.title else { return "" }
+        guard isGlobalScope else { return "" }
+        let title: String
+        if let first = rows.first, case .dock = first { title = first.title }
+        else if let top = globalTopMatch { title = top.title }
+        else { return "" }
         let typed = query
         guard !typed.isEmpty, title.count > typed.count,
             title.lowercased().hasPrefix(typed.lowercased())
@@ -654,8 +740,8 @@ extension AppChatPromptModel {
         // A scope stepped into from Global answers with what was asked for — files in
         // Finder, a window elsewhere. Falling back to that app's menu list there filled the
         // board with "About Finder" and "AirDrop", which is not what the user came for.
-        if returnsToGlobalScope { return rows.count }
-        return rows.isEmpty ? suggestions.count : rows.count
+        if returnsToGlobalScope { return min(rows.count, Self.menuRowLimit) }
+        return min(rows.isEmpty ? suggestions.count : rows.count, Self.menuRowLimit)
     }
 
     /// The row the user has arrowed to. Nil until they do, which is what lets Enter mean
@@ -709,6 +795,13 @@ extension AppChatPromptModel {
 
     func run(_ row: AppChatRow) {
         switch row {
+        case .dock(let pill):
+            guard pill.isEnabled else { return }
+            hasActed = true
+            query = ""
+            updateMenuMatches()
+            touch()
+            pill.execute()
         case .command(let item): runMenuItem(item)
         case .action(let action): runAdapterAction(action)
         case .cliSuggestion(let word):

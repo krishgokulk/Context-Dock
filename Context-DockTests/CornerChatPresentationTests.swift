@@ -128,6 +128,19 @@ struct CornerChatPresentationTests {
         #expect(!subject.isVisible)
     }
 
+    @Test func globalContextPromptHidingItselfTakesTheShellWithIt() {
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(
+            appChat: app, generalChat: GeneralChatWindowModel())
+        subject.showGlobalContext()
+        #expect(subject.mode == .globalContext)
+        #expect(subject.isVisible)
+
+        app.dismiss()
+
+        #expect(!subject.isVisible)
+    }
+
     @Test func emptyLeftArrowEntersGeneralButTextKeepsCursorOwnership() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),

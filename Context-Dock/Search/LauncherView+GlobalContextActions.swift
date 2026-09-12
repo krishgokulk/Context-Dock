@@ -155,7 +155,6 @@ extension LauncherView {
         guard let scope = activeVisibleGlobalScopedMenuScope(for: query),
             scope.isExplicitAppScope
         else { return nil }
-        let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let isSystemCommandScope = scope.scopedBundleId.hasPrefix("syscmd://")
         let isCLIScope = scope.scopedBundleId.hasPrefix("cli://")
         // A cli:// scope is a command workspace: the typed text is the tool's prompt, not
@@ -168,45 +167,7 @@ extension LauncherView {
         if isCLIScope {
             return emptyGlobalGroupedListNavigationState()
         }
-        var scopedPills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
-        if isBrowserMenuSource(scope.scopedBundleId), !scopedQuery.isEmpty {
-            if LiveMenuHistoryCache.usesLiveMenuHistory(scope.scopedBundleId) {
-                // Privacy browsers deliberately have no disk-history reader. Reuse the same
-                // freshness-guarded live History-menu cache as Context Dock; the cache performs
-                // at most one bounded refresh per freshness window, not one scan per keystroke.
-                scopedPills += buildLiveMenuHistoryPills(
-                    query: scopedQuery,
-                    bundleId: scope.scopedBundleId
-                )
-            } else {
-                scopedPills += buildBrowserURLLibraryPills(
-                    query: scopedQuery,
-                    scopedBrowserBundleId: scope.scopedBundleId,
-                    requireExplicitHistoryQuery: false,
-                    limit: maxListViewDockPills
-                )
-            }
-        }
-        let resolvedPills = scopedPills
-            .filter { pill in
-                guard !pill.isSeparator else { return false }
-                if isSystemCommandScope { return pill.rankingKind == "systemCommand" }
-                if isCLIScope { return pill.rankingKind == "cliTool" }
-                // Running-app capsules are isolated cached-menu scopes. Generic
-                // content search, web search, app launch, window management, tools,
-                // and Global Context actions belong to other surfaces — but actions the
-                // user authored for THIS app in App Adapters are exactly what an app scope
-                // is for, and were being filtered out of the surface they belong to.
-                return [
-                    "menu", "submenuChild", "finderMenu", "adapter",
-                    "recentURL", "browserCommand",
-                ]
-                    .contains(pill.rankingKind)
-            }
-        // System-command providers define semantic display order directly:
-        // power control, summary, then devices. The shared result shell handles
-        // its own dock transform, so keep the provider array unchanged.
-        let pills = resolvedPills
+        let pills = globalScopedResultPills(scope: scope)
         guard !pills.isEmpty else {
             return emptyGlobalGroupedListNavigationState()
         }
@@ -244,6 +205,83 @@ extension LauncherView {
             ],
             menuFirst: false
         )
+    }
+
+    /// One scoped result pipeline for the dock and corner; order and actions stay intact.
+    func globalScopedResultPills(scope: DockScopeResolution) -> [DockPill] {
+        let query = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        var pills = cachedGlobalAppScopeDockPills(query: query, scope: scope)
+        if isBrowserMenuSource(scope.scopedBundleId), !query.isEmpty {
+            if LiveMenuHistoryCache.usesLiveMenuHistory(scope.scopedBundleId) {
+                pills += buildLiveMenuHistoryPills(query: query, bundleId: scope.scopedBundleId)
+            } else {
+                pills += buildBrowserURLLibraryPills(
+                    query: query, scopedBrowserBundleId: scope.scopedBundleId,
+                    limit: maxListViewDockPills)
+            }
+        }
+        return pills.filter { pill in
+            guard !pill.isSeparator else { return false }
+            if scope.scopedBundleId.hasPrefix("syscmd://") { return pill.rankingKind == "systemCommand" }
+            if scope.scopedBundleId.hasPrefix("cli://") { return pill.rankingKind == "cliTool" }
+            return ["menu", "submenuChild", "finderMenu", "adapter", "recentURL", "browserCommand"]
+                .contains(pill.rankingKind)
+        }
+    }
+
+    func connectCornerGlobalResults() {
+        GlobalContextResultSource.shared.pureGlobalResults = { query in
+            let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !q.isEmpty else { return [] }
+            let state = instantGlobalGroupedListNavigationState(for: q)
+            let appRows = state.appResults.map { result in
+                globalAppResultDockPill(result)
+            }
+            return state.menuFirst ? state.menuPills + appRows : appRows + state.menuPills
+        }
+        GlobalContextResultSource.shared.scopedResults = { query, bundleID, appName in
+            let scope: DockScopeResolution
+            if let bundleID, !bundleID.isEmpty {
+                scope = DockScopeResolution(
+                    scopedBundleId: bundleID, scopedAppName: appName ?? "",
+                    scopedSearchQuery: query, isExplicitAppScope: true, isGlobalScope: false)
+            } else {
+                guard let target = indexedGlobalAppMenuTarget(
+                    for: query, allowPrefixAlias: false, preserveRemainingQueryTokens: true)
+                    ?? installedAppMenuTarget(
+                        for: query, runningOnly: false, includeAppsWithoutMenuSnapshot: true,
+                        allowPrefixAlias: false, preserveRemainingQueryTokens: true),
+                    !target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    !target.bundleId.contains("://")
+                else { return nil }
+                scope = DockScopeResolution(
+                    scopedBundleId: target.bundleId, scopedAppName: target.appName,
+                    scopedSearchQuery: target.actionQuery, isExplicitAppScope: true, isGlobalScope: false)
+            }
+            return globalScopedResultPills(scope: scope)
+        }
+    }
+
+    func globalAppResultDockPill(_ result: SearchResult) -> DockPill {
+        var pill = DockPill(
+            id: "global-result-\(result.trackingIdentifier)",
+            name: result.title,
+            icon: "app",
+            badge: result.subtitle,
+            execute: { executeGlobalAppSearchResult(result) }
+        )
+        pill.menuItemImage = result.icon
+        pill.menuContext = result.subtitle
+        pill.sourceAppName = result.subtitle
+        pill.sourceBundleId = bundleIdentifier(forApplicationResult: result) ?? ""
+        pill.rankingKind = result.type == .extensionCommand ? "globalCommand" : "application"
+        pill.trackingIdentifier = result.trackingIdentifier
+        pill.searchTerms = [result.title, result.subtitle]
+        pill.rankingScore = result.score
+        pill.keyboardShortcutLabel = result.displayBadges.first
+        pill.previewPath = result.filePath
+        pill.dragProvider = result.dragProvider
+        return pill
     }
 
     func visibleGlobalGroupedListNavigationState(
@@ -3232,6 +3270,7 @@ extension LauncherView {
     // Rebuild GlobalSearchService index from current @State sources.
     // Call after allApplications loads or running apps change.
     func rebuildGlobalSearchIndex() {
+        connectCornerGlobalResults()
         let started = Date()
         guard !allApplications.isEmpty || !runningRegularApps.isEmpty else { return }
         // Rebuilding walks every cached menu snapshot and re-grams it on the main thread —
@@ -3460,6 +3499,7 @@ extension LauncherView {
         )
 
         GlobalSearchService.shared.rebuild(with: docs)
+        GlobalContextResultSource.shared.refresh()
         GlobalSearchIndexStatus.shared.finish(documentCount: docs.count)
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 8 {

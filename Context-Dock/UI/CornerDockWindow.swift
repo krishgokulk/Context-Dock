@@ -499,6 +499,12 @@ final class CornerDockController: NSObject {
     /// disqualifies the tap, because ⌘ is half the shortcuts on the machine and stealing it
     /// would be worse than not having the gesture.
     private func handleCommandTap(_ event: NSEvent) -> NSEvent? {
+        // The global double-tap recognizer owns Command while enabled. Switching modes
+        // on its first release would turn the second tap into an unexpected dismissal.
+        guard !AppSettings.shared.useDoubleCommandGlobalContext else {
+            commandTapStarted = nil
+            return event
+        }
         guard let panel, event.window === panel else { return event }
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let isCommandDown = flags.contains(.command)

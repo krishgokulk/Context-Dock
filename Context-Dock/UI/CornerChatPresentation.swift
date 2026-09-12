@@ -82,7 +82,7 @@ final class CornerChatPresentation: ObservableObject {
         // was no longer in it, still answering the mouse. Follow the pill out.
         self.appChat.$phase
             .sink { [weak self] phase in
-                guard let self, self.mode == .frontmostApp, phase == .hidden else { return }
+                guard let self, self.mode != .general, phase == .hidden else { return }
                 self.isVisible = false
             }
             .store(in: &sinks)
@@ -217,6 +217,12 @@ final class CornerChatPresentation: ObservableObject {
         mode = .globalContext
         isVisible = true
         appChat.summonGlobalContext()
+        CornerDockController.shared.publishKeyboardOwner()
+        CornerDockController.shared.requestComposerFocus()
+        Task { @MainActor in
+            CornerDockController.shared.publishKeyboardOwner()
+            CornerDockController.shared.requestComposerFocus()
+        }
     }
 
     func showGeneralFromPreview() {
