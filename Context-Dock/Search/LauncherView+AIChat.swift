@@ -8060,7 +8060,7 @@ extension LauncherView {
                 "bookmarks", "history",
             ].contains { lowerQuery.contains($0) }
             || (scopeHasBuiltInMCP && readIntent)
-        let request = isGlobalQueryModeActive
+        var request = isGlobalQueryModeActive
             ? AIRequestBuilder.globalContext(
                 text: query,
                 context: effectiveConversationUserContext,
@@ -8083,6 +8083,11 @@ extension LauncherView {
                     )
                     : ""
             )
+        // A CLI scope is a conversation with one executable, not a chat about an app, and its
+        // skill says different things. `.contextDock` covers both, so name the surface here.
+        request.surface = isGlobalQueryModeActive
+            ? .globalContext
+            : DoraXSurface(scopeBundleId: scoped.bundleId)
         let response = try await AIOrchestrationEngine.shared.submit(
             AIOrchestrationRequest(
                 providerRequest: request,

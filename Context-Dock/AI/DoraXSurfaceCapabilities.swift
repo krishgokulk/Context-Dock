@@ -108,21 +108,39 @@ enum DoraXSurfaceCapabilities {
                     name: "bundle_id",
                     description: "Optional app bundle id to list skills for.",
                     required: false),
+                AICapabilityInputField(
+                    name: "surface",
+                    description:
+                        "Optional product surface to list skills for: global-context, "
+                        + "context-dock-chat, cli-scope, clipboard-scope, selection-scope, "
+                        + "general-chat, app-adapters.",
+                    required: false),
             ]),
             riskLevel: .low
         ) { request in
             let bundleID = request.input["bundle_id"] ?? ""
-            let skills = bundleID.isEmpty
-                ? SkillStore.shared.skills.filter(\.isEnabled)
-                : SkillStore.shared.skills(for: bundleID).filter(\.isEnabled)
+            let surface = (request.input["surface"] ?? "").isEmpty
+                ? nil : DoraXSurface(loose: request.input["surface"] ?? "")
+            // A surface asks for the skills that steer it — its own and the global ones — and
+            // an app asks for its own. Listing everything to either is how a clipboard rule
+            // ended up in a Safari answer.
+            let skills: [AdapterSkill]
+            if let surface {
+                skills = SkillStore.shared.skills(steering: surface).filter(\.isEnabled)
+            } else if !bundleID.isEmpty {
+                skills = SkillStore.shared.skills(for: bundleID).filter(\.isEnabled)
+            } else {
+                skills = SkillStore.shared.skills.filter(\.isEnabled)
+            }
             guard !skills.isEmpty else {
                 return AICapabilityExecutionResult(
                     success: true,
-                    output: bundleID.isEmpty
-                        ? "No skills are enabled."
-                        : "No enabled skills for \(bundleID).")
+                    output: surface.map { "No enabled skills for \($0.displayName)." }
+                        ?? (bundleID.isEmpty
+                            ? "No skills are enabled."
+                            : "No enabled skills for \(bundleID)."))
             }
-            let lines = skills.prefix(30).map { "- \($0.name) (\($0.adapterBundleId)): \($0.summary)" }
+            let lines = skills.prefix(30).map { "- \($0.name) (\($0.scope.label)): \($0.summary)" }
             return AICapabilityExecutionResult(
                 success: true, output: "Enabled skills:\n" + lines.joined(separator: "\n"))
         })
@@ -153,7 +171,7 @@ enum DoraXSurfaceCapabilities {
             }
             return AICapabilityExecutionResult(
                 success: true,
-                output: "Skill \"\(skill.name)\" for \(skill.adapterBundleId):\n\(skill.instructions)")
+                output: "Skill \"\(skill.name)\" for \(skill.scope.label):\n\(skill.instructions)")
         })
     }
 

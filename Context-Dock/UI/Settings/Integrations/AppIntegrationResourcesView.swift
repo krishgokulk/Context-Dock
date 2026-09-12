@@ -117,7 +117,11 @@ struct AppIntegrationResourcesView: View {
         ) { skill in
             resourceRow(
                 title: skill.name,
-                subtitle: "Steers chat · v\(skill.version)",
+                // What it steers, not just that it steers something: a skill scoped to the
+                // clipboard and one scoped to this app look identical in a list that only
+                // says "Steers chat".
+                subtitle: "Steers \(skill.scope.label) · v\(skill.version)"
+                    + (skill.isPinned ? " · pinned into every prompt" : " · read on demand"),
                 icon: "brain.head.profile",
                 tint: .purple,
                 isOn: Binding(
@@ -125,6 +129,19 @@ struct AppIntegrationResourcesView: View {
                     set: { skillStore.setEnabled($0, id: skill.id) }),
                 trailing: {
                     AnyView(HStack(spacing: 8) {
+                        // Pinning costs prompt on every turn, so it is a deliberate act with
+                        // a visible state rather than the default a skill arrives with.
+                        Button {
+                            skillStore.setPinned(!skill.isPinned, id: skill.id)
+                        } label: {
+                            Image(systemName: skill.isPinned ? "pin.fill" : "pin")
+                        }
+                            .buttonStyle(.plain)
+                            .help(skill.isPinned
+                                ? "Pinned: this skill's full text is in every prompt for its scope"
+                                : "Unpinned: the model reads this skill when it needs it")
+                            .accessibilityLabel(
+                                skill.isPinned ? "Unpin \(skill.name)" : "Pin \(skill.name)")
                         Button { editingSkill = skill } label: { Image(systemName: "pencil") }
                             .buttonStyle(.plain)
                             .accessibilityLabel("Edit \(skill.name)")

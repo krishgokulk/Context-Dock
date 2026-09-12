@@ -334,7 +334,10 @@ extension LauncherView {
               return none with reason "question" so it gets answered instead of executed.
             - Prefer a single route. Do not explain, do not add prose.
             """
-        let request = AIRequestBuilder.aiChat(text: query, history: [])
+        var request = AIRequestBuilder.aiChat(text: query, history: [])
+        // A selection route is decided on the selection surface, not in General Chat, and the
+        // two have different rules — `source` cannot tell them apart, so say which it is.
+        request.surface = .selectionScope
         let snapshot = await MainActor.run { currentAISelectionSnapshot }
         let raw: String
         do {

@@ -14,6 +14,7 @@ struct BrowserPageReadEvidence: Equatable {
     let url: String
     let textCharacterCount: Int
     let linkCount: Int
+    let tabCount: Int
 
     static func parse(
         promptBlock: String, browserName: String, source: String
@@ -46,7 +47,15 @@ struct BrowserPageReadEvidence: Equatable {
             }
             return ""
         }()
-        guard !title.isEmpty || !url.isEmpty || !text.isEmpty || linkCount > 0 else {
+        // The tab list is a read like any other. Reported from its own header rather than by
+        // counting rows, so a list capped at forty still says how many tabs were seen.
+        let tabCount: Int = {
+            let header = value(after: ["OPEN TABS ("])
+            guard let digits = header.split(separator: " ").first else { return 0 }
+            return Int(digits) ?? 0
+        }()
+        guard !title.isEmpty || !url.isEmpty || !text.isEmpty || linkCount > 0 || tabCount > 0
+        else {
             return nil
         }
         return BrowserPageReadEvidence(
@@ -55,7 +64,8 @@ struct BrowserPageReadEvidence: Equatable {
             title: title == "(unknown)" ? "" : title,
             url: url == "(unknown)" ? "" : url,
             textCharacterCount: text.trimmingCharacters(in: .whitespacesAndNewlines).count,
-            linkCount: linkCount)
+            linkCount: linkCount,
+            tabCount: tabCount)
     }
 
     var traceLines: [String] {
@@ -65,6 +75,7 @@ struct BrowserPageReadEvidence: Equatable {
         if !url.isEmpty { fields.append("URL") }
         if textCharacterCount > 0 { fields.append("\(textCharacterCount) text characters") }
         if linkCount > 0 { fields.append("\(linkCount) links") }
+        if tabCount > 0 { fields.append("\(tabCount) open tabs") }
         lines.append("Extracted " + (fields.isEmpty ? "no readable page fields" : fields.joined(separator: ", ")))
         return lines
     }
@@ -75,10 +86,11 @@ struct BrowserPageReadEvidence: Equatable {
         if !url.isEmpty { facts.append("URL: \(url)") }
         facts.append("Readable text: \(textCharacterCount) characters")
         facts.append("Links: \(linkCount)")
+        facts.append("Open tabs: \(tabCount)")
         return DoraXActionReceipt(
             command: "read_browser_page(\(browserName))",
             output: facts.joined(separator: "\n"),
-            success: !title.isEmpty || !url.isEmpty || textCharacterCount > 0,
+            success: !title.isEmpty || !url.isEmpty || textCharacterCount > 0 || tabCount > 0,
             isVerification: true)
     }
 }

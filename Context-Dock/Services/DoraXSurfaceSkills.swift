@@ -26,6 +26,10 @@ enum DoraXSurfaceSkills {
         let slug: String
         let name: String
         let description: String
+        /// Which product layer this one steers. Written into the file, so the surface reads
+        /// its own skill and no other — a clipboard rule in a Safari chat is noise, and the
+        /// user editing one of these can see which layer they are editing.
+        let surface: DoraXSurface
         let body: String
 
         var markdown: String {
@@ -33,6 +37,7 @@ enum DoraXSurfaceSkills {
             ---
             name: \(name)
             description: \(description)
+            surface: \(surface.rawValue)
             metadata:
               version: "1.0"
               source: built-in
@@ -56,6 +61,7 @@ enum DoraXSurfaceSkills {
         description:
             "The launcher's search over the whole machine: apps, running apps, tabs, files, "
             + "CLI tools, commands and cached menus.",
+        surface: .globalContext,
         body: """
             # Global Context
 
@@ -95,6 +101,7 @@ enum DoraXSurfaceSkills {
         name: "DoraX — Context Dock Chat",
         description:
             "The chat scoped to the app the user is in, shown in the corner or in the dock.",
+        surface: .contextDockChat,
         body: """
             # Context Dock Chat
 
@@ -127,6 +134,7 @@ enum DoraXSurfaceSkills {
         slug: "dorax-cli-tool-scope",
         name: "DoraX — CLI Tool Scope",
         description: "A conversation with one command-line tool, scoped as cli://<tool>.",
+        surface: .cliScope,
         body: """
             # CLI Tool Scope
 
@@ -159,6 +167,7 @@ enum DoraXSurfaceSkills {
         slug: "dorax-clipboard-scope",
         name: "DoraX — Clipboard Scope",
         description: "The clipboard history surface: what was copied, and what to do with it.",
+        surface: .clipboardScope,
         body: """
             # Clipboard Scope
 
@@ -188,6 +197,7 @@ enum DoraXSurfaceSkills {
         description:
             "The sheet opened on what the user has selected, whose authority ends at that "
             + "selection.",
+        surface: .selectionScope,
         body: """
             # Selection Scope
 
@@ -218,6 +228,7 @@ enum DoraXSurfaceSkills {
         name: "DoraX — General Chat",
         description:
             "The unscoped conversation that can resolve which apps a request touches.",
+        surface: .generalChat,
         body: """
             # General Chat
 
@@ -251,6 +262,7 @@ enum DoraXSurfaceSkills {
         description:
             "What an app is allowed to do: actions, CLI tools, MCP servers, API connections, "
             + "Shortcuts, context readers, skills.",
+        surface: .appAdapters,
         body: """
             # App Adapters
 

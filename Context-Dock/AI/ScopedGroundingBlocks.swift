@@ -152,7 +152,13 @@ enum ScopedGroundingBlocks {
             }
         }
 
-        guard !pageText.isEmpty || !pageURL.isEmpty else { return "" }
+        // Every other tab the browser has open. `dorax_browser_tabs` has always been exposed
+        // over MCP to other agents, while DoraX's own turn got the front page and nothing
+        // else — so "which tab has the invoice" was unanswerable by any provider, and
+        // unanswerable at all by one with no tools.
+        let tabsSection = openTabsSection(bundleId: bundleId, activeURL: pageURL)
+
+        guard !pageText.isEmpty || !pageURL.isEmpty || !tabsSection.isEmpty else { return "" }
         // The extension already strips browser chrome; this is the same query-aware compactor
         // documents get. Re-fetching the URL would be slower, could see a different
         // signed-out page, and would discard the user's live selection.
@@ -176,14 +182,82 @@ enum ScopedGroundingBlocks {
                 """
         }()
 
+        // Tabs sit above the page's own text so the two never run together: the evidence
+        // parser reads everything after `PAGE TEXT EXCERPT:` as page text, and a tab list
+        // below it would be counted as characters the page does not have.
         return """
             CURRENT PAGE TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
-            CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedSection)
+            CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedSection)\(tabsSection)
             \(pageText.isEmpty
                 ? "PAGE TEXT: (unavailable — could not read the page)"
                 : "PAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))")\(linkSection)
             """
     }
+
+    /// Every tab the scoped browser has open, with the one the page block describes marked
+    /// active. Empty when the browser exposes none, so the caller can tell "no tabs" from
+    /// "a tab list that happens to be short".
+    static func openTabsSection(bundleId: String, activeURL: String) -> String {
+        let tabs = openTabs(bundleId: bundleId)
+        guard !tabs.isEmpty else { return "" }
+        return Self.formatTabs(tabs, activeURL: activeURL)
+    }
+
+    /// Pure formatter, so the shape of the block is testable without a running browser.
+    ///
+    /// Rows deliberately avoid the `- [` prefix and the ` → ` arrow that
+    /// `BrowserPageReadEvidence` uses to recognise a page link; a tab counted as a link
+    /// would report evidence the page does not contain.
+    static func formatTabs(_ tabs: [BrowserTab], activeURL: String, limit: Int = 40) -> String {
+        guard !tabs.isEmpty else { return "" }
+        let rows = tabs.prefix(limit).map { tab -> String in
+            let title = tab.title.isEmpty ? tab.url : tab.title
+            let active = !activeURL.isEmpty && tab.url == activeURL ? " (active — the page above)" : ""
+            return "- \(title) — \(tab.url)\(active)"
+        }
+        let more = tabs.count > limit
+            ? "\n…and \(tabs.count - limit) more open tabs, not listed."
+            : ""
+        return """
+
+
+            OPEN TABS (\(tabs.count) open in this browser):
+            \(rows.joined(separator: "\n"))\(more)
+            These are open right now. A question about another tab is answered from this list, \
+            with its exact URL — never say a tab cannot be seen when it is named here.
+            """
+    }
+
+    /// The scoped browser's tabs, cached briefly. One turn asks for the page block several
+    /// times — the chat, `read_page`, `browser.findInPage` — and each read is an AppleScript
+    /// round trip into the browser, so without this a single question enumerates every tab
+    /// three or four times.
+    static func openTabs(bundleId: String) -> [BrowserTab] {
+        if let cached = tabCache[bundleId], Date().timeIntervalSince(cached.readAt) < 15 {
+            return cached.tabs
+        }
+        // Only ask a browser that is actually running: AppleScript to a stopped app launches
+        // it, and a grounding read must never open a browser the user closed.
+        guard NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).isEmpty == false
+        else { return [] }
+        let detector = ContextDetector.shared
+        let tabs: [BrowserTab]
+        switch bundleId {
+        case "com.apple.Safari":
+            tabs = detector.getAllSafariTabs()
+        case "com.google.Chrome", "com.brave.Browser", "org.chromium.Chromium",
+            "com.microsoft.edgemac":
+            tabs = detector.getAllChromeTabs()
+        case "company.thebrowser.Browser":
+            tabs = detector.getAllArcTabs()
+        default:
+            tabs = []
+        }
+        tabCache[bundleId] = (tabs, Date())
+        return tabs
+    }
+
+    private static var tabCache: [String: (tabs: [BrowserTab], readAt: Date)] = [:]
 
     /// Binaries this scope may run: the scope's own executable when it is a CLI thread, the
     /// packages linked to the app, and any CLI actions its adapter installs.

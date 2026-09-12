@@ -31,7 +31,7 @@ enum SkillFolder {
     /// Not a real bundle id, deliberately: `instructionsBlock(for:)` is keyed by bundle id,
     /// so nothing pastes these into a prompt wholesale. They are found and read on demand,
     /// which is the whole point of writing them down.
-    static let globalBundleID = "dorax.global"
+    static let globalBundleID = doraxGlobalSkillBundleID
 
     static var url: URL {
         let support = FileManager.default
@@ -44,6 +44,12 @@ enum SkillFolder {
     /// Stable so that re-reading the folder replaces a skill rather than adding a second
     /// copy of it beside the first on every launch.
     static func stableID(forSlug slug: String) -> String { "skillmd.\(slug)" }
+
+    /// The folder name behind a file-backed skill's id, so a change made in Settings can be
+    /// written back to the file it came from rather than to a second file beside it.
+    static func slug(forStableID id: String) -> String {
+        id.hasPrefix("skillmd.") ? String(id.dropFirst("skillmd.".count)) : slugify(id)
+    }
 
     static func isFileBacked(_ skill: AdapterSkill) -> Bool {
         skill.id.hasPrefix("skillmd.")
@@ -85,6 +91,12 @@ enum SkillFolder {
         guard var skill = AdapterSkill.fromSkillMarkdown(
             text, bundleId: bundleID, fallbackName: slug.replacingOccurrences(of: "-", with: " "))
         else { return nil }
+        // `surface:` is how a file says it steers a product layer rather than an app. Taken
+        // loosely — `clipboard` and `clipboard-scope` are the same request — and an
+        // unrecognised value is ignored rather than guessed at, which leaves the skill global
+        // instead of silently steering a surface the author did not name.
+        let surface = frontmatterValue("surface", in: text)
+            .flatMap(DoraXSurface.init(loose:))
         skill = AdapterSkill(
             id: stableID(forSlug: slug),
             adapterBundleId: skill.adapterBundleId,
@@ -92,7 +104,11 @@ enum SkillFolder {
             summary: skill.summary,
             instructions: skill.instructions,
             version: skill.version,
-            isEnabled: frontmatterValue("enabled", in: text)?.lowercased() != "false")
+            isEnabled: frontmatterValue("enabled", in: text)?.lowercased() != "false",
+            surfaceId: surface?.rawValue ?? "",
+            // `pinned: true` is how a file asks for its body in every prompt. Absent means
+            // no, which is the default a skill should have: found and read, not pasted.
+            isPinned: frontmatterValue("pinned", in: text)?.lowercased() == "true")
         return skill
     }
 
@@ -168,6 +184,12 @@ enum SkillFolder {
             """
         if skill.adapterBundleId != globalBundleID {
             front += "\nbundle_id: \(skill.adapterBundleId)"
+        }
+        if !skill.surfaceId.isEmpty {
+            front += "\nsurface: \(skill.surfaceId)"
+        }
+        if skill.isPinned {
+            front += "\npinned: true"
         }
         front += """
 

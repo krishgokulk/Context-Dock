@@ -58,6 +58,10 @@ struct AIRequest {
     var includesWorkflowCapabilities = false
     var additionalContextPrompt = ""
     var providerSelection: AIProviderSelection? = nil
+    /// The product surface this turn is being asked on, when the caller knows it more
+    /// precisely than `source` does — the dock's clipboard, selection and CLI scopes all
+    /// arrive as `.contextDock`, and each has its own skills.
+    var surface: DoraXSurface? = nil
 }
 
 typealias AIContextSnapshot = ContextSnapshot
@@ -542,8 +546,37 @@ final class AIProviderRouter {
         return "\(global)\n\n\(contextPrompt)"
     }
 
+    /// The surface a request is being asked on. An explicit one wins; otherwise the request's
+    /// source names it, and a source that maps to no surface (a workflow, an extension) gets
+    /// no surface skills rather than the nearest-looking ones.
+    static func surface(for request: AIRequest) -> DoraXSurface? {
+        if let explicit = request.surface { return explicit }
+        switch request.source {
+        case .globalContext: return .globalContext
+        case .contextDock: return .contextDockChat
+        case .aiChat: return .generalChat
+        case .mediaDock, .extensionSystem, .workflow: return nil
+        }
+    }
+
+    /// Tell a surface which skills steer it. Names and summaries only — the body arrives
+    /// through `skills.read` when a turn needs it.
+    ///
+    /// Applied at the router for the same reason the user's global prompt is: every AI surface
+    /// funnels through here, and doing it per caller guarantees one is missed.
+    private func withSurfaceSkills(_ contextPrompt: String, request: AIRequest) async -> String {
+        guard let surface = Self.surface(for: request) else { return contextPrompt }
+        let block = await MainActor.run {
+            SkillStore.shared.surfaceInstructionsBlock(for: surface)
+        }
+        guard !block.isEmpty else { return contextPrompt }
+        guard !contextPrompt.isEmpty else { return block }
+        return "\(contextPrompt)\n\n\(block)"
+    }
+
     func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt rawContextPrompt: String) async throws -> String {
-        let contextPrompt = withGlobalContext(rawContextPrompt)
+        let contextPrompt = await withSurfaceSkills(
+            withGlobalContext(rawContextPrompt), request: request)
         if !safetyPolicy.isLocal(provider),
             request.liveContext?.selectedTextCharacterCount ?? 0 > 0,
             !settings.allowSelectedTextCloudSharing
