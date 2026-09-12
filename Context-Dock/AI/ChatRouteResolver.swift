@@ -335,7 +335,7 @@ enum ChatRouteResolver {
                         payload: action.id,
                         appName: appName,
                         bundleId: bundleId,
-                        isReadOnly: !action.isDestructive && !action.requiresApproval))
+                        isReadOnly: isReadOnly(action)))
             }
         }
 
@@ -456,6 +456,24 @@ enum ChatRouteResolver {
     /// The route the layer takes when no decision is needed: highest-ranked, read-only.
     /// Deterministic before probabilistic means acting on it without consulting the model
     /// about which subsystem it would rather use.
+    /// Whether an adapter action can run as a read: without a model, without asking.
+    ///
+    /// This used to be `!isDestructive && !requiresApproval` — "nobody declared it dangerous".
+    /// That is not the same thing. New Note is a menu click, not destructive, needs no
+    /// approval, and creates a note. Classified read-only, it became the unattended route for
+    /// "how many notes do i have?" and ran deterministically, before any model, with no
+    /// approval — and a blank note appeared on the user's Mac.
+    ///
+    /// Two decisions rest on this flag: `unattendedRoute` runs a read-only route on its own,
+    /// and `executionApproval` grants one without asking. So the flag has to mean what it
+    /// says. A menu click is never a read — it presses a command, and the route's kind
+    /// (`.adapterAction`) hides that the action underneath is a `.menubar` click, which is why
+    /// `takesTheScreen` did not catch it either.
+    nonisolated static func isReadOnly(_ action: AdapterAction) -> Bool {
+        guard action.type != .menubar else { return false }
+        return !action.isDestructive && !action.requiresApproval
+    }
+
     static func unattendedRoute(_ routes: [ChatRoute]) -> ChatRoute? {
         routes.first { $0.isReadOnly && !$0.kind.takesTheScreen }
     }
