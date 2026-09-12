@@ -35,6 +35,12 @@ enum GlobalContextRow {
 
     /// What the row says under its title — where this result comes from, in the user's words.
     static func subtitle(for doc: GlobalSearchService.SearchDocument) -> String {
+        // An app document's own subtitle is its install path — useful for matching and
+        // de-duplication, never for showing under the name the user already sees the icon
+        // for. "Terminal" does not need "/System/Applications/Utilities/Terminal.app"
+        // written underneath it; the row already answers "what is this" with the icon.
+        if case .launchPath = doc.action { return "Application" }
+        if case .launchBundleId = doc.action { return "Application" }
         if !doc.subtitle.isEmpty { return doc.subtitle }
         switch doc.action {
         case .activatePID: return "Running app"

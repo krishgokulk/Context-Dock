@@ -849,6 +849,26 @@ extension AppChatPromptModel {
             updateMenuMatches()
             touch()
             GlobalContextRow.run(doc)
+            followFrontmostAppAfterGlobalAction()
+        }
+    }
+
+    /// After a Global Context row runs, the app it acted on — launched, activated, sent a
+    /// menu command, opened a browser tab — is very often the app now in front, a beat
+    /// later once the activation it triggered has actually settled. This is the user asking
+    /// Global Context to take them there, unlike an unrelated app stealing focus while they
+    /// are typing something else, so the corner follows rather than sitting on a search for
+    /// an app they already left.
+    private func followFrontmostAppAfterGlobalAction() {
+        let ownBundleID = Bundle.main.bundleIdentifier ?? ""
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let self, self.isGlobalScope else { return }
+            guard let front = NSWorkspace.shared.frontmostApplication,
+                let bundleID = front.bundleIdentifier,
+                bundleID != ownBundleID
+            else { return }
+            self.onAppLaunchedFromGlobalContext?(front.localizedName ?? bundleID, bundleID)
         }
     }
 

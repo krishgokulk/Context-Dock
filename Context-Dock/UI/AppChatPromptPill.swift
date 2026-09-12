@@ -439,7 +439,11 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
-                selectionScopeButton
+                // Only when there is something to open: an icon that does nothing on a
+                // blank selection is a button shaped like a promise it cannot keep.
+                if model.selection != nil {
+                    selectionScopeButton
+                }
             }
 
             if model.isAnswering {
@@ -508,6 +512,7 @@ struct AppChatPromptPill: View {
         }
         .buttonStyle(.plain)
         .help("Open the current selection")
+        .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
     private var attachMenu: some View {

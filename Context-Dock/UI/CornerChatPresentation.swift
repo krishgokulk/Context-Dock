@@ -86,6 +86,15 @@ final class CornerChatPresentation: ObservableObject {
                 self.isVisible = false
             }
             .store(in: &sinks)
+
+        // A Global Context row that launched, activated, or sent a menu command to an app
+        // is the user asking to go there — not an incidental background switch, which is
+        // why this is a deliberate signal from the model rather than a raw frontmost-app
+        // listener that would just as readily fire while the user is mid-search for
+        // something unrelated.
+        self.appChat.onAppLaunchedFromGlobalContext = { [weak self] name, bundleID in
+            self?.showFrontmostApp(target: CornerChatTarget(name: name, bundleID: bundleID))
+        }
     }
 
     /// The corner hotkey, pressed again.

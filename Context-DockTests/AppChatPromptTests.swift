@@ -386,8 +386,21 @@ struct AppChatControlsTests {
         return model
     }
 
+    /// Pinning writes a real UserDefaults key so the preference survives a relaunch — one
+    /// process, one shared domain, so a value left over from an earlier test (or an earlier
+    /// run of the app itself on this machine) would otherwise leak into the next model
+    /// constructed. Started at a known value and put back exactly as found, the same way
+    /// DoraXTurnLogTests isolates its own real default.
+    private func resetPinDefault() -> Bool {
+        let previous = UserDefaults.standard.bool(forKey: AppChatPromptModel.pinnedDefaultsKey)
+        UserDefaults.standard.set(false, forKey: AppChatPromptModel.pinnedDefaultsKey)
+        return previous
+    }
+
     /// Pinning is the user saying "stay". Nothing times it out after that.
     @Test func pinningStopsTheStandDown() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
 
         model.togglePin()
@@ -397,6 +410,8 @@ struct AppChatControlsTests {
     }
 
     @Test func aPinnedPromptIgnoresTheClockEntirely() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
         model.togglePin()
 
@@ -407,6 +422,8 @@ struct AppChatControlsTests {
     }
 
     @Test func unpinningPutsTheClockBack() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
         model.togglePin()
 
@@ -527,6 +544,8 @@ struct AppChatControlsTests {
     }
 
     @Test func dismissingDropsTheAttachmentsAndThePin() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
         model.attach(URL(fileURLWithPath: "/tmp/shot.png"))
         model.togglePin()
@@ -535,5 +554,45 @@ struct AppChatControlsTests {
 
         #expect(model.attachments.isEmpty)
         #expect(!model.isPinned)
+    }
+
+    // MARK: - Pin persists across a relaunch
+
+    /// A relaunch constructs a brand new model with nothing carried over except what was
+    /// explicitly written down — this is the only thing that should be.
+    @Test func aFreshModelStartsPinnedIfThatWasLastSetTrue() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        UserDefaults.standard.set(true, forKey: AppChatPromptModel.pinnedDefaultsKey)
+
+        let model = AppChatPromptModel()
+
+        #expect(model.isPinned)
+    }
+
+    @Test func aFreshModelStartsUnpinnedIfThatWasLastSetFalse() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+
+        let model = AppChatPromptModel()
+
+        #expect(!model.isPinned)
+    }
+
+    /// The toggle is what writes the preference down — not standing down, not dismissing,
+    /// both of which change the in-memory flag for reasons that have nothing to do with the
+    /// user changing their mind about whether this should always start pinned.
+    @Test func togglingIsWhatPersistsNotIdlingOrDismissing() {
+        let previous = resetPinDefault()
+        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        let model = opened()
+
+        model.togglePin()
+        #expect(UserDefaults.standard.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
+
+        model.dismiss()
+        // dismiss() clears the in-memory flag for this appearance — a fact about this
+        // session, not the user rescinding the preference they just stated.
+        #expect(UserDefaults.standard.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
     }
 }

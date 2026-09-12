@@ -106,7 +106,11 @@ final class AppChatPromptModel: ObservableObject {
     /// Files the question should carry.
     @Published private(set) var attachments: [URL] = []
     /// The user said "stay". Nothing times the surface out while this holds.
-    @Published private(set) var isPinned = false
+    /// Whether the corner chat starts pinned. A toggle that reset itself every relaunch was
+    /// not a preference — it was a button that occasionally worked, so pressing it wrote the
+    /// choice down rather than only holding it in memory for as long as this object exists.
+    @Published private(set) var isPinned = UserDefaults.standard.bool(
+        forKey: AppChatPromptModel.pinnedDefaultsKey)
 
     /// A question is out and its answer has not arrived. The transcript legitimately goes
     /// empty in between, so the card holds rather than reading that as "nothing here".
@@ -134,6 +138,10 @@ final class AppChatPromptModel: ObservableObject {
     private var drafts: [String: String] = [:]
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
+    /// A Global Context row acted on an app, and that app appears to have taken the front a
+    /// moment later — args are (name, bundleID). The corner reads this as "follow me there",
+    /// not as an incidental background switch to ignore.
+    var onAppLaunchedFromGlobalContext: ((String, String) -> Void)?
 
     init(conversation: AppChatConversation? = nil, globalResultSource: GlobalContextResultSource? = nil) {
         let source = conversation ?? AppChatConversation.shared
@@ -267,12 +275,20 @@ final class AppChatPromptModel: ObservableObject {
 
     func togglePin() {
         isPinned.toggle()
+        // Only here, not wherever this session happens to reset the in-memory flag (idling
+        // out, dismissing): a toggle is the user stating a preference, an idle timeout is
+        // not them changing their mind about it.
+        UserDefaults.standard.set(isPinned, forKey: Self.pinnedDefaultsKey)
         if isPinned {
             cancel()
         } else {
             arm(after: Self.idleDwell)
         }
     }
+
+    /// Not private: tests reset this key explicitly so one test's pin does not leak into
+    /// the next — `UserDefaults.standard` is one real domain shared by the whole process.
+    static let pinnedDefaultsKey = "cornerChatPinned"
 
     /// Opens the same conversation in the dock, for when the corner is too small for it.
     func openInDock() {
