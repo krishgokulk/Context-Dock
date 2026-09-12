@@ -32,7 +32,11 @@ enum AppChatSuggestionProvider {
         return result
     }
 
-    /// "5 actions · 2 skills · 3 cli tools" — only the parts that were actually counted.
+    /// "5 actions · 2 skills" — only the parts that were actually counted, and only about
+    /// this app. `SystemCommandsRegistry` is macOS's own always-on commands (Wi-Fi, volume,
+    /// sleep) — the same fixed count regardless of which app is scoped — and it used to be
+    /// folded into this line as if it were part of what the app itself offered, so a Terminal
+    /// summary and a Safari summary quoted the identical "commands" number by coincidence.
     /// A missing count is left out rather than shown as zero, because "0 skills" reads as
     /// a measured fact and this is an absent one.
     static func summary(for app: NSRunningApplication?) -> String {
@@ -43,11 +47,6 @@ enum AppChatSuggestionProvider {
             record.recordCount > 0
         {
             parts.append(pluralised(record.recordCount, "action"))
-        }
-
-        let commands = SystemCommandsRegistry.shared.commands.count
-        if commands > 0 {
-            parts.append(pluralised(commands, "command"))
         }
 
         return parts.joined(separator: " · ")

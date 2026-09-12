@@ -209,6 +209,12 @@ struct AppChatListCard: View {
                 Text(shortcut)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(.secondary)
+            } else if isFocused {
+                // No real shortcut to show in its place, so this row — focused, about to
+                // run on Return — said nothing at all about what Return would do to it.
+                Image(systemName: "return")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 16)
@@ -412,6 +418,11 @@ struct AppChatListCard: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            if isFocused {
+                Image(systemName: "return")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)

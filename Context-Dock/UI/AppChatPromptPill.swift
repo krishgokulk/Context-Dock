@@ -413,17 +413,16 @@ struct AppChatPromptPill: View {
             // The dock's own match pills, mounted rather than imitated: the apps that
             // answer what is typed, with "+N" for the rest. Same view, same icons, same
             // running dot as the dock's global bar.
+            // Global Context and the scopes reached from it only: a scoped app chat is a
+            // conversation about that one app, and a row of every other running app next
+            // to it read as clutter rather than "somewhere else to go" — this was tried
+            // widened to the plain frontmost-app chat too and asked back out.
             // Hidden once the user has typed and the board is answering: the rows say what
             // matched, and two answers to one question is the clutter the dock avoids. An
             // untyped field is not that case — there the pills are the only thing offering
             // anywhere to go, so they stay through a scope change.
-            // Global Context always had these; the plain frontmost-app chat never did,
-            // even though the dock's own equivalent shows the same running-app row while
-            // scoped to one app — the corner's mode split (frontmost/global/general) has
-            // no dock equivalent, and this pill row is not actually about which of those
-            // three is active. It is about whether the field is empty and there is
-            // somewhere else to go.
-            if model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            if model.isSearchField,
+                model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 ContextMatchDock(
