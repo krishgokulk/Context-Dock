@@ -749,10 +749,19 @@ struct CornerDockSurface: View {
                 DropShelfPill(presentation: shelf, store: shelfStore)
             }
 
+            // Pinned to the composer's own width, not whatever it happens to be showing:
+            // the mini badge collapses to 52pt and Global Context's list is 372pt, and
+            // this row centers itself on the sum of its children's widths. Without this,
+            // opening Global Context (or idling back down to the badge) changed that sum
+            // and the whole row — shelf, field, clipboard together — visibly slid sideways
+            // to stay centered, when nothing about the shelf or clipboard had changed. The
+            // dock never has this problem because its bar is one fixed-width container
+            // that content changes happen inside of, not a row that resizes around them.
             VStack(alignment: .center, spacing: CornerDockLayout.gap) {
                 chatBoards
                 chatSurface
             }
+            .frame(width: AppChatPromptMetrics.width, alignment: .bottom)
 
             VStack(alignment: .center, spacing: CornerDockLayout.gap) {
                 if CornerDockController.shared.showsClipPreview,

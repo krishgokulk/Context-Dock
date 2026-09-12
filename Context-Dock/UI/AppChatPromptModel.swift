@@ -12,6 +12,7 @@
 // grounding, or approval is reimplemented here, so the two cannot drift: they are the
 // same conversation shown in two places.
 
+import AppKit
 import Combine
 import Foundation
 
@@ -134,6 +135,7 @@ final class AppChatPromptModel: ObservableObject {
     private var messagesObservation: AnyCancellable?
     private var selectionObservation: AnyCancellable?
     private var globalResultsObservation: AnyCancellable?
+    private var runningAppsObservation: AnyCancellable?
     /// Half-written questions, kept per scope so a walk between them loses nothing.
     private var drafts: [String: String] = [:]
 
@@ -172,6 +174,20 @@ final class AppChatPromptModel: ObservableObject {
                 self.selection = AppChatSelectionScope.from(
                     context: context, scopedTo: self.appBundleID)
             }
+        // The dock's own running-app row refreshes the instant an app launches or quits —
+        // it watches `NSWorkspace` directly rather than waiting for the next keystroke.
+        // This pill row reads the same running apps but only ever recomputed them when
+        // typing changed, so a switch made anywhere but this field never showed up in it.
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        runningAppsObservation = Publishers.Merge(
+            workspaceCenter.publisher(for: NSWorkspace.didLaunchApplicationNotification),
+            workspaceCenter.publisher(for: NSWorkspace.didTerminateApplicationNotification)
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            guard let self else { return }
+            self.updateGlobalTyping(for: self.query)
+        }
     }
 
     /// Set by `AppChatMenuBrowsing` as the user types in Global Context.

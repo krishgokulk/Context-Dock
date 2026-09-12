@@ -309,6 +309,13 @@ struct AppChatListCard: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 4)
+            // The dock hints "press Return" at whichever row the arrow keys land on; this
+            // list showed the same rows without ever saying what Return does to one.
+            if isFocused {
+                Image(systemName: "return")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
