@@ -491,6 +491,154 @@ enum AppScopedChatService {
             seconds: seconds, fallback: fallback, label: label, operation: operation)
     }
 
+    // MARK: - Tool-less providers
+
+    /// The prose "ask, run, re-ask" loop for a provider with no function-calling of its own.
+    ///
+    /// General Chat has carried this since it was built for Apple Intelligence: the same
+    /// prompt block that hands a tool-calling provider its schemas tells a tool-less one, in
+    /// prose, how to ask for a capability by writing one line of JSON —
+    /// `GeneralChatCapabilityHub.execute` parses that line, runs the capability through the
+    /// same approval gate a native tool call goes through, and the result is handed back as
+    /// the next turn. This scoped surface had none of it: one call to `sendMessage`, one
+    /// answer, and a question needing even one hop of evidence — "what's on my clipboard,
+    /// and does it look like an email?" — failed outright, with the model guessing at a
+    /// permission system that does not exist.
+    ///
+    /// Bounded at four rounds, matching General Chat's own loop, and scoped to this chat's
+    /// own app via `.contextDock` — `routingBundleId` is nil for a scope the router does not
+    /// resolve to one app (a CLI tool, a bare thread), and `.general` there is strictly more
+    /// than the zero capability access this path had before, never less. Cross-app reach is
+    /// still `CapabilityAuthorizationGate`'s decision, not this loop's — it runs the same
+    /// check a native tool call goes through, whichever scope was picked.
+    /// Which `AIConversationScope` the tool-less loop's capability search and execution
+    /// run under.
+    ///
+    /// `routingBundleId` is nil for a scope the router does not resolve to one app — a CLI
+    /// tool, a bare thread — and `.general` there is strictly more than the zero capability
+    /// access this path had before this loop existed, never less. Cross-app reach past
+    /// whichever scope this returns is still `CapabilityAuthorizationGate`'s decision.
+    nonisolated static func conversationScope(
+        routingBundleId: String?, appName: String
+    ) -> AIConversationScope {
+        guard let routingBundleId, !routingBundleId.isEmpty else { return .general }
+        return .contextDock(bundleID: routingBundleId, appName: appName)
+    }
+
+    /// The next turn's question, after a capability call returned in this loop.
+    ///
+    /// Three things this has to say every time: the result is real ("you are connected to
+    /// it"), an empty result is itself an answer rather than a reason to guess, and the
+    /// model answers the user's original words rather than drifting onto the tool result as
+    /// its own topic.
+    nonisolated static func toolResultFollowUp(
+        originalQuery: String, label: String, output: String, success: Bool
+    ) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return """
+            SYSTEM NOTE: You just called \(label) and it returned the REAL data below. \
+            Never claim you lack access to this — you are connected to it.
+
+            Tool result (\(label))\(success ? "" : " — FAILED"):
+            \(trimmed.isEmpty
+                ? "(no items were returned — say so, not that you lack access)"
+                : String(trimmed.prefix(8_000)))
+
+            Using ONLY this result, answer the user's original question: "\(originalQuery)"
+            If you still need another capability, reply with ONLY that JSON directive again.
+            """
+    }
+
+    private static func runToolLessScopedTurn(
+        query: String,
+        systemPrompt: String,
+        provider: AIProvider,
+        apiKey: String?,
+        history: [ChatMessage],
+        attachments: [URL],
+        context: UserContext,
+        routingBundleId: String?,
+        appName: String,
+        taskPlan: FrontmostAppTaskPlan,
+        liveAppleData: String,
+        onStatus: ((String) -> Void)?
+    ) async throws -> Answer {
+        let conversationScope = Self.conversationScope(
+            routingBundleId: routingBundleId, appName: appName)
+
+        let toolsBlock = await withTimeout(
+            seconds: 8, fallback: "", label: "scoped tool-less capability block"
+        ) {
+            await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
+                compact: provider == .onDevice,
+                query: query,
+                scope: conversationScope,
+                characterBudget: AIContextBudget.characterBudget(for: provider))
+        }
+        let promptWithTools = toolsBlock.isEmpty ? systemPrompt : systemPrompt + "\n\n" + toolsBlock
+
+        var loopHistory = history
+        var loopQuery = query
+        var toolChips: [String] = liveAppleData.isEmpty ? [] : ["Live app data · just now"]
+        // Tracked so the "this provider cannot act" notice is never shown underneath an
+        // answer where something visibly ran — a capability reached for and returned is not
+        // the one-shot blindness the notice exists to explain.
+        var executedAnything = false
+
+        for _ in 0..<4 {
+            onStatus?(toolChips.isEmpty ? "Thinking…" : "Reading tool result…")
+            let raw = try await AIProviderService.shared.sendMessage(
+                loopQuery,
+                context: context,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: loopHistory,
+                additionalContextPrompt: promptWithTools,
+                attachments: attachments.map(AIAttachment.inferred(from:)),
+                // This surface supplies its own capability catalogue; letting the provider
+                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
+                // nothing here executes, and the directive ends up printed at the user.
+                surfaceScoped: true
+            )
+
+            let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
+            guard call.handled else {
+                let text = ChatAnswerSanitizer.clean(raw)
+                // The model cannot know why a request to *do* something failed here — it
+                // was given neither tools nor the reason — unless something in this very
+                // loop already ran.
+                let notice = executedAnything
+                    ? nil
+                    : ProviderActionNotice.note(provider: provider, intent: taskPlan.intent)
+                return Answer(text: text + (notice ?? ""), toolChips: toolChips)
+            }
+
+            executedAnything = true
+            toolChips.append(call.label)
+            onStatus?("Running \(call.label)…")
+            loopHistory.append(ChatMessage(role: .user, content: loopQuery))
+            loopHistory.append(ChatMessage(role: .assistant, content: raw))
+            loopQuery = Self.toolResultFollowUp(
+                originalQuery: query, label: call.label, output: call.output,
+                success: call.success)
+        }
+
+        // Loop budget exhausted — one final forced plain answer, same as General Chat's own
+        // exhaustion path.
+        onStatus?("Writing answer…")
+        let finalRaw = try await AIProviderService.shared.sendMessage(
+            loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
+            context: context,
+            provider: provider,
+            apiKey: apiKey,
+            conversationHistory: loopHistory,
+            additionalContextPrompt: promptWithTools,
+            attachments: attachments.map(AIAttachment.inferred(from:)),
+            surfaceScoped: true
+        )
+        return Answer(text: ChatAnswerSanitizer.clean(finalRaw), toolChips: toolChips)
+    }
+
     // MARK: - Shared context blocks
 
     /// Image files a provider can be shown directly. Capped: a folder of forty photos sent
@@ -1469,30 +1617,26 @@ enum AppScopedChatService {
         let systemPrompt = prompt.assemble(for: provider, preserving: preservedSources)
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
-        // Apple Intelligence has no function-calling API, so it takes the plain path.
+        // Apple Intelligence has no function-calling API, and Claude Code is deliberately
+        // run with none of DoraX's tools (it answers; the app acts) — both used to get
+        // exactly one turn here, no capability catalogue and no way to ask for a second
+        // read, so a question needing one hop of evidence failed outright. General Chat
+        // solved this for the same providers with a prose "ask, run, re-ask" loop; this
+        // gives a scoped chat the same one rather than inventing a second protocol.
         guard provider.supportsNativeTools else {
-            let raw = try await AIProviderService.shared.sendMessage(
-                query,
-                context: context,
+            return try await runToolLessScopedTurn(
+                query: query,
+                systemPrompt: systemPrompt,
                 provider: provider,
                 apiKey: apiKey,
-                conversationHistory: history,
-                additionalContextPrompt: systemPrompt,
-                attachments: attachments.map(AIAttachment.inferred(from:)),
-                // This surface supplies its own capability catalogue; letting the provider
-                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
-                // nothing here executes, and the directive ends up printed at the user.
-                surfaceScoped: true
-            )
-            let text = ChatAnswerSanitizer.clean(raw)
-            // This provider was handed no tools, so a request to *do* something could not run.
-            // The model cannot know why — it was given neither tools nor the reason — and the
-            // guesses it made instead ("my toolset lacks run_menu_command", "not granted this
-            // session") described rules that do not exist. The app knows the reason exactly.
-            let notice = ProviderActionNotice.note(provider: provider, intent: taskPlan.intent)
-            return Answer(
-                text: text + (notice ?? ""),
-                toolChips: liveAppleData.isEmpty ? [] : ["Live app data · just now"])
+                history: history,
+                attachments: attachments,
+                context: context,
+                routingBundleId: routingBundleId,
+                appName: appName,
+                taskPlan: taskPlan,
+                liveAppleData: liveAppleData,
+                onStatus: onStatus)
         }
 
         // Which apps this turn may reach, by name and by bundle id, so a tool asked about
