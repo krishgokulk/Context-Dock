@@ -435,6 +435,16 @@ struct AppChatPromptPill: View {
                 }
             }
 
+            // The dock shows this in Global Context too, independent of whether the
+            // running-apps row has anything in it — a selection is worth carrying into a
+            // question whether or not the field is also offering somewhere else to go.
+            // This lived only in the composer's own branch below, so Global Context and
+            // the scopes reached from it never had a way to see or reach the selection at
+            // all, whatever the frontmost app's AX tree actually reported.
+            if model.isSearchField, model.selection != nil {
+                selectionScopeButton
+            }
+
             // What Return does, shown rather than left to the row below to explain: the
             // dock puts this same icon in its own search field once there is a match for
             // what is typed, so the field itself — not just a row you have to look down
