@@ -435,6 +435,24 @@ struct AppChatPromptPill: View {
                     .transition(.opacity)
             }
 
+            // What Return does, shown rather than left to the row below to explain: the
+            // dock puts this same icon in its own search field once there is a match for
+            // what is typed, so the field itself — not just a row you have to look down
+            // at — says what is about to open. Whichever row the arrows landed on, or the
+            // top one otherwise, same as the row hint and the ghost text agree with.
+            if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                let icon = model.leadingResultIcon
+            {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 22, height: 22)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                    .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
+            }
+
             // Attaching and sending live in the field, always drawn, the way the dock's own
             // composer keeps its "+" on screen. Hiding them until the pointer arrived meant
             // the two things you do most here were invisible until found by accident, and

@@ -4,6 +4,7 @@
 // Presentation state for the one corner chat shell. The two chat modes keep their own
 // models and pipelines; this object only decides which one the shell is showing.
 
+import AppKit
 import Combine
 import Foundation
 
@@ -194,9 +195,34 @@ final class CornerChatPresentation: ObservableObject {
         case .general: showGeneral()
         case .globalContext: showGlobalContext()
         case .frontmostApp:
-            guard let latestTarget else { return }
-            showFrontmostApp(target: latestTarget)
+            guard let target = currentFrontmostTarget() ?? latestTarget else { return }
+            showFrontmostApp(target: target)
         }
+    }
+
+    /// The app to show, resolved fresh rather than trusting whatever was frontmost when
+    /// the corner first opened.
+    ///
+    /// `latestTarget` is a snapshot from whenever this session was last told to summon —
+    /// the hotkey, or a Global Context row that launched something. Nothing updates it in
+    /// between, so a step away from the corner to a different real app, taken without
+    /// touching the corner at all, left this walking back to whichever app was frontmost
+    /// when the corner opened rather than the one actually in front now. Reading
+    /// `NSWorkspace.shared.frontmostApplication` here would not fix it either — this fires
+    /// while the corner's own panel holds key focus, which reports us, the same trap the
+    /// hotkey path already routes around via the menu-bar owner instead.
+    private func currentFrontmostTarget() -> CornerChatTarget? {
+        guard let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+              !app.isTerminated,
+              let bundleID = app.bundleIdentifier, !bundleID.isEmpty
+        else { return nil }
+        let target = CornerChatTarget(
+            name: app.localizedName ?? bundleID,
+            bundleID: bundleID,
+            suggestions: AppChatSuggestionProvider.suggestions(for: app),
+            summary: AppChatSuggestionProvider.summary(for: app))
+        latestTarget = target
+        return target
     }
 
     /// A swipe walks the same scopes the arrows do, one step per swipe.

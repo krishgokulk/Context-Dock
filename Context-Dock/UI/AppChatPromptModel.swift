@@ -136,6 +136,7 @@ final class AppChatPromptModel: ObservableObject {
     private var selectionObservation: AnyCancellable?
     private var globalResultsObservation: AnyCancellable?
     private var runningAppsObservation: AnyCancellable?
+    private var clipboardPillObservation: AnyCancellable?
     /// Half-written questions, kept per scope so a walk between them loses nothing.
     private var drafts: [String: String] = [:]
 
@@ -188,6 +189,15 @@ final class AppChatPromptModel: ObservableObject {
             guard let self else { return }
             self.updateGlobalTyping(for: self.query)
         }
+        // Same staleness, one copy away: the clipboard pill leads this row precisely
+        // because copying is the thing that just happened, but nothing here noticed a
+        // copy until the next keystroke recomputed the row anyway.
+        clipboardPillObservation = ClipboardPanelController.shared.model.$entries
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateGlobalTyping(for: self.query)
+            }
     }
 
     /// Set by `AppChatMenuBrowsing` as the user types in Global Context.

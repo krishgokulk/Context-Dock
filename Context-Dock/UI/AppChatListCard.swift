@@ -114,21 +114,26 @@ struct AppChatListCard: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 0) {
+                            // Return already runs the top row when nothing has been arrowed
+                            // to — `rows.first`, the same fallback the field's own icon
+                            // reads — so a list showing none of them chosen was a list
+                            // disagreeing with what its own Return key was about to do.
+                            let effectiveFocus = model.focusedMenuIndex ?? 0
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
                                 Group {
                                     switch row {
                                     case .dock(let pill):
-                                        dockRow(pill, isFocused: index == model.focusedMenuIndex)
+                                        dockRow(pill, isFocused: index == effectiveFocus)
                                     case .command(let item):
-                                        commandRow(item, isFocused: index == model.focusedMenuIndex)
+                                        commandRow(item, isFocused: index == effectiveFocus)
                                     case .action(let action):
-                                        actionRow(action, isFocused: index == model.focusedMenuIndex)
+                                        actionRow(action, isFocused: index == effectiveFocus)
                                     case .global(let doc):
-                                        globalRow(doc, isFocused: index == model.focusedMenuIndex)
+                                        globalRow(doc, isFocused: index == effectiveFocus)
                                     case .file(let url):
-                                        fileRow(url, isFocused: index == model.focusedMenuIndex)
+                                        fileRow(url, isFocused: index == effectiveFocus)
                                     case .cliSuggestion(let word):
-                                        cliSuggestionRow(word, isFocused: index == model.focusedMenuIndex)
+                                        cliSuggestionRow(word, isFocused: index == effectiveFocus)
                                     }
                                 }
                                 .id(row.id)
