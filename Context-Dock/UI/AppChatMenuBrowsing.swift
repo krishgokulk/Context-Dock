@@ -590,8 +590,14 @@ extension AppChatPromptModel {
 
     /// The Finder scope searches the disk rather than Finder's menus — the question there
     /// is about files, which is why the user carved it out of the snapshot behaviour.
+    ///
+    /// True whenever the field is about Finder, not only when Finder was scoped into from
+    /// Global Context: opening the corner directly on the Desktop (or any Finder window)
+    /// is the plain, more common way to end up here, and it fell through to the generic
+    /// menu-command ranker instead — the same file search dock always gives Finder, shown
+    /// only for the less common of the two paths into it.
     var isFinderScope: Bool {
-        returnsToGlobalScope && appBundleID == "com.apple.finder"
+        appBundleID == "com.apple.finder"
     }
 
     /// Files and folders matching what is typed, from the same Spotlight index the dock's
@@ -653,37 +659,55 @@ extension AppChatPromptModel {
     /// half-typed word this app scope's own commands might also match is a worse guess
     /// than just not offering it.
     private func runningAppSwitchRow(for query: String) -> AppChatRow? {
-        guard !query.isEmpty,
-            let topMatch = GlobalContextSearchCoordinator.shared.resolveFastTopMatch(
-                query: query),
-            topMatch.kind == .installedApp || topMatch.kind == .runningApp,
-            let bundleID = topMatch.bundleID, bundleID != appBundleID,
-            let running = NSWorkspace.shared.runningApplications.first(where: {
-                // Siri and other background helpers are "running" by this check without
-                // being anything a person would call a running app — no window, no dock
-                // icon, nothing to switch to. `.regular` is the same filter every other
-                // running-apps list in this file already uses for exactly that reason.
-                $0.bundleIdentifier == bundleID && !$0.isTerminated
-                    && $0.activationPolicy == .regular
-            })
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !q.isEmpty else { return nil }
+
+        // Dock's own version of this (`buildContextDockApplicationSwitchPills`) is a
+        // dedicated pass over the running apps themselves, not a lookup into its general
+        // search index — so "mes" reliably finds Messages whether or not something else
+        // in that broader index would have outscored it. Matched here the same way: name
+        // match, tiered so a name that starts with what was typed always beats one that
+        // merely contains it, over the running apps directly.
+        let candidates = NSWorkspace.shared.runningApplications.filter {
+            $0.activationPolicy == .regular
+                && !$0.isTerminated
+                && $0.bundleIdentifier != appBundleID
+                && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+        }
+        func matchTier(_ app: NSRunningApplication) -> Int? {
+            guard let name = app.localizedName?.lowercased(), !name.isEmpty else { return nil }
+            if name.hasPrefix(q) { return 0 }
+            if name.split(separator: " ").contains(where: { $0.hasPrefix(q) }) { return 1 }
+            if name.contains(q) { return 2 }
+            return nil
+        }
+        var scored: [(app: NSRunningApplication, tier: Int)] = []
+        for app in candidates {
+            guard let tier = matchTier(app) else { continue }
+            scored.append((app, tier))
+        }
+        guard let best = scored.min(by: { $0.tier < $1.tier }),
+            let bundleID = best.app.bundleIdentifier
         else { return nil }
+        let running = best.app
+        let name = running.localizedName ?? bundleID
 
         var pill = DockPill(
             id: "corner-app-switch-\(bundleID)",
-            name: topMatch.title,
+            name: name,
             icon: "app",
             badge: "Switch",
             execute: { [weak self] in
                 running.activate()
-                self?.onAppLaunchedFromGlobalContext?(topMatch.title, bundleID)
+                self?.onAppLaunchedFromGlobalContext?(name, bundleID)
             }
         )
         pill.menuItemImage = running.icon
-        pill.sourceAppName = topMatch.title
+        pill.sourceAppName = name
         pill.sourceBundleId = bundleID
         pill.rankingKind = "appSwitch"
         pill.trackingIdentifier = "corner-app-switch:\(bundleID)"
-        pill.searchTerms = [topMatch.title, bundleID, "switch"]
+        pill.searchTerms = [name, bundleID, "switch"]
         return .dock(pill)
     }
 
