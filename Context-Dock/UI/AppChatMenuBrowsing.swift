@@ -659,7 +659,12 @@ extension AppChatPromptModel {
             topMatch.kind == .installedApp || topMatch.kind == .runningApp,
             let bundleID = topMatch.bundleID, bundleID != appBundleID,
             let running = NSWorkspace.shared.runningApplications.first(where: {
+                // Siri and other background helpers are "running" by this check without
+                // being anything a person would call a running app — no window, no dock
+                // icon, nothing to switch to. `.regular` is the same filter every other
+                // running-apps list in this file already uses for exactly that reason.
                 $0.bundleIdentifier == bundleID && !$0.isTerminated
+                    && $0.activationPolicy == .regular
             })
         else { return nil }
 
