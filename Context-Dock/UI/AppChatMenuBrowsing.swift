@@ -128,6 +128,14 @@ extension AppChatPromptModel {
             query: typed,
             limit: Self.menuRowLimit,
             policy: isGlobalScope ? .globalContext : .cornerAppChat)
+        // The dock lets someone scoped into one app type a different app's name and switch
+        // straight to it, without backing out to Global Context first — the same running-app
+        // row `pillIcons()` already offers when the field is empty, just reachable through
+        // typing instead. This scope never had it: typing "safari" while chatting with Code
+        // only ever filtered Code's own commands, with no way out but leaving the scope.
+        if let switchRow = runningAppSwitchRow(for: typed) {
+            rows.insert(switchRow, at: 0)
+        }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -636,6 +644,44 @@ extension AppChatPromptModel {
     }
 
     /// Clicking one of the match pills opens that app, the way it does in the dock.
+    /// Typing a running app's name while scoped to a different one, resolved through the
+    /// same fast index that already drives Global Context's own top match and ghost text —
+    /// so "safari" finds Safari here for the same reason it finds Safari there.
+    ///
+    /// Deliberately running apps only, not every installed one: the dock's own version of
+    /// this is a *switch*, not a launch, and offering to launch something over a
+    /// half-typed word this app scope's own commands might also match is a worse guess
+    /// than just not offering it.
+    private func runningAppSwitchRow(for query: String) -> AppChatRow? {
+        guard !query.isEmpty,
+            let topMatch = GlobalContextSearchCoordinator.shared.resolveFastTopMatch(
+                query: query),
+            topMatch.kind == .installedApp || topMatch.kind == .runningApp,
+            let bundleID = topMatch.bundleID, bundleID != appBundleID,
+            let running = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleID && !$0.isTerminated
+            })
+        else { return nil }
+
+        var pill = DockPill(
+            id: "corner-app-switch-\(bundleID)",
+            name: topMatch.title,
+            icon: "app",
+            badge: "Switch",
+            execute: { [weak self] in
+                running.activate()
+                self?.onAppLaunchedFromGlobalContext?(topMatch.title, bundleID)
+            }
+        )
+        pill.menuItemImage = running.icon
+        pill.sourceAppName = topMatch.title
+        pill.sourceBundleId = bundleID
+        pill.rankingKind = "appSwitch"
+        pill.trackingIdentifier = "corner-app-switch:\(bundleID)"
+        pill.searchTerms = [topMatch.title, bundleID, "switch"]
+        return .dock(pill)
+    }
+
     func openGlobalMatchIcon(_ icon: MatchDockIcon) {
         hasActed = true
         touch()
