@@ -45,10 +45,13 @@ enum AppChatPromptMetrics {
     /// What sits over the field — an approval waiting on a yes, attached files — is part
     /// of the card's height in every phase. Attachments were not counted at all before, so
     /// pasting a file into App mode drew a row the card had no room for.
-    static func sheetHeight(hasApproval: Bool, attachments: Int) -> CGFloat {
+    static func sheetHeight(hasApproval: Bool, attachments: Int, hasSelectionRow: Bool = false)
+        -> CGFloat
+    {
         var result: CGFloat = 0
         if hasApproval { result += ApprovalCard.height + 1 }
         if attachments > 0 { result += attachmentRowHeight }
+        if hasSelectionRow { result += attachmentRowHeight }
         return result
     }
 
@@ -57,9 +60,11 @@ enum AppChatPromptMetrics {
         suggestions: Int,
         messages: Int = 0,
         hasApproval: Bool = false,
-        attachments: Int = 0
+        attachments: Int = 0,
+        hasSelectionRow: Bool = false
     ) -> CGSize {
-        let sheet = sheetHeight(hasApproval: hasApproval, attachments: attachments)
+        let sheet = sheetHeight(
+            hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
         switch phase {
         case .hidden, .mini:
             return miniSize
@@ -89,7 +94,8 @@ struct AppChatPromptPill: View {
             suggestions: model.listRowCount,  // list rows live in AppChatListCard now
             messages: model.messages.count,
             hasApproval: approvals.pending(for: .corner) != nil,
-            attachments: model.attachments.count)
+            attachments: model.attachments.count,
+            hasSelectionRow: model.isShowingSelectionScope)
     }
 
     var body: some View {
@@ -171,6 +177,10 @@ struct AppChatPromptPill: View {
                 choiceCard
                 Divider().opacity(0.18)
             }
+            // The selection icon, clicked: what is selected shown the same way an actual
+            // attachment is — a chip above the field, in this same composer — rather than
+            // a second card opened on top of it.
+            if model.isShowingSelectionScope { selectionRow }
             if !model.attachments.isEmpty { attachmentRow }
             inputRow
         }
@@ -364,6 +374,7 @@ struct AppChatPromptPill: View {
                             model.queryChanged()
                             return .handled
                         }
+                        if model.leaveSelectionScope() { return .handled }
                         if model.isAnswering {
                             model.cancelTurn()
                             return .handled
@@ -549,14 +560,16 @@ struct AppChatPromptPill: View {
     /// off the screen instead of picking a file.
     private var selectionScopeButton: some View {
         Button {
-            // Named explicitly: at the moment of this click the corner's own panel is key,
-            // so "whatever is frontmost" would mean us, not the app this chat is about.
-            AppDelegate.shared?.activateSelectionScope(sourceBundleID: model.appBundleID)
+            // In place, not a second card: this session already knows what is selected
+            // and already carries it on whatever question gets asked here, so opening the
+            // separate Selection Scope card on top of an already-open chat stacked one
+            // surface on another for something this one could just show itself.
+            model.toggleSelectionScope()
         } label: {
-            controlGlyph("text.cursor")
+            controlGlyph("text.cursor", tinted: model.isShowingSelectionScope)
         }
         .buttonStyle(.plain)
-        .help("Open the current selection")
+        .help(model.isShowingSelectionScope ? "Back to \(model.appName)" : "Show the current selection")
         .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
@@ -752,6 +765,66 @@ struct AppChatPromptPill: View {
             .padding(.horizontal, 14)
         }
         .frame(height: AppChatPromptMetrics.attachmentRowHeight)
+    }
+
+    /// What is selected, as a chip — a real file reuses the exact same attachment chip an
+    /// actually-attached one draws; text gets the same shape without a thumbnail, since it
+    /// has no file to generate one from.
+    @ViewBuilder
+    private var selectionRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                switch model.selectionContent {
+                case .files(let urls):
+                    ForEach(urls, id: \.self) { url in
+                        ChatAttachmentChip(url: url) { model.leaveSelectionScope() }
+                    }
+                case .text(let text):
+                    selectionTextChip(text)
+                case nil:
+                    EmptyView()
+                }
+            }
+            .padding(.horizontal, 14)
+        }
+        .frame(height: AppChatPromptMetrics.attachmentRowHeight)
+    }
+
+    private func selectionTextChip(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "text.alignleft")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+                .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            Text(text)
+                .font(.system(size: 11.5, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Button { model.leaveSelectionScope() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .opacity(0.45)
+            }
+            .buttonStyle(.plain)
+            .help("Close the selection")
+        }
+        .padding(.leading, 6)
+        .padding(.trailing, 8)
+        .padding(.vertical, 5)
+        .background(
+            Color.primary.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+        )
+        .frame(maxWidth: 260, alignment: .leading)
+        .help(text)
     }
 
     // MARK: - Suggestions

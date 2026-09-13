@@ -107,6 +107,26 @@ struct AppChatPromptTests {
         #expect(model.phase == .prompt)
     }
 
+    /// The icon does nothing to a chat with nothing selected — an in-place view of an
+    /// empty selection is a promise the button cannot keep.
+    @Test func togglingSelectionScopeDoesNothingWithoutASelection() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+
+        model.toggleSelectionScope()
+
+        #expect(!model.isShowingSelectionScope)
+    }
+
+    /// Esc backing out of a selection view that was never open is not this key's meaning —
+    /// it has to fall through to whatever else Esc does here.
+    @Test func leavingSelectionScopeWithNothingToLeaveIsIgnored() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+
+        #expect(model.leaveSelectionScope() == false)
+    }
+
     /// The arrow keys are exactly how the dock's own hidden results sheet comes back too.
     @Test func arrowingBackInReopensTheClosedSuggestions() {
         let model = AppChatPromptModel(conversation: AppChatConversation())

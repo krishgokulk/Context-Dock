@@ -213,6 +213,7 @@ extension AppChatPromptModel {
         returnsToGlobalScope = false
         scopedExtension = nil
         scopedCommand = nil
+        _ = leaveSelectionScope()
         adoptScope(name: Self.globalScopeName, bundleID: "")
         adapterActions = []
         allMenuItems = []

@@ -30,6 +30,13 @@ struct AppChatSuggestion: Identifiable, Equatable {
     var id: String { "\(title)-\(icon)" }
 }
 
+/// What is actually behind the selection — `AppChatSelectionScope` is only ever a count
+/// and an icon, and showing the selection in place needs something to show.
+enum AppChatSelectionContent: Equatable {
+    case text(String)
+    case files([URL])
+}
+
 enum AppChatPromptPhase: Equatable {
     case hidden
     /// Shrunk to the frontmost app's own icon, holding whatever was typed.
@@ -82,6 +89,13 @@ final class AppChatPromptModel: ObservableObject {
     @Published var rows: [AppChatRow] = []
     /// What the app has selected right now — carried by the question, so it is shown.
     @Published private(set) var selection: AppChatSelectionScope?
+    /// The content behind `selection` — `AppChatSelectionScope` itself is only ever a
+    /// label and an icon, never enough to actually preview what would be carried.
+    @Published private(set) var selectionContent: AppChatSelectionContent?
+    /// The selection icon was clicked: this session's own surface is standing in for the
+    /// separate Selection Scope card, showing what is selected in place of the app's own
+    /// suggestions rather than opening a second card stacked on top of this one.
+    @Published private(set) var isShowingSelectionScope = false
     /// Global Context only: the dock's own top match for what is typed, and the matching
     /// app icons it shows beside the field. Resolved by the dock's coordinator so the two
     /// surfaces agree on what "the best match" means.
@@ -212,7 +226,7 @@ final class AppChatPromptModel: ObservableObject {
                     }
                     return
                 }
-                self.selection = next
+                self.applySelection(from: context, scopedTo: scopedTo)
             }
         // The dock's own running-app row refreshes the instant an app launches or quits —
         // it watches `NSWorkspace` directly rather than waiting for the next keystroke.
@@ -288,6 +302,7 @@ final class AppChatPromptModel: ObservableObject {
     ) {
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
+        isShowingSelectionScope = false
         refreshSelectionForCurrentScope()
         loadMenuItems()
         // The running-app pills used to be a Global Context-only concept. They are really
@@ -331,7 +346,49 @@ final class AppChatPromptModel: ObservableObject {
             isGlobalScope
             ? (context.bundleId == ownBundleID ? "" : context.bundleId)
             : appBundleID
-        selection = AppChatSelectionScope.from(context: context, scopedTo: scopedTo)
+        applySelection(from: context, scopedTo: scopedTo)
+    }
+
+    /// Sets `selection` and `selectionContent` together — the two must never disagree, or
+    /// the icon could promise a selection the in-place view then has nothing to show.
+    private func applySelection(from context: AXContext, scopedTo bundleID: String) {
+        selection = AppChatSelectionScope.from(context: context, scopedTo: bundleID)
+        guard selection != nil else {
+            selectionContent = nil
+            return
+        }
+        if !context.selectedFilePaths.isEmpty {
+            selectionContent = .files(context.selectedFilePaths.map { URL(fileURLWithPath: $0) })
+        } else if let text = context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !text.isEmpty
+        {
+            selectionContent = .text(text)
+        } else {
+            selectionContent = nil
+        }
+    }
+
+    /// The selection icon, clicked: show what is selected in place of this session's own
+    /// suggestions, rather than opening the separate Selection Scope card on top of it.
+    func toggleSelectionScope() {
+        guard selection != nil || isShowingSelectionScope else { return }
+        isShowingSelectionScope.toggle()
+        // The chip sits right above the field either way; the suggestions board sitting
+        // above that too was three things stacked for what should read as one small
+        // addition to the composer, not a second board's worth of attention.
+        if isShowingSelectionScope, phase == .suggesting { set(.prompt) }
+        touch()
+    }
+
+    /// Esc back out of the in-place selection view — to whatever this session was showing
+    /// before, not a dismiss. Returns false when there was nothing to back out of, so the
+    /// key keeps its other meanings.
+    @discardableResult
+    func leaveSelectionScope() -> Bool {
+        guard isShowingSelectionScope else { return false }
+        isShowingSelectionScope = false
+        touch()
+        return true
     }
 
     /// Opens on suggestions when there are any, because a blank field asks the user to
@@ -553,8 +610,8 @@ final class AppChatPromptModel: ObservableObject {
         self.suggestions = suggestions
         capabilitySummary = summary
         Self.changeScope(app: name, bundleID: bundleID)
-        selection = AppChatSelectionScope.from(
-            context: AXContextReader.shared.current, scopedTo: bundleID)
+        applySelection(from: AXContextReader.shared.current, scopedTo: bundleID)
+        isShowingSelectionScope = false
         stopAwaitingAnswer()
         hasPresentedConversation = !messages.isEmpty
         set(hasPresentedConversation ? .chat : restingInputPhase)
