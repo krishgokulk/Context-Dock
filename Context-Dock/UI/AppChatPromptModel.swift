@@ -137,6 +137,11 @@ final class AppChatPromptModel: ObservableObject {
     private var globalResultsObservation: AnyCancellable?
     private var runningAppsObservation: AnyCancellable?
     private var clipboardPillObservation: AnyCancellable?
+    /// Guards against the reconfirming read below feeding straight back into the sink
+    /// that triggered it — `refreshSelectionForCurrentScope` publishes through the same
+    /// reader this observation reads, so calling it from inside the sink without this
+    /// would re-enter itself on every publish it makes.
+    private var isReconfirmingSelection = false
     /// Half-written questions, kept per scope so a walk between them loses nothing.
     private var drafts: [String: String] = [:]
 
@@ -171,7 +176,7 @@ final class AppChatPromptModel: ObservableObject {
         selectionObservation = AXContextReader.shared.contextPublisher
             .receive(on: RunLoop.main)
             .sink { [weak self] context in
-                guard let self else { return }
+                guard let self, !self.isReconfirmingSelection else { return }
                 // Global Context is scoped to no app in particular — `adoptScope` gives it
                 // an empty bundle id on purpose — so matching against `appBundleID` the way
                 // every other scope does could never pass, and the selection button had no
@@ -183,8 +188,27 @@ final class AppChatPromptModel: ObservableObject {
                     self.isGlobalScope
                     ? (context.bundleId == Bundle.main.bundleIdentifier ? "" : context.bundleId)
                     : self.appBundleID
-                self.selection = AppChatSelectionScope.from(
-                    context: context, scopedTo: scopedTo)
+                let next = AppChatSelectionScope.from(context: context, scopedTo: scopedTo)
+                if next == nil, self.selection != nil {
+                    // A live event just claimed the selection is gone. That is either a
+                    // real deselection, or the same race `refreshSelectionOnly` and
+                    // `updateFocusedElement` already guard against — a read that came
+                    // back empty because our own window just took key focus, not because
+                    // the user deselected anything. This is the one path that skipped
+                    // that check, which is what made the icon appear correctly on open
+                    // and then erase itself moments later. One more explicit, targeted
+                    // read before believing a passive event over what this session
+                    // already knew — off the stack this sink is running on, since that
+                    // read publishes right back through the reader this sink observes.
+                    self.isReconfirmingSelection = true
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else { return }
+                        self.refreshSelectionForCurrentScope()
+                        self.isReconfirmingSelection = false
+                    }
+                    return
+                }
+                self.selection = next
             }
         // The dock's own running-app row refreshes the instant an app launches or quits —
         // it watches `NSWorkspace` directly rather than waiting for the next keystroke.
