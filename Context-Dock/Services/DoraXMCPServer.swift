@@ -556,8 +556,16 @@ final class DoraXMCPServer: ObservableObject {
     }
 
     /// The frontmost app's own accessibility state, read at the moment of the call.
+    ///
+    /// `NSWorkspace.shared.frontmostApplication` reports Context-Dock itself the instant
+    /// any of our own panels (the corner included) has taken key focus — the same trap
+    /// fixed everywhere else this app reads "what's frontmost" — so a tool call made right
+    /// after opening the corner asked this app about its own empty UI instead of whatever
+    /// the user was actually looking at a moment before.
     private static func liveFrontmostContext() -> AXContext {
-        guard let frontmost = NSWorkspace.shared.frontmostApplication,
+        guard
+            let frontmost = AppDelegate.shared?.menuBarOwningUserFacingApplication()
+                ?? NSWorkspace.shared.frontmostApplication,
             let bundleId = frontmost.bundleIdentifier
         else { return AXContextReader.shared.current }
 
