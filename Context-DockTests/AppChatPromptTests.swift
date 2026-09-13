@@ -91,6 +91,41 @@ struct AppChatPromptTests {
         #expect(model.query == "half a question")
     }
 
+    /// Idling away from the suggestions closes them back to just the field first — the
+    /// dock's own results sheet stays hidden until the arrow keys ask for it, and this
+    /// offer works the same way now — before the whole thing eventually shrinks to the
+    /// app's icon like any other untouched prompt.
+    @Test func idlingAwayFromSuggestionsClosesToThePlainFieldFirst() {
+        let model = AppChatPromptModel()
+        model.summon(
+            app: "Code", bundleID: "com.microsoft.VSCode",
+            suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
+            summary: "5 actions")
+
+        model.standDown()
+
+        #expect(model.phase == .prompt)
+    }
+
+    /// The arrow keys are exactly how the dock's own hidden results sheet comes back too.
+    @Test func arrowingBackInReopensTheClosedSuggestions() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(
+            app: "Code", bundleID: "com.microsoft.VSCode",
+            suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
+            summary: "5 actions")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+        model.standDown()
+        #expect(model.phase == .prompt)
+
+        #expect(model.moveMenuFocus(by: 1))
+
+        #expect(model.phase == .suggesting)
+    }
+
     /// Coming back to an untouched prompt should show the suggestions again, not a blank
     /// field the user has to guess at.
     @Test func reachingForTheIconWithNothingTypedRestoresTheSuggestions() {
@@ -100,6 +135,8 @@ struct AppChatPromptTests {
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
             summary: "5 actions")
         model.standDown()
+        model.standDown()
+        #expect(model.phase == .mini)
 
         model.hoverBegan()
 

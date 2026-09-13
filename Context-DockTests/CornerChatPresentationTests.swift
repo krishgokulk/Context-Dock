@@ -103,6 +103,10 @@ struct CornerChatPresentationTests {
         let subject = CornerChatPresentation(
             appChat: app, generalChat: GeneralChatWindowModel())
         subject.cycle(target: code)
+        // Idling away from the suggestions closes them to the plain field first now —
+        // the dock's own results sheet works the same way — before the whole thing
+        // shrinks to the app's icon like any other untouched prompt.
+        app.standDown()
         app.standDown()
         #expect(app.phase == .mini)
 

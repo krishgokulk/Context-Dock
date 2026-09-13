@@ -52,6 +52,10 @@ final class AppChatPromptModel: ObservableObject {
     static let idleDwell: TimeInterval = 5
     /// How long the badge holding an unfinished question waits after that.
     static let miniDwell: TimeInterval = 8
+    /// How long the untouched "what this app can do" list stays up before the field
+    /// closes back to just itself — the dock's own results sheet doesn't show at all
+    /// until the arrow keys ask for it, and this offer is the same kind of thing.
+    static let suggestionsDwell: TimeInterval = 2
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
@@ -291,7 +295,7 @@ final class AppChatPromptModel: ObservableObject {
         // scope too, and the dock's own equivalent shows them here as well.
         updateGlobalTyping(for: "")
         set(restingInputPhase)
-        arm(after: Self.idleDwell)
+        armForIdle()
     }
 
     /// The reader's snapshot, refreshed against whichever app this session's selection
@@ -382,7 +386,7 @@ final class AppChatPromptModel: ObservableObject {
         if isPinned {
             cancel()
         } else {
-            arm(after: Self.idleDwell)
+            armForIdle()
         }
     }
 
@@ -509,7 +513,7 @@ final class AppChatPromptModel: ObservableObject {
     /// Any interaction puts the clock back, unless the surface is pinned.
     func touch() {
         guard !isPinned, !isAnswering, phase.isVisible else { return }
-        arm(after: Self.idleDwell)
+        armForIdle()
     }
 
     func hoverBegan() {
@@ -557,7 +561,7 @@ final class AppChatPromptModel: ObservableObject {
         if isPinned || isPointerInside {
             cancel()
         } else {
-            arm(after: Self.idleDwell)
+            armForIdle()
         }
     }
 
@@ -569,7 +573,14 @@ final class AppChatPromptModel: ObservableObject {
     func standDown() {
         guard !isPinned, !isPointerInside, !isAnswering else { return }
         switch phase {
-        case .prompt, .suggesting, .chat:
+        case .suggesting:
+            // The dock's own results sheet does not show at all until the arrow keys ask
+            // for it; this offer is the same kind of thing, so idling closes it back to
+            // just the field rather than shrinking the whole thing down to a badge over
+            // an offer nobody asked to see again.
+            set(.prompt)
+            armForIdle()
+        case .prompt, .chat:
             set(.mini)
             arm(after: Self.miniDwell)
         case .mini:
@@ -583,7 +594,7 @@ final class AppChatPromptModel: ObservableObject {
     /// user walked away from.
     func userLeftTheSpace() {
         isPointerInside = false
-        if !isPinned { arm(after: Self.idleDwell) }
+        if !isPinned { armForIdle() }
     }
 
     func dismiss() {
@@ -656,6 +667,14 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     // MARK: - Timer
+
+    /// Arms the idle timer for whichever phase is showing right now: the "what this app
+    /// can do" offer gets the short dwell, everything else gets the long one. Callers used
+    /// to all reach for the same delay regardless of what they were arming down from,
+    /// which is what let the suggestions list sit open as long as a real conversation did.
+    private func armForIdle() {
+        arm(after: phase == .suggesting ? Self.suggestionsDwell : Self.idleDwell)
+    }
 
     private func arm(after delay: TimeInterval) {
         standDownTask?.cancel()

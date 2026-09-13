@@ -845,6 +845,10 @@ extension AppChatPromptModel {
     @discardableResult
     func moveMenuFocus(by delta: Int) -> Bool {
         guard isBrowsingMenus else { return false }
+        // The list closed back to just the field after a few seconds of nobody looking at
+        // it, the same way the dock's own results sheet is never open until the arrow
+        // keys ask for it. Reaching for it now is exactly that ask.
+        if phase == .prompt { set(.suggesting) }
         let count = rows.count
         if let current = focusedMenuIndex {
             focusedMenuIndex = (current + delta + count) % count
