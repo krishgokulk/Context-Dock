@@ -180,11 +180,16 @@ struct AppChatPromptPill: View {
             // The selection icon, clicked: what is selected shown the same way an actual
             // attachment is — a chip above the field, in this same composer — rather than
             // a second card opened on top of it.
-            if model.isShowingSelectionScope { selectionRow }
+            if model.isShowingSelectionScope {
+                selectionRow
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
             if !model.attachments.isEmpty { attachmentRow }
             inputRow
         }
         .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
+        .animation(.easeOut(duration: 0.16), value: model.isShowingSelectionScope)
+        .animation(.easeOut(duration: 0.16), value: model.selectionContent)
     }
 
     /// What the answer is waiting on, above the composer.
@@ -552,6 +557,8 @@ struct AppChatPromptPill: View {
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
+        .animation(.easeOut(duration: 0.16), value: model.selection)
+        .animation(.easeOut(duration: 0.16), value: model.isShowingSelectionScope)
     }
 
     /// Opens the frontmost app's selection as its own corner card — the same surface the

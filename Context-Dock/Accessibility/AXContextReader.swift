@@ -245,6 +245,30 @@ final class AXContextReader {
         }
         updated.timestamp          = Date()
         updateIfChanged(updated)
+
+        if updated.bundleId == "com.apple.finder" {
+            refreshFinderSelection(for: pid, bundleId: updated.bundleId)
+        }
+    }
+
+    /// `AXSelectedRowsChanged` is exactly this path's own event — Finder posts it the
+    /// moment the selection changes, whether that means a different file, a different
+    /// count of them, or none at all — but this path never re-read the selection itself
+    /// for it, only text and window title, so the icon held whatever it opened with until
+    /// something unrelated forced a full refresh.
+    ///
+    /// Async and cache-first, deliberately: the read is an AppleScript round-trip, this
+    /// event can fire on every row the user's mouse passes over while dragging a
+    /// selection, and the dock's own idle loop already knows never to sit on one of these.
+    private func refreshFinderSelection(for pid: pid_t, bundleId: String) {
+        ContextDetector.shared.finderSelectedFilesAsync { [weak self] urls in
+            guard let self, self.current.pid == pid, self.current.bundleId == bundleId
+            else { return }
+            var refreshed = self.current
+            refreshed.selectedFilePaths = urls.map(\.path)
+            refreshed.timestamp = Date()
+            self.updateIfChanged(refreshed)
+        }
     }
 
     private func updateSelectedText(_ text: String, pid: pid_t) {
