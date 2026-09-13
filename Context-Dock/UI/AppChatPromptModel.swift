@@ -395,10 +395,10 @@ final class AppChatPromptModel: ObservableObject {
     /// guess what the app can do.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        // Typed: the app's matching commands sit under the field. Untyped: what it can do,
-        // but only until the user has done something — running a command and being handed
-        // the opening menu again reads as the surface forgetting what just happened.
-        if typed { return isBrowsingMenus ? .suggesting : .prompt }
+        // Typed: the field alone, same as the dock. Typing never pops the sheet open by
+        // itself, and it closes right back down if a down-arrow peek was open when the next
+        // character landed — the arrow key is the only door in.
+        if typed { return .prompt }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
