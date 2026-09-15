@@ -96,6 +96,26 @@ struct PluginSchemaTests {
         #expect(errors(m).contains { $0.contains("push:window") && $0.contains("not declared") })
     }
 
+    @Test("A shortcut action without the shortcuts permission is a warning, not an error")
+    func shortcutNeedsPermission() throws {
+        let m = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "shortcut", "script": "My Shortcut" } }, "primaryAction": "run" }"#)
+        #expect(errors(m).isEmpty)
+        #expect(warnings(m).contains { $0.contains("system:shortcuts") })
+
+        let ok = try manifest(#"{ "id": "x", "name": "X", "permissions": ["system:shortcuts"], "actions": { "run": { "type": "shortcut", "script": "My Shortcut" } }, "primaryAction": "run" }"#)
+        #expect(errors(ok).isEmpty)
+        #expect(warnings(ok).isEmpty)
+    }
+
+    @Test("An action's undo must name a declared action")
+    func undoMustBeDeclared() throws {
+        let bad = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "bash", "script": "true", "undo": "revert" } }, "primaryAction": "run" }"#)
+        #expect(errors(bad).contains { $0.contains("undo \"revert\" is not a declared action") })
+
+        let ok = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "bash", "script": "true", "undo": "reverse" }, "reverse": { "type": "bash", "script": "false" } }, "primaryAction": "run" }"#)
+        #expect(errors(ok).isEmpty)
+    }
+
     @Test("inputs come from the fixed set, optional with a question mark")
     func inputsSet() throws {
         let ok = try manifest(#"{ "id": "x", "name": "X", "inputs": ["query", "selection.text?", "clipboard.history"], "views": { "panel": { "title": "a" } } }"#)
