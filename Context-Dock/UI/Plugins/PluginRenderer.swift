@@ -40,6 +40,8 @@ struct PluginRenderer: View {
         "emptyState", "loading",
         // Task 4 — panel views
         "list", "row", "section", "actionPanel",
+        // Task 5 — detail, grid, form
+        "listDetail", "detail", "grid", "form",
     ]
 
     static func supports(_ component: String) -> Bool { implemented.contains(component) }
@@ -79,6 +81,14 @@ struct PluginRenderer: View {
             PluginSectionView(node: node, traits: traits, binding: binding, sink: sink)
         case "actionPanel":
             PluginActionPanelView(node: node, traits: traits, binding: binding, sink: sink)
+        case "listDetail":
+            PluginListDetailView(node: node, traits: traits, binding: binding, sink: sink)
+        case "detail":
+            PluginDetailView(node: node, traits: traits, binding: binding)
+        case "grid":
+            PluginGridView(node: node, traits: traits, binding: binding, sink: sink)
+        case "form":
+            PluginFormView(node: node, traits: traits, binding: binding, sink: sink)
         case "emptyState":
             PluginEmptyStateView(
                 title: binding.text(node.props["title"] ?? node.props["text"]),

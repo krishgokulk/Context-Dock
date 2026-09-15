@@ -11,8 +11,40 @@ enum PluginSizing {
     /// The height of one node, its children included.
     static func height(of node: PluginNode, traits: HostTraits, binding: PluginBinding) -> CGFloat {
         switch node.component {
-        case "vstack", "form", "actionPanel", "detail", "listDetail", "capsule":
+        case "vstack", "actionPanel", "capsule":
             return stacked(node.children, traits: traits, binding: binding)
+
+        // The three that keep their content in props rather than in children. Measuring them
+        // as stacks of children makes every one of them nothing high, and the panel holding
+        // one collapses — which looks exactly like a plugin that returned no data.
+        case "form":
+            let fields = (node.props["fields"]?.arrayValue ?? []).compactMap { value -> String? in
+                guard let object = value.objectValue else { return nil }
+                let kind = object["kind"]?.stringValue ?? "text"
+                return PluginFormField(key: "", label: "", kind: kind).component
+            }
+            let submit = node.props["submit"] == nil
+                ? 0 : PluginKit.leafHeight("button", traits: traits)
+            let rows = fields.reduce(CGFloat.zero) {
+                $0 + PluginKit.leafHeight($1, traits: traits)
+            }
+            let pieces = fields.count + (submit > 0 ? 1 : 0)
+            return rows + submit + PluginKit.gap * CGFloat(max(0, pieces - 1))
+
+        case "detail":
+            return detailHeight(of: node, traits: traits)
+
+        case "listDetail":
+            // Side by side: as tall as whichever side wins, and which side that is changes
+            // with the data rather than with the manifest.
+            let items = binding.items(node.props["items"])
+            let rowHeight = childNode(node, key: "row")
+                .map { height(of: $0, traits: traits, binding: binding) }
+                ?? PluginKit.rowHeight(traits)
+            let list = rowHeight * CGFloat(items.count)
+            let detail = childNode(node, key: "detail")
+                .map { detailHeight(of: $0, traits: traits) } ?? 0
+            return max(list, detail)
 
         case "hstack":
             let heights = node.children.map { height(of: $0, traits: traits, binding: binding) }
@@ -74,6 +106,17 @@ enum PluginSizing {
     /// encode+decode per nested node on every redraw.
     static func childNode(_ node: PluginNode, key: String) -> PluginNode? {
         node.nodeProps[key]
+    }
+
+    /// A detail is its markdown and one line per metadata entry. Metadata is a data array in
+    /// props, not children, so it is counted here rather than walked as a tree.
+    private static func detailHeight(of node: PluginNode, traits: HostTraits) -> CGFloat {
+        let markdown = node.props["markdown"] == nil
+            ? 0 : PluginKit.leafHeight("markdown", traits: traits)
+        let lines = node.props["metadata"]?.arrayValue?.count ?? 0
+        let metadata = PluginKit.leafHeight("caption", traits: traits) * CGFloat(lines)
+        let pieces = (markdown > 0 ? 1 : 0) + lines
+        return markdown + metadata + PluginKit.gap * CGFloat(max(0, pieces - 1))
     }
 
     private static func stacked(

@@ -113,6 +113,63 @@ struct PluginRendererTests {
         #expect(sink.requests.map(\.name) == ["play"])
     }
 
+    // MARK: Detail, grid and form (Task 5)
+
+    @Test func aDetailReadsMarkdownAndMetadataFromTheSelectedRow() throws {
+        let listDetail = try node(#"""
+        { "listDetail": { "items": "{{docs}}",
+                          "row": { "title": "{{item.title}}" },
+                          "detail": { "markdown": "{{item.body}}",
+                                      "metadata": [ { "title": "Size", "text": "{{item.size}}" } ] } } }
+        """#)
+        let binding = PluginBinding(data: ["docs": .array([
+            .object(["title": .string("Notes"), "body": .string("# Hi"), "size": .string("2 KB")])
+        ])])
+        let detail = PluginListDetailView.detail(for: listDetail, binding: binding, selection: 0)
+        #expect(detail?.markdown == "# Hi")
+        #expect(detail?.metadata == [PluginMetadataItem(title: "Size", text: "2 KB")])
+    }
+
+    @Test func aDetailForARowThatIsNotThereIsNothing() throws {
+        // The selection outlives the data whenever a refresh returns fewer items, so this is
+        // the ordinary case, not a defensive one.
+        let listDetail = try node(#"""
+        { "listDetail": { "items": "{{docs}}", "detail": { "markdown": "{{item.body}}" } } }
+        """#)
+        let binding = PluginBinding(data: ["docs": .array([.object(["body": .string("x")])])])
+        #expect(PluginListDetailView.detail(for: listDetail, binding: binding, selection: 3) == nil)
+    }
+
+    @Test func aFormCollectsItsFieldsAndSubmitsThemAsOneValue() throws {
+        let form = try node(#"""
+        { "form": { "submit": "save",
+                    "fields": [ { "key": "name", "label": "Name", "kind": "text" },
+                                { "key": "public", "label": "Public", "kind": "toggle" } ] } }
+        """#)
+        let state = PluginFormState(fields: PluginFormView.fields(of: form, binding: PluginBinding()))
+        #expect(state.fields.map(\.key) == ["name", "public"])
+        state.set("name", .string("Kitchen"))
+        state.set("public", .bool(true))
+        let sink = RecordingActionSink()
+        PluginFormView.submit(form, state: state, binding: PluginBinding(), sink: sink)
+        #expect(sink.requests == [PluginActionRequest(
+            name: "save", value: .object(["name": .string("Kitchen"), "public": .bool(true)]))])
+    }
+
+    @Test func aFormWithNoSubmitActionAsksForNothing() throws {
+        let form = try node(#"{ "form": { "fields": [ { "key": "name", "kind": "text" } ] } }"#)
+        let state = PluginFormState(fields: PluginFormView.fields(of: form, binding: PluginBinding()))
+        let sink = RecordingActionSink()
+        PluginFormView.submit(form, state: state, binding: PluginBinding(), sink: sink)
+        #expect(sink.requests.isEmpty)
+    }
+
+    @Test func aGridClampsItsColumnsToTheWidthClass() throws {
+        let grid = try node(#"{ "grid": { "columns": 6, "items": "{{p}}", "cell": { "thumbnail": {} } } }"#)
+        #expect(PluginGridView.columns(of: grid, traits: .dockSheet, binding: PluginBinding()) == 6)
+        #expect(PluginGridView.columns(of: grid, traits: .cornerPanel, binding: PluginBinding()) == 3)
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))

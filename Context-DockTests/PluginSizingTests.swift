@@ -88,6 +88,52 @@ struct PluginSizingTests {
                 == header + title)
     }
 
+    @Test func aFormIsAsTallAsItsFieldsAndItsSubmitButton() throws {
+        // A form keeps its fields in props, not in children, so measuring it as a stack of
+        // children makes every form nothing high and the panel that holds one collapses.
+        let form = try node(#"""
+        { "form": { "submit": "save",
+                    "fields": [ { "key": "name", "kind": "text" },
+                                { "key": "public", "kind": "toggle" } ] } }
+        """#)
+        let field = PluginKit.leafHeight("textField", traits: .dockSheet)
+        let toggle = PluginKit.leafHeight("toggle", traits: .dockSheet)
+        let button = PluginKit.leafHeight("button", traits: .dockSheet)
+        #expect(
+            PluginSizing.height(of: form, traits: .dockSheet, binding: empty)
+                == field + toggle + button + PluginKit.gap * 2)
+    }
+
+    @Test func aDetailIsItsMarkdownPlusARowPerMetadataEntry() throws {
+        let detail = try node(#"""
+        { "detail": { "markdown": "{{body}}",
+                      "metadata": [ { "title": "Size", "text": "2 KB" },
+                                    { "title": "Kind", "text": "Note" } ] } }
+        """#)
+        let markdown = PluginKit.leafHeight("markdown", traits: .dockSheet)
+        let line = PluginKit.leafHeight("caption", traits: .dockSheet)
+        #expect(
+            PluginSizing.height(of: detail, traits: .dockSheet, binding: empty)
+                == markdown + line * 2 + PluginKit.gap * 2)
+    }
+
+    @Test func aListDetailIsTheTallerOfItsTwoSides() throws {
+        // Side by side, so the pair is as tall as whichever side wins — and which side that
+        // is changes with the data, not with the manifest.
+        let listDetail = try node(#"""
+        { "listDetail": { "items": "{{docs}}", "row": { "title": "{{item.t}}" },
+                          "detail": { "markdown": "{{item.body}}" } } }
+        """#)
+        let markdown = PluginKit.leafHeight("markdown", traits: .dockSheet)
+        let row = PluginKit.rowHeight(.dockSheet)
+
+        let short = PluginBinding(data: ["docs": .array([.object([:])])])
+        #expect(PluginSizing.height(of: listDetail, traits: .dockSheet, binding: short) == markdown)
+
+        let long = PluginBinding(data: ["docs": .array(Array(repeating: .object([:]), count: 6))])
+        #expect(PluginSizing.height(of: listDetail, traits: .dockSheet, binding: long) == row * 6)
+    }
+
     @Test func anUnknownComponentTakesTheHeightOfItsDiagnosticRow() throws {
         let unknown = try node(#"{ "orbitCluster": { "title": "x" } }"#)
         #expect(
