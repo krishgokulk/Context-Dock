@@ -61,17 +61,35 @@ struct PluginPack: Equatable {
         var plugins: [PluginManifest] = []
         var diagnostics: [String: [PluginDiagnostic]] = [:]
         var loadErrors: [String] = []
+        var seenIds = Set<String>()
 
         let pluginsDir = folder.appendingPathComponent("plugins")
-        let entries = (try? FileManager.default.contentsOfDirectory(at: pluginsDir, includingPropertiesForKeys: [.isDirectoryKey]))?
-            .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
+        let pluginsDirExists = FileManager.default.fileExists(atPath: pluginsDir.path)
+        let entries: [URL]
+        if pluginsDirExists {
+            do {
+                entries = try FileManager.default.contentsOfDirectory(at: pluginsDir, includingPropertiesForKeys: nil)
+                    .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            } catch {
+                loadErrors.append("plugins/: \(error.localizedDescription)")
+                entries = []
+            }
+        } else {
+            entries = []
+        }
+
         for dir in entries {
             let manifestURL = dir.appendingPathComponent("manifest.json")
             guard FileManager.default.fileExists(atPath: manifestURL.path) else { continue }
             do {
                 let manifest = try JSONDecoder().decode(PluginManifest.self, from: Data(contentsOf: manifestURL))
-                plugins.append(manifest)
-                diagnostics[manifest.id] = PluginSchema.validate(manifest)
+                if seenIds.contains(manifest.id) {
+                    loadErrors.append("Duplicate plugin id '\(manifest.id)' in \(dir.lastPathComponent), skipped")
+                } else {
+                    seenIds.insert(manifest.id)
+                    plugins.append(manifest)
+                    diagnostics[manifest.id] = PluginSchema.validate(manifest)
+                }
             } catch {
                 loadErrors.append("\(dir.lastPathComponent)/manifest.json: \(error.localizedDescription)")
             }

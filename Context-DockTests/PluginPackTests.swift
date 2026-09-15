@@ -69,4 +69,36 @@ struct PluginPackTests {
         #expect(PluginPack.compareVersions("2", "1.99.99") == .orderedDescending)
         #expect(PluginPack.compareVersions("0.9", "1.0") == .orderedAscending)
     }
+
+    @Test("Duplicate plugin ids are reported, first one kept")
+    func duplicatePluginIds() throws {
+        let folder = try makePack("dup-test", plugins: [
+            "alpha": #"{ "id": "same-id", "name": "Alpha", "views": { "panel": { "title": "A" } } }"#,
+            "beta": #"{ "id": "same-id", "name": "Beta", "views": { "panel": { "title": "B" } } }"#,
+        ])
+        let pack = try PluginPack.load(from: folder)
+        #expect(pack.plugins.map(\.id) == ["same-id"])
+        #expect(pack.plugins[0].name == "Alpha")
+        #expect(pack.diagnostics["same-id"] != nil)
+        #expect(pack.loadErrors.count == 1)
+        #expect(pack.loadErrors[0].contains("Duplicate"))
+        #expect(pack.loadErrors[0].contains("same-id"))
+        #expect(pack.loadErrors[0].contains("beta"))
+    }
+
+    @Test("Unreadable plugins directory is reported")
+    func unreadablePluginsDirectory() throws {
+        let folder = try makePack("unreadable", plugins: [
+            "ok": #"{ "id": "ok", "name": "OK", "views": { "panel": { "title": "hi" } } }"#,
+        ])
+        let pluginsDir = folder.appendingPathComponent("plugins")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: pluginsDir.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: pluginsDir.path)
+        }
+        let pack = try PluginPack.load(from: folder)
+        #expect(pack.info.id == "unreadable")
+        #expect(pack.loadErrors.count > 0)
+        #expect(pack.loadErrors[0].contains("plugins/"))
+    }
 }
