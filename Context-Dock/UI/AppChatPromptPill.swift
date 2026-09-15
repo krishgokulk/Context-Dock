@@ -146,7 +146,7 @@ struct AppChatPromptPill: View {
             attachments: model.attachments.count,
             hasSelectionRow: model.isShowingSelectionScope,
             running: model.stripIcons.count,
-            pinned: 0)  // DockPinStore.shared.pins.count once the store lands
+            pinned: DockPinStore.shared.pins.count)
     }
 
     var body: some View {

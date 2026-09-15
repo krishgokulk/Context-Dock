@@ -215,6 +215,14 @@ final class GlobalSearchService {
         return revision
     }
 
+    /// One document by its id — for a pinned command or tool, which stores the id rather
+    /// than the document so it survives an index rebuild.
+    nonisolated func document(withID id: String) -> SearchDocument? {
+        lock.lock()
+        defer { lock.unlock() }
+        return documents.first { $0.id == id }
+    }
+
     nonisolated func documents(forBundleId bundleId: String, limit: Int = 80) -> [SearchDocument] {
         let wanted = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !wanted.isEmpty else { return [] }
