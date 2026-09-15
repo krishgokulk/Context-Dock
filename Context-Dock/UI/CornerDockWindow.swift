@@ -375,7 +375,9 @@ final class CornerDockController: NSObject {
             suggestions: prompt.listRowCount,
             messages: prompt.messages.count,
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
-            attachments: prompt.attachments.count)
+            attachments: prompt.attachments.count,
+            running: prompt.stripIcons.count,
+            pinned: 0)  // DockPinStore.shared.pins.count once the store lands
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.

@@ -42,6 +42,50 @@ enum AppChatPromptMetrics {
         min(maximumChatHeight, chatHeight + CGFloat(min(messages, 5)) * perMessageHeight)
     }
 
+    // MARK: Dock strip
+
+    static let dockIconSize: CGFloat = 48
+    static let dockIconGap: CGFloat = 8
+    static let dockInset: CGFloat = 10
+    /// gap + hairline + gap between the running section and the pins.
+    static let dockDividerSpan: CGFloat = 17
+    static let dockHeight: CGFloat = 68
+    /// Wider than the field, never wider than the corner can hold.
+    static var dockMaximumWidth: CGFloat { width * 1.6 }
+
+    struct DockLayout: Equatable {
+        /// Running icons actually drawn; the rest are the `+N` pill.
+        let shownRunning: Int
+        let overflow: Int
+        let width: CGFloat
+    }
+
+    private static func runWidth(_ count: Int) -> CGFloat {
+        guard count > 0 else { return 0 }
+        return CGFloat(count) * dockIconSize + CGFloat(count - 1) * dockIconGap
+    }
+
+    /// Pure: counts in, geometry out. Pins are never dropped — the user chose them — so
+    /// the running section is what gives way, keeping one slot for the `+N` pill.
+    static func dockLayout(running: Int, pinned: Int) -> DockLayout {
+        let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) : 0
+        let available = dockMaximumWidth - 2 * dockInset - pinsWidth
+        // How many running icons fit in what is left, at least one slot.
+        let capacity = max(1, Int((available + dockIconGap) / (dockIconSize + dockIconGap)))
+        let shownRunning: Int
+        let overflow: Int
+        if running <= capacity {
+            shownRunning = running
+            overflow = 0
+        } else {
+            shownRunning = max(0, capacity - 1)  // one slot for +N
+            overflow = running - shownRunning
+        }
+        let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
+        let width = 2 * dockInset + runWidth(max(1, runningSlots)) + pinsWidth
+        return DockLayout(shownRunning: shownRunning, overflow: overflow, width: width)
+    }
+
     /// What sits over the field — an approval waiting on a yes, attached files — is part
     /// of the card's height in every phase. Attachments were not counted at all before, so
     /// pasting a file into App mode drew a row the card had no room for.
@@ -61,13 +105,18 @@ enum AppChatPromptMetrics {
         messages: Int = 0,
         hasApproval: Bool = false,
         attachments: Int = 0,
-        hasSelectionRow: Bool = false
+        hasSelectionRow: Bool = false,
+        running: Int = 0,
+        pinned: Int = 0
     ) -> CGSize {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
         switch phase {
-        case .hidden, .mini, .dock:
+        case .hidden, .mini:
             return miniSize
+        case .dock:
+            return CGSize(
+                width: dockLayout(running: running, pinned: pinned).width, height: dockHeight)
         case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field.
             return CGSize(width: width, height: inputHeight + sheet)
@@ -95,7 +144,9 @@ struct AppChatPromptPill: View {
             messages: model.messages.count,
             hasApproval: approvals.pending(for: .corner) != nil,
             attachments: model.attachments.count,
-            hasSelectionRow: model.isShowingSelectionScope)
+            hasSelectionRow: model.isShowingSelectionScope,
+            running: model.stripIcons.count,
+            pinned: 0)  // DockPinStore.shared.pins.count once the store lands
     }
 
     var body: some View {
