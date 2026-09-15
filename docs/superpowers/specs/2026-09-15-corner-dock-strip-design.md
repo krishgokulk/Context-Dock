@@ -47,6 +47,12 @@ dock ──Esc / click outside / Space switch───────────�
 - A printable key while `.dock`: `set(.prompt)`, `query = <that character>`, focus the field.
   Handled in `CornerDockController`'s existing local key monitor, only when
   `chatPresentation` holds the keyboard and the Global pill is the visible surface.
+- **Only printable characters expand.** Arrow keys, Tab, Return, Esc, Backspace and modifier
+  chords keep the handlers the field has today, in every phase. In `.dock` with the field
+  gone, → still runs `scopeIntoFirstRunningApp()` (steps into the first running app's scoped
+  chat — which is a scope, so the pill leaves `.dock` for that scope's `.prompt`) and falls
+  through to `chatPresentation.handleRightArrow`; ← still runs `handleLeftArrow`. Nothing the
+  empty field did on an arrow key changes.
 - `isPinned` (⌘P "keep open") and `isAnswering` block the shrink, as they block `.mini` today.
 - Frontmost-app change while `.dock`: the strip updates in place; no phase change.
 - `.suggesting` still idles back to `.prompt` first (today's rule), and `.prompt` then idles to
@@ -185,7 +191,7 @@ dock strip. Typing brings it back.* Off → behaviour identical to HEAD.
 **Tests** (`Context-DockTests/`, swift-testing, offline):
 - `CornerDockPhaseTests` — `.dock` reachable only from `.prompt` when `isGlobalScope` and the
   setting is on; never from a scoped chat, General, CLI, `.chat`; `.dock` never times out;
-  printable key → `.prompt` with the character seeded; `isPinned`/`isAnswering` block it;
+  printable key → `.prompt` with the character seeded; → on `.dock` calls `scopeIntoFirstRunningApp()` exactly as on an empty `.prompt` field and ← calls `handleLeftArrow`, neither seeds a character; `isPinned`/`isAnswering` block it;
   setting off → the existing `.prompt → .mini → hidden` sequence, dwell values unchanged.
 - `AppChatPromptMetricsDockTests` — widths for (n, p) ∈ {(1,0), (4,0), (4,3), (12,0), (12,5)},
   the cap, overflow count, and that pins are never overflowed.
