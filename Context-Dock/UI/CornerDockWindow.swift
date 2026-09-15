@@ -799,7 +799,10 @@ struct CornerDockSurface: View {
     /// twice, closer together the more the shell's own anchor pushed them toward each
     /// other. General has no clipboard icon of its own yet, so it keeps this one.
     private var clipboardAlreadyShownInComposer: Bool {
+        // The expanded card is never "already shown": the dock's own clipboard icon is
+        // what opens it, and hiding it for being open would hide what was just asked for.
         chatPresentation.isVisible && chatPresentation.mode != .general
+            && clipboardModel.phase != .expanded
     }
 
     var body: some View {
@@ -866,6 +869,45 @@ struct CornerDockSurface: View {
     /// Shelf | field-and-its-boards | clipboard-and-its-preview — the same arithmetic
     /// `CornerDockLayout.slots` measures, so what is drawn is what is hit-tested.
     private var centredRow: some View {
+        // Drawn the way `CornerDockLayout.slots` hit-tests it: the shelf and the field as a
+        // centred row, the clipboard on its own at the right-hand corner — the same spot the
+        // right anchor gives it, so a copy lands where the hand already knows to look.
+        ZStack(alignment: .bottom) {
+            centredRowContent
+            HStack(alignment: .bottom, spacing: 0) {
+                Spacer(minLength: 0)
+                clipboardStack
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .padding(CornerDockLayout.pad)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isVisible)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.84), value: clipboardModel.phase.isVisible)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
+    }
+
+    private var clipboardStack: some View {
+        VStack(alignment: .center, spacing: CornerDockLayout.gap) {
+            if CornerDockController.shared.showsClipPreview,
+                let focused = clipboardModel.focusedEntry
+            {
+                ClipboardPreviewCard(
+                    model: clipboardModel,
+                    entry: focused,
+                    isPinned: clipboardModel.isPreviewPinned,
+                    onTogglePin: { clipboardModel.togglePreviewPin() }
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if clipboardModel.phase.isVisible, !clipboardAlreadyShownInComposer {
+                ClipboardDockPill(model: clipboardModel)
+            }
+        }
+    }
+
+    private var centredRowContent: some View {
         HStack(alignment: .bottom, spacing: CornerDockLayout.gap) {
             if shelf.phase.isVisible {
                 DropShelfPill(presentation: shelf, store: shelfStore)
@@ -884,31 +926,7 @@ struct CornerDockSurface: View {
                 chatSurface
             }
             .frame(width: AppChatPromptMetrics.width, alignment: .bottom)
-
-            VStack(alignment: .center, spacing: CornerDockLayout.gap) {
-                if CornerDockController.shared.showsClipPreview,
-                    let focused = clipboardModel.focusedEntry
-                {
-                    ClipboardPreviewCard(
-                        model: clipboardModel,
-                        entry: focused,
-                        isPinned: clipboardModel.isPreviewPinned,
-                        onTogglePin: { clipboardModel.togglePreviewPin() }
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                if clipboardModel.phase.isVisible, !clipboardAlreadyShownInComposer {
-                    ClipboardDockPill(model: clipboardModel)
-                }
-            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .padding(CornerDockLayout.pad)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isVisible)
-        .animation(
-            .spring(response: 0.34, dampingFraction: 0.84), value: clipboardModel.phase.isVisible)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: chatPresentation.mode)
     }
 
     private var column: some View {
