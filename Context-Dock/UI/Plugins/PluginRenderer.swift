@@ -46,6 +46,9 @@ struct PluginRenderer: View {
         "vstack", "hstack", "card", "footerCard", "capsule", "divider",
         "title", "subtitle", "body", "caption", "markdown", "stat", "header",
         "tag", "statusBadge", "chipRow", "segment",
+        // Task 7 — controls and card rows
+        "button", "iconButton", "buttonRow", "toggle", "slider", "stateButton",
+        "eventRow", "activityRow", "fileRow", "checkRow", "compareRow",
     ]
 
     static func supports(_ component: String) -> Bool { implemented.contains(component) }
@@ -99,6 +102,10 @@ struct PluginRenderer: View {
             PluginTextView(node: node, traits: traits, binding: binding)
         case "tag", "statusBadge", "chipRow", "segment":
             PluginChipView(node: node, traits: traits, binding: binding)
+        case "button", "iconButton", "buttonRow", "toggle", "slider", "stateButton":
+            PluginControlView(node: node, traits: traits, binding: binding, sink: sink)
+        case "eventRow", "activityRow", "fileRow", "checkRow", "compareRow":
+            PluginCardRowView(node: node, traits: traits, binding: binding, sink: sink)
         case "emptyState":
             PluginEmptyStateView(
                 title: binding.text(node.props["title"] ?? node.props["text"]),

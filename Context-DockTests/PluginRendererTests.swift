@@ -208,6 +208,78 @@ struct PluginRendererTests {
         #expect(PluginTextView.text(of: long, binding: binding) == "Up next")
     }
 
+    // MARK: Controls and card rows (Task 7)
+
+    @Test func aButtonsActionAndValueBecomeOneRequest() throws {
+        let button = try node(#"{ "button": { "title": "Play", "action": "play", "value": "{{id}}" } }"#)
+        let binding = PluginBinding(data: ["id": .string("t9")])
+        #expect(PluginControlView.request(of: button, binding: binding)
+            == PluginActionRequest(name: "play", value: .string("t9")))
+    }
+
+    @Test func aControlWithoutAnActionAsksForNothing() throws {
+        let button = try node(#"{ "button": { "title": "Play" } }"#)
+        #expect(PluginControlView.request(of: button, binding: PluginBinding()) == nil)
+    }
+
+    @Test func aToggleSendsItsNewStateAsTheValue() {
+        let sink = RecordingActionSink()
+        PluginControlView.send(
+            PluginActionRequest(name: "mute", value: .bool(true)), sink: sink)
+        #expect(sink.requests == [PluginActionRequest(name: "mute", value: .bool(true))])
+    }
+
+    @Test func aToggleStartsWhereItsDataSaysItIs() throws {
+        // A light that is already on must not draw as off until someone touches it.
+        let on = try node(#"{ "toggle": { "title": "Kitchen", "action": "flip", "value": "{{lit}}" } }"#)
+        #expect(PluginControlView.initialBool(of: on, binding: PluginBinding(data: ["lit": .bool(true)])))
+        #expect(PluginControlView.initialBool(of: on, binding: PluginBinding()) == false)
+    }
+
+    @Test func aSliderStartsAtItsBoundValue() throws {
+        let slider = try node(#"{ "slider": { "action": "volume", "value": "{{level}}" } }"#)
+        #expect(PluginControlView.initialNumber(of: slider, binding: PluginBinding(data: ["level": .number(35)])) == 35)
+        #expect(PluginControlView.initialNumber(of: slider, binding: PluginBinding()) == 0)
+    }
+
+    @Test func aStateButtonCyclesThroughItsDeclaredStates() throws {
+        let button = try node(#"""
+        { "stateButton": { "states": [ { "title": "Play", "action": "play" },
+                                       { "title": "Pause", "action": "pause" } ],
+                           "state": "{{playing}}" } }
+        """#)
+        let states = PluginControlView.states(of: button, binding: PluginBinding())
+        #expect(states.map(\.title) == ["Play", "Pause"])
+        #expect(states[1].request.name == "pause")
+    }
+
+    @Test func aStateButtonShowsTheStateItsDataNames() throws {
+        let button = try node(#"""
+        { "stateButton": { "states": [ { "title": "Play", "action": "play" },
+                                       { "title": "Pause", "action": "pause" },
+                                       { "title": "Stop", "action": "stop" } ],
+                           "state": "{{mode}}" } }
+        """#)
+        // A bool picks the second state; a number picks by index, which is the only way a
+        // three-state control can say which one it is in.
+        let states = PluginControlView.states(of: button, binding: PluginBinding())
+        #expect(PluginControlView.currentIndex(of: button, binding: PluginBinding(data: ["mode": .bool(true)])) == 1)
+        #expect(PluginControlView.currentIndex(of: button, binding: PluginBinding(data: ["mode": .number(2)])) == 2)
+        #expect(PluginControlView.currentIndex(of: button, binding: PluginBinding()) == 0)
+        // Past the end falls back to the first rather than drawing an empty button.
+        let over = PluginControlView.currentIndex(of: button, binding: PluginBinding(data: ["mode": .number(9)]))
+        #expect(states.indices.contains(over))
+    }
+
+    @Test func anEventRowReadsItsTimeRangeAndDurationChip() throws {
+        let row = try node(#"""
+        { "eventRow": { "title": "Standup", "timeRange": "09:30 – 09:45", "durationChip": "15m" } }
+        """#)
+        let model = PluginCardRowView.event(of: row, binding: PluginBinding())
+        #expect(model.timeRange == "09:30 – 09:45")
+        #expect(model.durationChip == "15m")
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))
