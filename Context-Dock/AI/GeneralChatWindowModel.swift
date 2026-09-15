@@ -413,7 +413,7 @@ final class GeneralChatWindowModel: ObservableObject {
                 // What the machine says, after the worker has spoken. Nothing read back is
                 // still an answer — "its executor confirmed it" — and never "verified".
                 let outcome = AIWorkerVerification.assess(
-                    report: report, task: task, readings: [],
+                    report: report, task: task, readings: AIWorkerReadings.take(for: task),
                     workspaceIntegrity: .init(before: workspaceBefore, after: workspaceAfter))
                 await MainActor.run {
                     self?.deliver(

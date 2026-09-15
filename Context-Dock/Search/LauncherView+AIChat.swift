@@ -2358,7 +2358,7 @@ extension LauncherView {
                 let workspaceAfter = AIWorkerWorkspaceIntegrity.snapshot(
                     of: task.authority.allowedPaths.first)
                 let outcome = AIWorkerVerification.assess(
-                    report: report, task: task, readings: [],
+                    report: report, task: task, readings: AIWorkerReadings.take(for: task),
                     workspaceIntegrity: .init(before: workspaceBefore, after: workspaceAfter))
                 l2.chatMessages.append(
                     AIChatMessage(
