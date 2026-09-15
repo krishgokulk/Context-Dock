@@ -69,6 +69,24 @@ enum PluginMigration {
         }
     }
 
+    /// Attaches success feedback and an undo action to a run-like action.
+    /// `successTitle`/`successMessage`/`undoScript` are generic fields on every
+    /// `SystemCommand` regardless of `scriptType` — a URL/deep-link or AI-prompt command
+    /// can carry them exactly as a script one can — so this is shared across every branch
+    /// that produces a `run` action, not owned by the one-shot default branch alone.
+    private static func attachOutcomes(_ action: PluginAction, from command: SystemCommand, into m: inout PluginManifest) -> PluginAction {
+        var action = action
+        if !command.successTitle.isEmpty || !command.successMessage.isEmpty {
+            action.success = PluginActionFeedback(title: command.successTitle, message: command.successMessage)
+        }
+        if command.hasUndoAction {
+            m.actions["undo"] = PluginAction(type: scriptType(command.undoScriptType).rawValue, script: command.undoScript,
+                                             title: command.undoTitle.isEmpty ? "Undo" : command.undoTitle, risk: .low)
+            action.undo = "undo"
+        }
+        return action
+    }
+
     // MARK: SystemCommand
 
     static func manifest(from command: SystemCommand) -> PluginManifest {
@@ -128,23 +146,23 @@ enum PluginMigration {
 
         switch kind {
         case .url, .file:
-            m.actions["run"] = PluginAction(type: "open", value: command.script, risk: .read)
+            let open = PluginAction(type: "open", value: command.script, risk: .read)
+            m.actions["run"] = attachOutcomes(open, from: command, into: &m)
             m.primaryAction = "run"
         case .aiPrompt:
             m.views.window = PluginWindowView(root: PluginNode(component: "ai", props: ["prompt": .string(command.script)]))
             m.agent = PluginAgent(instructions: command.script)
-        default:
-            var run = PluginAction(type: scriptType(command.scriptType).rawValue, script: command.script,
-                                   risk: destructiveNames.contains(command.name) ? .medium : .low)
-            if !command.successTitle.isEmpty || !command.successMessage.isEmpty {
-                run.success = PluginActionFeedback(title: command.successTitle, message: command.successMessage)
-            }
+            // No `run` action exists in this shape, so a success message has nowhere to
+            // attach — intentionally dropped (see task-6-report.md). An undo script still
+            // has a home: keep it as a standalone action so it isn't lost.
             if command.hasUndoAction {
                 m.actions["undo"] = PluginAction(type: scriptType(command.undoScriptType).rawValue, script: command.undoScript,
                                                  title: command.undoTitle.isEmpty ? "Undo" : command.undoTitle, risk: .low)
-                run.undo = "undo"
             }
-            m.actions["run"] = run
+        default:
+            let run = PluginAction(type: scriptType(command.scriptType).rawValue, script: command.script,
+                                   risk: destructiveNames.contains(command.name) ? .medium : .low)
+            m.actions["run"] = attachOutcomes(run, from: command, into: &m)
             m.primaryAction = "run"
         }
         return m

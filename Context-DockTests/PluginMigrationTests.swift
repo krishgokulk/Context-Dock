@@ -110,6 +110,39 @@ struct PluginMigrationTests {
         #expect(m.actions["run"]?.value == "x-apple.systempreferences:com.apple.BluetoothSettings")
     }
 
+    @Test("A URL command with success and undo fields keeps both, not just the open action")
+    func urlKeepsSuccessAndUndo() {
+        let cmd = SystemCommand(name: "Toggle Focus Filter", icon: "moon.circle", keywords: ["focus"],
+                                scriptType: "url", script: "x-apple.systempreferences:com.apple.Focus-Settings.extension",
+                                successTitle: "Focus toggled", successMessage: "Filter applied",
+                                undoTitle: "Revert Focus", undoScriptType: "bash",
+                                undoScript: "shortcuts run \"Focus Off\"")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["run"]?.type == "open")
+        #expect(m.actions["run"]?.value == "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        #expect(m.actions["run"]?.success?.title == "Focus toggled")
+        #expect(m.actions["run"]?.success?.message == "Filter applied")
+        #expect(m.actions["run"]?.undo == "undo")
+        #expect(m.actions["undo"]?.script == "shortcuts run \"Focus Off\"")
+        #expect(m.actions["undo"]?.title == "Revert Focus")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+
+    @Test("An aiPrompt command with an undo script keeps the undo action; no run action is invented")
+    func aiPromptKeepsUndo() {
+        let cmd = SystemCommand(name: "Summarize", icon: "sparkles", keywords: ["summarize"],
+                                scriptType: "aiPrompt", script: "Summarize the current context.",
+                                undoTitle: "Clear Summary", undoScriptType: "bash",
+                                undoScript: "rm -f /tmp/context-dock-summary.txt")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["undo"]?.script == "rm -f /tmp/context-dock-summary.txt")
+        #expect(m.actions["undo"]?.title == "Clear Summary")
+        #expect(m.primaryAction == nil)
+        #expect(m.views.window?.root.component == "ai")
+        #expect(m.agent?.instructions == "Summarize the current context.")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+
     @Test("A Global Extension becomes a lines list; AI on makes it a window with an agent")
     func routeB() {
         let ext = UserGlobalExtension(name: "Branches", icon: "arrow.triangle.branch", keywords: ["git"],
