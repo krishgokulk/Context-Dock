@@ -42,14 +42,14 @@ struct PluginNode: Codable, Equatable {
             var props = o
             var kids: [PluginNode] = []
             if let childValues = o["children"]?.arrayValue {
-                kids = try childValues.map { try PluginNode(value: $0, path: decoder.codingPath) }
+                kids = try childValues.map { try PluginNode(value: $0) }
                 props["children"] = nil
             }
             self.props = props
             self.children = kids
         case .array(let a):
             props = [:]
-            children = try a.map { try PluginNode(value: $0, path: decoder.codingPath) }
+            children = try a.map { try PluginNode(value: $0) }
         case .string, .number, .bool:
             props = ["text": body]
             children = []
@@ -60,7 +60,7 @@ struct PluginNode: Codable, Equatable {
     }
 
     /// Re-enter decoding for a child that arrived as an already-decoded value.
-    init(value: PluginValue, path: [CodingKey]) throws {
+    init(value: PluginValue) throws {
         let data = try JSONEncoder().encode(value)
         self = try JSONDecoder().decode(PluginNode.self, from: data)
     }
