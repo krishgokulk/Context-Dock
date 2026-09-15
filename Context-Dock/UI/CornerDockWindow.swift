@@ -577,6 +577,39 @@ final class CornerDockController: NSObject {
         pendingCommandSwitch?.cancel()
         pendingCommandSwitch = nil
 
+        // The dock has no field, so nothing below can answer for it. Printable characters
+        // bring the field back with the character in it; every other key keeps doing what
+        // it does on an empty Global field — → steps into the first running app, ← walks
+        // back, Esc leaves. Nothing else has a field to act on and passes through.
+        if let panel, event.window === panel,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase == .dock,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        {
+            switch event.keyCode {
+            case 53:  // Esc
+                prompt.dismiss()
+                return nil
+            case 124:  // →
+                if prompt.arrowRightFromDock() { return nil }
+                return chatPresentation.handleRightArrow(draft: "") ? nil : event
+            case 123:  // ←
+                return chatPresentation.handleLeftArrow(draft: "") ? nil : event
+            case 125, 126, 48, 36, 76, 51, 117:  // ↓ ↑ Tab Return Enter Backspace Delete
+                return event
+            default:
+                guard let text = event.characters, !text.isEmpty,
+                    text.unicodeScalars.allSatisfy({
+                        !CharacterSet.controlCharacters.contains($0)
+                            && !CharacterSet.newlines.contains($0)
+                    })
+                else { return event }
+                prompt.expandFromDock(seeding: text)
+                requestComposerFocus()
+                return nil
+            }
+        }
+
         // Backspace on an empty field leaves the scope. Like Tab, the field's own handler
         // never saw it — `onKeyPress` competes with the text system for the delete keys,
         // and the text system wins even when there is nothing to delete.
