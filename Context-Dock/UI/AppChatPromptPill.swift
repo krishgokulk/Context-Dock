@@ -66,7 +66,7 @@ enum AppChatPromptMetrics {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
         switch phase {
-        case .hidden, .mini:
+        case .hidden, .mini, .dock:
             return miniSize
         case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field.

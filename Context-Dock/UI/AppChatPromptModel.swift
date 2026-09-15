@@ -41,6 +41,9 @@ enum AppChatPromptPhase: Equatable {
     case hidden
     /// Shrunk to the frontmost app's own icon, holding whatever was typed.
     case mini
+    /// Global Context at rest: the field folded away, the running apps and the pins
+    /// standing as a dock. Nothing typed, nothing waiting.
+    case dock
     /// The input field alone: the user is writing a question.
     case prompt
     /// The input plus what this app can do, which is how it opens.
@@ -63,6 +66,21 @@ final class AppChatPromptModel: ObservableObject {
     /// closes back to just itself — the dock's own results sheet doesn't show at all
     /// until the arrow keys ask for it, and this offer is the same kind of thing.
     static let suggestionsDwell: TimeInterval = 2
+    /// How long an untouched, empty Global field waits before folding into the dock.
+    static let dockDwell: TimeInterval = 1
+
+    /// Read through a closure so a test can flip it without touching UserDefaults. The
+    /// key is the General settings toggle; absent means on.
+    var autoShrinkEnabled: () -> Bool = {
+        UserDefaults.standard.object(forKey: "autoShrinkInputField") as? Bool ?? true
+    }
+
+    /// Running apps the user took off the strip this session. Not persisted: like an icon
+    /// dragged out of the Dock while its app runs, it comes back next launch.
+    @Published var hiddenRunningBundleIDs: Set<String> = []
+
+    /// The app whose icon the pointer is over in the strip, for the window row.
+    @Published var hoveredStripBundleID: String?
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
@@ -569,7 +587,8 @@ final class AppChatPromptModel: ObservableObject {
 
     /// Any interaction puts the clock back, unless the surface is pinned.
     func touch() {
-        guard !isPinned, !isAnswering, phase.isVisible else { return }
+        // A dock has no clock to put back.
+        guard !isPinned, !isAnswering, phase.isVisible, phase != .dock else { return }
         armForIdle()
     }
 
@@ -637,14 +656,65 @@ final class AppChatPromptModel: ObservableObject {
             // an offer nobody asked to see again.
             set(.prompt)
             armForIdle()
+        case .prompt where canRestAsDock:
+            // The dock has no timer of its own: it stays until Esc, a click outside, or a
+            // Space switch, the way the Dock does.
+            set(.dock)
         case .prompt, .chat:
             set(.mini)
             arm(after: Self.miniDwell)
         case .mini:
             dismiss()
-        case .hidden:
+        case .dock, .hidden:
             break
         }
+    }
+
+    /// An empty Global field with the setting on is the only thing that rests as a dock.
+    var canRestAsDock: Bool {
+        isGlobalScope
+            && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && autoShrinkEnabled()
+    }
+
+    /// The strip's running section: the dock's own running pills, minus the removed ones.
+    var stripIcons: [MatchDockIcon] {
+        globalMatchIcons.filter { icon in
+            guard let bundleID = icon.bundleID else { return true }
+            return !hiddenRunningBundleIDs.contains(bundleID)
+        }
+    }
+
+    func hideRunningApp(_ bundleID: String) {
+        hiddenRunningBundleIDs.insert(bundleID)
+    }
+
+    /// The first printable character brings the field back and lands in it. Anything the
+    /// field would have done with the key itself — arrows, Return, Esc — is not this.
+    @discardableResult
+    func expandFromDock(seeding text: String?) -> Bool {
+        guard phase == .dock else { return false }
+        set(.prompt)
+        if let text, !text.isEmpty {
+            query = text
+            queryChanged()
+        }
+        armForIdle()
+        return true
+    }
+
+    /// → on the dock does what → on an empty Global field does: step into the first
+    /// running app. The caller falls through to the presentation's own right-arrow when
+    /// there is nothing to step into.
+    @discardableResult
+    func arrowRightFromDock() -> Bool {
+        guard phase == .dock else { return false }
+        guard scopeIntoFirstRunningApp() else { return false }
+        if phase == .dock {
+            set(.prompt)
+            syncListPhase()
+        }
+        return true
     }
 
     /// Switching Space is leaving, and the question was about an app on the screen the
@@ -730,7 +800,8 @@ final class AppChatPromptModel: ObservableObject {
     /// to all reach for the same delay regardless of what they were arming down from,
     /// which is what let the suggestions list sit open as long as a real conversation did.
     private func armForIdle() {
-        arm(after: phase == .suggesting ? Self.suggestionsDwell : Self.idleDwell)
+        if phase == .suggesting { arm(after: Self.suggestionsDwell); return }
+        arm(after: phase == .prompt && canRestAsDock ? Self.dockDwell : Self.idleDwell)
     }
 
     private func arm(after delay: TimeInterval) {
