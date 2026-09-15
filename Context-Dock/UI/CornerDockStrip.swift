@@ -49,15 +49,16 @@ struct CornerDockStrip: View {
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
+                // The corner's own cards, not the field's scope chips: a dock icon opens a
+                // surface beside the dock, it does not bring the field back with a chip in it.
                 if clipboard.phase.isVisible {
                     toolIcon("doc.on.clipboard", title: "Clipboard") {
-                        AppDelegate.shared?.activateClipboardScope()
+                        ClipboardPanelController.shared.show()
                     }
                 }
                 if model.selection != nil {
                     toolIcon("text.cursor", title: "Selection") {
-                        model.expandFromDock(seeding: nil)
-                        model.toggleSelectionScope()
+                        CornerDockController.shared.showSelectionScopeFromDock()
                     }
                 }
             }

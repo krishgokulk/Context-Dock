@@ -32,24 +32,29 @@ struct CornerDockAnchorTests {
         #expect(slots.clipboard?.minX == CornerDockLayout.pad)
     }
 
-    @Test("Centred, the shell is a row: the clipboard stands beside the field, not over it")
-    func centreLaysOutSideways() {
-        let slots = CornerDockLayout.slots(clipboard: pill, prompt: card, anchor: .center)
+    @Test("Centred, the clipboard keeps the right-hand corner; the field stays in the middle")
+    func centreKeepsTheClipboardInTheCorner() {
+        let width: CGFloat = 1800
+        let slots = CornerDockLayout.slots(
+            clipboard: pill, prompt: card, anchor: .center, panelWidth: width)
 
-        // Same baseline, clipboard to the right of the field, one gap between them.
+        // Same baseline; clipboard flush to the panel's right pad, where the right anchor
+        // puts it; field centred on the panel.
         #expect(slots.clipboard?.minY == slots.prompt?.minY)
-        #expect(slots.clipboard?.minX == (slots.prompt?.maxX ?? 0) + CornerDockLayout.gap)
+        #expect(slots.clipboard?.maxX == width - CornerDockLayout.pad)
+        #expect(abs((slots.prompt?.midX ?? 0) - width / 2) < 0.5)
     }
 
-    @Test("Centred, the whole row is centred — not the field with things hanging off it")
+    @Test("Centred, the shelf and the field are centred as one row")
     func centreCentresTheRow() {
+        let width: CGFloat = 1800
         let slots = CornerDockLayout.slots(
-            shelf: pill, clipboard: pill, prompt: card, anchor: .center)
+            shelf: pill, clipboard: pill, prompt: card, anchor: .center, panelWidth: width)
         let left = slots.shelf!.minX
-        let right = slots.clipboard!.maxX
+        let right = slots.prompt!.maxX
 
-        #expect(
-            abs((left + right) / 2 - CornerDockLayout.panelSize(for: .center).width / 2) < 0.5)
+        #expect(abs((left + right) / 2 - width / 2) < 0.5)
+        #expect(slots.shelf!.maxX + CornerDockLayout.gap == slots.prompt!.minX)
     }
 
     @Test("Centred, what answers the field still sits above the field")
