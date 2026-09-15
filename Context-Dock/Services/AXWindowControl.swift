@@ -157,7 +157,7 @@ enum AXWindowControl {
         return CGRect(x: x, y: y, width: w, height: h)
     }
 
-    private static func frame(of element: AXUIElement) -> CGRect? {
+    static func frame(of element: AXUIElement) -> CGRect? {
         var positionValue: CFTypeRef?
         var sizeValue: CFTypeRef?
         var position = CGPoint.zero
@@ -215,17 +215,31 @@ enum AXWindowControl {
     /// the screen before it moved back.
     @discardableResult
     static func place(windowID: CGWindowID, bundleID: String, frame: CGRect) -> Bool {
-        guard let element = element(windowID: windowID, bundleID: bundleID) else { return false }
+        guard let element = element(windowID: windowID, bundleID: bundleID) else {
+            SnapDebug.log("place: NO ELEMENT for window \(windowID) of \(bundleID)")
+            return false
+        }
+        return write(element: element, frame: frame, label: "\(bundleID) w\(windowID)")
+    }
+
+    /// The two writes, with their errors kept. A window that refuses to move returns an
+    /// `AXError` nobody sees; without it, a refusal and a missing element are both just
+    /// "nothing happened".
+    @discardableResult
+    static func write(element: AXUIElement, frame: CGRect, label: String) -> Bool {
         var origin = frame.origin
         var size = frame.size
         guard let positionValue = AXValueCreate(.cgPoint, &origin),
             let sizeValue = AXValueCreate(.cgSize, &size)
         else { return false }
-        let moved = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
-            == .success
-        let resized = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-            == .success
-        return moved && resized
+        let moveError = AXUIElementSetAttributeValue(
+            element, kAXPositionAttribute as CFString, positionValue)
+        let sizeError = AXUIElementSetAttributeValue(
+            element, kAXSizeAttribute as CFString, sizeValue)
+        let after = self.frame(of: element).map { "\($0)" } ?? "unreadable"
+        SnapDebug.log(
+            "place: \(label) -> \(frame) move=\(moveError.rawValue) size=\(sizeError.rawValue) after=\(after)")
+        return moveError == .success && sizeError == .success
     }
 
     /// AppKit's bottom-left screen point, as the top-left AX point plus the screen it is on
@@ -247,17 +261,11 @@ enum AXWindowControl {
     /// snapped one, which belong to whatever app happens to own them.
     @discardableResult
     static func place(windowID: CGWindowID, pid: pid_t, frame: CGRect) -> Bool {
-        guard let element = element(windowID: windowID, pid: pid) else { return false }
-        var origin = frame.origin
-        var size = frame.size
-        guard let positionValue = AXValueCreate(.cgPoint, &origin),
-            let sizeValue = AXValueCreate(.cgSize, &size)
-        else { return false }
-        let moved = AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue)
-            == .success
-        let resized = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue)
-            == .success
-        return moved && resized
+        guard let element = element(windowID: windowID, pid: pid) else {
+            SnapDebug.log("place: NO ELEMENT for window \(windowID) of pid \(pid)")
+            return false
+        }
+        return write(element: element, frame: frame, label: "pid \(pid) w\(windowID)")
     }
 
     struct OnScreenWindow: Equatable {
@@ -351,23 +359,43 @@ final class SnapZoneOverlay {
         host?.rootView = ZoneView(state: state)
     }
 
+    /// What a drop did, which the caller needs to tell apart: nothing to snap to is an
+    /// ordinary move, but a window Accessibility cannot reach is a failure the user has to
+    /// be told about — silently doing nothing is what made this look broken.
+    enum Outcome: Equatable {
+        case placed
+        case noZone
+        /// The app does not expose this window to Accessibility, so nothing can move it.
+        case unreachable
+    }
+
     /// Apply the hovered zone to the dragged window and arrange the others around it.
-    /// Returns false when the pointer was nowhere in particular, so the caller falls back to
-    /// a plain move to where the hand let go.
+    ///
+    /// The dragged window goes first and the arrangement only follows if it actually moved.
+    /// The other way round rearranges the desktop for a snap that never happened — which is
+    /// exactly what a window Safari does not expose produced: the complement slid into place
+    /// beside nothing.
     @discardableResult
-    func drop(windowID: CGWindowID, bundleID: String) -> Bool {
+    func drop(windowID: CGWindowID, bundleID: String) -> Outcome {
         defer { end() }
-        guard let hovered else { return false }
-        AXWindowControl.place(
+        SnapDebug.log(
+            "drop: window \(windowID) of \(bundleID) zone=\(hovered?.title ?? "none") "
+                + "screenAX=\(screenAX) others=\(others.count)")
+        guard let hovered else { return .noZone }
+        guard AXWindowControl.place(
             windowID: windowID, bundleID: bundleID,
             frame: hovered.frame(on: screenAX, window: window))
+        else {
+            SnapDebug.log("drop: dragged window unreachable — arrangement skipped")
+            return .unreachable
+        }
         for move in moves(for: hovered) {
             guard let other = others.first(where: { $0.id == move.id }) else { continue }
             AXWindowControl.place(
                 windowID: other.id, pid: other.pid,
                 frame: move.layout.frame(on: screenAX, window: other.frame))
         }
-        return true
+        return .placed
     }
 
     func end() {

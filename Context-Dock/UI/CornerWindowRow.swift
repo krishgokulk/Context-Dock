@@ -138,12 +138,36 @@ struct CornerWindowRow: View {
 
     private func place(_ window: WindowSnapshot, at appKitPoint: NSPoint) {
         // A snap zone under the pointer places it; anywhere else moves the window there.
-        if !SnapZoneOverlay.shared.drop(windowID: window.id, bundleID: bundleID) {
+        var moved = true
+        switch SnapZoneOverlay.shared.drop(windowID: window.id, bundleID: bundleID) {
+        case .placed:
+            break
+        case .unreachable:
+            moved = false
+        case .noZone:
             guard let (point, screen) = AXWindowControl.axPointAndScreen(fromAppKit: appKitPoint),
                 let current = AXWindowControl.frame(windowID: window.id, bundleID: bundleID)
-            else { return }
+            else {
+                moved = false
+                break
+            }
             let target = WindowPlacement.frame(drop: point, screen: screen, size: current.size)
-            AXWindowControl.place(windowID: window.id, bundleID: bundleID, frame: target)
+            moved = AXWindowControl.place(
+                windowID: window.id, bundleID: bundleID, frame: target)
+        }
+        // A window the app never exposes to Accessibility cannot be moved by anyone, and
+        // saying nothing is what made this read as a bug in the drag. Safari is the case in
+        // hand: ScreenCaptureKit lists its window and lets it be dragged, while the app
+        // publishes no AX windows at all, so nothing can act on it.
+        guard moved else {
+            let appName = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID).first?
+                .localizedName ?? "That app"
+            AppToast.show(
+                "\(appName) doesn't let its windows be moved",
+                icon: "macwindow.badge.plus", duration: 3)
+            model.dismiss()
+            return
         }
         AXWindowControl.raise(windowID: window.id, bundleID: bundleID)
         model.dismiss()
