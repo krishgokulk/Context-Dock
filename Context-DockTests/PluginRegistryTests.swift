@@ -87,4 +87,21 @@ struct PluginRegistryTests {
         let registry = PluginRegistry(roots: [r], stateFile: r.appendingPathComponent("state.json"))
         #expect(registry.plugins.isEmpty)
     }
+
+    @Test("A folder with a bad pack.json is reported by name; a folder with no pack.json at all is silently skipped")
+    func rootErrorsNameTheBrokenPackNotTheEmptyFolder() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("regerr-\(UUID().uuidString)")
+        let brokenFolder = root.appendingPathComponent("broken-pack")
+        try FileManager.default.createDirectory(at: brokenFolder, withIntermediateDirectories: true)
+        try "not json".write(to: brokenFolder.appendingPathComponent("pack.json"), atomically: true, encoding: .utf8)
+
+        let nonPackFolder = root.appendingPathComponent("not-a-pack-at-all")
+        try FileManager.default.createDirectory(at: nonPackFolder, withIntermediateDirectories: true)
+
+        let registry = PluginRegistry(roots: [root], stateFile: root.appendingPathComponent("state.json"))
+        #expect(registry.rootErrors.count == 1)
+        #expect(registry.rootErrors[0].contains("broken-pack"))
+        #expect(!registry.rootErrors.contains { $0.contains("not-a-pack-at-all") })
+        #expect(registry.plugins.isEmpty)
+    }
 }

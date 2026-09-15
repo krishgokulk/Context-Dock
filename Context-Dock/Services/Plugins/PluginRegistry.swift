@@ -21,6 +21,19 @@ struct InstalledPlugin: Identifiable, Equatable {
 
 @MainActor
 final class PluginRegistry: ObservableObject {
+    /// First access performs synchronous disk I/O on the main actor: directory
+    /// enumeration, a JSON decode and a full schema validation per manifest, across every
+    /// pack root. That is tolerable only because nothing exercises this warm-up path yet —
+    /// a later phase must warm `shared` from `applicationDidFinishLaunching` rather than
+    /// let a view body touch it first. `CustomListProviderService`'s header explains why:
+    /// running work like this on the view-build path re-enters the view graph and aborts,
+    /// the same failure mode a subprocess launched mid-render hits there.
+    ///
+    /// `Bundle.main.url(forResource: "Essentials", withExtension: nil, subdirectory:
+    /// "Plugins")` returns nil unless the Essentials pack has been added to the target as
+    /// a folder reference (not a group) — a silent nil here just means "no built-ins
+    /// loaded", not a crash, so a missing bundled pack is easy to miss without checking
+    /// `packs` directly.
     static let shared: PluginRegistry = {
         var roots: [URL] = []
         if let bundled = Bundle.main.url(forResource: "Essentials", withExtension: nil, subdirectory: "Plugins") {
@@ -40,6 +53,12 @@ final class PluginRegistry: ObservableObject {
 
     @Published private(set) var packs: [PluginPack] = []
     @Published private(set) var plugins: [InstalledPlugin] = []
+    /// One entry per root-level folder that DID contain a `pack.json` but failed to load
+    /// (bad JSON, mostly) — naming the folder and the reason, so Settings can explain why
+    /// a pack the user dropped in vanished instead of it disappearing with no signal. A
+    /// folder with no `pack.json` at all is not an error here: any folder may sit in a
+    /// plugin root without being a pack.
+    @Published private(set) var rootErrors: [String] = []
 
     init(roots: [URL], stateFile: URL) {
         self.roots = roots
@@ -66,16 +85,30 @@ final class PluginRegistry: ObservableObject {
 
         var packsByID: [String: PluginPack] = [:]
         var order: [String] = []
+        var errors: [String] = []
         for root in roots {
             let folders = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey]))?
                 .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
             for folder in folders {
-                guard let pack = try? PluginPack.load(from: folder) else { continue }
+                let pack: PluginPack
+                do {
+                    pack = try PluginPack.load(from: folder)
+                } catch PluginPackError.missingPackJSON {
+                    // Any folder may sit in a plugin root without being a pack.
+                    continue
+                } catch PluginPackError.badPackJSON(_, let reason) {
+                    errors.append("\(folder.lastPathComponent): \(reason)")
+                    continue
+                } catch {
+                    errors.append("\(folder.lastPathComponent): \(error.localizedDescription)")
+                    continue
+                }
                 if let existing = packsByID[pack.info.id], !pack.isNewer(than: existing) { continue }
                 if packsByID[pack.info.id] == nil { order.append(pack.info.id) }
                 packsByID[pack.info.id] = pack
             }
         }
+        rootErrors = errors
         packs = order.compactMap { packsByID[$0] }
 
         var seen: Set<String> = []
