@@ -4,7 +4,7 @@
 bounded problem to an installed coding agent — inside an authority envelope derived from the
 scope it was asked in — instead of ending at "add a route in Settings".
 
-**Status:** plan only. Nothing here is built.
+**Status:** built through Task 7 (2026-09-15). The Release-build half of Task 7 is blocked by a toolchain crash unrelated to this layer — brain issue #25.
 
 **Origin:** a user analysis of why Claude Code and Codex "feel more powerful", checked against
 the code. Its architecture was right and is followed here; two of its factual claims were not,
@@ -122,20 +122,20 @@ When the ladder reaches this rung, the answer carries a delegation proposal, ren
 Claude Code can inspect this read-only. Use one?"* — Use Codex / Use Claude Code / Cancel.
 Nothing runs before approval. Reuse the corner and window surfaces; no new window, no new mode.
 
-### ◑ Task 5 — Execution and progress (Claude Code done; Codex pending)
+### ✅ Task 5 — Execution and progress (Claude Code `9580b5d`; Codex `489f1c1`)
 
 Run the worker as a process with the envelope applied. Report through the existing step rows —
 `● Codex inspecting installation…` — never as hidden reasoning, only factual stages and tool
 receipts.
 
-### ◑ Task 6 — Verification (status vocabulary done; read-backs pending)
+### ✅ Task 6 — Verification (vocabulary `b0a1ebb`; workspace integrity `cb2d5a3`; read-backs `4159dd6`)
 
 A worker's text is not proof. Map its result onto `AIVerificationStatus` and, where possible,
 verify independently: app version, filesystem state, git state, package-manager state. A write
 the worker recommends needs its own second approval; delegation approval is not execution
 approval.
 
-### Task 7 — Regression and performance proof
+### ◑ Task 7 — Regression and performance proof (suite + escalation done; Release build blocked by #25)
 
 Typing latency unchanged; Context Dock live context unchanged; simple VS Code actions still use
 `code`/menu directly; a worker never runs before approval; a Context Dock delegation receives

@@ -38,6 +38,52 @@ struct AIWorkerTask: Equatable {
     /// reads it back against the machine before the answer is believed.
     let requiresVerification: Bool
 
+    /// Why a request did not become a task. The two answers differ in what the user is told:
+    /// a question goes back up the ladder; work wider than its scope is offered a way out.
+    enum Rejection: Error, Equatable {
+        /// A question, not work — the rung above (an approvable command) answers it.
+        case notWork
+        /// Work, but needing more than this scope grants. Never widened silently: the scope
+        /// architecture is the product, and a worker that outgrows it is General Chat's.
+        case exceedsScope(reason: String)
+
+        func escalationOffer(scopeDescription: String) -> String {
+            switch self {
+            case .notWork:
+                return "That is not a bounded task a specialist can take."
+            case .exceedsScope(let reason):
+                return "This needs more than \(scopeDescription) allows (\(reason)). "
+                    + "Continue in General Chat, where it can be asked without an app's limits."
+            }
+        }
+    }
+
+    /// Words that name work no app- or folder-scoped envelope can carry. Whole words, matched
+    /// on the request the user typed, so "install" in "installation directory" does not fire.
+    private static let scopeExceedingWords: [String: String] = [
+        "sudo": "sudo", "uninstall": "uninstall", "install": "install", "reinstall": "install",
+        "delete": "delete", "remove": "remove", "wipe": "delete", "format": "format",
+        "everywhere": "the whole machine", "system-wide": "the whole machine",
+        "systemwide": "the whole machine", "all": "more than one place",
+    ]
+
+    /// What in the goal reaches past an app or folder scope, if anything.
+    static func scopeExcess(in goal: String) -> String? {
+        let words = goal.lowercased().split { !$0.isLetter && $0 != "-" }.map(String.init)
+        for (index, word) in words.enumerated() {
+            guard let reason = scopeExceedingWords[word] else { continue }
+            // "all" alone is a quantifier; "all my repositories", "all apps" is a scope.
+            if word == "all" {
+                let next = index + 1 < words.count ? words[index + 1] : ""
+                let after = index + 2 < words.count ? words[index + 2] : ""
+                let plural = [next, after].contains { $0.hasSuffix("s") && $0.count > 3 }
+                guard plural else { continue }
+            }
+            return reason
+        }
+        return nil
+    }
+
     /// Reading, from somewhere specific, and nothing else. A delegation approved to
     /// *investigate* must not come back having changed anything, so writes and shell are off
     /// in the only constructor there is.
@@ -47,12 +93,32 @@ struct AIWorkerTask: Equatable {
         appName: String?,
         workspace: URL?
     ) -> AIWorkerTask? {
+        try? build(goal: goal, scope: scope, appName: appName, workspace: workspace).get()
+    }
+
+    /// The same, saying why when it declines.
+    static func build(
+        goal: String,
+        scope: GeneralChatScope,
+        appName: String?,
+        workspace: URL?
+    ) -> Result<AIWorkerTask, Rejection> {
         // A question is answered by the rung above this one — proposing a read-only command
         // the user approves. Spending minutes of an agent's time on what one curl returns is
         // the mistake the whole ladder exists to avoid.
-        guard AIWorkerRouter.isWorkerShaped(goal) else { return nil }
+        guard AIWorkerRouter.isWorkerShaped(goal) else { return .failure(.notWork) }
         let domains = AIWorkerRouter.domains(for: goal)
-        guard !domains.isEmpty else { return nil }
+        guard !domains.isEmpty else { return .failure(.notWork) }
+
+        // An app or a folder is a promise about where the work stays. Work that names the
+        // whole machine, or anything privileged, is offered General Chat rather than an
+        // envelope quietly wider than the scope that asked.
+        switch scope {
+        case .app, .folder, .cli:
+            if let reason = scopeExcess(in: goal) { return .failure(.exceedsScope(reason: reason)) }
+        case .general, .thread:
+            break
+        }
 
         let authority: AIWorkerAuthority
         switch scope {
@@ -90,7 +156,7 @@ struct AIWorkerTask: Equatable {
                 allowsShell: false)
         }
 
-        return AIWorkerTask(
+        return .success(AIWorkerTask(
             goal: goal,
             authority: authority,
             domains: domains,
@@ -106,6 +172,6 @@ struct AIWorkerTask: Equatable {
             expectedOutput:
                 "What was found, the evidence for it, and the safest next step — as a report, "
                 + "not as a change already made.",
-            requiresVerification: true)
+            requiresVerification: true))
     }
 }

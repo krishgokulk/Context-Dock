@@ -2336,17 +2336,24 @@ extension LauncherView {
             l2.chatMessages.append(
                 AIChatMessage(role: .tool, content: "Asking \(kind.displayName)…"))
             Task { @MainActor in
-                guard let task = AIWorkerTask.bounded(
+                let task: AIWorkerTask
+                switch AIWorkerTask.build(
                     goal: question,
                     scope: bundleId.isEmpty ? scope : .app(bundleId: bundleId),
                     appName: appName,
                     workspace: ChatWorkingDirectory.resolve(for: nil))
-                else {
+                {
+                case .success(let built):
+                    task = built
+                case .failure(let rejection):
+                    // Work wider than this app's scope is offered General Chat; it is never
+                    // widened here.
                     l2.chatMessages.append(
                         AIChatMessage(
                             role: .assistant,
-                            content: "That is not a bounded task a specialist can take.",
-                            isError: true))
+                            content: rejection.escalationOffer(
+                                scopeDescription: appName ?? "this app"),
+                            isError: rejection == .notWork))
                     return
                 }
                 // Taken before and after, unattended: the promise a read-only worker

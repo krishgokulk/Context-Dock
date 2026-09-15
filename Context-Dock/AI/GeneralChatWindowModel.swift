@@ -386,16 +386,23 @@ final class GeneralChatWindowModel: ObservableObject {
         if let kind = AIWorkerOffer.worker(for: choice.id) {
             let appName = activeScopeAppName
             sendTasks[key] = Task { [weak self] in
-                guard let task = AIWorkerTask.bounded(
+                let task: AIWorkerTask
+                switch AIWorkerTask.build(
                     goal: question, scope: scope, appName: appName,
                     workspace: ChatWorkingDirectory.resolve(for: nil))
-                else {
+                {
+                case .success(let built):
+                    task = built
+                case .failure(let rejection):
+                    // In an app or folder scope, work wider than the scope is offered General
+                    // Chat; in General it is simply not work.
                     await MainActor.run {
                         self?.deliver(
                             AIChatMessage(
                                 role: .assistant,
-                                content: "That is not a bounded task a specialist can take.",
-                                isError: true),
+                                content: rejection.escalationOffer(
+                                    scopeDescription: appName ?? "this scope"),
+                                isError: rejection == .notWork),
                             to: scope, title: title)
                     }
                     return

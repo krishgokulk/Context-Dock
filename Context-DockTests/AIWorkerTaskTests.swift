@@ -121,3 +121,64 @@ struct AIWorkerTaskTests {
         #expect(forbidden.contains("delete"))
     }
 }
+
+/// A request wider than its scope is an escalation offer, never a silent widening.
+@Suite("Worker task escalation")
+struct AIWorkerTaskEscalationTests {
+    private let project = URL(fileURLWithPath: "/Users/someone/Developer/Context-Dock")
+
+    @Test func systemLevelWorkIsNotBoundedToAnApp() {
+        let result = AIWorkerTask.build(
+            goal: "investigate why the build fails and uninstall the old toolchain with sudo",
+            scope: .app(bundleId: "com.microsoft.VSCode"),
+            appName: "Code",
+            workspace: project)
+        guard case .failure(.exceedsScope(let reason)) = result else {
+            Issue.record("Expected an escalation, got \(result)")
+            return
+        }
+        #expect(reason.contains("sudo") || reason.contains("uninstall"))
+        // The convenience form hands back nothing, as it always did.
+        #expect(AIWorkerTask.bounded(
+            goal: "investigate why the build fails and uninstall the old toolchain with sudo",
+            scope: .app(bundleId: "com.microsoft.VSCode"), appName: "Code", workspace: project) == nil)
+    }
+
+    @Test func aFolderScopeRejectsWorkOnOtherPlaces() {
+        let result = AIWorkerTask.build(
+            goal: "investigate the failing tests across all my repositories",
+            scope: .folder(path: "/Users/someone/Developer/scripts"),
+            appName: nil,
+            workspace: nil)
+        guard case .failure(.exceedsScope) = result else {
+            Issue.record("Expected an escalation, got \(result)")
+            return
+        }
+    }
+
+    @Test func generalScopeTakesTheSameRequestAsWork() throws {
+        // General Chat is where a request that needs more than one place belongs; it still
+        // grants no app authority by being general.
+        let task = try AIWorkerTask.build(
+            goal: "investigate the failing tests across all my repositories",
+            scope: .general, appName: nil, workspace: project).get()
+        #expect(task.authority.allowedAppBundleIDs.isEmpty)
+        #expect(task.authority.allowedPaths == [project])
+    }
+
+    @Test func aQuestionIsStillNotWork() {
+        let result = AIWorkerTask.build(
+            goal: "what is sudo?", scope: .app(bundleId: "com.apple.Terminal"),
+            appName: "Terminal", workspace: nil)
+        guard case .failure(.notWork) = result else {
+            Issue.record("Expected notWork, got \(result)")
+            return
+        }
+    }
+
+    @Test func theEscalationNamesTheScopeAndTheWayOut() {
+        let text = AIWorkerTask.Rejection.exceedsScope(reason: "sudo").escalationOffer(scopeDescription: "Code")
+        #expect(text.contains("Code"))
+        #expect(text.contains("General Chat"))
+    }
+}
