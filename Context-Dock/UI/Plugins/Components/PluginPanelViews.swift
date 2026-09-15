@@ -20,6 +20,10 @@ struct PluginRowModel: Identifiable, Equatable {
     let accessories: [String]
     let actions: [PluginRowAction]
 
+    /// Set on a row by PluginCompactRules when the corner wants its accessories folded into
+    /// the subtitle but cannot do the folding itself — the values are still bindings then.
+    static let stackAccessoriesKey = "cdStackAccessories"
+
     /// One row from one item. `node` is the manifest's `row` template; `binding` is already
     /// scoped to the item.
     static func make(from node: PluginNode, binding: PluginBinding, index: Int) -> PluginRowModel {
@@ -35,12 +39,20 @@ struct PluginRowModel: Identifiable, Equatable {
             }
         let explicitID = binding.text(node.props["id"])
         let iconName = binding.text(node.props["icon"])
+        var subtitle = binding.text(node.props["subtitle"])
+        var accessories = binding.items(node.props["accessories"]).map { binding.text($0) }
+        // The corner asked for these to stack and could not do it itself: when the manifest
+        // binds `accessories`, the value is still `{{…}}` while the rules run.
+        if node.props[stackAccessoriesKey] == .bool(true), !accessories.isEmpty {
+            subtitle = ([subtitle] + accessories).filter { !$0.isEmpty }.joined(separator: " · ")
+            accessories = []
+        }
         return PluginRowModel(
             id: explicitID.isEmpty ? "row-\(index)" : explicitID,
             title: binding.text(node.props["title"] ?? node.props["text"]),
-            subtitle: binding.text(node.props["subtitle"]),
+            subtitle: subtitle,
             icon: iconName.isEmpty ? nil : iconName,
-            accessories: binding.items(node.props["accessories"]).map { binding.text($0) },
+            accessories: accessories,
             actions: actions)
     }
 }

@@ -31,6 +31,8 @@ struct SettingsDetailView: View {
             AIProvidersSettingsPage()
         case .integrations:
             IntegrationsSettingsPage(destination: integrationDestination)
+        case .plugins:
+            PluginsSettingsPage()
         case .extensionsGlobalWithSelection,
              .extensionsGlobalWithoutSelection,
              .extensionsCLIToolScope,

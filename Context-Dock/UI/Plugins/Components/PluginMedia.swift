@@ -75,8 +75,22 @@ struct PluginCellView: View {
     let binding: PluginBinding
     weak var sink: (any PluginActionSink)?
 
+    /// What a cell holds. Three spellings reach here and all three are ordinary:
+    /// children, an object-valued prop (`"thumbnail": { "src": … }`, a nodeProp per #27), and
+    /// the bare-string shorthand (`"thumbnail": "{{item.art}}"`) that PluginNode itself accepts
+    /// for any component's text. Missing the third drew every grid cell as a placeholder.
+    static func content(of node: PluginNode) -> [PluginNode] {
+        let shorthand = node.props
+            .filter { PluginComponentCatalog.isKnown($0.key) && $0.value.stringValue != nil }
+            .sorted { $0.key < $1.key }
+            .map { PluginNode(component: $0.key, props: ["text": $0.value]) }
+        return node.children
+            + node.nodeProps.sorted { $0.key < $1.key }.map(\.value)
+            + shorthand
+    }
+
     var body: some View {
-        let inner = node.children + node.nodeProps.sorted { $0.key < $1.key }.map(\.value)
+        let inner = Self.content(of: node)
         if inner.isEmpty {
             PluginArtwork(source: binding.text(node.props["text"] ?? node.props["src"]))
                 .frame(

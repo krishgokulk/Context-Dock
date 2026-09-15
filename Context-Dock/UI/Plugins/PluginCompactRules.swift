@@ -42,6 +42,12 @@ enum PluginCompactRules {
                 let joined = ([subtitle] + extras).filter { !$0.isEmpty }.joined(separator: " · ")
                 props["subtitle"] = .string(joined)
                 props["accessories"] = nil
+            } else if props["accessories"] != nil {
+                // `"accessories": "{{item.accessories}}"` is still a string here — this rule is
+                // pure and the data arrives later. Mark the row; PluginRowModel joins them when
+                // it has the values. Without this the corner keeps a right-hand column it has
+                // no width for, which is the whole reason the rule exists.
+                props[PluginRowModel.stackAccessoriesKey] = .bool(true)
             }
 
         default:

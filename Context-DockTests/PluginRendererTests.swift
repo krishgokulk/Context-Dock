@@ -399,6 +399,45 @@ struct PluginRendererTests {
         }
     }
 
+    // MARK: Defects the preview showed (post-Task 10)
+
+    @Test func aCellDrawsTheComponentNamedByAStringProp() throws {
+        // `"cell": { "thumbnail": "{{item.art}}" }` is the shorthand a manifest author writes
+        // — PluginNode itself accepts a bare string as a component's text. The cell was only
+        // looking for object-valued props, so every grid cell drew the placeholder.
+        let cell = try node(#"{ "cell": { "thumbnail": "{{item.art}}" } }"#)
+        let inner = PluginCellView.content(of: cell)
+        #expect(inner.map(\.component) == ["thumbnail"])
+        #expect(inner.first?.props["text"] == .string("{{item.art}}"))
+    }
+
+    @Test func aCellWithNothingInItIsStillArtwork() throws {
+        let bare = try node(#"{ "cell": { "src": "/tmp/a.png" } }"#)
+        #expect(PluginCellView.content(of: bare).isEmpty)
+    }
+
+    @Test func compactStacksAccessoriesThatOnlyExistOnceTheDataArrives() throws {
+        // The corner's rule is pure, so a bound `accessories` is still a string when it runs.
+        // It marks the row instead, and the row model does the joining when it has the data.
+        let list = try node(#"""
+        { "list": { "items": "{{q}}",
+                    "row": { "title": "{{item.title}}", "subtitle": "{{item.artist}}",
+                             "accessories": "{{item.accessories}}" } } }
+        """#)
+        let binding = PluginBinding(data: ["q": .array([
+            .object(["title": .string("Jungle"), "artist": .string("Casio"),
+                     "accessories": .array([.string("3:41")])])
+        ])])
+        let wide = PluginListView.rowModels(for: list, binding: binding)
+        #expect(wide[0].subtitle == "Casio")
+        #expect(wide[0].accessories == ["3:41"])
+
+        let compact = PluginCompactRules.apply(to: list, traits: .cornerPanel)
+        let narrow = PluginListView.rowModels(for: compact, binding: binding)
+        #expect(narrow[0].subtitle == "Casio · 3:41")
+        #expect(narrow[0].accessories.isEmpty)
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))

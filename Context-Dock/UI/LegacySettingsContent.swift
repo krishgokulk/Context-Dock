@@ -1045,12 +1045,6 @@ struct AIProviderSettingsView: View {
 
                 Divider()
 
-                // The plugin kit has no runtime yet (Phase 3), so this is the only place a
-                // person can see what a manifest draws.
-                PluginPreviewPanel()
-
-                Divider()
-
                 modelRateCardView
 
                 Divider()
