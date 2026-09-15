@@ -42,6 +42,10 @@ struct PluginRenderer: View {
         "list", "row", "section", "actionPanel",
         // Task 5 — detail, grid, form
         "listDetail", "detail", "grid", "form",
+        // Task 6 — containers, text, chips
+        "vstack", "hstack", "card", "footerCard", "capsule", "divider",
+        "title", "subtitle", "body", "caption", "markdown", "stat", "header",
+        "tag", "statusBadge", "chipRow", "segment",
     ]
 
     static func supports(_ component: String) -> Bool { implemented.contains(component) }
@@ -89,6 +93,12 @@ struct PluginRenderer: View {
             PluginGridView(node: node, traits: traits, binding: binding, sink: sink)
         case "form":
             PluginFormView(node: node, traits: traits, binding: binding, sink: sink)
+        case "vstack", "hstack", "card", "footerCard", "capsule", "divider":
+            PluginContainerView(node: node, traits: traits, binding: binding, sink: sink)
+        case "title", "subtitle", "body", "caption", "markdown", "stat", "header":
+            PluginTextView(node: node, traits: traits, binding: binding)
+        case "tag", "statusBadge", "chipRow", "segment":
+            PluginChipView(node: node, traits: traits, binding: binding)
         case "emptyState":
             PluginEmptyStateView(
                 title: binding.text(node.props["title"] ?? node.props["text"]),

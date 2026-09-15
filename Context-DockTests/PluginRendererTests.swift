@@ -170,6 +170,44 @@ struct PluginRendererTests {
         #expect(PluginGridView.columns(of: grid, traits: .cornerPanel, binding: PluginBinding()) == 3)
     }
 
+    // MARK: Containers, text and chips (Task 6)
+
+    @Test func theSixStatusWordsEachGetTheirOwnTone() {
+        let words = ["pending", "running", "success", "failed", "expired", "waiting"]
+        let tones = words.map { PluginStatusTone.tone(for: $0) }
+        for (i, tone) in tones.enumerated() {
+            #expect(tone != PluginStatusTone.neutral, "\(words[i]) has no tone of its own")
+            for (j, other) in tones.enumerated() where j != i {
+                #expect(tone != other, "\(words[i]) and \(words[j]) share a tone")
+            }
+        }
+        // An unknown word is neutral rather than an accident.
+        #expect(PluginStatusTone.tone(for: "banana") == PluginStatusTone.neutral)
+    }
+
+    @Test func aStatusWordIsReadWhateverItsCase() {
+        // Script output is not curated: `SUCCESS` and `Success` are the same status.
+        #expect(PluginStatusTone.tone(for: "SUCCESS") == PluginStatusTone.tone(for: "success"))
+    }
+
+    @Test func aStatReadsValueLabelAndDelta() throws {
+        let stat = try node(#"{ "stat": { "value": "{{count}}", "label": "Tracks", "delta": "+3" } }"#)
+        let model = PluginTextView.stat(of: stat, binding: PluginBinding(data: ["count": .number(12)]))
+        #expect(model == PluginStatModel(value: "12", label: "Tracks", delta: "+3"))
+    }
+
+    @Test func shorthandTextReachesTheView() throws {
+        // { "title": "Up next" } decodes to props["text"], not props["title"].
+        let title = try node(#"{ "title": "Up next" }"#)
+        #expect(PluginTextView.text(of: title, binding: PluginBinding()) == "Up next")
+    }
+
+    @Test func aLongFormTextNodeReadsTheSameAsTheShorthand() throws {
+        let long = try node(#"{ "title": { "text": "{{heading}}" } }"#)
+        let binding = PluginBinding(data: ["heading": .string("Up next")])
+        #expect(PluginTextView.text(of: long, binding: binding) == "Up next")
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))
