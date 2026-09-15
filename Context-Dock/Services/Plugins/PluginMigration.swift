@@ -12,6 +12,26 @@
 // (Appearance Light/Dark/Auto, Focus scopes) that nothing in the manifest yet represents,
 // so they stay in `keywords` until a later phase gives them a home. Only `provider:`,
 // `refresh:` and `query:` are consumed.
+//
+// What this conversion drops (Phase 8 owns parity for these):
+//   - The custom-list row template here only carries title/subtitle/badge/icon (see
+//     `CustomListRow` in CustomListProviderService.swift), so a compare-layout row's
+//     `layout: "compare"`, `left`, `right`, `centerIcon`, `leftQuery`, `rightQuery` and
+//     `centerAction` are not migrated. Neither is the "no row-action script authored, but
+//     the row's id/icon is a real path → Enter opens it" fallback that
+//     `LauncherView+ContextualActions.customListRowOpenablePath` provides at runtime for
+//     Global Commands.
+//   - The native-provider branch below returns immediately once it recognises the
+//     provider, so a native provider's own `interaction` (Wi-Fi and Bluetooth are declared
+//     as `"toggle"` in SystemCommands.swift, with a `valueScript` reflecting live state)
+//     and its `script` are never carried into the manifest — the manifest only records
+//     which native provider owns the panel, not how that provider's own toggle behaves.
+//
+// A caller converting a *list* of legacy items (not implemented in this phase — nothing
+// here has a batch API yet) is responsible for uniquifying the resulting ids before
+// installing them: `slug()` alone does not guarantee uniqueness (the legacy UUID is
+// dropped and two items named "Deploy" collapse to the same id), and `PluginPack` keeps
+// only the first plugin it sees for a given id, silently dropping the rest.
 
 import Foundation
 
@@ -21,12 +41,20 @@ enum PluginMigration {
     private static let metaPrefixes = ["provider:", "refresh:", "query:"]
     private static let nativeProviders: Set<String> = ["wifi", "bluetooth", "windows", "notepad", "processes"]
 
+    /// `Character.isLetter` is true for "é", Cyrillic and CJK alike, so without folding to
+    /// ASCII first, a name like "Café" produced the id "café" — a rule-12 schema error with
+    /// nothing a user could act on ("your id is invalid" when the id came from their plugin's
+    /// own name). Transliterate to Latin then strip remaining diacritics where Foundation
+    /// can; anything still non-ASCII afterwards (untransliterable scripts) is dropped like
+    /// any other non-letter character, same as before. The empty-name fallback is unchanged.
     static func slug(_ name: String) -> String {
-        let lowered = name.lowercased()
+        var folded = name.lowercased()
+        if let latin = folded.applyingTransform(.toLatin, reverse: false) { folded = latin }
+        if let stripped = folded.applyingTransform(.stripDiacritics, reverse: false) { folded = stripped }
         var out = ""
         var lastDash = true
-        for ch in lowered {
-            if ch.isLetter || ch.isNumber {
+        for ch in folded {
+            if ch.isASCII, ch.isLetter || ch.isNumber {
                 out.append(ch); lastDash = false
             } else if !lastDash {
                 out.append("-"); lastDash = true
@@ -54,11 +82,13 @@ enum PluginMigration {
         keywords.filter { kw in !metaPrefixes.contains { kw.lowercased().hasPrefix($0) } }
     }
 
-    /// Normalises a legacy script-type string into the manifest's canonical vocabulary.
-    /// `url`, `file` and `aiPrompt` never reach here for the primary action — they are
-    /// handled by dedicated branches before this is consulted — but the secondary action
-    /// fields (`set`, `rowAction`, `undo`) route through this too so every action's `type`
-    /// speaks the same vocabulary, per the migration ruling.
+    /// Normalises a legacy script-type string into the manifest's canonical script
+    /// vocabulary. Used for `PluginDataSource.type`, which is always a script (a data
+    /// source has no `url`/`file`/`aiPrompt` shape to preserve), and, via `legacyAction`
+    /// below, as the fallback for a script-type action once `url`, `file` and `aiPrompt`
+    /// have already been peeled off by dedicated handling. `.bash` here is only ever a
+    /// last-resort default for a genuinely unrecognised type string, never a stand-in for
+    /// one of those three.
     private static func scriptType(_ raw: String) -> PluginScriptType {
         switch SystemCommandActionType.normalize(raw) {
         case .bash: return .bash
@@ -66,6 +96,35 @@ enum PluginMigration {
         case .jxa: return .jxa
         case .scriptFile: return .scriptFile
         case .url, .file, .aiPrompt: return .bash
+        }
+    }
+
+    /// The one place a legacy `url`/`file` script becomes the manifest's built-in `open`
+    /// action, so a deep link or a file path is opened, not handed to a shell as `bash`.
+    private static func openAction(value: String, title: String? = nil) -> PluginAction {
+        PluginAction(type: "open", value: value, title: title, risk: .read)
+    }
+
+    /// Turns a legacy script-type string into an action for a *secondary* slot — an undo
+    /// action, a slider/toggle's `set` action, a custom list's `rowAction` — the same way
+    /// the primary `run` action branch below treats it (via the same `openAction` helper),
+    /// so every runner that reads these (`LauncherView+ContextualActions`'s
+    /// command/undo/row-action switches) sees the same shape regardless of which slot the
+    /// script came from:
+    ///   - `url`/`file` become `openAction(value:)`.
+    ///   - `aiPrompt` has no action shape in a secondary slot (there is no "run an AI
+    ///     prompt" action type); `nil` says so, and every caller drops the slot entirely
+    ///     rather than mislabelling it `bash` — mirroring how the primary aiPrompt branch
+    ///     below already drops a success message it has nowhere to attach.
+    ///   - Every other script type maps straight through `scriptType(_:)`.
+    private static func legacyAction(scriptType raw: String, script: String, risk: PluginRisk, title: String? = nil) -> PluginAction? {
+        switch SystemCommandActionType.normalize(raw) {
+        case .url, .file:
+            return openAction(value: script, title: title)
+        case .aiPrompt:
+            return nil
+        case .bash, .applescript, .jxa, .scriptFile:
+            return PluginAction(type: scriptType(raw).rawValue, script: script, title: title, risk: risk)
         }
     }
 
@@ -80,9 +139,13 @@ enum PluginMigration {
             action.success = PluginActionFeedback(title: command.successTitle, message: command.successMessage)
         }
         if command.hasUndoAction {
-            m.actions["undo"] = PluginAction(type: scriptType(command.undoScriptType).rawValue, script: command.undoScript,
-                                             title: command.undoTitle.isEmpty ? "Undo" : command.undoTitle, risk: .low)
-            action.undo = "undo"
+            if let undo = legacyAction(scriptType: command.undoScriptType, script: command.undoScript, risk: .low,
+                                        title: command.undoTitle.isEmpty ? "Undo" : command.undoTitle) {
+                m.actions["undo"] = undo
+                action.undo = "undo"
+            }
+            // else: undoScriptType is aiPrompt — no action shape in a secondary slot, so
+            // the undo is dropped rather than mislabelled `bash` (see legacyAction).
         }
         return action
     }
@@ -110,8 +173,8 @@ enum PluginMigration {
                 "title": .string("{{item.title}}"), "subtitle": .string("{{item.subtitle}}"),
                 "badge": .string("{{item.badge}}"), "icon": .string("{{item.icon}}"),
             ]
-            if command.hasUndoAction {
-                m.actions["rowAction"] = PluginAction(type: scriptType(command.undoScriptType).rawValue, script: command.undoScript, risk: .low)
+            if command.hasUndoAction, let rowAction = legacyAction(scriptType: command.undoScriptType, script: command.undoScript, risk: .low) {
+                m.actions["rowAction"] = rowAction
                 row["action"] = .string("rowAction")
             }
             let filter = meta(command, prefix: "query:") == "live" ? "query" : "local"
@@ -128,7 +191,9 @@ enum PluginMigration {
             if !command.valueScript.isEmpty {
                 m.data = PluginDataSource(type: scriptType(command.scriptType), script: command.valueScript, format: .raw)
             }
-            m.actions["set"] = PluginAction(type: scriptType(command.scriptType).rawValue, script: command.script, risk: .low)
+            if let set = legacyAction(scriptType: command.scriptType, script: command.script, risk: .low) {
+                m.actions["set"] = set
+            }
             var props: [String: PluginValue] = ["value": .string("{{value}}"), "action": .string("set")]
             if component == "slider" {
                 props["min"] = .number(command.sliderMin)
@@ -146,7 +211,7 @@ enum PluginMigration {
 
         switch kind {
         case .url, .file:
-            let open = PluginAction(type: "open", value: command.script, risk: .read)
+            let open = openAction(value: command.script)
             m.actions["run"] = attachOutcomes(open, from: command, into: &m)
             m.primaryAction = "run"
         case .aiPrompt:
@@ -154,10 +219,12 @@ enum PluginMigration {
             m.agent = PluginAgent(instructions: command.script)
             // No `run` action exists in this shape, so a success message has nowhere to
             // attach — intentionally dropped (see task-6-report.md). An undo script still
-            // has a home: keep it as a standalone action so it isn't lost.
-            if command.hasUndoAction {
-                m.actions["undo"] = PluginAction(type: scriptType(command.undoScriptType).rawValue, script: command.undoScript,
-                                                 title: command.undoTitle.isEmpty ? "Undo" : command.undoTitle, risk: .low)
+            // has a home: keep it as a standalone action so it isn't lost, unless the
+            // undoScriptType is itself aiPrompt — see legacyAction.
+            if command.hasUndoAction,
+               let undo = legacyAction(scriptType: command.undoScriptType, script: command.undoScript, risk: .low,
+                                        title: command.undoTitle.isEmpty ? "Undo" : command.undoTitle) {
+                m.actions["undo"] = undo
             }
         default:
             let run = PluginAction(type: scriptType(command.scriptType).rawValue, script: command.script,

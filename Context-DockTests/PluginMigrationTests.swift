@@ -31,12 +31,30 @@ struct PluginMigrationTests {
         #expect(PluginMigration.slug("  Keep   Awake ") == "keep-awake")
     }
 
+    @Test("A non-ASCII name transliterates to a schema-valid slug instead of failing rule 12")
+    func nonASCIINameProducesSchemaValidId() {
+        #expect(PluginMigration.slug("Café") == "cafe")
+        for name in ["Café", "Déjà Vu", "Кафе", "日本語"] {
+            let cmd = SystemCommand(name: name, icon: "gear", keywords: [], scriptType: "bash", script: "true")
+            let m = PluginMigration.manifest(from: cmd)
+            let errors = PluginSchema.validate(m).filter { $0.severity == .error }
+            #expect(errors.isEmpty, "\(name) -> id \"\(m.id)\": \(errors.map(\.message))")
+        }
+    }
+
     @Test("Meta keywords are consumed; user keywords survive")
     func keywordsSurvive() throws {
         let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Top Memory" })
         let m = PluginMigration.manifest(from: cmd)
         #expect(m.keywords.contains("ram"))
         #expect(!m.keywords.contains { $0.hasPrefix("provider:") || $0.hasPrefix("refresh:") })
+
+        // `presets:` is deliberately NOT a meta-prefix (see the file header) — it carries
+        // user-visible options nothing in the manifest yet represents, so it must stay in
+        // `keywords` rather than silently disappear if `metaPrefixes` is ever tidied up.
+        let appearance = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Appearance" })
+        let appearanceManifest = PluginMigration.manifest(from: appearance)
+        #expect(appearanceManifest.keywords.contains { $0.hasPrefix("presets:") })
     }
 
     @Test("A provider:custom command becomes a jsonl list with its refresh")
@@ -71,7 +89,7 @@ struct PluginMigrationTests {
         let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Volume" })
         let m = PluginMigration.manifest(from: cmd)
         #expect(m.views.widget?.family == .small)
-        #expect(m.views.widget?.root.component == "slider")
+        #expect(m.views.widget?.root?.component == "slider")
         #expect(m.views.panel?.root.component == "slider")
         #expect(m.views.panel?.root.props["action"] == .string("set"))
         #expect(m.actions["set"] != nil)
@@ -128,6 +146,20 @@ struct PluginMigrationTests {
         #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
     }
 
+    @Test("An undoScriptType of url produces an open undo action, never a bash one")
+    func undoURLBecomesOpenNotBash() {
+        let cmd = SystemCommand(name: "Toggle Focus", icon: "moon", keywords: [],
+                                scriptType: "bash", script: "echo on",
+                                undoTitle: "Open Focus Settings", undoScriptType: "url",
+                                undoScript: "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["undo"]?.type == "open")
+        #expect(m.actions["undo"]?.value == "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        #expect(m.actions["undo"]?.script == nil)
+        #expect(m.actions["undo"]?.title == "Open Focus Settings")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+
     @Test("An aiPrompt command with an undo script keeps the undo action; no run action is invented")
     func aiPromptKeepsUndo() {
         let cmd = SystemCommand(name: "Summarize", icon: "sparkles", keywords: ["summarize"],
@@ -138,7 +170,7 @@ struct PluginMigrationTests {
         #expect(m.actions["undo"]?.script == "rm -f /tmp/context-dock-summary.txt")
         #expect(m.actions["undo"]?.title == "Clear Summary")
         #expect(m.primaryAction == nil)
-        #expect(m.views.window?.root.component == "ai")
+        #expect(m.views.window?.root?.component == "ai")
         #expect(m.agent?.instructions == "Summarize the current context.")
         #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
     }
@@ -154,7 +186,7 @@ struct PluginMigrationTests {
         #expect(m.data?.format == .lines)
         #expect(m.views.panel?.root.component == "list")
         #expect(m.actions["rowAction"]?.script == "git switch \"$CD_ROW_TITLE\"")
-        #expect(m.views.window?.root.flattened.contains { $0.component == "ai" } == true)
+        #expect(m.views.window?.root?.flattened.contains { $0.component == "ai" } == true)
         #expect(m.agent?.instructions == "You help with git branches.")
         #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
     }
