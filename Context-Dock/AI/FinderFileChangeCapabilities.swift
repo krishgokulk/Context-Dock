@@ -62,7 +62,11 @@ enum FinderFileChangeCapabilities {
                 inputSchema: .init(fields: [
                     .init(name: "destination", description: "Absolute destination folder", required: true)
                 ]),
-                riskLevel: .high
+                // Move claims mv only when a whole folder is not being reorganised;
+                // finder.organize claims it for that, and whichever the registry finds
+                // first is the one the gate names.
+                riskLevel: .high,
+                supersedesShellVerbs: copy ? ["cp", "ditto"] : []
             ) { request in
                 guard let path = request.input["destination"], !path.isEmpty else {
                     throw AICapabilityError.missingInput("destination")
@@ -98,7 +102,8 @@ enum FinderFileChangeCapabilities {
                     .init(name: "destination", description: "Absolute parent directory", required: true),
                     .init(name: "name", description: "New folder name", required: true),
                 ]),
-                riskLevel: .medium
+                riskLevel: .medium,
+                supersedesShellVerbs: ["mkdir"]
             ) { request in
                 guard let destination = request.input["destination"], !destination.isEmpty else {
                     throw AICapabilityError.missingInput("destination")

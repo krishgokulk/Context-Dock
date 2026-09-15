@@ -1,6 +1,7 @@
 import AddressBook
 import AppIntents
 import AppKit
+
 import Combine
 import Contacts
 import Darwin
@@ -10,6 +11,12 @@ import Quartz
 import SwiftTerm
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// Coalesces global-search index rebuilds. Extensions can't hold stored state, and the rebuild
+/// is main-thread work heavy enough to show up in spin reports, so the clock lives here.
+enum GlobalSearchIndexThrottle {
+    @MainActor static var lastRebuild: Date = .distantPast
+}
 import Vision
 
 extension LauncherView {
@@ -148,23 +155,19 @@ extension LauncherView {
         guard let scope = activeVisibleGlobalScopedMenuScope(for: query),
             scope.isExplicitAppScope
         else { return nil }
-        let scopedQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let isSystemCommandScope = scope.scopedBundleId.hasPrefix("syscmd://")
         let isCLIScope = scope.scopedBundleId.hasPrefix("cli://")
-        let resolvedPills = cachedGlobalAppScopeDockPills(query: scopedQuery, scope: scope)
-            .filter { pill in
-                guard !pill.isSeparator else { return false }
-                if isSystemCommandScope { return pill.rankingKind == "systemCommand" }
-                if isCLIScope { return pill.rankingKind == "cliTool" }
-                // Running-app capsules are isolated cached-menu scopes. Generic
-                // content search, web search, app launch, window management, tools,
-                // and Global Context actions belong to other surfaces.
-                return ["menu", "submenuChild", "finderMenu"].contains(pill.rankingKind)
-            }
-        // System-command providers define semantic display order directly:
-        // power control, summary, then devices. The shared result shell handles
-        // its own dock transform, so keep the provider array unchanged.
-        let pills = resolvedPills
+        // A cli:// scope is a command workspace: the typed text is the tool's prompt, not
+        // a filter over rows. Its only row was the tool's own pill, so the sheet appeared
+        // on an empty query, vanished the moment a typed letter missed the pill's search
+        // terms, and flickered back when a later letter hit them — the dock grew and
+        // shrank while typing, and again on entering and leaving the scope. A System
+        // Command scope keeps its rows because those are real, selectable device/control
+        // rows; a CLI tool has none.
+        if isCLIScope {
+            return emptyGlobalGroupedListNavigationState()
+        }
+        let pills = globalScopedResultPills(scope: scope)
         guard !pills.isEmpty else {
             return emptyGlobalGroupedListNavigationState()
         }
@@ -204,6 +207,83 @@ extension LauncherView {
         )
     }
 
+    /// One scoped result pipeline for the dock and corner; order and actions stay intact.
+    func globalScopedResultPills(scope: DockScopeResolution) -> [DockPill] {
+        let query = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        var pills = cachedGlobalAppScopeDockPills(query: query, scope: scope)
+        if isBrowserMenuSource(scope.scopedBundleId), !query.isEmpty {
+            if LiveMenuHistoryCache.usesLiveMenuHistory(scope.scopedBundleId) {
+                pills += buildLiveMenuHistoryPills(query: query, bundleId: scope.scopedBundleId)
+            } else {
+                pills += buildBrowserURLLibraryPills(
+                    query: query, scopedBrowserBundleId: scope.scopedBundleId,
+                    limit: maxListViewDockPills)
+            }
+        }
+        return pills.filter { pill in
+            guard !pill.isSeparator else { return false }
+            if scope.scopedBundleId.hasPrefix("syscmd://") { return pill.rankingKind == "systemCommand" }
+            if scope.scopedBundleId.hasPrefix("cli://") { return pill.rankingKind == "cliTool" }
+            return ["menu", "submenuChild", "finderMenu", "adapter", "recentURL", "browserCommand"]
+                .contains(pill.rankingKind)
+        }
+    }
+
+    func connectCornerGlobalResults() {
+        GlobalContextResultSource.shared.pureGlobalResults = { query in
+            let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !q.isEmpty else { return [] }
+            let state = instantGlobalGroupedListNavigationState(for: q)
+            let appRows = state.appResults.map { result in
+                globalAppResultDockPill(result)
+            }
+            return state.menuFirst ? state.menuPills + appRows : appRows + state.menuPills
+        }
+        GlobalContextResultSource.shared.scopedResults = { query, bundleID, appName in
+            let scope: DockScopeResolution
+            if let bundleID, !bundleID.isEmpty {
+                scope = DockScopeResolution(
+                    scopedBundleId: bundleID, scopedAppName: appName ?? "",
+                    scopedSearchQuery: query, isExplicitAppScope: true, isGlobalScope: false)
+            } else {
+                guard let target = indexedGlobalAppMenuTarget(
+                    for: query, allowPrefixAlias: false, preserveRemainingQueryTokens: true)
+                    ?? installedAppMenuTarget(
+                        for: query, runningOnly: false, includeAppsWithoutMenuSnapshot: true,
+                        allowPrefixAlias: false, preserveRemainingQueryTokens: true),
+                    !target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                    !target.bundleId.contains("://")
+                else { return nil }
+                scope = DockScopeResolution(
+                    scopedBundleId: target.bundleId, scopedAppName: target.appName,
+                    scopedSearchQuery: target.actionQuery, isExplicitAppScope: true, isGlobalScope: false)
+            }
+            return globalScopedResultPills(scope: scope)
+        }
+    }
+
+    func globalAppResultDockPill(_ result: SearchResult) -> DockPill {
+        var pill = DockPill(
+            id: "global-result-\(result.trackingIdentifier)",
+            name: result.title,
+            icon: "app",
+            badge: result.subtitle,
+            execute: { executeGlobalAppSearchResult(result) }
+        )
+        pill.menuItemImage = result.icon
+        pill.menuContext = result.subtitle
+        pill.sourceAppName = result.subtitle
+        pill.sourceBundleId = bundleIdentifier(forApplicationResult: result) ?? ""
+        pill.rankingKind = result.type == .extensionCommand ? "globalCommand" : "application"
+        pill.trackingIdentifier = result.trackingIdentifier
+        pill.searchTerms = [result.title, result.subtitle]
+        pill.rankingScore = result.score
+        pill.keyboardShortcutLabel = result.displayBadges.first
+        pill.previewPath = result.filePath
+        pill.dragProvider = result.dragProvider
+        return pill
+    }
+
     func visibleGlobalGroupedListNavigationState(
         for query: String
     ) -> GlobalGroupedListNavigationState {
@@ -216,6 +296,57 @@ extension LauncherView {
         }
         return visibleGlobalScopedMenuNavigationState(for: query)
             ?? globalGroupedListNavigationState(for: query)
+    }
+
+    /// Opens an app-scope capsule's result sheet. Typing keeps the capsule compact; this is
+    /// the one transition that reveals its rows, so it also seats the first selection and
+    /// animates the panel as a single motion.
+    func expandScopedCapsuleSheet(selectFirst: Bool) {
+        guard !globalContextViewModel.scopedSheetExpanded else { return }
+        globalContextViewModel.scopedSheetExpanded = true
+        // `typingSnapshot.phase` is the documented single source of truth for expansion, and
+        // several gates key off it (the Global Context surface only renders when the snapshot
+        // stops asking for the top match alone). A scoped capsule never runs the typing
+        // pipeline, so its phase would sit at .typing forever and ↓ would set a flag nothing
+        // downstream believed — the dock stayed a transparent pill with no sheet.
+        if globalContextViewModel.typingSnapshot.phase != .expanded {
+            globalContextViewModel.typingSnapshot.phase = .expanded
+        }
+        if selectFirst {
+            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if isGlobalContextActive {
+                let state = visibleGlobalGroupedListNavigationState(for: q)
+                if state.totalCount > 0 {
+                    setGlobalGroupedFocus(
+                        globalGroupedVisibleOrder(state: state).first, state: state)
+                }
+            } else {
+                // Frontmost Context Dock renders dock pills: seat the first non-separator row
+                // so ↓ lands on something and the next ↓ moves down the list.
+                let pills = renderedOrderDockPills(for: q)
+                if let index = pills.firstIndex(where: { !$0.isSeparator }) {
+                    l2.pillNavViaKeyboard = true
+                    l2.focusedPillIndex = index
+                }
+            }
+        }
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+    }
+
+    /// Collapses the capsule back to its input. Called whenever the query or the scope
+    /// changes, so a new search starts compact instead of inheriting the open sheet.
+    func collapseScopedCapsuleSheet() {
+        guard globalContextViewModel.scopedSheetExpanded else { return }
+        globalContextViewModel.scopedSheetExpanded = false
+        // Back to the compact contract: the snapshot asks for the top match alone again.
+        if globalContextViewModel.typingSnapshot.phase == .expanded {
+            globalContextViewModel.typingSnapshot.phase =
+                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? .idle : .typing
+        }
+        l2.focusedPillIndex = nil
+        focusedAppPillIndex = nil
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
     }
 
     func isActiveGlobalRunningAppMenuScope() -> Bool {
@@ -753,30 +884,11 @@ extension LauncherView {
         }
     }
 
+    /// Delegates to the one shared definition. Copies of this predicate drifted apart:
+    /// some CLI-suggestion paths filtered on it while others took every enabled package,
+    /// so PATH binaries the user never added ("tac", "pdf2ps") ghost-completed as scopes.
     func isUserAddedGlobalCLITool(_ package: TerminalPackage) -> Bool {
-        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return false }
-        if settings.isCLIToolPinned(command) { return true }
-        let commandKey = normalizedDockPillText(command)
-        let packageNameKey = normalizedDockPillText(package.name)
-        if adapterManager.adapters.contains(where: { adapter in
-            let adapterKey = normalizedDockPillText(adapter.bundleId)
-            let adapterNameKey = normalizedDockPillText(adapter.appName)
-            if adapter.bundleId.lowercased().hasPrefix("cli://") {
-                return adapterKey.contains(commandKey)
-                    || (!packageNameKey.isEmpty && adapterKey.contains(packageNameKey))
-                    || adapterNameKey == commandKey
-                    || (!packageNameKey.isEmpty && adapterNameKey == packageNameKey)
-            }
-            return adapter.actions.contains { action in
-                action.type == .cliTool
-                    && (action.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
-            }
-        }) {
-            return true
-        }
-        let scopeIds = Set(["cli://\(command)", "cli_\(command)", command])
-        return package.contextAppBundleIds.contains { scopeIds.contains($0) }
+        terminalPackageManager.isUserAddedGlobalScope(package)
     }
 
     func globalSystemCommandScopeMatches(for query: String, limit: Int) -> [SearchResult] {
@@ -1039,76 +1151,8 @@ extension LauncherView {
         aliases: [String] = [],
         contexts: [String] = []
     ) -> Double? {
-        let q = normalizedDockPillText(query)
-        guard !q.isEmpty else { return nil }
-
-        let primaryText = normalizedDockPillText(primary)
-        let aliasTexts = aliases.map(normalizedDockPillText).filter {
-            !$0.isEmpty && $0 != primaryText
-        }
-        let contextTexts = contexts.map(normalizedDockPillText).filter { !$0.isEmpty }
-        let queryTokens = q.split(separator: " ").map(String.init)
-
-        func wordPrefixScore(_ text: String, base: Double) -> Double? {
-            let words = text.split(separator: " ").map(String.init)
-            guard let idx = words.firstIndex(where: { $0.hasPrefix(q) }) else { return nil }
-            return base - Double(idx * 34) - min(Double(text.count), 42)
-        }
-
-        var best: Double?
-        func keep(_ score: Double?) {
-            guard let score else { return }
-            best = max(best ?? -Double.infinity, score)
-        }
-
-        if primaryText == q { keep(12_000) }
-        if aliasTexts.contains(q) { keep(10_600) }
-        if primaryText.hasPrefix(q) {
-            keep(9_600 + Double(q.count * 20) - min(Double(primaryText.count), 48))
-        }
-        keep(wordPrefixScore(primaryText, base: 8_900 + Double(q.count * 12)))
-
-        for alias in aliasTexts {
-            if alias.hasPrefix(q) {
-                keep(8_250 + Double(q.count * 14) - min(Double(alias.count), 48))
-            }
-            keep(wordPrefixScore(alias, base: 7_700 + Double(q.count * 10)))
-        }
-
-        for context in contextTexts {
-            if context == q { keep(6_800) }
-            if context.hasPrefix(q) { keep(6_100 - min(Double(context.count), 48)) }
-            keep(wordPrefixScore(context, base: 5_700))
-        }
-
-        if q.count >= 2 {
-            if let range = primaryText.range(of: q) {
-                let offset = primaryText.distance(
-                    from: primaryText.startIndex, to: range.lowerBound)
-                keep(4_900 - Double(offset * 72) - min(Double(primaryText.count), 48))
-            }
-            for alias in aliasTexts {
-                if let range = alias.range(of: q) {
-                    let offset = alias.distance(from: alias.startIndex, to: range.lowerBound)
-                    keep(4_250 - Double(offset * 58) - min(Double(alias.count), 48))
-                }
-            }
-            for context in contextTexts where context.contains(q) {
-                keep(3_400 - min(Double(context.count), 48))
-            }
-        }
-
-        if queryTokens.count > 1 {
-            let primaryTokens = Set(dockPillTokens(primaryText))
-            let aliasTokens = Set(aliasTexts.flatMap(dockPillTokens))
-            let contextTokens = Set(contextTexts.flatMap(dockPillTokens))
-            let qSet = Set(queryTokens)
-            keep(Double(qSet.intersection(primaryTokens).count) * 820)
-            keep(Double(qSet.intersection(aliasTokens).count) * 680)
-            keep(Double(qSet.intersection(contextTokens).count) * 420)
-        }
-
-        return best
+        DockTextMatch.rankedScore(
+            query: query, primary: primary, aliases: aliases, contexts: contexts)
     }
 
     func appSearchMatchScore(
@@ -1892,7 +1936,33 @@ extension LauncherView {
 
     func executeFocusedGlobalGroupedListRow() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = visibleGlobalGroupedListNavigationState(for: q)
+        var state = visibleGlobalGroupedListNavigationState(for: q)
+        // Before the sheet expands there is no committed grouped state — that method returns
+        // empty on purpose, so SwiftUI body evaluation never starts index work per keystroke.
+        // The prepared snapshot is what exists at that point, and it is what the leading icon
+        // and the ghost are already drawn from. Without it Enter did nothing at all until the
+        // user pressed Down to expand, which is what committed the state.
+        if state.totalCount == 0,
+            let prepared = globalContextViewModel.preparedResults,
+            prepared.query == q,
+            let preparedState = prepared.navigationState,
+            preparedState.totalCount > 0
+        {
+            state = preparedState
+        }
+        // Neither snapshot has rows while the dock is compact: the grouped state is not
+        // committed until expansion, and preparedResults carries a nil navigationState at
+        // this point. The ghost and the leading icon come from
+        // currentOrImmediateGlobalAppMatches — verified by logging the real keystroke, which
+        // showed preparedQ matching the query with a nil state behind it. Enter runs that
+        // same row, so it acts on exactly what is on screen.
+        if state.totalCount == 0 {
+            guard let immediate = currentOrImmediateGlobalAppMatches(for: q).first else {
+                return false
+            }
+            executeGlobalAppSearchResult(immediate)
+            return true
+        }
         guard state.totalCount > 0 else { return false }
 
         let index =
@@ -1970,6 +2040,13 @@ extension LauncherView {
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return nil }
+
+        // CLI packages are an immediate, local match.  Do this before consulting the
+        // debounced grouped-result snapshot so the input completion stays in lockstep
+        // with the terminal result (for example, `bre` -> `brew`) on the first keystroke.
+        if let cli = directGlobalCLIScopeMatches(for: q, limit: 1).first {
+            return cli.title
+        }
 
         // Ghost must use the same visible order as the result sheet. If first row is
         // a menu command, preview that command, not the first app result.
@@ -2111,11 +2188,25 @@ extension LauncherView {
     func activateFocusedGlobalAppScopeIfPossible() -> Bool {
         guard isGlobalContextActive,
             currentGlobalScopedBundleID == nil,
-            searchInputCursorIsAtEnd(),
-            let result = focusedGlobalAppResultForInputPreview() ?? focusedOrTopGlobalAppResult()
+            searchInputCursorIsAtEnd()
         else { return false }
 
-        if result.subtitle.hasPrefix("syscmd://") {
+        // The input's leading CLI icon is resolved synchronously from the package
+        // registry, while the grouped app snapshot is intentionally debounced. On a
+        // quick Right Arrow those two could disagree and scope an old app result.
+        // Command-name prefix matches own this gesture until the user navigates to a
+        // different row explicitly.
+        if let cliResult = directGlobalCLIScopeMatches(
+            for: searchState.query,
+            limit: 1
+        ).first {
+            return activateGlobalInlineScope(result: cliResult, bundleID: cliResult.subtitle)
+        }
+
+        guard let result = focusedGlobalAppResultForInputPreview() ?? focusedOrTopGlobalAppResult()
+        else { return false }
+
+        if result.subtitle.hasPrefix("syscmd://") || result.subtitle.hasPrefix("cli://") {
             let activated = activateGlobalInlineScope(
                 result: result,
                 bundleID: result.subtitle
@@ -2155,6 +2246,12 @@ extension LauncherView {
         let typed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedQuery = typed.lowercased()
 
+        // Keep Right Arrow consistent with the immediate command result/leading icon,
+        // rather than waiting for the debounced grouped-result state to catch up.
+        if let cliResult = directGlobalCLIScopeMatches(for: typed, limit: 1).first {
+            return activateGlobalInlineScope(result: cliResult, bundleID: cliResult.subtitle)
+        }
+
         // Right Arrow always follows the visibly highlighted row. Commands enter
         // their scope immediately; apps first accept their visible completion.
         let state = visibleGlobalGroupedListNavigationState(for: normalizedQuery)
@@ -2178,8 +2275,22 @@ extension LauncherView {
             )
         }
 
-        let completionTitle = selectedResult?.title
-            ?? topContextMatchDockTitleForInputPreview()
+        // The ghost the user is looking at wins. It is computed by
+        // topContextMatchDockTitleForInputPreview from preparedResults, while selectedResult
+        // above comes from visibleGlobalGroupedListNavigationState — two snapshots that
+        // disagree about which row is first. Completing from the other one is what filled
+        // "iPhone Mirroring" while the input plainly ghosted "screenshot".
+        //
+        // Only accept it as the completion when it actually continues what was typed;
+        // otherwise fall back to the selected row, since a ghost that does not extend the
+        // query is not what Tab is completing.
+        let displayedGhost = topContextMatchDockTitleForInputPreview()
+        let ghostContinuesQuery =
+            displayedGhost?.lowercased().hasPrefix(normalizedQuery) == true
+        let completionTitle =
+            (ghostContinuesQuery ? displayedGhost : nil)
+            ?? selectedResult?.title
+            ?? displayedGhost
             ?? focusedOrTopGlobalAppResult()?.title
 
         guard !typed.isEmpty,
@@ -2203,6 +2314,14 @@ extension LauncherView {
 
     @discardableResult
     func activateGlobalInlineScope(result: SearchResult, bundleID: String) -> Bool {
+        if bundleID.hasPrefix("cli://") {
+            // Entering a CLI scope is the moment its documentation is about to be used, so
+            // it is the right moment to notice the binary was upgraded since it was scanned.
+            // Detached and pinned-only: this must never delay the scope opening.
+            Task.detached(priority: .utility) {
+                await TerminalPackageManager.shared.refreshStaleHelpForPinnedTools()
+            }
+        }
         guard shouldUsePureGlobalAppSearch,
             isGlobalContextActive,
             !hasSelectionScopeSurface,
@@ -2444,6 +2563,7 @@ extension LauncherView {
             globalContextViewModel.idleCollapseTask?.cancel()
             globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.stickyLeadingMatchIcon = nil
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
             globalContextViewModel.prepareTask = nil
@@ -2455,6 +2575,9 @@ extension LauncherView {
             globalContextViewModel.idleCollapseTask?.cancel()
             globalContextViewModel.idleCollapseTask = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            globalContextViewModel.scopedSheetExpanded = false
+            measuredGlobalListContentHeight = 0
+            globalContextViewModel.stickyLeadingMatchIcon = nil
             globalContextViewModel.preparedResults = nil
             globalContextViewModel.prepareTask?.cancel()
             globalContextViewModel.prepareTask = nil
@@ -2476,7 +2599,14 @@ extension LauncherView {
             preparedResultsVersion: preparedVersion
         )
         scheduleBackgroundGlobalContextPreparation(q)
-        scheduleEligibleGlobalContextAutoExpansion(query: q)
+        // No auto-expansion. The dock's contract is one the user drives: typing shows the
+        // ghost match in a compact capsule, ↓ opens the sheet. A timer that opened it 360ms
+        // after a typing pause made the surface behave differently depending on how fast you
+        // type — compact in a fast burst, expanded the moment you hesitated — and once open
+        // the phase stays expanded while refining, so every later keystroke rendered the
+        // full sheet.
+        globalContextViewModel.autoExpandTask?.cancel()
+        globalContextViewModel.autoExpandTask = nil
         if wasExpanded { scheduleGlobalContextIdleCollapse() }
 
         // Search the immutable Global Context index away from the main actor. Every
@@ -2502,7 +2632,12 @@ extension LauncherView {
                     self.globalInlineAppScope == nil
                 else { return }
 
-                var matchDockIcons = resolved
+                // The search index is intentionally lightweight and can carry a
+                // generic executable/app placeholder. Resolve only these bounded,
+                // already-matched rows on the main actor before we publish the
+                // ready state. This mirrors Spotlight's fast-results → real-icon
+                // refinement without doing bundle I/O for every keystroke.
+                var matchDockIcons = resolved.map { self.refinedMatchDockIcon($0) }
                 if let target = self.transientGlobalInlineAppScopeTarget(for: q),
                     !matchDockIcons.contains(where: { $0.bundleID == target.bundleId })
                 {
@@ -2531,6 +2666,10 @@ extension LauncherView {
 
                 let hasExpandableMatch = matchDockIcons.contains { $0.isExpandable }
                 self.globalContextViewModel.isResolvingFastMatches = false
+                // Top match owns the leading input icon (Spotlight behaviour). Written
+                // on every resolve, so an empty result clears it instead of stranding
+                // the previous query's icon.
+                self.globalContextViewModel.stickyLeadingMatchIcon = matchDockIcons.first
                 self.globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot(
                     query: q,
                     phase: wasExpanded
@@ -2559,6 +2698,37 @@ extension LauncherView {
                 }
             }
         }
+    }
+
+    /// Replaces an indexed fallback image with the real running/bundle icon once a
+    /// match is ready to draw. Called for at most 12 results, after the 24 ms input
+    /// coalescing pass; it is deliberately not part of the hot index query.
+    func refinedMatchDockIcon(_ item: MatchDockIcon) -> MatchDockIcon {
+        guard let bundleID = item.bundleID,
+              !bundleID.isEmpty,
+              !bundleID.hasPrefix("cli://"),
+              !bundleID.hasPrefix("syscmd://")
+        else { return item }
+
+        let icon: NSImage?
+        if let running = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
+        }) {
+            icon = resolvedRunningAppIcon(for: running)
+        } else {
+            icon = resolvedApplicationIcon(bundleIdentifier: bundleID, appName: item.title)
+        }
+        guard let icon else { return item }
+        return MatchDockIcon(
+            id: item.id,
+            bundleID: item.bundleID,
+            title: item.title,
+            icon: icon,
+            isRunning: item.isRunning,
+            isExpandable: item.isExpandable,
+            score: item.score,
+            isExactAppPrefix: item.isExactAppPrefix
+        )
     }
 
     /// Stage zero of expanded Global Context search. Spotlight removes stale rows in the
@@ -2645,32 +2815,6 @@ extension LauncherView {
                     // here would replay the sheet's entrance on every keystroke.
                 }
             }
-        }
-    }
-
-    /// Auto-reveal is limited to Global Context's launcher sources. Frontmost-app actions,
-    /// Finder/file results, selection actions, and provider-backed scopes stay compact until ↓.
-    func scheduleEligibleGlobalContextAutoExpansion(query: String) {
-        globalContextViewModel.autoExpandTask?.cancel()
-        globalContextViewModel.autoExpandTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 360_000_000)
-            defer { globalContextViewModel.autoExpandTask = nil }
-            guard !Task.isCancelled,
-                isGlobalContextActive,
-                shouldUsePureGlobalAppSearch,
-                globalInlineAppScope == nil,
-                currentGlobalScopedBundleID == nil,
-                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                    .lowercased() == query,
-                globalContextViewModel.typingSnapshot.phase != .expanded
-            else { return }
-
-            let state = visibleGlobalGroupedListNavigationState(for: query)
-            let hasAppsOrRunningApps = !state.appResults.isEmpty
-            let hasGlobalCommandsOrCachedMenus =
-                !state.menuPills.isEmpty || !state.menuGroups.isEmpty || !state.appMenuGroups.isEmpty
-            guard hasAppsOrRunningApps || hasGlobalCommandsOrCachedMenus else { return }
-            _ = expandGlobalContextTypingMatch(selectFirst: true)
         }
     }
 
@@ -2780,9 +2924,8 @@ extension LauncherView {
         //    was suppressed during compact typing, so the stale value would size the
         //    window to the compact bar (the "↓ shrinks the dock" bug). The rendered
         //    list refines this via updateMeasuredGlobalListHeight right after commit.
-        let estimatedRows = CGFloat(min(state.totalCount, 12))
-        measuredGlobalListContentHeight = min(
-            max(estimatedRows * 52 + 36, 86), listViewVisibleHeight)
+        measuredGlobalListContentHeight = DockMetrics.globalListEstimatedHeight(
+            rowCount: min(state.totalCount, 12), maximum: listViewVisibleHeight)
 
         // 6. Let SwiftUI reconcile the committed row payload before revealing its shell. The
         // compact dock continues showing its spinner during this single turn; the expanded
@@ -2830,6 +2973,8 @@ extension LauncherView {
             // Resolve icon: prefer live running icon, fall back to doc's pre-cached icon
             let icon: NSImage?
             switch doc.action {
+            case .userExtension:
+                icon = doc.icon
             case .activatePID(let pid, let bundleId, let path):
                 let app =
                     runningRegularApps.first { $0.processIdentifier == pid }
@@ -2974,6 +3119,58 @@ extension LauncherView {
                 results.append(result)
                 continue
 
+            case .adapterAction(let bundleId, let appName, let actionId):
+                // Actions the user authored in App Adapters, runnable from anywhere rather
+                // than only after scoping to the app. Executed through the same
+                // AppAdapterManager.execute the dock and scope rows use.
+                guard
+                    let action = AppAdapterManager.shared
+                        .actions(for: bundleId)
+                        .first(where: { $0.id == actionId })
+                else { continue }
+                icon = doc.icon
+                let capturedDoc = doc
+                let capturedBundleId = bundleId
+                let capturedAppName = appName
+                var result = SearchResult(
+                    title: action.name,
+                    subtitle: "\(appName) · \(action.type.displayName)",
+                    icon: icon,
+                    action: {
+                        recordGlobalSearchDocumentUse(capturedDoc, query: query)
+                        let capturedContext = effectiveAXContextForConversation()
+                        Task {
+                            AppInteractionStore.shared.record(
+                                bundleId: capturedBundleId,
+                                appName: capturedAppName,
+                                query: query,
+                                kind: action.type == .pageJS ? .pageJS : .adapterAction,
+                                actionId: action.id
+                            )
+                            let outcome = await AppAdapterManager.shared.execute(
+                                action,
+                                context: capturedContext,
+                                targetBundleId: capturedBundleId,
+                                query: query
+                            )
+                            guard !outcome.0 else { return }
+                            let detail = outcome.1.trimmingCharacters(in: .whitespacesAndNewlines)
+                            await MainActor.run {
+                                AppToast.show(
+                                    detail.isEmpty ? "Couldn't run \(action.name)" : detail,
+                                    icon: "exclamationmark.triangle", tint: .orange, duration: 4)
+                            }
+                        }
+                    },
+                    type: .extensionCommand,
+                    filePath: nil,
+                    contactData: nil,
+                    stableID: doc.id
+                )
+                result.score = doc.sourceKind.rawValue
+                results.append(result)
+                continue
+
             case .cachedMenu:
                 continue
 
@@ -3052,7 +3249,11 @@ extension LauncherView {
             if !trimmedQuery.isEmpty {
                 AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
             }
-        case .systemCommandScope, .cliScope:
+        case .userExtension:
+            if !trimmedQuery.isEmpty {
+                AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
+            }
+        case .systemCommandScope, .cliScope, .adapterAction:
             AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
             AppUsageLearner.shared.recordAction(doc.title, inBundleID: usableBundleId)
         case .cachedMenu(_, _, let path, _, _):
@@ -3069,8 +3270,15 @@ extension LauncherView {
     // Rebuild GlobalSearchService index from current @State sources.
     // Call after allApplications loads or running apps change.
     func rebuildGlobalSearchIndex() {
+        connectCornerGlobalResults()
         let started = Date()
         guard !allApplications.isEmpty || !runningRegularApps.isEmpty else { return }
+        // Rebuilding walks every cached menu snapshot and re-grams it on the main thread —
+        // spin reports caught it holding the main queue for ~0.5s. The open path alone asks for
+        // two rebuilds (frontmost warm, then the recent-app warm a second later), and every
+        // reopen asks again. Coalesce: at most one rebuild per 8s.
+        guard Date().timeIntervalSince(GlobalSearchIndexThrottle.lastRebuild) > 8 else { return }
+        GlobalSearchIndexThrottle.lastRebuild = Date()
         GlobalSearchIndexStatus.shared.begin(message: "Building Global Context index...")
 
         var docs: [GlobalSearchService.SearchDocument] = []
@@ -3197,11 +3405,39 @@ extension LauncherView {
             message: "Indexed apps and running app menus..."
         )
 
-        // 5. CLI tools
+        // 5. CLI tools the user deliberately made a scope — pinned, or wired into an App
+        // Adapter. `packages` also holds every executable BinaryWatcherService found on PATH,
+        // and indexing those made "tac" ghost-complete as a scope the user never added and
+        // Settings could neither list nor remove. Same predicate Settings uses.
         let cliIcon = NSWorkspace.shared.icon(forFileType: "public.unix-executable")
         for pkg in terminalPackageManager.packages
-        where pkg.isEnabled && isUserAddedGlobalCLITool(pkg) {
+        where pkg.isEnabled && terminalPackageManager.isUserAddedGlobalScope(pkg) {
             addIfNew(.init(cliPackage: pkg, icon: cliIcon))
+        }
+
+        // 5b. Actions the user authored in App Adapters. Menu-bar actions are excluded
+        // because AXMenuReader owns menus and section 7 already indexes them; CLI-tool
+        // actions are excluded because they attach a terminal to a dock scope, which is not
+        // something a global search row can do.
+        for adapter in adapterManager.adapters where adapter.isEnabled {
+            let appName = adapter.appName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let bundleId = adapter.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bundleId.isEmpty, !bundleId.hasPrefix("cli://") else { continue }
+            // The app icon is only a fallback. Each action carries its own SF Symbol and
+            // accent colour — the glyphs shown in Settings — and rows were rendering blank
+            // because a Safari Web App has no bundle URL to take an app icon from, leaving
+            // nil. The action's own symbol is both more available and more informative.
+            let appIcon = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+            for action in adapter.visibleActions
+            where action.type != .menubar && action.type != .cliTool {
+                addIfNew(
+                    .init(
+                        adapterAction: action,
+                        appName: appName.isEmpty ? bundleId : appName,
+                        bundleId: bundleId,
+                        icon: adapterActionSymbolImage(action) ?? appIcon))
+            }
         }
 
         // 6. Global system commands
@@ -3247,12 +3483,23 @@ extension LauncherView {
             )
             addIfNew(.init(browserURL: entry, icon: icon))
         }
+        // Global Extensions the user built. They reached the launcher's own list and no
+        // further, so Global Context and the corner could not find one by any name (#15).
+        for ext in UserGlobalExtensionStore.shared.enabledExtensions {
+            addIfNew(
+                .init(
+                    userExtension: ext,
+                    icon: NSImage(
+                        systemSymbolName: ext.icon, accessibilityDescription: ext.name)))
+        }
+
         GlobalSearchIndexStatus.shared.update(
             progress: 0.9,
             message: "Publishing search index..."
         )
 
         GlobalSearchService.shared.rebuild(with: docs)
+        GlobalContextResultSource.shared.refresh()
         GlobalSearchIndexStatus.shared.finish(documentCount: docs.count)
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 8 {
@@ -3275,6 +3522,11 @@ extension LauncherView {
             pendingGlobalAppQuery = nil
             pendingGlobalGroupedQuery = nil
             globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
+            // Clearing the field is a fresh start: drop the capsule's expanded flag and the
+            // last measured sheet height too, or the next query inherits the previous
+            // session's open sheet and its size.
+            globalContextViewModel.scopedSheetExpanded = false
+            measuredGlobalListContentHeight = 0
             globalContextViewModel.preparedResults = nil
             cachedGlobalAppQuery = ""
             cachedGlobalAppMatches = []
@@ -5025,6 +5277,32 @@ extension LauncherView {
         }?.url
     }
 
+    /// The action's own SF Symbol, tinted with its accent colour, as a row icon.
+    /// Nil when the symbol name is empty or macOS does not know it, so the caller can fall
+    /// back to the app icon rather than render an empty frame.
+    func adapterActionSymbolImage(_ action: AdapterAction) -> NSImage? {
+        let name = action.icon.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+            let image = NSImage(systemSymbolName: name, accessibilityDescription: action.name)
+        else { return nil }
+        let tint: NSColor
+        switch (action.accentColor ?? "blue").lowercased() {
+        case "red": tint = .systemRed
+        case "green": tint = .systemGreen
+        case "orange": tint = .systemOrange
+        case "yellow": tint = .systemYellow
+        case "purple": tint = .systemPurple
+        case "indigo": tint = .systemIndigo
+        case "teal": tint = .systemTeal
+        case "pink": tint = .systemPink
+        case "gray", "grey": tint = .secondaryLabelColor
+        default: tint = .systemBlue
+        }
+        let configured = image.withSymbolConfiguration(
+            NSImage.SymbolConfiguration(paletteColors: [tint]))
+        return configured ?? image
+    }
+
     func cachedGlobalAppScopeDockPills(
         query: String,
         scope: DockScopeResolution,
@@ -5080,6 +5358,21 @@ extension LauncherView {
                 appName: scope.scopedAppName,
                 query: actionQuery
             )
+            // Actions the user authored in App Adapters. They were built only for Context
+            // Dock, so an app scope in Global Context showed cached menus and nothing the
+            // user had added themselves. Menu-bar actions stay out: AXMenuReader owns menus
+            // and would duplicate them. CLI-tool actions stay out too — they attach a
+            // terminal to the dock, which is not what a Global Context row does.
+            let scopedAdapterActions = adapterManager
+                .actions(for: scope.scopedBundleId, query: actionQuery)
+                .filter { $0.type != .menubar && $0.type != .cliTool }
+            if !scopedAdapterActions.isEmpty {
+                pills += adapterActionPills(
+                    actions: scopedAdapterActions,
+                    scopedBundleId: scope.scopedBundleId,
+                    scopedAppName: scope.scopedAppName,
+                    scopedSearchQuery: actionQuery)
+            }
         }
         let visible =
             pills
@@ -5659,6 +5952,23 @@ extension LauncherView {
         return 0
     }
 
+    /// Never collapse an open sheet below one comfortable row — a 40pt sliver reads as a
+    /// rendering bug rather than a short result list.
+    var listViewMinimumContentHeight: CGFloat { 86 }
+
+    /// Height to reserve for the first frame of a reveal, before the rendered list has
+    /// reported its real height. Row metrics match `pillListRow`; the extra covers one
+    /// section header and the list's own padding.
+    func estimatedListContentHeight(rowCount: Int) -> CGFloat {
+        let rowHeight: CGFloat = 52
+        let headerReserve: CGFloat = 24
+        let contentPadding: CGFloat = 12
+        return max(
+            CGFloat(rowCount) * rowHeight + headerReserve + contentPadding,
+            listViewMinimumContentHeight
+        )
+    }
+
     var currentListViewDockContentHeight: CGFloat {
         let rowCount = currentListViewDockRowCount
         // `shouldShowSeparateActionList` can become true one render before async app/menu
@@ -5677,6 +5987,7 @@ extension LauncherView {
                 (bundle?.hasPrefix("syscmd://") == true || bundle?.hasPrefix("cli://") == true)
                 && activeNotepadScopeCommand == nil
             if isExtensionListScope { return 0 }
+            guard isDockResultSheetRevealed else { return 0 }
             return usesVerticalListDockLayout ? listViewVisibleHeight : 0
         }
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -5685,6 +5996,9 @@ extension LauncherView {
         // place as the visible glass; otherwise the old 372pt reservation leaves a clear
         // window tail that intercepts clicks below a short scoped result list.
         if isActiveGlobalRunningAppMenuScope() {
+            // Compact until ↓: no reserved viewport, so the window stays a capsule while
+            // the user types instead of throwing the sheet open on the first keystroke.
+            guard isDockResultSheetRevealed else { return 0 }
             let isExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
                 || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
@@ -5694,15 +6008,10 @@ extension LauncherView {
             if isExtensionScope { return listViewVisibleHeight }
             let measured = measuredGlobalListContentHeight
             if measured > 1 {
-                return min(max(measured, 86), listViewVisibleHeight)
+                return min(max(measured, listViewMinimumContentHeight), listViewVisibleHeight)
             }
-            let rowHeight: CGFloat = 52
-            let headerReserve: CGFloat = 24
-            let contentPadding: CGFloat = 12
-            return min(
-                max(CGFloat(rowCount) * rowHeight + headerReserve + contentPadding, 86),
-                listViewVisibleHeight
-            )
+            return DockMetrics.globalListEstimatedHeight(
+                rowCount: rowCount, maximum: listViewVisibleHeight)
         }
         if shouldUsePureGlobalAppSearch,
             !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil
@@ -5726,7 +6035,18 @@ extension LauncherView {
         // like the sheet jumps up/down. Once the list opens, reserve the same fixed list
         // height as Global Context; only row content changes inside the scroll area.
         if showContextInDock, !isGlobalContextActive {
-            return listViewVisibleHeight
+            // Compact until ↓, so the window does not reserve a sheet the user has not asked
+            // for. Surfaces that are their own list stay open — see isDockResultSheetRevealed.
+            guard isDockResultSheetRevealed else { return 0 }
+            // Hug the rows. The fixed 372pt drawer existed because the sheet used to be open
+            // WHILE typing, where measuring made the window chase every keystroke. The sheet
+            // now opens once, on ↓, and typing collapses it — so it can end where its content
+            // ends instead of leaving dead space under two rows.
+            let measured = measuredGlobalListContentHeight
+            if measured > 1 {
+                return min(max(measured, listViewMinimumContentHeight), listViewVisibleHeight)
+            }
+            return min(estimatedListContentHeight(rowCount: rowCount), listViewVisibleHeight)
         }
 
         // Non-Context scopes can still hug measured content.
@@ -5741,11 +6061,8 @@ extension LauncherView {
         if isFinderDesktopOnlyMode {
             return listViewVisibleHeight
         }
-        let rowHeight: CGFloat = 52
-        let headerReserve: CGFloat = rowCount > 0 ? 24 : 0
-        let contentPadding: CGFloat = 12
-        let dynamicHeight = CGFloat(rowCount) * rowHeight + headerReserve + contentPadding
-        return min(max(dynamicHeight, 86), listViewVisibleHeight)
+        return DockMetrics.globalListEstimatedHeight(
+            rowCount: rowCount, includesHeader: rowCount > 0, maximum: listViewVisibleHeight)
     }
 
     var isExplicitAppScopeLocked: Bool {
@@ -5818,7 +6135,8 @@ extension LauncherView {
     var listViewResizeToken: String {
         guard usesVerticalListDockLayout else { return "off" }
         if isActiveGlobalRunningAppMenuScope() {
-            return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
+            let expanded = isDockResultSheetRevealed ? "open" : "compact"
+            return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(expanded):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
         }
         // Pure Global Context must feel like Spotlight/Raycast: once results are visible,
         // the window frame stays fixed and only row content changes inside the scroll area.
@@ -5827,7 +6145,8 @@ extension LauncherView {
             return "global:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         if showContextInDock {
-            return "scoped:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
+            let expanded = isDockResultSheetRevealed ? "open" : "compact"
+            return "scoped:\(expanded):\(currentListViewDockRowCount > 0 ? "open" : "closed")"
         }
         // Frontmost Context Dock now also hugs the MEASURED content (section headers vary
         // per app, so row count alone undercounts) — react to the measured height in 8px
@@ -5839,10 +6158,31 @@ extension LauncherView {
     /// sheet sizes to this (via currentListViewDockContentHeight) and the resize token
     /// reacts to it, so the window settles to fit the actual rendered rows.
     func updateMeasuredGlobalListHeight(_ height: CGFloat) {
+        // A clipped list measures itself as zero. Recording that wiped the real height, so
+        // the first ↓ sized the sheet to nothing (a transparent card) and only a second pass
+        // — after the rows re-measured — showed it. Keep the last real measurement instead.
+        guard isDockResultSheetRevealed else { return }
         let clamped = max(0, height)
         guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
+        let previous = measuredGlobalListContentHeight
         measuredGlobalListContentHeight = clamped
-        guard !isGlobalContextActive else { return }
+        guard isGlobalContextActive else { return }
+
+        // The expanded sheet is sized from an estimate — rows × 52 + 36 — taken before the
+        // rows exist. Real rows are not 52pt (the codebase carries 52, 58 and 66 for
+        // different lists), so when they are taller the window is short and the last row is
+        // clipped. This measurement is the true height, and it was being stored and then
+        // ignored: the early return meant the window was never corrected while Global
+        // Context was active, which is the one mode that uses the estimate.
+        //
+        // Correct only once the sheet is already expanded, so compact typing keeps its
+        // suppression and the window does not chase every keystroke. The threshold is well
+        // above the 2pt noise floor above, so sub-pixel reflow cannot start a resize loop.
+        guard globalContextViewModel.typingSnapshot.phase == .expanded,
+            abs(previous - clamped) > 6
+        else { return }
+        requestWindowSizeUpdate(
+            reason: .modeChanged, animated: true, debounceNanoseconds: 30_000_000)
     }
 
 }

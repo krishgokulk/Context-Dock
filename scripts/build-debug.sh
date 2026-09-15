@@ -32,6 +32,7 @@ xcodebuild \
   -scheme Context-Dock \
   -configuration Debug \
   -derivedDataPath "$DERIVED_DATA_DIR" \
+  -allowProvisioningUpdates \
   CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" \
   ENABLE_DEBUG_DYLIB=NO \
   build

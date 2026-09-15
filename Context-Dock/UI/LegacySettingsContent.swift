@@ -240,6 +240,21 @@ struct GeneralSettingsView: View {
                             caption: "Detects dev / browse / comms sessions and re-ranks adapter pills.")
                         Toggle("", isOn: $settings.sessionDetectionPills).labelsHidden()
                     }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Let the AI decide how to answer",
+                            caption: "Keyword matches become suggestions the AI can weigh, "
+                                + "instead of answering for it. Turn off to restore the older "
+                                + "keyword-first behaviour.")
+                        Toggle("", isOn: $settings.agentModelFirstRouting).labelsHidden()
+                    }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Auto-shrink the search field",
+                            caption: "After 2 seconds with nothing typed, the corner's search "
+                                + "field folds into the dock strip. Typing brings it back.")
+                        Toggle("", isOn: $settings.autoShrinkInputField).labelsHidden()
+                    }
                 }
             }
 
@@ -883,6 +898,11 @@ struct AIProviderSettingsView: View {
     @State private var discoveredFirstPartyProvider: AIProvider?
     @State private var firstPartyModelDiscoveryError: String?
     @State private var isDiscoveringFirstPartyModels = false
+    /// Typed rather than numeric: an empty field means "not priced", which a Double cannot
+    /// express, and a half-typed "3." must not be read as a rate mid-keystroke.
+    @State private var rateInput = ""
+    @State private var rateOutput = ""
+    @State private var rateCached = ""
     @State private var modelDiscoveryTask: Task<Void, Never>?
     @State private var isTestingAppleScriptModel = false
     @State private var appleScriptModelTestMessage: String?
@@ -894,6 +914,58 @@ struct AIProviderSettingsView: View {
         case failure(String)
     }
     
+    /// One prompt that steers every AI surface. Lives here rather than per-surface so
+    /// tone, language and standing rules are set once — the router folds it into whatever
+    /// system prompt General Chat, Context Dock chat or an extension panel builds.
+    @ViewBuilder
+    private var globalContextPromptSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Global Context Prompt")
+                .font(.headline)
+
+            Text("Prepended to every AI surface — General Chat, Context Dock chat and "
+                 + "extension panels. Use it for standing instructions: who you are, "
+                 + "preferred language, how answers should be formatted.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            TextEditor(text: $settings.globalContextPrompt)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(minHeight: 90)
+                .padding(6)
+                .background(Color.primary.opacity(0.05),
+                            in: RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1)
+                )
+                .overlay(alignment: .topLeading) {
+                    if settings.globalContextPrompt.isEmpty {
+                        Text("e.g. Answer concisely. I'm a macOS developer working in Swift.")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 14)
+                            .allowsHitTesting(false)
+                    }
+                }
+
+            HStack {
+                Text("\(settings.globalContextPrompt.count) characters")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                if !settings.globalContextPrompt.isEmpty {
+                    Button("Clear") { settings.globalContextPrompt = "" }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -907,7 +979,9 @@ struct AIProviderSettingsView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
-                
+
+                globalContextPromptSection
+
                 // Provider Selection
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Select Provider")
@@ -961,6 +1035,20 @@ struct AIProviderSettingsView: View {
 
                 Divider()
 
+                // Directly under the provider it describes. Usage was only reachable from a
+                // dock scope, which is not where anyone decides which provider to use.
+                ProviderUsagePanel(provider: settings.selectedAIProvider)
+
+                Divider()
+
+                DiagnosticsPanel()
+
+                Divider()
+
+                modelRateCardView
+
+                Divider()
+
                 appleScriptAutomationModelView
 
                 // Test Connection Button
@@ -987,6 +1075,8 @@ struct AIProviderSettingsView: View {
                                 connectionResultView(result)
                             }
                         }
+                        Text("Diagnostics")
+                            .font(.caption).foregroundStyle(.secondary)
                         HStack {
                             Button("Test Text") { testProviderText() }
                             Button("Test Vision") { testProviderVision() }
@@ -1042,12 +1132,18 @@ struct AIProviderSettingsView: View {
                     apiKey: settings.openAIAPIKey)
             }
         case .googleGemini:
-            apiKeyConfigView(
-                title: "Google Gemini API Key",
-                key: $settings.googleGeminiAPIKey,
-                placeholder: "AIza...",
-                helpURL: "https://makersuite.google.com/app/apikey"
-            )
+            VStack(alignment: .leading, spacing: 12) {
+                apiKeyConfigView(
+                    title: "Google Gemini API Key",
+                    key: $settings.googleGeminiAPIKey,
+                    placeholder: "AIza...",
+                    helpURL: "https://makersuite.google.com/app/apikey"
+                )
+                firstPartyModelPicker(
+                    selection: $settings.selectedGeminiModel,
+                    provider: .googleGemini,
+                    apiKey: settings.googleGeminiAPIKey)
+            }
         case .anthropic:
             VStack(alignment: .leading, spacing: 12) {
                 apiKeyConfigView(
@@ -1065,29 +1161,50 @@ struct AIProviderSettingsView: View {
             ollamaConfigView
         case .openAICompatible:
             openAICompatibleConfigView
+        case .kimi:
+            VStack(alignment: .leading, spacing: 12) {
+                apiKeyConfigView(
+                    title: "Kimi API Key",
+                    key: $settings.kimiAPIKey,
+                    placeholder: "sk-...",
+                    helpURL: "https://platform.moonshot.ai/console/api-keys"
+                )
+                TextField("Model", text: $settings.selectedKimiModel)
+                    .textFieldStyle(.roundedBorder)
+                Text("Official endpoint: https://api.moonshot.ai/v1")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .claudeCode:
+            ClaudeSubscriptionConfigView()
         case .claudeBridge:
             bridgeConfigView(
-                title: "Claude Pro Bridge",
-                subtitle: "Connect via VibeProxy or any OpenAI-compatible bridge exposing your Claude subscription.",
+                title: "Claude via Local Bridge",
+                subtitle: "Any OpenAI-compatible bridge you run that fronts a Claude subscription.",
                 icon: "arrow.triangle.2.circlepath.circle.fill",
                 iconColor: .purple,
                 endpointBinding: $settings.claudeBridgeEndpoint,
                 modelBinding: $settings.claudeBridgeModelID,
                 defaultEndpoint: "http://localhost:8317/v1",
-                defaultModel: "claude-3-5-sonnet-20241022",
-                vibeProxyNote: "Claude Pro → VibeProxy :8317 → DoraX. Your existing subscription pays."
+                defaultModel: AppSettings.defaultClaudeBridgeModelID,
+                vibeProxyNote: "Runs against whatever local bridge you have started — the "
+                    + "endpoint is found automatically. Replaying a subscription token "
+                    + "through a proxy is outside Anthropic's and OpenAI's consumer terms; "
+                    + "Claude Subscription above uses the sanctioned route instead."
             )
         case .chatGPTBridge:
             bridgeConfigView(
-                title: "ChatGPT Plus Bridge",
-                subtitle: "Connect via VibeProxy or any OpenAI-compatible bridge exposing your ChatGPT subscription.",
+                title: "ChatGPT via Local Bridge",
+                subtitle: "Any OpenAI-compatible bridge you run that fronts a ChatGPT subscription.",
                 icon: "arrow.triangle.2.circlepath.circle",
                 iconColor: .green,
                 endpointBinding: $settings.chatGPTBridgeEndpoint,
                 modelBinding: $settings.chatGPTBridgeModelID,
                 defaultEndpoint: "http://localhost:8317/v1",
-                defaultModel: "gpt-4o",
-                vibeProxyNote: "ChatGPT Plus → VibeProxy :8317 → DoraX. Your existing subscription pays."
+                defaultModel: AppSettings.defaultChatGPTBridgeModelID,
+                vibeProxyNote: "Runs against whatever local bridge you have started — the "
+                    + "endpoint is found automatically. Replaying a subscription token "
+                    + "through a proxy is outside OpenAI's consumer terms."
             )
         case .shortcuts:
             shortcutsConfigView
@@ -1211,6 +1328,109 @@ struct AIProviderSettingsView: View {
         }
     }
 
+    /// What this model costs, entered by the user.
+    ///
+    /// DoraX counts tokens exactly — the providers report them — but it does not ship a price
+    /// table: one is wrong the day a provider changes its pricing page, and someone would
+    /// pick a cheaper model on a number the app made up two releases ago. Enter the figures
+    /// from the provider's own page and the usage rows show money; leave them empty and they
+    /// show tokens and nothing else.
+    @ViewBuilder
+    private var modelRateCardView: some View {
+        let model = currentRateModelID
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Cost per million tokens")
+                .font(.subheadline)
+                .fontWeight(.medium)
+            if model.isEmpty {
+                Text("Choose a model above to record what it costs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    rateField("Input $", value: $rateInput)
+                    rateField("Output $", value: $rateOutput)
+                    rateField("Cached $", value: $rateCached)
+                }
+                Text(
+                    "From \(settings.selectedAIProvider.displayName)'s pricing page, for "
+                    + "\(model). Leave blank to show tokens only. Cached input is billed at "
+                    + "the input rate when left empty."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                let spend = AIModelRateCard.shared.todaySpend()
+                if spend.amount > 0 {
+                    Text(
+                        "Today: \(spend.amount.compactUSD)"
+                        + (spend.hasUnpriced ? " (plus models with no rate entered)" : ""))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .onAppear { loadRate(for: model) }
+        .onChange(of: currentRateModelID) { _, newModel in loadRate(for: newModel) }
+    }
+
+    private func rateField(_ label: String, value: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            TextField("—", text: value)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 90)
+                .onSubmit { saveRate() }
+        }
+    }
+
+    /// The model the rate applies to: whichever one this provider is set to use.
+    private var currentRateModelID: String {
+        switch settings.selectedAIProvider {
+        case .openAI: return settings.selectedOpenAIModel
+        case .anthropic: return settings.selectedAnthropicModel
+        case .googleGemini: return settings.selectedGeminiModel
+        case .ollama: return settings.selectedOllamaModel
+        case .openAICompatible: return settings.openAICompatibleModelID
+        case .kimi: return settings.selectedKimiModel
+        case .claudeBridge: return settings.claudeBridgeModelID
+        case .chatGPTBridge: return settings.chatGPTBridgeModelID
+        // Claude Code bills nothing per token — the subscription already paid. A rate
+        // card for it would invite a number that is not a cost.
+        case .onDevice, .shortcuts, .claudeCode: return ""
+        }
+    }
+
+    private func loadRate(for model: String) {
+        guard !model.isEmpty, let rate = AIModelRateCard.shared.rate(forModel: model) else {
+            rateInput = ""
+            rateOutput = ""
+            rateCached = ""
+            return
+        }
+        rateInput = String(rate.inputPerMillion)
+        rateOutput = String(rate.outputPerMillion)
+        rateCached = rate.cachedInputPerMillion.map { String($0) } ?? ""
+    }
+
+    private func saveRate() {
+        let model = currentRateModelID
+        guard !model.isEmpty else { return }
+        let input = Double(rateInput.trimmingCharacters(in: .whitespaces))
+        let output = Double(rateOutput.trimmingCharacters(in: .whitespaces))
+        // Both halves or neither: a rate with only one side priced would report a cost that
+        // is wrong in a direction the user cannot see.
+        guard let input, let output else {
+            AIModelRateCard.shared.set(nil, forModel: model)
+            return
+        }
+        AIModelRateCard.shared.set(
+            AIModelRate(
+                inputPerMillion: input,
+                outputPerMillion: output,
+                cachedInputPerMillion: Double(rateCached.trimmingCharacters(in: .whitespaces))),
+            forModel: model)
+    }
+
     private func firstPartyModelPicker(
         selection: Binding<String>,
         provider: AIProvider,
@@ -1288,6 +1508,8 @@ struct AIProviderSettingsView: View {
                     models = try await FirstPartyModelDiscovery.openAI(apiKey: apiKey)
                 case .anthropic:
                     models = try await FirstPartyModelDiscovery.anthropic(apiKey: apiKey)
+                case .googleGemini:
+                    models = try await FirstPartyModelDiscovery.gemini(apiKey: apiKey)
                 default:
                     models = []
                 }
@@ -1868,8 +2090,8 @@ struct AIProviderSettingsView: View {
                 provider: provider,
                 apiKey: key,
                 conversationHistory: [],
-                commandExecutor: { command, _ in
-                    (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output")
+                commandExecutor: { command, _, _ in
+                    (true, command.contains("TOOL_OK") ? "TOOL_OK" : "Simulated tool output", 0)
                 },
                 maxIterations: 2,
                 systemPromptOverride: "You are running provider QA. Call requested tool exactly once.",
@@ -3571,14 +3793,49 @@ Rules:
 - Optional "presets": [..] adds tappable preset values.
 
 ────────────────────────────────────────────────────────
-ADVANCED — LIVE SCOPE (a searchable auto-refreshing list, like Process Monitor):
-Add keyword "provider:custom" to turn the command into a live LIST. Then:
+ADVANCED — LIVE SCOPE (a panel of rows, like Process Monitor):
+Add keyword "provider:custom" to turn the command into a live PANEL. Then:
 - "script" is a ROWS script printing ONE JSON object PER LINE (NDJSON):
   {"id":"unique","title":"shown","subtitle":"dim","badge":"tag","icon":"SFSymbol-or-/abs/path"}
   Only "id" and "title" are required. No other output — one object per line.
 - "undoScript" is the ROW ACTION, run on Return. Selected row = $CD_ROW_ID, $CD_ROW_TITLE.
-- $CD_QUERY = typed text; filter rows with it for search-as-you-type.
 - Add "refresh:N" to auto-refresh every N seconds. All runs in the background.
+
+FIRST decide which of the TWO panel kinds you are building — they behave differently:
+
+1. BROWSE panel — the rows exist independently of what the user types
+   (ports, files, containers, branches). Print ALL rows; Context Dock filters
+   them by the typed text for you. Do NOT read $CD_QUERY.
+
+2. COMPUTED panel — the typed text IS the input; the rows are the answer
+   (currency converter, unit converter, calculator, a web search).
+   Read $CD_QUERY and print the RESULT rows. Never filter by the query — the
+   answer to "20 gbp" does not contain the text "20 gbp", so filtering it would
+   leave the panel empty.
+
+Reading $CD_QUERY in the rows script is what marks a panel COMPUTED. The script
+then re-runs as the user types (debounced), instead of being filtered.
+
+A COMPUTED panel MUST handle the empty query — print one hint row telling the
+user what to type, or the panel looks broken before they start typing.
+
+For file rows: put the ABSOLUTE PATH in "id". That gives the row the real file
+icon and thumbnail, Return opens it, and Space previews it in Quick Look.
+
+ROW LAYOUTS — a row can choose how it draws:
+- default: title + subtitle on one line, icon on the left.
+- "layout":"compare" — two values with a symbol between them, for conversions
+  and before/after results. Extra fields:
+    "left"        the input value, shown dimmer on the left
+    "right"       the result, shown large on the right
+    "centerIcon"  SF Symbol between them (default "arrow.right";
+                  "arrow.up.arrow.down" reads as a swap)
+  With compare, "title" becomes the small caption under the left value and
+  "badge" the caption under the right.
+  {"id":"gbp","layout":"compare","left":"100 USD","right":"78.40 GBP",
+   "title":"US Dollar","badge":"Pound Sterling","centerIcon":"arrow.right"}
+Pick compare whenever the row means "X becomes Y". Use the default row for
+lists of things.
 
 Live-scope example (Ports — Return kills the process):
 {
@@ -3597,8 +3854,29 @@ Live-scope example (Ports — Return kills the process):
     }
   ]
 }
+COMPUTED-panel example (Celsius → Fahrenheit; note the hint row and that the
+query is READ, never used as a filter):
+{
+  "version": "1.0",
+  "type": "system_commands",
+  "systemCommands": [
+    {
+      "name": "Temp Convert",
+      "description": "Convert Celsius to Fahrenheit and Kelvin.",
+      "icon": "thermometer.medium",
+      "keywords": ["temp", "celsius", "provider:custom"],
+      "scriptType": "bash",
+      "script": "q=$CD_QUERY; if [ -z \\"$q\\" ]; then echo '{\\"id\\":\\"hint\\",\\"title\\":\\"Type a temperature in Celsius\\",\\"subtitle\\":\\"e.g. 21\\",\\"icon\\":\\"questionmark.circle\\"}'; else echo \\"$q\\" | awk '{f=$1*9/5+32; k=$1+273.15; printf \\"{\\\\\\"id\\\\\\":\\\\\\"f\\\\\\",\\\\\\"title\\\\\\":\\\\\\"%.2f degF\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s degC\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"thermometer.sun\\\\\\"}\\\\n{\\\\\\"id\\\\\\":\\\\\\"k\\\\\\",\\\\\\"title\\\\\\":\\\\\\"%.2f K\\\\\\",\\\\\\"subtitle\\\\\\":\\\\\\"%s degC\\\\\\",\\\\\\"icon\\\\\\":\\\\\\"thermometer.snowflake\\\\\\"}\\\\n\\", f, $1, k, $1}'; fi",
+      "undoScriptType": "bash",
+      "undoScript": "printf '%s' \\"$CD_ROW_TITLE\\" | pbcopy"
+    }
+  ]
+}
+A currency converter is the same shape: read $CD_QUERY, call a rates API with
+curl, print one row per target currency, and copy the row on Return.
+
 Build anything as a live scope: ports, Docker containers, git branches, a
-password store, a file box, a web-app dashboard.
+password store, a file box, a converter, a web-app dashboard.
 
 Now create one for: "<describe the command OR live scope you want>"
 """
@@ -3607,46 +3885,101 @@ Now create one for: "<describe the command OR live scope you want>"
             id: 1,
             title: "Context Dock",
             icon: "rectangle.grid.1x2",
-            description: "Per-app actions that appear as pills only when a specific app is frontmost. Paste the JSON back here to install.",
+            description: "AI-built adapter pack for ANY app. Paste this, tell the AI the app + share its links; it researches the app and returns a ready-to-import pack. No manual Add Action.",
             prompt: """
-You generate a Context-Dock APP ADAPTER. Its actions appear as pills in the
-Context Dock ONLY when the target app is frontmost.
+You build a Context-Dock APP ADAPTER PACK — the complete, ready-to-run extension for ONE
+macOS app. The user pastes your JSON back into Context-Dock → Create Extension and it works
+immediately, appearing as actions while that app is frontmost. Do NOT skip the interview.
 
-Context variables you may use inside scripts / prompts:
-  $APP_NAME, $BUNDLE_ID, $WINDOW_TITLE, $CURRENT_URL, $AX_SELECTED_TEXT
+STEP 1 — ASK FIRST (do not output JSON yet). Ask the user:
+  1) Which app? (name, and bundle id if they know it)
+  2) What do you want it to do? (the tasks / agent behaviour you want)
+  3) Paste any references so you can research the app's REAL capabilities:
+       - the app's website / support / help page
+       - its KEYBOARD-SHORTCUTS page (each shortcut is a menu command you can trigger)
+       - URL-scheme / deep-link docs
+       - a GitHub repo or CLI docs
+       - any MCP server the app offers
+Then RESEARCH EXHAUSTIVELY — don't stop at what they paste. Check every source that
+could reveal a capability: the app's official site and support/help pages, its full
+keyboard-shortcut list, documented URL schemes / deep links, its GitHub repo and any
+CLI it ships, community forums/wikis, the app's AppleScript dictionary, and MCP
+directories for a matching server. Cover the whole app, not just the one task.
+Build ONLY from capabilities you can actually verify from those sources — never invent
+a URL scheme, menu path, or command you have not confirmed.
 
-Output ONLY this JSON (no prose, no markdown fences):
+STEP 2 — DESIGN. For each task, choose the SAFEST native route, in this order:
+  urlScheme (deep link)  >  menubar (a menu command — this is how you fire a keyboard
+  shortcut)  >  shortcut (a Shortcuts.app shortcut)  >  applescript / jxa  >
+  scriptFile / shell (last resort)  >  aiPrompt (for "explain / summarise" tasks).
+  - Keyboard shortcuts: a "menubar" action with the exact menuPath (e.g. New Board Cmd-N
+    becomes menuPath ["File","New Board"]). Context-Dock clicks that menu item via macOS
+    Accessibility = the shortcut fires. Never synthesise raw keystrokes.
+  - Anything that writes / sends / deletes: set requiresApproval true (and isDestructive
+    true for delete), so Context-Dock shows its approval card first.
+  - If the app has a real CLI, add a "cliTool" action with the exact command. If it offers
+    an official MCP server, DON'T put it in this JSON — note it in STEP 4 so the user links
+    it in Settings.
+
+STEP 3 — OUTPUT ONE JSON (no prose, no markdown fences), exactly this shape:
 {
-  "id": "com.apple.Safari",
-  "appName": "Safari",
-  "bundleId": "com.apple.Safari",
-  "icon": "safari",
+  "id": "com.apple.freeform",
+  "appName": "Freeform",
+  "bundleId": "com.apple.freeform",
+  "icon": "square.on.square",
   "isEnabled": true,
   "actions": [
     {
-      "id": "copy-url",
-      "name": "Copy Page URL",
-      "icon": "link",
-      "description": "Copy the current tab URL.",
-      "triggers": ["url", "copy", "link"],
-      "type": "shell",
-      "script": "printf '%s' \\"$CURRENT_URL\\" | pbcopy",
+      "id": "new-board",
+      "name": "New Board",
+      "icon": "plus.square.on.square",
+      "description": "Create a new Freeform board.",
+      "triggers": ["new", "board", "create"],
+      "type": "menubar",
+      "menuPath": ["File", "New Board"],
+      "requiresApproval": false,
+      "isDestructive": false
+    },
+    {
+      "id": "open-freeform",
+      "name": "Open Freeform",
+      "icon": "square.on.square",
+      "description": "Open the Freeform app.",
+      "triggers": ["open", "freeform"],
+      "type": "urlScheme",
+      "urlScheme": "freeform://",
       "requiresApproval": false,
       "isDestructive": false
     }
   ]
 }
 
-Rules:
-- "id", "bundleId" = the app's real bundle ID; "appName" = display name.
-- Each action "type" is one of: shell, applescript, jxa, urlScheme,
-  openItem, scriptFile, shortcut, aiPrompt.
-- Set the matching payload field for the type:
-  shell/applescript/jxa → "script", urlScheme → "urlScheme",
-  shortcut → "shortcutName", aiPrompt → "aiPromptTemplate".
-- "triggers" are keywords that surface the action while typing.
+FIELD RULES:
+- Action "type" is one of: menubar, urlScheme, openItem, shortcut, applescript, jxa,
+  scriptFile, shell, cliTool, aiPrompt.
+- Set ONLY the matching payload for the type:
+    menubar    -> "menuPath" (array of the exact menu-bar titles, top to item)
+    urlScheme  -> "urlScheme"        openItem -> "urlScheme" (an app / file path)
+    shortcut   -> "shortcutName"     cliTool  -> "cliToolCommand"
+    applescript / jxa / shell -> "script"     scriptFile -> "scriptFile" (absolute path)
+    aiPrompt   -> "aiPromptTemplate"
+- "id" / "bundleId" MUST be the app's real bundle id; "appName" is the display name.
+- "triggers" are the words that surface the action while typing in the dock.
+- Scripts and prompts may use context vars: $CURRENT_URL, $WINDOW_TITLE, $AX_SELECTED_TEXT,
+  and $CD_QUERY (the user's natural-language request, so an action can parameterize itself).
 
-Now create one for: "<app name + the actions you want>"
+ADDING MORE LATER (incremental packs): if the user already set this app up and now wants
+MORE, keep the SAME "id" / "bundleId" and output an adapter whose "actions" contains ONLY
+the NEW actions, each with a NEW unique "actionId". Context-Dock MERGES by actionId — it
+ADDS your new actions and keeps every action already installed. Do not re-list old actions
+unless you are deliberately changing one (reuse its exact id to update it). Never send a
+shrunken pack expecting a replace; same app id = merge, always.
+
+STEP 4 — EXPLAIN. After the JSON, in one short paragraph: which routes you built, what the
+app does NOT support (be honest — e.g. "Freeform has no CLI"), and whether an official MCP
+server exists that the user should link separately in Settings.
+
+Begin now by asking the STEP 1 questions.
 """
         ),
         Template(
@@ -3780,185 +4113,199 @@ private struct BridgeConfigView: View {
     let defaultModel: String
     let vibeProxyNote: String
 
-    @State private var testState: TestState = .idle
+    @State private var probe: ProbeState = .idle
     @State private var discoveredModels: [String] = []
+    @State private var showsAdvanced = false
 
-    enum TestState: Equatable {
+    /// Ports a local bridge is commonly published on. Scanned in order rather than typed:
+    /// the endpoint was a free-text field whose default nobody could verify, and both
+    /// bridges shipped pointing at a model their proxy did not serve.
+    private static let knownPorts = [8317, 8318, 3000, 4000, 1337]
+
+    enum ProbeState: Equatable {
         case idle
-        case testing
-        case success(String)
-        case failure(String)
+        case scanning
+        case connected(port: Int, models: Int)
+        case unreachable
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Header
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 26))
-                    .foregroundStyle(iconColor)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title).font(.headline)
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                }
+            header
+            statusRow
+
+            if case .connected = probe, !discoveredModels.isEmpty {
+                modelPicker
+            } else if case .unreachable = probe {
+                unreachableHelp
             }
 
-            // Feature callouts
-            VStack(alignment: .leading, spacing: 6) {
-                BridgeFeatureRow(icon: "creditcard.slash.fill", color: .green,
-                                 text: "No extra billing — uses your existing subscription")
-                BridgeFeatureRow(icon: "arrow.left.arrow.right.circle.fill", color: .blue,
-                                 text: vibeProxyNote)
-                BridgeFeatureRow(icon: "app.connected.to.app.below.fill", color: .orange,
-                                 text: "AI's connected tools (GitHub, Notion, Calendar…) flow through")
-            }
-            .padding(12)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
-
-            Divider()
-
-            // Endpoint
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Bridge Endpoint")
-                    .font(.subheadline).fontWeight(.medium)
-
-                HStack(spacing: 6) {
-                    Button("VibeProxy :8317") {
-                        endpointBinding.wrappedValue = "http://localhost:8317/v1"
+            DisclosureGroup("Advanced", isExpanded: $showsAdvanced) {
+                VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Endpoint").font(.caption).fontWeight(.medium)
+                        TextField(defaultEndpoint, text: endpointBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
                     }
-                    .buttonStyle(.bordered).controlSize(.small)
-
-                    Button("Port 3000") {
-                        endpointBinding.wrappedValue = "http://localhost:3000/v1"
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Model ID").font(.caption).fontWeight(.medium)
+                        TextField(defaultModel, text: modelBinding)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
                     }
-                    .buttonStyle(.bordered).controlSize(.small)
-
-                    Button("Port 4000") {
-                        endpointBinding.wrappedValue = "http://localhost:4000/v1"
-                    }
-                    .buttonStyle(.bordered).controlSize(.small)
+                    Text(vibeProxyNote)
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                TextField(defaultEndpoint, text: endpointBinding)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
+                .padding(.top, 8)
             }
+            .font(.caption)
+        }
+        .task { await scan() }
+    }
 
-            // Model ID
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Model ID")
-                    .font(.subheadline).fontWeight(.medium)
+    // MARK: - Pieces
 
-                HStack {
-                    TextField(defaultModel, text: modelBinding)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 26))
+                .foregroundStyle(iconColor)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                Task { await scan() }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Look for the bridge again")
+            .disabled(probe == .scanning)
+        }
+    }
 
-                    if !discoveredModels.isEmpty {
-                        Menu("Pick") {
-                            ForEach(discoveredModels, id: \.self) { m in
-                                Button(m) { modelBinding.wrappedValue = m }
-                            }
-                        }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                    }
-                }
-
-                Text("Model name the bridge exposes. Run Test Connection to discover models.")
+    /// One line that answers the only question this screen is asked: is it working.
+    @ViewBuilder private var statusRow: some View {
+        HStack(spacing: 8) {
+            switch probe {
+            case .idle, .scanning:
+                ProgressView().scaleEffect(0.6)
+                Text("Looking for a local bridge…")
                     .font(.caption).foregroundStyle(.secondary)
+            case .connected(let port, let models):
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("Connected on port \(port) · \(models) model\(models == 1 ? "" : "s")")
+                    .font(.caption)
+            case .unreachable:
+                Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                Text("No bridge running")
+                    .font(.caption)
             }
+            Spacer()
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
 
-            // Test Connection
-            HStack(spacing: 10) {
-                Button {
-                    Task { await testConnection() }
-                } label: {
-                    if case .testing = testState {
-                        HStack(spacing: 6) {
-                            ProgressView().scaleEffect(0.75)
-                            Text("Testing…")
-                        }
-                        .frame(minWidth: 120)
-                    } else {
-                        Label("Test Connection", systemImage: "network")
-                            .frame(minWidth: 120)
-                    }
+    /// The models the bridge actually serves. A picker rather than a text field because a
+    /// typed model name is a guess, and the two bugs this screen shipped with were both a
+    /// guess that the bridge rejected on the first message.
+    private var modelPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Model").font(.subheadline).fontWeight(.medium)
+            Picker("", selection: modelBinding) {
+                ForEach(relevantModels, id: \.self) { model in
+                    Text(model).tag(model)
                 }
-                .buttonStyle(.bordered)
-                .disabled(endpointBinding.wrappedValue.isEmpty || testState == .testing)
+                if !relevantModels.contains(modelBinding.wrappedValue),
+                    !modelBinding.wrappedValue.isEmpty
+                {
+                    Text("\(modelBinding.wrappedValue) (not served)")
+                        .tag(modelBinding.wrappedValue)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
 
-                switch testState {
-                case .idle: EmptyView()
-                case .testing: EmptyView()
-                case .success(let msg):
-                    Label(msg, systemImage: "checkmark.circle.fill")
-                        .font(.caption).foregroundStyle(.green)
-                case .failure(let msg):
-                    Label(msg, systemImage: "xmark.circle.fill")
-                        .font(.caption).foregroundStyle(.red)
-                }
+            if !relevantModels.contains(modelBinding.wrappedValue) {
+                Label(
+                    "This bridge does not serve that model — pick one above.",
+                    systemImage: "exclamationmark.triangle.fill"
+                )
+                .font(.caption).foregroundStyle(.orange)
             }
         }
     }
 
-    private func testConnection() async {
-        testState = .testing
+    private var unreachableHelp: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Start your bridge, then press refresh.")
+                .font(.caption)
+            Text(vibeProxyNote)
+                .font(.caption2).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Models for this bridge's own vendor. One proxy commonly fronts both subscriptions,
+    /// so the full list would offer Claude models inside the ChatGPT panel.
+    private var relevantModels: [String] {
+        let wantsClaude = defaultModel.lowercased().hasPrefix("claude")
+        let matching = discoveredModels.filter {
+            $0.lowercased().hasPrefix("claude") == wantsClaude
+        }
+        return matching.isEmpty ? discoveredModels : matching
+    }
+
+    // MARK: - Probe
+
+    /// Tries the configured endpoint first, then the ports a bridge is usually on. Whatever
+    /// answers becomes the endpoint, so the user never types one.
+    private func scan() async {
+        probe = .scanning
         discoveredModels = []
 
-        let base = endpointBinding.wrappedValue
+        var candidates: [String] = []
+        let configured = endpointBinding.wrappedValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if !configured.isEmpty { candidates.append(configured) }
+        candidates.append(contentsOf: Self.knownPorts.map { "http://localhost:\($0)/v1" })
 
-        // Try GET /models first
-        if let url = URL(string: "\(base)/models") {
-            do {
-                var req = URLRequest(url: url, timeoutInterval: 5)
-                req.httpMethod = "GET"
-                let (data, resp) = try await URLSession.shared.data(for: req)
-                if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
-                    // Parse models if possible
-                    if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let modelArray = json["data"] as? [[String: Any]] {
-                        let ids = modelArray.compactMap { $0["id"] as? String }
-                        await MainActor.run {
-                            discoveredModels = ids
-                            if !ids.isEmpty && modelBinding.wrappedValue.isEmpty {
-                                modelBinding.wrappedValue = ids[0]
-                            }
-                        }
-                    }
-                    await MainActor.run {
-                        testState = .success(discoveredModels.isEmpty ? "Bridge reachable" : "\(discoveredModels.count) model(s) found")
-                    }
-                    return
-                }
-            } catch { }
+        for endpoint in candidates {
+            guard let models = await Self.models(at: endpoint), !models.isEmpty else {
+                continue
+            }
+            endpointBinding.wrappedValue = endpoint
+            discoveredModels = models
+            // Only correct the model when the saved one is not on offer: a working choice
+            // is never overwritten just because a scan happened.
+            if !models.contains(modelBinding.wrappedValue) {
+                modelBinding.wrappedValue = relevantModels.first ?? models[0]
+            }
+            let port = URL(string: endpoint)?.port ?? 0
+            probe = .connected(port: port, models: relevantModels.count)
+            return
         }
+        probe = .unreachable
+    }
 
-        // Fallback: probe with a minimal chat completion
-        if let url = URL(string: "\(base)/chat/completions") {
-            do {
-                var req = URLRequest(url: url, timeoutInterval: 5)
-                req.httpMethod = "POST"
-                req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                let body: [String: Any] = [
-                    "model": modelBinding.wrappedValue.isEmpty ? "default" : modelBinding.wrappedValue,
-                    "messages": [["role": "user", "content": "ping"]],
-                    "max_tokens": 1
-                ]
-                req.httpBody = try JSONSerialization.data(withJSONObject: body)
-                let (_, resp) = try await URLSession.shared.data(for: req)
-                if let http = resp as? HTTPURLResponse, http.statusCode < 500 {
-                    await MainActor.run { testState = .success("Bridge reachable") }
-                    return
-                }
-            } catch { }
-        }
-
-        await MainActor.run {
-            testState = .failure("Not reachable — is VibeProxy running?")
-        }
+    private static func models(at endpoint: String) async -> [String]? {
+        guard let url = URL(string: "\(endpoint)/models") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 3)
+        request.httpMethod = "GET"
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+            let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let entries = json["data"] as? [[String: Any]]
+        else { return nil }
+        return entries.compactMap { $0["id"] as? String }
     }
 }
 
@@ -4000,8 +4347,7 @@ struct AIProviderRow: View {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(rowAccent.opacity(isSelected ? 0.18 : 0.09))
                         .frame(width: 36, height: 36)
-                    Image(systemName: provider.iconName)
-                        .font(.system(size: 16, weight: .medium))
+                    AIProviderIcon(provider: provider, size: 16)
                         .foregroundStyle(isSelected ? rowAccent : .primary)
                 }
 
@@ -4059,10 +4405,12 @@ struct AIProviderRow: View {
         case .googleGemini: return .indigo
         case .openAI:       return .teal
         case .anthropic:    return .orange
+        case .claudeCode:   return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .teal
         case .ollama:       return .green
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts:    return .purple
         }
     }

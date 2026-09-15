@@ -86,6 +86,56 @@ final class AppPanelChatStore {
 
     // MARK: Clear
 
+    // MARK: Session window
+
+    /// When the dock's current visit to this app began. The dock is a transient surface —
+    /// it shows the session you are in, not everything ever said — while the chat window
+    /// keeps the whole history. One conversation, two spans of it.
+    private func sessionStartKey(_ appKey: String) -> String {
+        "dorax.dockChat.sessionStart.\(appKey)"
+    }
+
+    func sessionStart(for appKey: String) -> Date? {
+        let value = UserDefaults.standard.double(forKey: sessionStartKey(appKey))
+        return value > 0 ? Date(timeIntervalSince1970: value) : nil
+    }
+
+    /// Called when the dock enters a scope: everything already stored becomes history,
+    /// and the sheet starts empty instead of replaying weeks of conversation.
+    func beginSession(for appKey: String, at date: Date = Date()) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: sessionStartKey(appKey))
+    }
+
+    /// Messages from the current session only — what the dock sheet shows.
+    func loadSession(for appKey: String) -> [AIChatMessage] {
+        let all = load(for: appKey)
+        guard let start = sessionStart(for: appKey) else { return all }
+        return all.filter { $0.timestamp >= start }
+    }
+
+    /// Replaces the current session's messages, keeping everything older. The dock saving
+    /// its sheet must not truncate the history the window is showing.
+    func saveSession(_ messages: [AIChatMessage], for appKey: String) {
+        guard let start = sessionStart(for: appKey) else {
+            save(messages, for: appKey)
+            return
+        }
+        let history = load(for: appKey).filter { $0.timestamp < start }
+        save(history + messages, for: appKey)
+    }
+
+    /// Clear in the dock ends this session only: the conversation before it stays, and
+    /// the window still has it. Erasing months of history because someone cleared a sheet
+    /// would not be a clear, it would be a delete.
+    func clearSession(for appKey: String) {
+        guard let start = sessionStart(for: appKey) else {
+            clear(for: appKey)
+            return
+        }
+        save(load(for: appKey).filter { $0.timestamp < start }, for: appKey)
+        beginSession(for: appKey)
+    }
+
     func clear(for appKey: String) {
         try? FileManager.default.removeItem(at: chatFile(for: appKey))
     }
@@ -111,12 +161,20 @@ final class AppPanelChatStore {
 
     // MARK: Helpers
 
-    private func chatFile(for appKey: String) -> URL {
-        // Sanitise key so it's safe as a filename
-        let safe = appKey
-            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_")).inverted)
+    /// The on-disk name for a key. Exposed because the file list cannot be reversed back
+    /// into keys — dots and slashes are all replaced by underscores — so a caller that
+    /// wants to know whether a conversation exists has to sanitise its candidate and look
+    /// for that instead.
+    nonisolated static func sanitizedKey(_ appKey: String) -> String {
+        appKey
+            .components(
+                separatedBy: CharacterSet.alphanumerics
+                    .union(CharacterSet(charactersIn: "-_")).inverted)
             .joined(separator: "_")
-        return baseDir.appendingPathComponent("\(safe).json")
+    }
+
+    private func chatFile(for appKey: String) -> URL {
+        baseDir.appendingPathComponent("\(Self.sanitizedKey(appKey)).json")
     }
 }
 

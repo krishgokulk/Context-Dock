@@ -188,7 +188,8 @@ class AIProviderService: ObservableObject {
         apiKey: String? = nil,
         conversationHistory: [ChatMessage] = [],
         additionalContextPrompt: String = "",
-        attachments: [AIAttachment] = []
+        attachments: [AIAttachment] = [],
+        surfaceScoped: Bool = false
     ) async throws -> String {
 
         #if DEBUG
@@ -201,6 +202,10 @@ class AIProviderService: ObservableObject {
         print("🤖 [AIProviderService] Context: \(context.description)")
         #endif
 
+        // The plan already said when it comes back. Asking again before then buys a slow
+        // failure and nothing else.
+        try AISubscriptionGuard.check(provider)
+
         isProcessing = true
         error = nil
 
@@ -208,19 +213,51 @@ class AIProviderService: ObservableObject {
             isProcessing = false
         }
 
-        // Match query against registered L2 packages for tool-specific context injection
-        let matchedPackage = TerminalPackageManager.shared.findPackageForQuery(message)
+        // Match query against registered L2 packages for tool-specific context injection.
+        // Surface-scoped callers (the Quick Note sidecar, extension panels) opt out: they
+        // own a narrow domain, and package matching would teach the model the
+        // [TERMINAL_COMMAND: …] protocol — "new note" once matched an L2 package and came
+        // back as a terminal directive instead of a note.
+        let matchedPackage = surfaceScoped
+            ? nil
+            : TerminalPackageManager.shared.findPackageForQuery(message)
 
         // Capture current Finder folder only when Finder is the active context.
         // A pinned app scope in the dock should not inherit frontmost Finder folder context.
-        let currentFolder: String? = {
-            if case .appFocused(_, let bundleID) = context,
-               bundleID != "com.apple.finder" {
+        let currentFolder: String? = await { () async -> String? in
+            // A directory the user attached IS the working directory — asked first,
+            // because a folder-scoped chat must not run "here" against whatever happens to
+            // be frontmost. (The later `.filesSelected` fallback takes the parent, which is
+            // right for a selected file and wrong for a selected folder.)
+            if case .filesSelected(let urls) = context, urls.count == 1,
+                let url = urls.first
+            {
+                var isDirectory: ObjCBool = false
+                if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+                    isDirectory.boolValue
+                {
+                    return url.path
+                }
+            }
+            // A scoped app dock panel resolves the folder for THAT app, so a pinned scope
+            // still gets its own project instead of inheriting whatever is frontmost.
+            if case .appFocused(_, let bundleID) = context {
+                if bundleID == "com.apple.finder" {
+                    return AppleAppsAPI.shared.getCurrentFolder()
+                }
+                if let scoped = NSWorkspace.shared.runningApplications.first(
+                    where: { $0.bundleIdentifier == bundleID }) {
+                    return await ProjectContextResolver.shared.projectRoot(for: scoped)
+                }
                 return nil
             }
-            if let frontmost = NSWorkspace.shared.frontmostApplication,
-               frontmost.bundleIdentifier == "com.apple.finder" {
-                return AppleAppsAPI.shared.getCurrentFolder()
+            if let frontmost = NSWorkspace.shared.frontmostApplication {
+                if frontmost.bundleIdentifier == "com.apple.finder" {
+                    return AppleAppsAPI.shared.getCurrentFolder()
+                }
+                // An editor in front means its workspace is the working directory. Without
+                // this, folder-relative work silently ran in the Finder folder or ~.
+                return await ProjectContextResolver.shared.projectRoot(for: frontmost)
             }
             return nil
         }()
@@ -232,12 +269,27 @@ class AIProviderService: ObservableObject {
             currentFolder: currentFolder,
             originalQuery: message,
             includePrivateSafariData: shouldIncludePrivateSafariData(for: provider),
-            additionalContextPrompt: additionalContextPrompt
+            additionalContextPrompt: additionalContextPrompt,
+            surfaceScoped: surfaceScoped
         )
 
         #if DEBUG
         print("🤖 [AIProviderService] Context prompt built (\(contextPrompt.count) chars)")
         #endif
+
+        // Not an HTTP provider: the subscription is reached by running the CLI the user has
+        // already signed in, so it takes its own path rather than an adapter with no
+        // endpoint to point at.
+        if provider == .claudeCode {
+            let response = try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: message, history: conversationHistory),
+                systemPrompt: contextPrompt,
+                model: AppSettings.shared.claudeCodeModel.isEmpty
+                    ? nil : AppSettings.shared.claudeCodeModel)
+            currentResponse = response
+            return response
+        }
 
         let response = try await AIProviderRouter.shared.sendPrepared(
             provider: provider,
@@ -260,6 +312,8 @@ class AIProviderService: ObservableObject {
 
     private func shouldIncludePrivateSafariData(for provider: AIProvider) -> Bool {
         switch provider {
+        // The CLI runs on this Mac against the user's own signed-in subscription, but the
+        // question still leaves the machine — it is not local in the sense this guard means.
         case .onDevice:
             return true
         case .ollama, .openAICompatible, .claudeBridge, .chatGPTBridge:
@@ -274,7 +328,7 @@ class AIProviderService: ObservableObject {
                   let host = components.host?.lowercased()
             else { return false }
             return host == "localhost" || host == "127.0.0.1" || host == "::1"
-        case .openAI, .anthropic, .googleGemini, .shortcuts:
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode:
             return false
         }
     }
@@ -292,6 +346,14 @@ class AIProviderService: ObservableObject {
         return prompt
     }
 
+    /// `hasDirectoryPath` only reports what the URL was built to claim, so a path parsed
+    /// from text says "file" for a real folder. The disk is asked instead.
+    private func isDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+        return exists && isDirectory.boolValue
+    }
+
     private func buildContextPrompt(
         for context: UserContext,
         matchedPackage: TerminalPackage? = nil,
@@ -300,8 +362,20 @@ class AIProviderService: ObservableObject {
         forToolUse: Bool = false,
         forOnDevice: Bool = false,
         includePrivateSafariData: Bool = false,
-        additionalContextPrompt: String = ""
+        additionalContextPrompt: String = "",
+        surfaceScoped: Bool = false
     ) async -> String {
+        // A scoped surface supplies its own identity in additionalContextPrompt. Layering
+        // the launcher-wide preamble on top makes the model believe it can run files, apps
+        // and shell commands from inside a note sidecar.
+        if surfaceScoped {
+            var scoped = additionalContextPrompt
+            if !AppSettings.shared.onDeviceSystemPrompt.isEmpty {
+                scoped = AppSettings.shared.onDeviceSystemPrompt + "\n\n" + scoped
+            }
+            return scoped
+        }
+
         var prompt = "You are a helpful AI assistant integrated into ILauncher, a macOS launcher application. "
         prompt += "You help users with file management, app workflows, and productivity tasks. "
         prompt += "Be concise, helpful, and actionable. "
@@ -350,7 +424,17 @@ class AIProviderService: ObservableObject {
 
         switch context {
         case .filesSelected(let urls):
-            if urls.count == 1 {
+            if urls.count == 1, urls[0].hasDirectoryPath || isDirectory(urls[0]) {
+                // A folder described with the file template reads as a file nobody can
+                // open: "Type: —, Size: 0 bytes, no content". A folder chat asked "do you
+                // know anything about this folder?" and was answered "I do not have any
+                // specific information", because the section that looked authoritative was
+                // empty. Folders get folder facts.
+                let url = urls[0]
+                prompt += "\n\n## SELECTED FOLDER\n"
+                prompt += FolderScopeDigest.promptBlock(for: url)
+                prompt += "\n"
+            } else if urls.count == 1 {
                 let url = urls[0]
                 let fileInfo = await analyzeFile(url)
                 prompt += "\n\n## SELECTED FILE\n"
@@ -1095,6 +1179,20 @@ class AIProviderService: ObservableObject {
         let command: String
         let output: String
         let success: Bool
+        let isVerification: Bool
+
+        init(
+            command: String,
+            output: String,
+            success: Bool,
+            isVerification: Bool = false
+        ) {
+            self.command = command
+            self.output = output
+            self.success = success
+            self.isVerification = isVerification
+            TaskRunStore.shared.record(self)
+        }
     }
 
     // MARK: - Tool-Use Dispatcher
@@ -1109,18 +1207,59 @@ class AIProviderService: ObservableObject {
         provider: AIProvider,
         apiKey: String?,
         conversationHistory: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         maxIterations: Int = 5,
         systemPromptOverride: String? = nil,
         additionalSystemPrompt: String? = nil,
-        simulateAllTools: Bool = false
+        imageAttachments: [URL] = [],
+        /// The thread asking, so tools inherit its folder boundary and its artifact home.
+        chatScope: GeneralChatScope? = nil,
+        /// Apps this conversation may reach, so a tool can resolve one the user named. In a
+        /// scoped thread that is the thread's app; in General Chat it is whatever the user
+        /// granted at the access gate.
+        grantedApps: [String: String] = [:],
+        /// A task-planning authority boundary. Nil preserves unscoped General Chat.
+        allowedToolNames: Set<String>? = nil,
+        /// This turn may read and must not change anything. Panels declare it: their own
+        /// prompt promises it, and a promise in a prompt is not a boundary.
+        refusesChanges: Bool = false,
+        simulateAllTools: Bool = false,
+        /// Called as the answer is written, when the provider supports it. Nil keeps the
+        /// buffered behaviour — a caller that has nowhere to put a partial answer should not
+        /// be handed one.
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        /// Observable agent lifecycle events for a live progress checklist.
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
+
+        try AISubscriptionGuard.check(provider)
+
+        let resume = TaskRunStore.shared.resolve(message)
+        let effectiveMessage = resume.message
+        AgentToolRegistry.shared.prepareTurnBudget(
+            query: effectiveMessage, provider: provider, allowedToolNames: allowedToolNames,
+            refusesChanges: refusesChanges)
+        onStatus?("Looking through the available app adapters and tools…")
+        let guardedCommandExecutor: (String, String, Bool) async -> (Bool, String, Int32) = {
+            command, purpose, approval in
+            if let cached = TaskRunStore.shared.cachedSuccessfulCommand(command, from: resume.source) {
+                return (true, "Resumed from durable receipt: \(cached.output)", 0)
+            }
+            return await commandExecutor(command, purpose, approval)
+        }
+
+        return try await TaskRunStore.shared.track(
+            request: resume.source?.request ?? message,
+            provider: String(describing: provider),
+            resumedFrom: resume.source?.id,
+            maxToolCalls: maxIterations
+        ) {
 
         var contextPrompt: String
         if let override = systemPromptOverride {
             contextPrompt = override
         } else {
-            contextPrompt = await buildContextPrompt(for: context, originalQuery: message, forToolUse: true)
+            contextPrompt = await buildContextPrompt(for: context, originalQuery: effectiveMessage, forToolUse: true)
         }
         if let additional = additionalSystemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
             !additional.isEmpty
@@ -1129,6 +1268,25 @@ class AIProviderService: ObservableObject {
         }
         let extManager = L2ExtensionManager.shared
 
+        // The subscription CLI answers, it does not call our tools — DoraX runs it with
+        // none on purpose. Handled here rather than left to `default:`, which threw
+        // "onDevice_fallback" at every caller that reaches for tools without first checking
+        // supportsNativeTools. Most of them do, and a chat that only says hello should not
+        // depend on which of them asked.
+        if provider == .claudeCode {
+            // The CLI's own steps go to the same live list DoraX fills for its own turns, so
+            // a subscription turn reads like every other one instead of sitting silent until
+            // it finishes.
+            let answer = try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: effectiveMessage, history: conversationHistory),
+                systemPrompt: contextPrompt,
+                model: AppSettings.shared.claudeCodeModel.isEmpty
+                    ? nil : AppSettings.shared.claudeCodeModel,
+                onProgress: onStatus.map { report in { step in report(step) } })
+            return (answer, [])
+        }
+
         switch provider {
         case .openAI:
             guard let key = apiKey, !key.isEmpty else {
@@ -1136,14 +1294,20 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: key,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations, endpoint: "https://api.openai.com/v1/chat/completions",
                 model: AppSettings.shared.selectedOpenAIModel.isEmpty
                     ? "gpt-4o-mini" : AppSettings.shared.selectedOpenAIModel,
                 transport: OpenAIToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
+                grantedApps: grantedApps,
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .anthropic:
@@ -1152,14 +1316,20 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .anthropic)
             return try await sendAnthropicWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: key,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 model: AppSettings.shared.selectedAnthropicModel.isEmpty
                     ? AnthropicModelCatalog.defaultModelID
                     : AppSettings.shared.selectedAnthropicModel,
-                simulateAllTools: simulateAllTools
+                imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
+                grantedApps: grantedApps,
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .googleGemini:
@@ -1168,11 +1338,17 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .gemini)
             return try await sendGeminiWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: key,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
-                simulateAllTools: simulateAllTools
+                imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
+                grantedApps: grantedApps,
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .ollama:
@@ -1182,8 +1358,8 @@ class AIProviderService: ObservableObject {
             let customTools = extManager.toolSchemas(for: .openAI)
             // Use OpenAI-compatible endpoint (/v1/chat/completions) so response format matches OpenAIToolResponse
             return try await sendOpenAIWithTools(
-                message: message, contextPrompt: contextPrompt, apiKey: nil,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                message: effectiveMessage, contextPrompt: contextPrompt, apiKey: nil,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 endpoint: "\(endpoint)/v1/chat/completions",
@@ -1191,7 +1367,9 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OllamaToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .openAICompatible:
@@ -1204,9 +1382,9 @@ class AIProviderService: ObservableObject {
             let key = apiKey ?? settings.openAICompatibleAPIKey
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message, contextPrompt: contextPrompt,
+                message: effectiveMessage, contextPrompt: contextPrompt,
                 apiKey: key.isEmpty ? nil : key,
-                history: conversationHistory, commandExecutor: commandExecutor,
+                history: conversationHistory, commandExecutor: guardedCommandExecutor,
                 customTools: customTools, maxIterations: maxIterations,
                 endpoint: endpoint.hasSuffix("chat/completions")
                     ? endpoint : "\(endpoint)/chat/completions",
@@ -1214,8 +1392,36 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
+
+        case .kimi:
+            guard let key = apiKey, !key.isEmpty else {
+                throw AIServiceError.missingAPIKey("Kimi API key is required")
+            }
+            let customTools = extManager.toolSchemas(for: .openAI)
+            return try await sendOpenAIWithTools(
+                message: effectiveMessage,
+                contextPrompt: contextPrompt,
+                apiKey: key,
+                history: conversationHistory,
+                commandExecutor: guardedCommandExecutor,
+                customTools: customTools,
+                maxIterations: maxIterations,
+                endpoint: "https://api.moonshot.ai/v1/chat/completions",
+                model: AppSettings.shared.selectedKimiModel,
+                timeout: 120,
+                extraHeaders: [:],
+                transport: OpenAICompatibleToolProviderAdapter(),
+                imageAttachments: imageAttachments,
+                userContext: context,
+                chatScope: chatScope,
+                grantedApps: grantedApps,
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus)
 
         case .claudeBridge:
             let settings = AppSettings.shared
@@ -1226,11 +1432,11 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message,
+                message: effectiveMessage,
                 contextPrompt: contextPrompt,
                 apiKey: nil,
                 history: conversationHistory,
-                commandExecutor: commandExecutor,
+                commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 endpoint: endpoint.hasSuffix("chat/completions")
@@ -1239,7 +1445,9 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         case .chatGPTBridge:
@@ -1251,11 +1459,11 @@ class AIProviderService: ObservableObject {
             }
             let customTools = extManager.toolSchemas(for: .openAI)
             return try await sendOpenAIWithTools(
-                message: message,
+                message: effectiveMessage,
                 contextPrompt: contextPrompt,
                 apiKey: nil,
                 history: conversationHistory,
-                commandExecutor: commandExecutor,
+                commandExecutor: guardedCommandExecutor,
                 customTools: customTools,
                 maxIterations: maxIterations,
                 endpoint: endpoint.hasSuffix("chat/completions")
@@ -1264,11 +1472,14 @@ class AIProviderService: ObservableObject {
                 timeout: 120,
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
-                simulateAllTools: simulateAllTools
+                simulateAllTools: simulateAllTools,
+                onStream: onStream,
+                onStatus: onStatus
             )
 
         default:
             throw AIServiceError.unsupportedProvider("onDevice_fallback")
+        }
         }
     }
 

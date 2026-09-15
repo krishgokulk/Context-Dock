@@ -9,6 +9,30 @@ struct HotkeysSettingsPage: View {
             VStack(spacing: 20) {
                 CardSection(title: "Launch Shortcut", systemImage: "bolt.fill") {
                     HStack(spacing: 12) {
+                        Text("⌘⌘")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(.teal)
+                            .frame(width: 38, height: 30)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Double-press Command")
+                                .font(.system(size: 13, weight: .medium))
+                            Text("Tap Command twice from anywhere to open Global Context in the corner.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle("Double-press Command", isOn: Binding(
+                            get: { settings.useDoubleCommandGlobalContext },
+                            set: {
+                                settings.useDoubleCommandGlobalContext = $0
+                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                            }
+                        ))
+                        .labelsHidden()
+                    }
+                    .padding(.vertical, 12)
+                    Divider()
+                    HStack(spacing: 12) {
                         Text("⌥⌥")
                             .font(.system(size: 14, weight: .bold))
                             .foregroundStyle(.orange)
@@ -53,6 +77,21 @@ struct HotkeysSettingsPage: View {
                         }
                         Divider()
                         captureHotkeyRow(
+                            icon: "bubble.left.and.bubble.right.fill", color: .pink,
+                            title: "App Chat",
+                            subtitle: "Ask the frontmost app something from the corner,"
+                                + " without leaving it",
+                            display: settings.appChatHotkeyDisplayString,
+                            clear: {
+                                settings.appChatHotkeyKeyCode = 0
+                                settings.appChatHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.appChatHotkeyKeyCode = $0
+                                settings.appChatHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
                             icon: "note.text", color: .indigo,
                             title: "Quick Note",
                             subtitle: "Open a floating pinned note anywhere",
@@ -67,17 +106,49 @@ struct HotkeysSettingsPage: View {
                             })
                         Divider()
                         captureHotkeyRow(
-                            icon: "macwindow.on.rectangle", color: .cyan,
-                            title: "Window Review",
-                            subtitle: "Preview and restore the current app's open and minimized windows",
-                            display: settings.windowReviewHotkeyDisplayString,
+                            icon: "bubble.left.and.text.bubble.right", color: .teal,
+                            title: "Chat Window",
+                            subtitle: "Open General Chat in its own window — the full-screen"
+                                + " version of the answer sheet",
+                            display: settings.chatWindowHotkeyDisplayString,
                             clear: {
-                                settings.windowReviewHotkeyKeyCode = 0
-                                settings.windowReviewHotkeyModifiers = 0
+                                settings.chatWindowHotkeyKeyCode = 0
+                                settings.chatWindowHotkeyModifiers = 0
                             },
                             apply: {
-                                settings.windowReviewHotkeyKeyCode = $0
-                                settings.windowReviewHotkeyModifiers = $1
+                                settings.chatWindowHotkeyKeyCode = $0
+                                settings.chatWindowHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
+                            icon: "globe", color: .teal,
+                            title: "Global Context",
+                            subtitle:
+                                "Search everything in the corner. Double-press Command is the default; add another shortcut here.",
+                            display: settings.globalContextHotkeyDisplayString,
+                            clear: {
+                                settings.globalContextHotkeyKeyCode = 0
+                                settings.globalContextHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.globalContextHotkeyKeyCode = $0
+                                settings.globalContextHotkeyModifiers = $1
+                            })
+                        Divider()
+                        captureHotkeyRow(
+                            icon: "text.cursor", color: .green,
+                            title: "Selection Scope",
+                            subtitle: settings.selectionScopeHotkeyEnabled
+                                ? "Open the selection in the corner — a plain launch stays a launcher"
+                                : "Open selected files or text as a corner card. Unset: a selection auto-scopes on every launch",
+                            display: settings.selectionScopeHotkeyDisplayString,
+                            clear: {
+                                settings.selectionScopeHotkeyKeyCode = 0
+                                settings.selectionScopeHotkeyModifiers = 0
+                            },
+                            apply: {
+                                settings.selectionScopeHotkeyKeyCode = $0
+                                settings.selectionScopeHotkeyModifiers = $1
                             })
                         Divider()
                         captureHotkeyRow(
@@ -125,6 +196,10 @@ struct HotkeysSettingsPage: View {
                     .padding(.vertical, 4)
                 }
 
+                CardSection(title: "Capture Save Folder", systemImage: "folder") {
+                    captureSaveFolderRow
+                }
+
                 CardSection(title: "Context Dock", systemImage: "rectangle.grid.1x2.fill") {
                     VStack(spacing: 0) {
                         HotkeysInfoRow(keys: "⌘R", action: "Refresh Context — re-scan the frontmost app's live menus")
@@ -150,6 +225,42 @@ struct HotkeysSettingsPage: View {
             }
             .padding(28)
         }
+    }
+
+    private var captureSaveFolderRow: some View {
+        let path = settings.captureSaveFolderPath
+        let displayName = path.isEmpty
+            ? "Pictures (default)"
+            : URL(fileURLWithPath: path).lastPathComponent
+        return HStack(spacing: 12) {
+            Image(systemName: "folder.fill")
+                .font(.system(size: 16)).foregroundStyle(.blue)
+                .frame(width: 26)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Save captured screenshots to")
+                    .font(.system(size: 13, weight: .medium))
+                Text(displayName)
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            if !path.isEmpty {
+                Button("Reset") { settings.captureSaveFolderPath = "" }
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Button("Choose…") {
+                let panel = NSOpenPanel()
+                panel.canChooseDirectories = true
+                panel.canChooseFiles = false
+                panel.allowsMultipleSelection = false
+                panel.prompt = "Choose"
+                panel.message = "Choose a folder for Capture Area / Screenshot images"
+                if panel.runModal() == .OK, let url = panel.url {
+                    settings.captureSaveFolderPath = url.path
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(.vertical, 6).padding(.horizontal, 4)
     }
 
     private func captureHotkeyRow(

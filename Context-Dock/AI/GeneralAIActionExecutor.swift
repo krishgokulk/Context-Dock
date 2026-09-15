@@ -1,9 +1,12 @@
 // GeneralAIActionExecutor.swift
 // Context-Dock
 //
-// Executes a DoraXActionCandidate produced by GeneralAIActionResolver, after
-// first-run approval. Every route validates before acting and reports honest
-// results — General Chat may only claim "done" when an executor returns success.
+// Executes a DoraXActionCandidate produced by GeneralAIActionResolver. Approval is part
+// of the signature, not an assumption about who is calling: `execute(_:approval:)` takes
+// an `ExecutionApproval` with no default, so either the caller states where the user's
+// yes came from or the executor raises the card itself. Every route validates before
+// acting and reports honest results — a surface may only claim "done" when an executor
+// returns success.
 //
 // Route mapping:
 //   .adapter          → CapabilityRegistry executor (via AIExecutionEngine) or AdapterAction
@@ -94,11 +97,79 @@ final class GeneralAIActionApprovalCenter: ObservableObject {
     }
 }
 
+// MARK: - Approval contract
+
+/// Where the user's yes for this execution came from — stated by the caller, at the call.
+///
+/// This used to be a comment. `execute` passed `approved: true` into the execution engine
+/// at three places and set `action.requiresApproval = false` at a fourth, on the strength
+/// of one line three call sites deep:
+///
+///     // General Chat already showed its own approval.
+///
+/// That was true of General AI Chat, which raises its own route-specific card before
+/// calling. It was never true of the executor. A second surface routed through it would
+/// inherit "already approved" for free — no card, no error, no trace.
+///
+/// The argument has no default on purpose. A new caller has to write down which of these
+/// it is, and the wrong answer is a visible claim in the audit history rather than an
+/// absence nobody can see.
+enum ExecutionApproval: Equatable {
+    /// The user has already said yes to this exact action, and the caller says how.
+    case granted(GrantSource)
+
+    /// Nobody has asked yet. `execute` raises the approval card itself and waits.
+    ///
+    /// The card is `GeneralAIActionApprovalCard`, driven by `GeneralAIActionApprovalCenter`.
+    /// A surface that passes `.ask` **must render that card**, or the request sits until
+    /// its 60-second expiry and comes back cancelled.
+    case ask
+
+    enum GrantSource: String, CaseIterable {
+        /// The caller ran `GeneralAIActionApprovalCenter` and got back something other
+        /// than `.cancel`.
+        case approvalCard
+        /// The user clicked a button that named this action — picking one of several
+        /// offered routes is itself the yes.
+        case userPickedButton
+        /// The route class is permitted outright at this app's access level, and the
+        /// caller checked `AppAccessPolicy` before calling. Menu control granted to an
+        /// app is not re-asked per click.
+        case accessPolicy
+
+        var auditLabel: String {
+            switch self {
+            case .approvalCard: return "approval card"
+            case .userPickedButton: return "user picked this action"
+            case .accessPolicy: return "app access policy"
+            }
+        }
+    }
+
+    var grantSource: GrantSource? {
+        switch self {
+        case .granted(let source): return source
+        case .ask: return nil
+        }
+    }
+}
+
 // MARK: - Executor
 
 struct GeneralAIActionResult {
     let success: Bool
     let message: String
+    /// The user declined, as opposed to the route running and failing. Callers print a
+    /// different sentence for each: "Cancelled — nothing was executed." is not an error
+    /// report, and showing one as the other reads as DoraX breaking when it obeyed.
+    var wasCancelled: Bool = false
+
+    static func cancelled(routeLabel: String) -> GeneralAIActionResult {
+        GeneralAIActionResult(
+            success: false,
+            message: "Cancelled \(routeLabel) — nothing was executed.",
+            wasCancelled: true)
+    }
 }
 
 @MainActor
@@ -107,17 +178,71 @@ final class GeneralAIActionExecutor {
 
     private init() {}
 
-    func execute(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    /// Whether `approval` still owes the user a card before anything runs.
+    ///
+    /// Pure and static so the gate can be tested without a window: it is the only thing
+    /// standing between a caller that forgot to ask and an action that runs anyway.
+    static func requiresPrompt(_ approval: ExecutionApproval, permissionKey: String) -> Bool {
+        switch approval {
+        case .granted:
+            return false
+        case .ask:
+            // A standing "Always Allow" is a real prior yes from this user, scoped to this
+            // exact permission key — never to the app or the route class.
+            return !GeneralAIActionApprovalStore.isAlwaysAllowed(permissionKey)
+        }
+    }
+
+    /// Whether the adapter's own approval prompt may be switched off for this execution.
+    ///
+    /// It may, and only, when the user has already been shown this exact action. General AI
+    /// raises a route-specific card, so re-prompting there is asking twice about one thing.
+    /// A caller whose authority came from `AppAccessPolicy` has shown the user nothing —
+    /// `AdapterActionConsentStore` is then the only thing standing between the model and a
+    /// destructive action, and suppressing it takes away the user's last say without
+    /// replacing it with anything.
+    static func suppressesAdapterPrompt(_ approval: ExecutionApproval) -> Bool {
+        switch approval.grantSource {
+        case .approvalCard, .userPickedButton: return true
+        case .accessPolicy, nil: return false
+        }
+    }
+
+    /// Run a resolved candidate. `approval` says where the user's yes came from; see
+    /// `ExecutionApproval`. Nothing below this line asks again, so nothing below this
+    /// line may run before it holds.
+    func execute(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
+        var grantSource = approval.grantSource
+        if Self.requiresPrompt(approval, permissionKey: candidate.permissionKey) {
+            let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
+            guard decision != .cancel else {
+                AIAuditHistory.shared.record(
+                    capabilityID: candidate.permissionKey,
+                    risk: candidate.riskLevel,
+                    approved: false,
+                    success: false,
+                    summary: "Declined at the approval card — nothing ran.")
+                return .cancelled(routeLabel: candidate.routeLabel)
+            }
+            grantSource = .approvalCard
+        } else if case .ask = approval {
+            // Reached only via a standing grant; record it as the card it stands in for.
+            grantSource = .approvalCard
+        }
+
         let result: GeneralAIActionResult
         switch candidate.route {
         case .appLaunch:
             result = await executeAppLaunch(candidate)
         case .adapter:
-            result = await executeAdapterRoute(candidate)
+            result = await executeAdapterRoute(candidate, approval: approval)
         case .keyboardShortcut:
-            result = await executeKeyboardShortcut(candidate)
+            result = await executeKeyboardShortcut(candidate, approval: approval)
         case .verifiedMenu:
-            result = await executeVerifiedMenu(candidate)
+            result = await executeVerifiedMenu(candidate, approval: approval)
         case .axFallback:
             result = await executeAXFallback(candidate)
         case .shortcutRunner:
@@ -131,26 +256,61 @@ final class GeneralAIActionExecutor {
         case .api:
             result = executeAPI(candidate)
         }
+        // The audit line now says which yes this ran on, so a caller that claimed one it
+        // never collected is visible after the fact instead of indistinguishable.
+        let provenance = grantSource?.auditLabel ?? "unstated"
         AIAuditHistory.shared.record(
             capabilityID: candidate.permissionKey,
             risk: candidate.riskLevel,
             approved: true,
             success: result.success,
-            summary: result.message
+            summary: "\(result.message) [approved via \(provenance)]"
         )
         return result
     }
 
     // MARK: - Verification (Stage 7)
 
+    /// The window list as it stood just before the last menu click, keyed by the candidate
+    /// that took it — so a snapshot left behind by an abandoned run can never be compared
+    /// against a different action's result.
+    private var menuStateBeforeClick: (candidateID: String, snapshot: MenuOutcomeVerifier.Snapshot)?
+
     /// Outcome of a single lightweight read-back after a successful write action.
+    ///
+    /// `contradicted` and `unverified` were one case until now, and collapsing them cost the
+    /// user the only part that was actionable. A file still sitting at the path it was meant
+    /// to leave is proof the trash did not happen; a reminder missing from the first thirty
+    /// open ones is a windowed read that saw nothing. The first has somewhere to look, the
+    /// second does not, and both used to produce "I couldn't verify the final result".
     enum VerificationOutcome {
         /// Confirmed. Optional refined success message ("I've added reminder …").
         case verified(String?)
-        /// Executor succeeded but the result couldn't be confirmed — never report success.
+        /// The read-back observed the opposite of what was written. Proof, not doubt.
+        case contradicted(evidence: String)
+        /// The read-back ran and could not tell. Never report success.
         case unverified(fallback: String)
         /// No verifier for this route — keep the executor's own honest message.
-        case skipped
+        case notApplicable
+
+        var status: VerificationStatus {
+            switch self {
+            case .verified: return .verified
+            case .contradicted: return .contradicted
+            case .unverified: return .unverified
+            case .notApplicable: return .notApplicable
+            }
+        }
+
+        /// What to tell the user about the check, when there is something to tell.
+        var evidence: String? {
+            switch self {
+            case .verified(let refined): return refined
+            case .contradicted(let evidence): return evidence
+            case .unverified(let fallback): return fallback
+            case .notApplicable: return nil
+            }
+        }
     }
 
     /// Read the result back exactly once (no polling, no retries, background reads) to
@@ -158,11 +318,89 @@ final class GeneralAIActionExecutor {
     /// that are cheap and reliable are implemented; everything else returns `.skipped` so
     /// the honest executor message stands (we never emit a false "couldn't verify").
     func verify(_ candidate: DoraXActionCandidate) async -> VerificationOutcome {
-        switch candidate.capabilityID {
+        let byCapability = await verifyCapability(
+            id: candidate.capabilityID, inputValues: candidate.inputValues)
+        if case .notApplicable = byCapability {} else { return byCapability }
+
+        switch candidate.route {
+        case .verifiedMenu, .keyboardShortcut:
+            guard let (id, before) = menuStateBeforeClick, id == candidate.id,
+                let path = candidate.menuPath
+            else { return .notApplicable }
+            menuStateBeforeClick = nil
+            // The window list settles a beat after the click; reading it in the same run
+            // loop turn reports the state before the app drew anything.
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let outcome = MenuOutcomeVerifier.compare(
+                before: before, appName: candidate.appName ?? "The app", path: path)
+            else { return .notApplicable }
+            return outcome.verified
+                ? .verified(outcome.message)
+                : .unverified(fallback: outcome.message)
+        case .appLaunch:
+            guard let bundleID = candidate.bundleID else { return .notApplicable }
+            let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .contains { !$0.isTerminated }
+            return running
+                ? .verified(nil)
+                : .contradicted(evidence: "\(candidate.appName ?? "The app") isn't running.")
+        case .cli:
+            // A shell command that exits zero has run, not worked. Where the effect can be
+            // read back — an appearance change, an app that was told to quit —
+            // CommandOutcomeVerifier reads it. It was already wired into the agent tool
+            // loop and never into this path, so the same command verified in one surface
+            // and not the other.
+            guard let command = candidate.inputValues["command"], !command.isEmpty,
+                let reading = CommandOutcomeVerifier.verify(command: command)
+            else { return .notApplicable }
+            switch reading.status {
+            case .verified: return .verified(reading.message)
+            case .contradicted: return .contradicted(evidence: reading.message)
+            case .unverified: return .unverified(fallback: reading.message)
+            case .notApplicable: return .notApplicable
+            }
+
+        // Named rather than left to fall through a `default:`, because "no verifier exists
+        // for this route" is a fact about each one and worth being able to read here.
+        //
+        // .adapter and .api reach this line only when the capability-id read-backs above
+        // found nothing for them; a registered capability with a verifier never gets here.
+        // .mcp returns whatever a server chose to return and there is no second call that
+        // means "did that land". .shortcutRunner hands off to Shortcuts, which reports its
+        // own success and nothing about the world afterwards. .automation composes in
+        // another app — the window it opens is the outcome, and the user is looking at it.
+        case .adapter, .api, .mcp, .shortcutRunner, .automation:
+            return .notApplicable
+
+        case .axFallback:
+            // Reached only after a live menu verification already passed, which is why it
+            // was allowed to click at all. There is nothing further to read.
+            return .notApplicable
+        }
+    }
+
+    /// The same read-backs, reachable by capability id alone.
+    ///
+    /// Split out because the candidate path is not the only way a capability runs: the
+    /// agent tool loop calls them directly through `run_capability`, and while this logic
+    /// lived inside `verify(_ candidate:)` that entire path claimed success on the
+    /// executor's word. Two execution paths, one of them verified, is the same shape of
+    /// bug as two send paths with one of them wired.
+    func verifyCapability(id: String?, inputValues: [String: String]) async
+        -> VerificationOutcome
+    {
+        guard let descriptor = ActionVerifierRegistry.descriptor(for: id),
+              descriptor.requiredInputKeys.allSatisfy({ key in
+                  !(inputValues[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+              })
+        else { return .notApplicable }
+
+        switch id {
         case "reminders.create":
-            let title = candidate.inputValues["title"]?
+            let title = inputValues["title"]?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return .skipped }
+            guard !title.isEmpty else { return .notApplicable }
             let items = await Task.detached(priority: .utility) {
                 AppleAppsAPI.shared.getReminders(limit: 30)
             }.value
@@ -174,9 +412,9 @@ final class GeneralAIActionExecutor {
                 : .unverified(fallback: "I couldn't find it in Reminders just now.")
 
         case "calendar.create":
-            let title = (candidate.inputValues["title"] ?? candidate.title)
+            let title = (inputValues["title"] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return .skipped }
+            guard !title.isEmpty else { return .notApplicable }
             let events = await Task.detached(priority: .utility) {
                 AppleAppsAPI.shared.getCalendarEvents(limit: 30)
             }.value
@@ -189,21 +427,60 @@ final class GeneralAIActionExecutor {
             }
             return .unverified(fallback: "I couldn't find the event in Calendar just now.")
 
-        default:
-            break
-        }
+        case "notes.create":
+            let title = inputValues["title"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !title.isEmpty else { return .notApplicable }
+            let matches = await Task.detached(priority: .utility) {
+                AppleAppsAPI.shared.searchNotes(query: title)
+            }.value
+            return matches.isEmpty
+                ? .unverified(fallback: "I couldn't find that note in Notes just now.")
+                : .verified("I've created the note “\(title)”.")
 
-        switch candidate.route {
-        case .appLaunch:
-            guard let bundleID = candidate.bundleID else { return .skipped }
-            let running = NSRunningApplication
-                .runningApplications(withBundleIdentifier: bundleID)
-                .contains { !$0.isTerminated }
-            return running
-                ? .verified(nil)
-                : .unverified(fallback: "\(candidate.appName ?? "The app") isn't running.")
+        // Filesystem writes verify against the filesystem, which is the one read-back with
+        // no scripting bridge, no permission prompt and no timing window between it and the
+        // thing it is checking.
+        case "finder.newFolder":
+            let destination = inputValues["destination"] ?? ""
+            let name = inputValues["name"] ?? ""
+            guard !destination.isEmpty, !name.isEmpty else { return .notApplicable }
+            let url = URL(fileURLWithPath: destination, isDirectory: true)
+                .appendingPathComponent(name)
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(
+                atPath: url.path, isDirectory: &isDirectory)
+            return exists && isDirectory.boolValue
+                ? .verified("Created the folder “\(name)”.")
+                : .contradicted(evidence: "The folder isn't at \(url.path).")
+
+        // Deletion is where an unearned "done" costs the most: the user stops looking for
+        // something that is still there, or believes something is gone that is not.
+        case "finder.trash":
+            let path = inputValues["path"] ?? ""
+            guard !path.isEmpty else { return .notApplicable }
+            return FileManager.default.fileExists(atPath: path)
+                ? .contradicted(evidence: "It's still at \(path).")
+                : .verified(nil)
+
+        case "reminders.delete", "reminders.complete":
+            let title = inputValues["title"]?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !title.isEmpty else { return .notApplicable }
+            let items = await Task.detached(priority: .utility) {
+                AppleAppsAPI.shared.getReminders(limit: 50)
+            }.value
+            // getReminders returns open reminders, so completing one removes it from this
+            // list exactly as deleting it does — absence is the confirmation either way.
+            let stillOpen = items.contains {
+                ($0["title"] as? String)?.localizedCaseInsensitiveContains(title) ?? false
+            }
+            return stillOpen
+                ? .contradicted(evidence: "“\(title)” is still in Reminders.")
+                : .verified(nil)
+
         default:
-            return .skipped
+            return .notApplicable
         }
     }
 
@@ -239,21 +516,41 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Registered capability / adapter action
 
-    private func executeAdapterRoute(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    private func executeAdapterRoute(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
         // Registered capability (reminders.create, calendar.create, …) — validated and
-        // run through the existing engine. Approval already happened in General Chat,
-        // so pass approved: true; .critical is still blocked inside execute().
+        // run through the existing engine. `approved: true` is safe here because nothing
+        // reaches this method until `execute` has satisfied its `approval:` contract;
+        // .critical is still hard-blocked inside AIExecutionEngine regardless.
         if let capabilityID = candidate.capabilityID {
             guard CapabilityRegistry.shared.capability(id: capabilityID) != nil else {
                 return .init(success: false, message: "Capability \(capabilityID) is not registered.")
             }
+            var capabilityInput = candidate.inputValues
+            if capabilityID.hasPrefix("notes."),
+                candidate.requiredInputs.contains("noteID"),
+                capabilityInput["noteID", default: ""].isEmpty
+            {
+                do {
+                    capabilityInput["noteID"] = try await AppleNotesMCPServer.shared.selectedNoteID()
+                } catch {
+                    return .init(
+                        success: false,
+                        message: "I couldn't identify the current note. Select a note in Notes and try again. \(error.localizedDescription)")
+                }
+            }
             let plan = AIActionPlan(
                 capability: capabilityID,
-                input: candidate.inputValues,
+                input: capabilityInput,
                 explanation: "DoraX Action Chat: \(candidate.title)")
             do {
                 let result = try await AIExecutionEngine.shared.execute(
-                    plan, context: .none, approved: true)
+                    plan, context: .none, approved: true,
+                    // The user's own sentence, so an interactive Global Command can tell
+                    // "is dark mode on?" from "turn on dark mode".
+                    userRequest: candidate.inputValues["query"] ?? "")
                 return .init(success: result.success, message: result.output)
             } catch {
                 return .init(success: false, message: error.localizedDescription)
@@ -266,11 +563,19 @@ final class GeneralAIActionExecutor {
             else {
                 return .init(success: false, message: "Adapter action is no longer available.")
             }
-            // General Chat already showed its own route-specific approval.
-            action.requiresApproval = false
+            // The adapter's own prompt is a second prompt only when the caller already
+            // showed the user this exact action. Otherwise it is the only one there is.
+            if Self.suppressesAdapterPrompt(approval) {
+                action.requiresApproval = false
+            }
             let context = AXContextReader.shared.current
+            // An adapter script that interpolates {query} runs against whatever the user
+            // actually asked. The shared executor used to pass nothing, so a route moved
+            // here from ChatRouteResolver — which always passed it — would have run its
+            // script against an empty string.
             let (success, output) = await AppAdapterManager.shared.execute(
-                action, context: context, targetBundleId: bundleID)
+                action, context: context, targetBundleId: bundleID,
+                query: candidate.inputValues["query"] ?? "")
             let fallbackMessage = success ? "Ran \(candidate.title)." : "\(candidate.title) failed."
             return .init(success: success, message: output.isEmpty ? fallbackMessage : output)
         }
@@ -279,14 +584,17 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Keyboard shortcut
 
-    private func executeKeyboardShortcut(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    private func executeKeyboardShortcut(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
         guard MenuExecutionCoordinator.ensureAccessibilityTrustOrPrompt() else {
             return .init(success: false, message: "Accessibility permission is required to send shortcuts.")
         }
         // Cached shortcuts belong to a cached menu record. Live-verify that menu first,
         // then let the coordinator send its shortcut or click the menu item as fallback.
         if candidate.menuPath?.isEmpty == false {
-            return await executeVerifiedMenu(candidate)
+            return await executeVerifiedMenu(candidate, approval: approval)
         }
         guard let bundleID = candidate.bundleID,
               let char = candidate.shortcutChar, !char.isEmpty,
@@ -303,7 +611,7 @@ final class GeneralAIActionExecutor {
         guard sent else {
             // Unsupported key code — degrade to the live-verified menu path if we have one.
             if candidate.menuPath?.isEmpty == false {
-                return await executeVerifiedMenu(candidate)
+                return await executeVerifiedMenu(candidate, approval: approval)
             }
             return .init(success: false, message: "The shortcut key couldn't be posted.")
         }
@@ -322,18 +630,44 @@ final class GeneralAIActionExecutor {
 
     // MARK: - Verified menu
 
-    private func executeVerifiedMenu(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
+    private func executeVerifiedMenu(
+        _ candidate: DoraXActionCandidate,
+        approval: ExecutionApproval
+    ) async -> GeneralAIActionResult {
         guard let bundleID = candidate.bundleID, let path = candidate.menuPath, !path.isEmpty else {
             return .init(success: false, message: "Menu route is missing its path.")
+        }
+        // Destructive menu commands ask once and are then remembered. A caller that
+        // already put this exact item in front of the user has asked; one whose
+        // authority came from AppAccessPolicy has not, and for it this is the only
+        // question anybody puts before a Delete.
+        if !Self.suppressesAdapterPrompt(approval) {
+            let consented = await AppAdapterManager.shared.ensureMenuConsent(
+                path: path, targetBundleId: bundleID,
+                appName: candidate.appName ?? bundleID)
+            guard consented else { return .cancelled(routeLabel: candidate.routeLabel) }
+        }
+        // An app that has to be launched for this click has not finished building its menu
+        // bar when it reports itself launched. App Store, cold-started to run Store ▸
+        // Updates, answered "isn't available right now — nothing was executed" about a menu
+        // it does have and that the Context Dock runs on ⌘8 all day.
+        let wasRunning = NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == bundleID && !$0.isTerminated
         }
         guard await launchAndActivate(bundleID: bundleID) != nil else {
             return .init(success: false, message: "Couldn't activate \(candidate.appName ?? bundleID).")
         }
+        // Counted before the click, because the effect of a menu item is only legible as a
+        // difference. Taken after activation so that launching the app is not itself read
+        // as the window the menu item opened.
+        menuStateBeforeClick = MenuOutcomeVerifier.snapshot(bundleID: bundleID)
+            .map { (candidate.id, $0) }
         let (success, message) = await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
             bundleIdentifier: bundleID,
             path: path,
             cachedShortcutChar: candidate.shortcutChar,
-            cachedShortcutModifiers: candidate.shortcutModifiers)
+            cachedShortcutModifiers: candidate.shortcutModifiers,
+            allowSlowMenuBar: !wasRunning)
         return .init(success: success, message: message)
     }
 
@@ -551,7 +885,7 @@ final class GeneralAIActionExecutor {
                     URL: \(context.url)
 
                     Page content (from the DoraX Safari extension):
-                    \(context.pageTextForAI)
+                    \(context.compactedPageText(for: "summarize this page", limit: 5_000))
                     """
                 )
             )

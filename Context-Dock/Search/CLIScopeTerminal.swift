@@ -29,9 +29,18 @@ final class CLIScopeTerminalManager: ObservableObject {
     func ensureController() -> TerminalHostController {
         if let controller { return controller }
         let created = TerminalHostController(isPanel: true)
+        created.showsCapturedExecutionTranscript = true
         controller = created
         hasController = true
         return created
+    }
+
+    /// Make this CLI scope's PTY the bridge target and reveal it for the command.
+    func prepareForExecution() -> TerminalHostController {
+        let controller = ensureController()
+        isExpanded = true
+        TerminalAIBridge.shared.terminalController = controller
+        return controller
     }
 
     /// Run an approved command live in the embedded terminal, expanding it so the
@@ -39,11 +48,11 @@ final class CLIScopeTerminalManager: ObservableObject {
     func run(_ command: String) {
         let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let controller = ensureController()
-        isExpanded = true
+        let isFreshController = controller == nil
+        let controller = prepareForExecution()
         // Give a freshly-created PTY a moment to finish starting its shell before the
         // command is typed, so nothing is dropped.
-        DispatchQueue.main.asyncAfter(deadline: .now() + (hasController ? 0.05 : 0.35)) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (isFreshController ? 0.35 : 0.05)) {
             controller.sendCommand(trimmed)
         }
     }
@@ -62,8 +71,7 @@ struct CLIScopeTerminalPanel: View {
     @ObservedObject var manager = CLIScopeTerminalManager.shared
     let isDark: Bool
     var accentColor: SwiftUI.Color = .green
-
-    @State private var isDraggingResize = false
+    var onLayoutChange: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,6 +101,7 @@ struct CLIScopeTerminalPanel: View {
                     _ = manager.ensureController()
                     manager.isExpanded = true
                 }
+                onLayoutChange()
             }
         } label: {
             HStack(spacing: 8) {
@@ -118,12 +127,6 @@ struct CLIScopeTerminalPanel: View {
     @ViewBuilder
     private var terminalBody: some View {
         VStack(spacing: 0) {
-            TerminalResizeHandle(
-                height: $manager.height,
-                isDragging: $isDraggingResize,
-                minHeight: 120,
-                maxHeight: 460
-            )
             if let controller = manager.controller {
                 PanelTerminalView(controller: controller)
                     .frame(height: manager.height)

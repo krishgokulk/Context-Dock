@@ -3,30 +3,29 @@ import Foundation
 enum AIProviderSelectionSource: String, Codable, Sendable {
     case userSelection
     case explicitOverride
-    case fallback
 }
 
-enum AIProviderFallbackPolicy: String, Codable, Sendable {
-    case never
-    case ask
-    case automatic
-}
-
+/// Which model answers, and on whose authority.
+///
+/// There was a `fallbackPolicy` here — never / ask / automatic — that nothing ever read. It
+/// described a feature this app deliberately does not have: the provider shown in the UI is
+/// the provider that answers, and silently rerouting a question to a different model (a
+/// different privacy boundary, a different bill) because the chosen one was busy is not a
+/// convenience, it is a lie about what just happened. Retries handle a busy provider; when it
+/// is truly unavailable the honest outcome is to say so and let the user switch.
+///
+/// Deleted rather than left in place. A type that names a policy nobody enforces reads, to
+/// the next person, as a policy that is enforced somewhere they have not looked yet.
 struct AIProviderSelection: Equatable, Sendable {
     let requestedProvider: AIProvider
     let effectiveProvider: AIProvider
     let source: AIProviderSelectionSource
-    let fallbackPolicy: AIProviderFallbackPolicy
 
-    static func userSelected(
-        _ provider: AIProvider,
-        fallbackPolicy: AIProviderFallbackPolicy = .never
-    ) -> AIProviderSelection {
+    static func userSelected(_ provider: AIProvider) -> AIProviderSelection {
         AIProviderSelection(
             requestedProvider: provider,
             effectiveProvider: provider,
-            source: .userSelection,
-            fallbackPolicy: fallbackPolicy
+            source: .userSelection
         )
     }
 
@@ -34,8 +33,7 @@ struct AIProviderSelection: Equatable, Sendable {
         AIProviderSelection(
             requestedProvider: provider,
             effectiveProvider: provider,
-            source: .explicitOverride,
-            fallbackPolicy: .never
+            source: .explicitOverride
         )
     }
 }

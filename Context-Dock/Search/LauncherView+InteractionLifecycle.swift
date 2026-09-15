@@ -38,12 +38,6 @@ extension LauncherView {
                 return event
             }
 
-            // Window Preview owns nested native vertical and horizontal ScrollViews.
-            // Never translate their trackpad movement into dock-layer or pill navigation.
-            if self.searchState.activeSmartQueryKey == "windows" {
-                return event
-            }
-
             let dx = event.scrollingDeltaX
             let dy = event.scrollingDeltaY
 
@@ -196,7 +190,7 @@ extension LauncherView {
                     if self.accumulatedSwipeDeltaY < 0 {
                         if self.isGlobalContextActive {
                             // Global Context → Context Dock
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            withAnimation(.dockSheet) {
                                 self.dismissContextAndReturnToDock()
                             }
                             self.didSwitchLayerInCurrentSwipe = true
@@ -205,7 +199,7 @@ extension LauncherView {
                             // Context Dock → Media Dock
                             Task {
                                 await self.mediaObserver.refreshNowPlaying()
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                                withAnimation(.dockSheet) {
                                     self.showContextInDock = true
                                     self.globalContextActivation = nil
                                     self.showMediaLayer = true
@@ -224,7 +218,7 @@ extension LauncherView {
                             self.didSwitchLayerInCurrentSwipe = true
                         } else if self.showMediaLayer {
                             // Media Dock → Context Dock
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                            withAnimation(.dockSheet) {
                                 self.showMediaLayer = false
                                 self.showContextInDock = true
                             }
@@ -282,7 +276,7 @@ extension LauncherView {
             if currentDockSurfaceMode == .generalChat {
                 exitGeneralChatRestoringLayer()
             } else if showMediaLayer {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                withAnimation(.dockSheet) {
                     showMediaLayer = false
                     showContextInDock = true
                 }
@@ -300,13 +294,13 @@ extension LauncherView {
             if currentDockSurfaceMode == .generalChat {
                 exitGeneralChatRestoringLayer()
             } else if isGlobalContextActive {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                withAnimation(.dockSheet) {
                     dismissContextAndReturnToDock()
                 }
             } else if !showMediaLayer && settings.enableLayer3 {
                 Task {
                     await mediaObserver.refreshNowPlaying()
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                    withAnimation(.dockSheet) {
                         showContextInDock = true
                         globalContextActivation = nil
                         showMediaLayer = true
@@ -383,7 +377,7 @@ extension LauncherView {
     /// (keep globalContextActivation; just drop the app scope). Triggered by Cmd on an empty
     /// field, matching Backspace/Escape.
     func exitGlobalAppScopeToGlobalContext() {
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             l2.targetApp = nil
             globalInlineAppScope = nil
             additionalGlobalInlineAppScopes = []
@@ -476,7 +470,7 @@ extension LauncherView {
 
         collapseTimer?.cancel()
 
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+        withAnimation(.dockSheet) {
             isSearchBarExpanded = true
         }
         requestWindowSizeUpdate(reason: .rowLayoutChanged)
@@ -710,6 +704,13 @@ extension LauncherView {
 
                 // Skip only our own app — ChatGPT is now treated as a normal frontmost app.
                 if bundleID == Bundle.main.bundleIdentifier {
+                    return
+                }
+
+                // A locked frontmost-app chat owns the dock. Do not repoint frontmost
+                // metadata, re-detect context or reload the new app's menus underneath a
+                // live conversation — the contextEnv path applies the same lock.
+                if isContextDockChatLocked {
                     return
                 }
 

@@ -24,6 +24,37 @@ struct CustomListRow: Identifiable {
     let subtitle: String?
     let badge: String?
     let icon: String?   // SF Symbol name, or an absolute file/app path
+
+    /// Optional row layout. nil / "row" = the standard title+subtitle line.
+    /// "compare" = two values side by side with a symbol between them, for
+    /// conversions and before/after results.
+    let layout: String?
+    let left: String?
+    let right: String?
+    let centerIcon: String?
+    /// Tapping a caption rewrites the dock query to this string. Lets a row offer a
+    /// drill-in ("which currency?") without the dock knowing what the row means.
+    let leftQuery: String?
+    let rightQuery: String?
+    /// Row id to run when the centre symbol is tapped — makes it a control (a swap)
+    /// rather than decoration.
+    let centerAction: String?
+
+    var isCompare: Bool {
+        layout?.lowercased() == "compare" && (left != nil || right != nil)
+    }
+
+    init(id: String, title: String, subtitle: String?, badge: String?, icon: String?,
+         layout: String? = nil, left: String? = nil, right: String? = nil,
+         centerIcon: String? = nil, leftQuery: String? = nil, rightQuery: String? = nil,
+         centerAction: String? = nil) {
+        self.id = id; self.title = title; self.subtitle = subtitle
+        self.badge = badge; self.icon = icon
+        self.layout = layout; self.left = left; self.right = right
+        self.centerIcon = centerIcon
+        self.leftQuery = leftQuery; self.rightQuery = rightQuery
+        self.centerAction = centerAction
+    }
 }
 
 final class CustomListProviderService {
@@ -38,6 +69,15 @@ final class CustomListProviderService {
 
     private var cache: [UUID: Entry] = [:]   // main-thread only
     private var lastQuery: [UUID: String] = [:]  // last query the rows script saw (live mode)
+    private var pendingDebounce: [UUID: DispatchWorkItem] = [:]
+    private var queuedQuery: [UUID: String] = [:]
+    private var generation: [UUID: UInt64] = [:]
+
+    /// Long enough that a burst of typing is one run, short enough to feel instant.
+    private static let liveDebounce: TimeInterval = 0.12
+    /// A rows script is on the interactive path; one that hangs must not wedge the
+    /// panel forever behind `refreshing == true`.
+    private static let scriptTimeout: TimeInterval = 5
     private let queue = DispatchQueue(
         label: "com.krishgokul.ContextDock.customListProvider", qos: .userInitiated)
 
@@ -45,6 +85,19 @@ final class CustomListProviderService {
 
     func rows(for command: SystemCommand) -> [CustomListRow] {
         cache[command.id]?.rows ?? []
+    }
+
+    /// True while a rows script is running. The scope shows a status row instead of
+    /// an empty sheet — the shell can be expanded before the first rows arrive, and a
+    /// blank panel reads as a broken app rather than a working one that is thinking.
+    func isRefreshing(_ command: SystemCommand) -> Bool {
+        cache[command.id]?.refreshing ?? false
+    }
+
+    /// Has this command ever produced a result? Distinguishes "still starting up"
+    /// from "ran and genuinely found nothing".
+    func hasRun(_ command: SystemCommand) -> Bool {
+        cache[command.id]?.at ?? .distantPast > .distantPast
     }
 
     func isStale(_ command: SystemCommand, query: String) -> Bool {
@@ -57,8 +110,33 @@ final class CustomListProviderService {
 
     /// Run the rows script off-view, cache the parsed rows, fire `completion` on the
     /// main thread. No-ops while a refresh for this command is already in flight.
+    ///
+    /// Live-query extensions are debounced: a keystroke-per-subprocess would spawn a
+    /// shell for every character of "100 gbp" and let a slow one land after a newer
+    /// keystroke, flickering stale results back onto the screen.
     func refresh(_ command: SystemCommand, query: String, completion: @escaping () -> Void) {
-        if cache[command.id]?.refreshing == true { return }
+        guard Self.isLiveQuery(command) else {
+            performRefresh(command, query: query, completion: completion)
+            return
+        }
+
+        pendingDebounce[command.id]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingDebounce[command.id] = nil
+            self?.performRefresh(command, query: query, completion: completion)
+        }
+        pendingDebounce[command.id] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.liveDebounce, execute: work)
+    }
+
+    private func performRefresh(_ command: SystemCommand, query: String,
+                                completion: @escaping () -> Void) {
+        if cache[command.id]?.refreshing == true {
+            // Something newer is wanted than what's running. Remember it so the
+            // in-flight run's completion can immediately chase the current query.
+            queuedQuery[command.id] = query
+            return
+        }
         var entry = cache[command.id] ?? Entry(rows: [], at: .distantPast, refreshing: false)
         entry.refreshing = true
         cache[command.id] = entry
@@ -66,31 +144,70 @@ final class CustomListProviderService {
         let script = command.script
         let interpreter = command.actionType
         let env = environment(query: query, row: nil)
+        // Generation guards against an older, slower run overwriting a newer result.
+        generation[command.id, default: 0] &+= 1
+        let issued = generation[command.id] ?? 0
 
         queue.async { [weak self] in
             let output = Self.runCapturing(
                 script: script, interpreter: interpreter, env: env)
             let rows = Self.parseRows(output)
             DispatchQueue.main.async {
-                self?.cache[command.id] = Entry(rows: rows, at: Date(), refreshing: false)
-                self?.lastQuery[command.id] = query
+                guard let self else { return }
+                guard self.generation[command.id] == issued else { return }
+
+                var updated = self.cache[command.id]
+                    ?? Entry(rows: [], at: .distantPast, refreshing: false)
+                // A rows script that returns nothing mid-typing ("100 g" before the
+                // currency is complete) must not blank the panel — hold the last good
+                // rows so the list stays steady the way Spotlight's does.
+                updated.rows = rows.isEmpty && !updated.rows.isEmpty ? updated.rows : rows
+                updated.at = Date()
+                updated.refreshing = false
+                self.cache[command.id] = updated
+                self.lastQuery[command.id] = query
                 completion()
+
+                if let next = self.queuedQuery.removeValue(forKey: command.id), next != query {
+                    self.performRefresh(command, query: next, completion: completion)
+                }
             }
         }
     }
 
     /// Run the row-action script (the command's undo field) for the tapped row.
-    func runAction(_ command: SystemCommand, row: CustomListRow, query: String) {
+    /// `completion` fires on the main thread once the script has exited — a picker needs
+    /// to know the choice has actually been written before it re-reads the rows.
+    func runAction(_ command: SystemCommand, row: CustomListRow, query: String,
+                   completion: (() -> Void)? = nil) {
         let script = command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !script.isEmpty else { return }
+        guard !script.isEmpty else { completion?(); return }
         let interpreter = command.undoActionType
         let env = environment(query: query, row: row)
         queue.async {
             _ = Self.runCapturing(script: command.undoScript, interpreter: interpreter, env: env)
+            if let completion {
+                DispatchQueue.main.async(execute: completion)
+            }
         }
     }
 
+    /// Drop cached rows so the next read re-runs the script. A row action that changes
+    /// what the script would print (picking a currency) leaves the cache describing the
+    /// old choice, and `isStale` would keep serving it until the refresh interval passed.
+    func invalidate(_ command: SystemCommand) {
+        cache[command.id] = nil
+        lastQuery[command.id] = nil
+    }
+
     // MARK: Config
+
+    /// Extension wants a chat surface in its pinned panel. Opt-in per extension, so a
+    /// pinned panel comes in two flavours: rows only, or rows plus an assistant scoped
+    /// to that extension — the same split Quick Note already has.
+    static func hasAIPanel(_ command: SystemCommand) -> Bool {
+        command.keywords.contains { $0.lowercased() == "ai:panel" }
+    }
 
     /// Whether a command is a user-authored list extension.
     static func isListProvider(_ command: SystemCommand) -> Bool {
@@ -99,9 +216,71 @@ final class CustomListProviderService {
 
     /// Live-query extensions re-run the rows script on every keystroke (passing
     /// $CD_QUERY) instead of client-filtering the cached rows — enables capture-style
-    /// scopes (type + Enter to save, live search, …).
+    /// scopes (type + Enter to save, live search, converters, …).
+    ///
+    /// The `query:live` keyword is the explicit opt-in, but a script that reads
+    /// $CD_QUERY has already declared the dependency: client-filtering its output is
+    /// always wrong. A currency converter emitting one row for "20 gbp" got that row
+    /// filtered away by the literal text "20" and showed an empty panel. Inferring the
+    /// mode from the script removes a magic keyword the author had no way to guess.
     static func isLiveQuery(_ command: SystemCommand) -> Bool {
-        command.keywords.contains { $0.lowercased() == "query:live" }
+        if command.keywords.contains(where: { $0.lowercased() == "query:live" }) { return true }
+        if scriptReadsQuery(command.script) { return true }
+        // An external script is opaque: the command line is just an interpreter and a
+        // path, so the CD_QUERY reference lives in a file we cannot see. Read the file.
+        // Without this a converter looked like a browse list, and its rows — which are
+        // the answer to the query, not a match for it — were filtered away the moment
+        // the user typed.
+        return referencedScriptFileReadsQuery(command.script)
+    }
+
+    /// Follow a quoted or bare path in the command line and look for CD_QUERY inside it.
+    private static func referencedScriptFileReadsQuery(_ command: String) -> Bool {
+        let candidates = command
+            .split(whereSeparator: { $0 == " " || $0 == "\"" || $0 == "'" })
+            .map(String.init)
+            .filter { $0.contains("/") }
+        for raw in candidates {
+            let path = (raw as NSString).expandingTildeInPath
+            guard FileManager.default.fileExists(atPath: path),
+                  let size = try? FileManager.default
+                      .attributesOfItem(atPath: path)[.size] as? Int,
+                  size < 512_000,
+                  let text = try? String(contentsOfFile: path, encoding: .utf8)
+            else { continue }
+            if text.contains("CD_QUERY") { return true }
+        }
+        return false
+    }
+
+    /// Does the rows script reference the query variable in any of its spellings?
+    static func scriptReadsQuery(_ script: String) -> Bool {
+        script.contains("CD_QUERY")
+    }
+
+    // MARK: Authoring-time test
+
+    /// Run a rows script once and hand back raw stdout, for the settings tester.
+    /// Bypasses the cache entirely — the author wants this exact script, right now.
+    static func testRun(script: String, interpreter: SystemCommandActionType,
+                        query: String) async -> String {
+        let ctx = await MainActor.run { AXContextReader.shared.current }
+        let env: [String: String] = [
+            "CD_QUERY": query,
+            "CD_URL": ctx.currentURL ?? "",
+            "CD_TEXT": ctx.selectedText ?? "",
+            "CD_APP": ctx.appName,
+        ]
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(returning:
+                    runCapturing(script: script, interpreter: interpreter, env: env))
+            }
+        }
+    }
+
+    static func testParse(_ output: String) -> [CustomListRow] {
+        parseRows(output)
     }
 
     private func refreshInterval(for command: SystemCommand) -> TimeInterval {
@@ -166,8 +345,18 @@ final class CustomListProviderService {
         } catch {
             return ""
         }
+
+        // Kill a script that overruns rather than blocking this queue forever — a
+        // `curl` with no network would otherwise leave the panel permanently busy.
+        let watchdog = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global(qos: .utility)
+            .asyncAfter(deadline: .now() + scriptTimeout, execute: watchdog)
+
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        watchdog.cancel()
         return String(data: data, encoding: .utf8) ?? ""
     }
 
@@ -181,6 +370,13 @@ final class CustomListProviderService {
             let subtitle: String?
             let badge: String?
             let icon: String?
+            let layout: String?
+            let left: String?
+            let right: String?
+            let centerIcon: String?
+            let leftQuery: String?
+            let rightQuery: String?
+            let centerAction: String?
         }
         var rows: [CustomListRow] = []
         var autoIndex = 0
@@ -199,7 +395,14 @@ final class CustomListProviderService {
                         title: title,
                         subtitle: raw.subtitle,
                         badge: raw.badge,
-                        icon: raw.icon))
+                        icon: raw.icon,
+                        layout: raw.layout,
+                        left: raw.left,
+                        right: raw.right,
+                        centerIcon: raw.centerIcon,
+                        leftQuery: raw.leftQuery,
+                        rightQuery: raw.rightQuery,
+                        centerAction: raw.centerAction))
             } else {
                 autoIndex += 1
                 rows.append(

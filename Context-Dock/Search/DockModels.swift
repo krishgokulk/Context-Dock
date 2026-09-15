@@ -20,6 +20,21 @@ struct DockPill: Identifiable {
     var searchTerms: [String] = []
     var rankingScore: Double = 0
     var menuItemImage: NSImage? = nil
+    /// File this row stands for. Set by list extensions whose rows are paths — Space
+    /// then Quick Looks it, the way it does in Finder.
+    var previewPath: String? = nil
+    /// Two-value comparison layout: left value, a symbol, right value. Conversions
+    /// read as one thing becoming another, which a title+subtitle line cannot show.
+    var compareLeft: String? = nil
+    var compareRight: String? = nil
+    var compareIcon: String? = nil
+    /// Tapping a compare caption replaces the dock query with this string.
+    var compareLeftQuery: String? = nil
+    var compareRightQuery: String? = nil
+    /// List extension that produced this row — the caption dropdown re-runs it.
+    var compareCommandID: UUID? = nil
+    /// Row id run when the centre symbol is tapped (a swap, typically).
+    var compareCenterAction: String? = nil
     var menuContext: String? = nil
     var hasLiveAvailability: Bool = false
     var menuStatusBadge: String? = nil

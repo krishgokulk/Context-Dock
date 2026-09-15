@@ -120,6 +120,21 @@ final class AppleNotesExecutionService {
         return count
     }
 
+    /// Stable Notes ID for the visible selection; never ask a model to invent it.
+    func selectedNoteID() async throws -> String {
+        let script = """
+        tell application "Notes"
+            set pickedNotes to selection
+            if (count of pickedNotes) is 0 then error "Select a note first."
+            return id of item 1 of pickedNotes
+        end tell
+        """
+        let noteID = try await runScript(script, timeout: 10)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !noteID.isEmpty else { throw AppleNotesError.noteNotFound("current selection") }
+        return noteID
+    }
+
     // MARK: - Fetch all note metadata (title, folder, snippet — no full body)
 
     /// Batched: each `... of every note` is ONE Apple Event returning a whole list.

@@ -175,6 +175,10 @@ final class DoraXSpotlightIndexService {
     private func cliToolRecords() -> [DoraXSpotlightRecord] {
         TerminalPackageManager.shared.packages
             .filter(\.isEnabled)
+            // Only tools the user deliberately added. `packages` holds every executable found
+            // on PATH, and publishing those put hundreds of system binaries into macOS
+            // Spotlight as DoraX items.
+            .filter(TerminalPackageManager.shared.isUserAddedGlobalScope)
             .map { package in
                 let title = package.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     ? package.command

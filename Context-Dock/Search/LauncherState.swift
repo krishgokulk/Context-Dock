@@ -5,6 +5,7 @@
 // Each struct corresponds to one @State var; SwiftUI diffs them like any other value type.
 
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -31,15 +32,58 @@ struct SearchState {
 
 // MARK: - L2
 
+/// The Context Dock chat's conversation, held apart from `L2State` so surfaces other than
+/// LauncherView can render the same turn.
+///
+/// The dock remains the only writer: its pipeline produces these messages and nothing else
+/// appends to them. What this buys is a second *reader* — the corner App Chat shows the
+/// dock's own conversation rather than running a second engine beside it, which is how the
+/// two stay identical instead of merely similar.
+@MainActor
+final class AppChatConversation: ObservableObject {
+    static let shared = AppChatConversation()
+
+    @Published var messages: [AIChatMessage] = []
+    /// True while the dock's pipeline is running a turn.
+    @Published var isLoading = false
+    /// Steps for the turn still running, shown above the answer as it arrives.
+    @Published var liveSteps: [String] = []
+    /// The app the live conversation belongs to, for a surface that did not start it.
+    @Published var scopeBundleId: String = ""
+    @Published var scopeAppName: String = ""
+
+    init() {}
+}
+
 struct L2State {
-    var chatMessages: [AIChatMessage] = []
+    /// Storage moved to `AppChatConversation`; the spelling did not, so the 221 places
+    /// that read and write this keep meaning exactly what they meant.
+    ///
+    /// CAREFUL: a class behind a `@State` struct no longer invalidates the view that owns
+    /// it. `LauncherView` observes `AppChatConversation.shared` for that reason — without
+    /// it the dock's chat stops redrawing, which looks like the model went silent.
+    var chatMessages: [AIChatMessage] {
+        get { AppChatConversation.shared.messages }
+        set { AppChatConversation.shared.messages = newValue }
+    }
     var handledApprovalIds: Set<UUID> = []
     var terminalDismissed: Bool = false
     var activeDockSessionKey: String? = nil
-    var isLoading: Bool = false
+    /// Shared with the conversation for the same reason as `chatMessages`: a second
+    /// surface has to know a turn is in flight.
+    var isLoading: Bool {
+        get { AppChatConversation.shared.isLoading }
+        set { AppChatConversation.shared.isLoading = newValue }
+    }
     /// Truthful, user-visible orchestration activity for Context Dock chat.
     /// This reports app/tool work, never private model reasoning.
     var loadingStatus: String? = nil
+    /// Every `loadingStatus` line this turn, kept so the finished answer carries the same
+    /// "N steps" disclosure Selection Scope shows. `loadingStatus` is a single live line and
+    /// is overwritten by the next stage; this is the history of what was actually done.
+    var routerTrace: [String] = [] {
+        didSet { AppChatConversation.shared.liveSteps = routerTrace }
+    }
     var currentTask: Task<Void, Never>? = nil
     var activeRequestID: UUID? = nil
     var contextExtensions: [ExtensionDiscoveryResult] = []
@@ -67,11 +111,26 @@ struct AIModeState {
     var isActive: Bool = false
     var messages: [AIChatMessage] = []
     var isLoading: Bool = false
+    /// When the in-flight request started, so a dead one can be told from a slow one.
+    ///
+    /// `isLoading` is only ever cleared by an answer arriving or the surface being left, so
+    /// a request that never returns leaves it true forever — and every later Return is
+    /// swallowed by the guard that reads it, silently, with the question still in the field.
+    var loadingStartedAt: Date? = nil
     /// Live agentic-loop status shown beside the typing indicator
     /// ("Searching app tools…", "Running search_items via Artifacts…").
     var loadingStatus: String? = nil
     /// Tool chips collected during the current request, attached to the final answer.
     var pendingToolChips: [String] = []
+    var pendingEvidenceReceipts: [DoraXActionReceipt] = []
+    /// The typed record of a turn that executed something, set by the path that ran it.
+    /// Where this is present it is the source of the message's receipts; the loose fields
+    /// above still carry the paths that have no execution record to hand over.
+    var pendingWorkflowResult: GeneralChatWorkflowResult? = nil
+    var pendingSubjectiveEvaluation: SubjectiveEvaluation? = nil
+    /// Ordered routing steps for the current request ("Matching 31 actions…", "Best path: …").
+    /// Attached to the answer so the trace survives the loading indicator disappearing.
+    var routerTrace: [String] = []
     /// Minimal DoraX Action Chat execution state (planner stages + discovered routes +
     /// chosen route). Nil when no action is in flight. Deliberately tiny — a launcher
     /// progress strip, not an IDE "thinking" log.
@@ -87,11 +146,48 @@ struct AIModeState {
     var selectionURL: String? = nil
     // Awaiting user confirmation before sending an AI result via Share (two-step "Send via X?").
     var pendingShare: PendingSelectionShare? = nil
+    // Awaiting confirmation for a composed email draft ("summarise this and mail it to X"):
+    // the content is written first, then offered. Never sent without the user's click.
+    var pendingEmailDraft: PendingSelectionEmail? = nil
+    // Set when a query targeted an app the user hasn't selected — the answer bubble shows a
+    // one-tap "Enable <app> for this chat" button that adds it to the picker and re-runs.
+    var pendingEnableApp: EnableAppRequest? = nil
+    /// Routes offered for the current answer, rendered as buttons on it.
+    var pendingActionChoices: [ActionChoice] = []
+}
+
+/// A two-phase delivery request: the router recognised "do X to this, then mail it to
+/// someone", so the content is generated in the chat first and the recipient is remembered
+/// until it exists. `body` is filled in from the finished answer, never guessed.
+struct PendingSelectionEmail: Equatable {
+    let to: String
+    let subject: String
+    var body: String = ""
 }
 
 struct PendingSelectionShare: Equatable {
     let text: String
     let destination: String
+}
+
+/// A one-tap offer to scope the chat to an app the user asked about but hasn't selected.
+struct EnableAppRequest: Equatable {
+    let name: String
+    let bundleId: String
+    let query: String
+}
+
+/// One route the user can pick when several fit the request equally well.
+///
+/// The alternatives used to be printed into the answer as a bullet list, which asked a
+/// question the user could not answer by clicking — they had to read the options and retype
+/// their intent. `id` is the candidate's id, so the pick executes the exact route that was
+/// offered rather than re-resolving from text.
+struct ActionChoice: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let routeLabel: String
+    let appName: String?
 }
 
 /// Tiny planner-progress model for General AI Chat's DoraX Action Chat pipeline. Ordered

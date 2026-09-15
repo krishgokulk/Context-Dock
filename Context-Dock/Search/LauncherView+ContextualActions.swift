@@ -1420,6 +1420,36 @@ extension LauncherView {
             }
 
         let hasAction = !command.undoScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        // An extension scope owns the sheet the moment it is entered, so the shell can
+        // already be expanded when the rows script has produced nothing — which renders
+        // as a large empty box that looks like a crash. Always give the sheet one row
+        // saying what is actually happening.
+        if filtered.isEmpty {
+            let refreshing = service.isRefreshing(command) || !service.hasRun(command)
+            var status = DockPill(
+                id: "syscmd-custom-status-\(command.id)",
+                name: refreshing ? "Working…" : "No results",
+                icon: refreshing ? "hourglass" : "magnifyingglass",
+                accentColorName: refreshing ? "blue" : "secondary",
+                badge: refreshing
+                    ? nil
+                    : (trimmed.isEmpty ? "Nothing to show" : "Nothing matched “\(query)”"),
+                execute: {}
+            )
+            status.isEnabled = false
+            status.rankingKind = "systemCommand"
+            status.sourceBundleId = scopedBundleId
+            status.sourceAppName = command.name
+            status.trackingIdentifier = "syscmd-custom-status:\(command.id)"
+            // The dock ranks/filters pills by searchTerms. A computed extension's rows
+            // are an ANSWER to the query, not a match for it — "12" appears nowhere in
+            // "US Dollar" — so without the raw query here the dock drops every row the
+            // moment the user types, leaving the sheet expanded and empty.
+            status.searchTerms = [query, command.name]
+            return [status]
+        }
+
         return filtered.enumerated().map { index, row in
             var pill = DockPill(
                 // Index keeps the id unique even when a script emits duplicate row ids
@@ -1451,7 +1481,22 @@ extension LauncherView {
                     }
                 }
             )
-            if let fileIcon = fileSystemIcon(for: row.icon) {
+            // Real Finder icon — and a QuickLook thumbnail where one is meaningful —
+            // whenever the row points at a file. Authors nearly always put an SF Symbol in
+            // `icon` and the path in `id`, so resolving through the path is what makes a
+            // screenshots scope look like Finder instead of identical repeated glyphs.
+            if let path = Self.customListRowOpenablePath(row) {
+                pill.previewPath = path
+                if let thumb = FileThumbnailCache.shared.thumbnail(for: path, onReady: {
+                    self.scheduleDockPillRebuild(
+                        query: self.searchState.query, delayNanoseconds: 0,
+                        refreshContext: false)
+                }) {
+                    pill.menuItemImage = thumb
+                } else if let fileIcon = fileSystemIcon(for: path) {
+                    pill.menuItemImage = fileIcon
+                }
+            } else if let fileIcon = fileSystemIcon(for: row.icon) {
                 pill.menuItemImage = fileIcon
             }
             if row.badge != nil, let sub = row.subtitle {
@@ -1466,7 +1511,18 @@ extension LauncherView {
             } else if Self.customListRowOpenablePath(row) != nil {
                 pill.keyboardShortcutLabel = "Open"
             }
-            pill.searchTerms = [row.title, row.subtitle ?? "", command.name]
+            if row.isCompare {
+                pill.compareLeft = row.left
+                pill.compareRight = row.right
+                pill.compareIcon = row.centerIcon
+                pill.compareLeftQuery = row.leftQuery
+                pill.compareRightQuery = row.rightQuery
+                pill.compareCommandID = command.id
+                pill.compareCenterAction = row.centerAction
+            }
+            // Include the raw query: see the note on the status row. A compare card for
+            // "12" contains none of the characters the user typed.
+            pill.searchTerms = [row.title, row.subtitle ?? "", command.name, query]
             return pill
         }
     }
@@ -1792,8 +1848,22 @@ extension LauncherView {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
             }
             await MainActor.run {
-                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
                 let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+                // Writing the note is the point of this action, but an error or a refusal
+                // is the assistant talking about itself — and once it is in `text` it is a
+                // note, mirrored into memory and returned later as something the user
+                // wrote. "I can't see or access your current Safari page" came back in a
+                // listing of their own saved notes that way.
+                //
+                // The sidecar is where that belongs: QuickNote keeps `chatMessages`
+                // separate from `text` precisely so an AI answer cannot pollute the note.
+                guard AssistantNoteReply.isNoteContent(body) else {
+                    store?.appendChatMessage(
+                        ChatMessage(role: .assistant, content: body), for: targetID)
+                    self.notepadAIGenerating = false
+                    return
+                }
+                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
                 let joined = existing.isEmpty ? body : existing + "\n\n" + body
                 store?.updateText(joined, for: targetID)
                 self.notepadAIGenerating = false
@@ -2580,6 +2650,18 @@ extension LauncherView {
                 if pillEditDistance(qt, ct) <= 2 { return true }
             }
         }
+
+        // Raycast-style fuzzy subsequence: query chars appear in order across a menu
+        // label or path, spanning word boundaries. Guarded to 3+ chars so short queries
+        // stay on the stricter prefix/substring paths above and don't match everything.
+        let compactQuery = normalizedQuery.replacingOccurrences(of: " ", with: "")
+        if compactQuery.count >= 3 {
+            let pathJoined = pathParts.joined(separator: " ")
+            for hay in ([title, pathJoined] + corpora)
+            where dockPillFuzzySubsequence(normalizedQuery, in: hay) {
+                return true
+            }
+        }
         return false
     }
 
@@ -2633,6 +2715,21 @@ extension LauncherView {
                 score += 260 + orderedQueryTokens.count * 40
             }
 
+            // Fuzzy-subsequence hits rank below exact/prefix/substring but above nothing,
+            // so queries like "what" still surface ordered menu matches.
+            let compactQuery = normalizedQuery.replacingOccurrences(of: " ", with: "")
+            if compactQuery.count >= 3, !title.contains(normalizedQuery) {
+                if dockPillFuzzySubsequence(normalizedQuery, in: title) {
+                    score += 180
+                } else if dockPillFuzzySubsequence(normalizedQuery, in: path)
+                    || pathParts.contains(where: {
+                        dockPillFuzzySubsequence(normalizedQuery, in: $0)
+                    })
+                {
+                    score += 90
+                }
+            }
+
             if !item.isEnabled { score -= 60 }
             if menuContext == "services" || menuContext == "open with" {
                 score -= 180
@@ -2666,6 +2763,117 @@ extension LauncherView {
         return true
     }
 
+    /// Dock pills for one app's adapter actions.
+    ///
+    /// Extracted so Global Context's app scope renders the same pills, executed the same
+    /// way, as Context Dock. Building a second set for the other surface would have meant
+    /// two implementations of "run an adapter action" free to drift apart.
+    func adapterActionPills(
+        actions: [AdapterAction],
+        scopedBundleId: String,
+        scopedAppName: String,
+        scopedSearchQuery: String
+    ) -> [DockPill] {
+        var pills: [DockPill] = []
+        for action in actions {
+            let cliCommand =
+                action.cliToolCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let pillName =
+                action.type == .cliTool && !cliCommand.isEmpty
+                ? cliCommand
+                : action.name
+            let shortcutName = action.shortcutName ?? action.name
+            let pillIcon = action.type == .shortcut
+                ? ShortcutsCatalog.iconName(for: shortcutName)
+                : action.icon
+            let pillAccent = action.type == .shortcut
+                ? ShortcutsCatalog.accentColorName(for: shortcutName)
+                : (action.accentColor ?? "blue")
+            var pill = DockPill(
+                id: "adapter-\(scopedBundleId)-\(action.id)",
+                name: pillName,
+                icon: pillIcon,
+                accentColorName: pillAccent,
+                badge: action.type == .menubar
+                    ? "Custom" : (action.type == .cliTool ? "CLI" : action.type.displayName),
+                execute: {
+                    if action.type == .cliTool, !cliCommand.isEmpty {
+                        attachCLIToolToCurrentDock(
+                            command: cliCommand,
+                            bundleIdentifier: scopedBundleId,
+                            appName: scopedAppName
+                        )
+                        return
+                    }
+                    let capturedContext = effectiveAXContextForConversation()
+                    Task {
+                        AppInteractionStore.shared.record(
+                            bundleId: scopedBundleId,
+                            appName: scopedAppName,
+                            query: scopedSearchQuery.isEmpty ? action.name : scopedSearchQuery,
+                            kind: action.type == .pageJS ? .pageJS : .adapterAction,
+                            actionId: action.id
+                        )
+                        let result = await adapterManager.execute(
+                            action,
+                            context: capturedContext,
+                            targetBundleId: scopedBundleId,
+                            query: scopedSearchQuery
+                        )
+                        await MainActor.run {
+                            if action.type == .aiPrompt, result.0, !result.1.isEmpty {
+                                searchState.query = result.1
+                                isSearchFieldFocused = true
+                            }
+                        }
+                    }
+                })
+            pill.rankingKind = action.type == .cliTool ? "cliTool" : "adapter"
+            if action.type == .shortcut {
+                pill.menuItemImage = nil
+            }
+            pill.sourceBundleId = scopedBundleId
+            pill.sourceAppName = scopedAppName
+            pill.trackingIdentifier = "adapter:\(scopedBundleId):\(action.id)"
+            pill.searchTerms =
+                [action.name, pillName, action.description, action.type.displayName, cliCommand]
+                + action.triggers
+            pills.append(pill)
+
+            // For CLI tool adapter actions, also emit subcommand pills so the user
+            // gets the same scannable help-command pills as standalone CLI packages.
+            if action.type == .cliTool, !cliCommand.isEmpty,
+                let pkg = terminalPackageManager.packages.first(where: {
+                    $0.command.caseInsensitiveCompare(cliCommand) == .orderedSame
+                })
+            {
+                for sub in pkg.subcommands.prefix(5) {
+                    let fullCmd = "\(cliCommand) \(sub)"
+                    var subPill = DockPill(
+                        id: "adapter-sub-\(scopedBundleId)-\(fullCmd)",
+                        name: sub,
+                        icon: action.icon,
+                        accentColorName: action.accentColor ?? "green",
+                        badge: cliCommand,
+                        execute: {
+                            attachCLIToolToCurrentDock(
+                                command: fullCmd,
+                                package: pkg,
+                                runImmediately: true
+                            )
+                        }
+                    )
+                    subPill.rankingKind = "cliTool"
+                    subPill.sourceBundleId = scopedBundleId
+                    subPill.sourceAppName = scopedAppName
+                    subPill.trackingIdentifier = "adapter-sub:\(scopedBundleId):\(fullCmd)"
+                    subPill.searchTerms = [sub, fullCmd, action.name, cliCommand] + pkg.keywords
+                    pills.append(subPill)
+                }
+            }
+        }
+        return pills
+    }
     func scopedSpecialAppPills(
         bundleIdentifier: String,
         appName: String,
@@ -3397,7 +3605,12 @@ extension LauncherView {
 
         let hints: String
         if bundleId == "com.apple.finder" || lowerName == "finder" {
-            if !attachedFinderFolderSearchPath.isEmpty {
+            if let browsing = finderBrowsePath {
+                // Inside a folder the field filters that folder, so it should say which
+                // one rather than advertising the whole-machine search it no longer does.
+                let name = (browsing as NSString).lastPathComponent
+                hints = "search in \(name.isEmpty ? "this folder" : name)"
+            } else if !attachedFinderFolderSearchPath.isEmpty {
                 hints = "search this folder, open files, menu cmds"
             } else if isFinderDesktopOnlyMode {
                 // No Finder window — desktop file search over the user's folders.
@@ -3468,6 +3681,15 @@ extension LauncherView {
         }
         let scopedBundleId = scope.scopedBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         if !scopedBundleId.isEmpty {
+            // Finder is not one place. A chat about Downloads and a chat about a project
+            // folder are different conversations, and keying both to com.apple.finder put
+            // them in one thread that made sense in neither. Keyed by folder, the dock and
+            // the window's Folders row are the same conversation.
+            if scopedBundleId == ChatAppDirectory.finderBundleID,
+                isFinderFrontmostWindowContext()
+            {
+                return "dock_folder_\(currentFinderAIChatFolderURL.path)"
+            }
             return "dock_app_\(scopedBundleId)"
         }
         let appName = scope.scopedAppName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3489,7 +3711,7 @@ extension LauncherView {
         }
 
         if let previousKey = l2.activeDockSessionKey {
-            AppPanelChatStore.shared.save(l2.chatMessages, for: previousKey)
+            AppPanelChatStore.shared.saveSession(l2.chatMessages, for: previousKey)
         }
 
         l2.activeDockSessionKey = newKey
@@ -3500,7 +3722,13 @@ extension LauncherView {
         l2.handledApprovalIds = []
         l2.contextExtensions = []
         l2.lastAutoRunExtensionID = nil
-        l2.chatMessages = newKey.map { AppPanelChatStore.shared.load(for: $0) } ?? []
+        // Entering a scope starts a session: the sheet shows this visit, the chat window
+        // keeps the whole conversation. Exiting a scope without clearing therefore loses
+        // nothing — it just ends the span the dock is showing.
+        if let newKey {
+            AppPanelChatStore.shared.beginSession(for: newKey)
+        }
+        l2.chatMessages = newKey.map { AppPanelChatStore.shared.loadSession(for: $0) } ?? []
         updateL2Results([])
     }
 
@@ -3515,13 +3743,27 @@ extension LauncherView {
         guard !bundleIdentifier.isEmpty, !appName.isEmpty else { return false }
         let isCLIToolScope = bundleIdentifier.hasPrefix("cli://")
 
+        // Entering a CLI tool's scope: make sure its `--help` reference is scanned. A newly
+        // pinned binary is registered without a blocking scan (helpText empty), which left the
+        // chat model blind — it hallucinated generic scripts instead of using the real tool.
+        // Deduped + no-ops when help is already present, so this is cheap on every entry.
+        if isCLIToolScope {
+            let cliCommand = String(bundleIdentifier.dropFirst("cli://".count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cliCommand.isEmpty {
+                TerminalPackageManager.shared.ensureHelpScanned(command: cliCommand)
+            }
+        }
+
         let targetApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleIdentifier && !$0.isTerminated
         })
         let appURL = applicationURL(bundleIdentifier: bundleIdentifier, appName: appName)
         let appPath = appURL?.path ?? ""
         let icon =
-            !appPath.isEmpty
+            isCLIToolScope
+            ? NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: "CLI Tool")
+            : !appPath.isEmpty
             ? NSWorkspace.shared.icon(forFile: appPath)
             : (resolvedApplicationIcon(bundleIdentifier: bundleIdentifier, appName: appName)
                 ?? preparedDockIcon(targetApp?.icon))
@@ -3547,7 +3789,7 @@ extension LauncherView {
             remPanelIsProcessing = false
         }
 
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             if hasLegacyPanelState {
                 searchState.contextApp = nil
                 searchState.activeSmartQueryKey = nil
@@ -3639,7 +3881,7 @@ extension LauncherView {
                             in: .whitespacesAndNewlines
                         ).isEmpty
                 }
-        if hasAnyCLI {
+        if hasAnyCLI && !isCLIToolScope {
             _ = prepareScopedWorkspaceTerminal()
         }
 
@@ -3665,13 +3907,13 @@ extension LauncherView {
         }
         remPanelAITask?.cancel()
         remPanelIsProcessing = false
-        selectedClipboardEntryIDs.removeAll()
+        clearClipboardSelection()
         focusedClipboardEntryIndex = nil
         clipboardSourcePillFocusIndex = nil
         clipboardSourceFilterBundleId = ""
         clipboardSourceFilterName = ""
 
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             searchState.contextApp = nil
             searchState.activeSmartQueryKey = "clipboard"
             l2.targetApp = nil
@@ -3714,7 +3956,7 @@ extension LauncherView {
         remPanelAITask?.cancel()
         remPanelIsProcessing = false
 
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             searchState.contextApp = nil
             searchState.activeSmartQueryKey = "notifications"
             l2.targetApp = nil
@@ -3846,23 +4088,7 @@ extension LauncherView {
     }
 
     func currentDateTimeContextBlock() -> String {
-        let now = Date()
-        let formatter = DateFormatter()
-        formatter.dateStyle = .full
-        formatter.timeStyle = .medium
-        let localDateTime = formatter.string(from: now)
-        let isoFormatter = ISO8601DateFormatter()
-        isoFormatter.timeZone = .current
-        let isoDateTime = isoFormatter.string(from: now)
-        let timeZoneName = TimeZone.current.identifier
-
-        return """
-            CURRENT DATE & TIME:
-            - Local: \(localDateTime)
-            - ISO 8601: \(isoDateTime)
-            - Time Zone: \(timeZoneName)
-            Use this exact date/time for relative time references like today, yesterday, tomorrow, recent, and this week.
-            """
+        AppScopedChatService.dateTimeBlock()
     }
 
     func executeCachedMenuAction(
@@ -3997,40 +4223,7 @@ extension LauncherView {
     }
 
     func distributedMenuItems(_ items: [AXMenuItem], limit: Int) -> [AXMenuItem] {
-        guard limit > 0, !items.isEmpty else { return [] }
-
-        var buckets: [String: [AXMenuItem]] = [:]
-        var rootOrder: [String] = []
-
-        for item in items {
-            let root = item.path.first ?? item.title
-            if buckets[root] == nil {
-                buckets[root] = []
-                rootOrder.append(root)
-            }
-            buckets[root, default: []].append(item)
-        }
-
-        for root in rootOrder {
-            buckets[root]?.sort {
-                if $0.path.count != $1.path.count { return $0.path.count < $1.path.count }
-                return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-            }
-        }
-
-        var distributed: [AXMenuItem] = []
-        var didAppend = true
-        while distributed.count < limit && didAppend {
-            didAppend = false
-            for root in rootOrder where distributed.count < limit {
-                guard var bucket = buckets[root], !bucket.isEmpty else { continue }
-                distributed.append(bucket.removeFirst())
-                buckets[root] = bucket
-                didAppend = true
-            }
-        }
-
-        return distributed
+        FrontmostMenuMatcher.distributed(items, limit: limit)
     }
 
     func orderedScopedMenuMatches(_ items: [AXMenuItem], filterQuery: String, limit: Int)
@@ -4104,7 +4297,10 @@ extension LauncherView {
                 refreshContext: refreshContext,
                 cachedPills: cachedDockPills,
                 previewPills: contextDockPreviewPills(for: query),
-                isQuestionStyle: isQuestionStyleDockQuery(query)
+                // Selection Scope never takes the question-style short-circuit. That path wipes
+                // the pill cache before buildDockPills runs, so "what im…" produced no rows at
+                // all — including the Ask AI row this scope is supposed to always show.
+                isQuestionStyle: isQuestionStyleDockQuery(query) && !hasSelectionScopeSurface
             ),
             viewModel: contextDockViewModel,
             actions: ContextDockPillCoordinator.Actions(
@@ -4276,7 +4472,7 @@ extension LauncherView {
             sel.append(contentsOf: finderMenuPills)
             sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
             sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
-            return dedupeRankedDockPills(
+            let rankedSelection = dedupeRankedDockPills(
                 rankDockPills(
                     sel,
                     rawQuery: q,
@@ -4287,6 +4483,13 @@ extension LauncherView {
                     includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 )
             )
+            // Ask AI is the floor row of this scope, not a search result: ranking dropped it for
+            // any query whose words it doesn't carry ("what", "about this file"), which left an
+            // expanded-but-empty sheet. Re-seat it whenever ranking filtered it out.
+            if rankedSelection.contains(where: { $0.rankingKind == "selectionAI" }) {
+                return rankedSelection
+            }
+            return [selectionScopeAskAIPill(query: q)] + rankedSelection
         }
 
         if isQuestionStyleDockQuery(q) { return [] }
@@ -4314,6 +4517,9 @@ extension LauncherView {
                     self.pendingAIMenuProposal = nil
                     self.executeDockMenuAction(
                         sourcePID: pid,
+                        // A proposal built from a cached snapshot carries pid 0; the bundle id
+                        // is what lets the click launch the app first.
+                        launchBundleId: pid == 0 ? bId : nil,
                         path: path,
                         shortcutChar: sc,
                         shortcutModifiers: mod
@@ -5269,7 +5475,40 @@ extension LauncherView {
 
         let visibleMenuMatches: [AXMenuItem] = {
             if shouldSuppressMenuForContext { return [] }
-            return hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
+            let base = hasStrongContextQuery ? Array(menuMatches.prefix(6)) : menuMatches
+            // A scope chip on screen means the dock belongs to exactly ONE app. When that
+            // app has no menu match, the generic branches above fall back to the FRONTMOST
+            // app's live menus — a "Caffeine" chip listed Safari's Quit items. Drop any row
+            // that didn't come from the scoped app.
+            let chip: (bundleId: String, appName: String)? = {
+                if let target = l2.targetApp, !target.bundleId.isEmpty {
+                    return (target.bundleId, target.name)
+                }
+                if let inline = globalInlineAppScope, !inline.bundleId.isEmpty {
+                    return (inline.bundleId, inline.appName)
+                }
+                if isExplicitAppScope, !scopedBundleId.isEmpty {
+                    return (scopedBundleId, scopedAppName)
+                }
+                return nil
+            }()
+            guard let chip, !chip.bundleId.hasPrefix("cli://"),
+                chip.bundleId != frontmost.bundleID
+            else { return base }
+            let chipPID = NSWorkspace.shared.runningApplications.first {
+                $0.bundleIdentifier == chip.bundleId && !$0.isTerminated
+            }?.processIdentifier
+            return base.filter { item in
+                if item.sourcePID != 0 {
+                    // Cached rows for a closed app carry pid 0 — only live rows are checked.
+                    return item.sourcePID == chipPID
+                }
+                if !item.sourceAppName.isEmpty {
+                    return item.sourceAppName.caseInsensitiveCompare(chip.appName)
+                        == .orderedSame
+                }
+                return true
+            }
         }()
 
         // Always offer "Search <App> for <query>" while typing in a scoped app — not
@@ -5387,103 +5626,11 @@ extension LauncherView {
             pill.searchTerms = [tool.displayName, tool.toolName]
             pills.append(pill)
         }
-        for action in visibleAdapterActions {
-            let cliCommand =
-                action.cliToolCommand?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let pillName =
-                action.type == .cliTool && !cliCommand.isEmpty
-                ? cliCommand
-                : action.name
-            let shortcutName = action.shortcutName ?? action.name
-            let pillIcon = action.type == .shortcut
-                ? ShortcutsCatalog.iconName(for: shortcutName)
-                : action.icon
-            let pillAccent = action.type == .shortcut
-                ? ShortcutsCatalog.accentColorName(for: shortcutName)
-                : (action.accentColor ?? "blue")
-            var pill = DockPill(
-                id: "adapter-\(scopedBundleId)-\(action.id)",
-                name: pillName,
-                icon: pillIcon,
-                accentColorName: pillAccent,
-                badge: action.type == .menubar
-                    ? "Custom" : (action.type == .cliTool ? "CLI" : action.type.displayName),
-                execute: {
-                    if action.type == .cliTool, !cliCommand.isEmpty {
-                        attachCLIToolToCurrentDock(
-                            command: cliCommand,
-                            bundleIdentifier: scopedBundleId,
-                            appName: scopedAppName
-                        )
-                        return
-                    }
-                    let capturedContext = effectiveAXContextForConversation()
-                    Task {
-                        AppInteractionStore.shared.record(
-                            bundleId: scopedBundleId,
-                            appName: scopedAppName,
-                            query: scopedSearchQuery.isEmpty ? action.name : scopedSearchQuery,
-                            kind: action.type == .pageJS ? .pageJS : .adapterAction,
-                            actionId: action.id
-                        )
-                        let result = await adapterManager.execute(
-                            action,
-                            context: capturedContext,
-                            targetBundleId: scopedBundleId,
-                            query: scopedSearchQuery
-                        )
-                        await MainActor.run {
-                            if action.type == .aiPrompt, result.0, !result.1.isEmpty {
-                                searchState.query = result.1
-                                isSearchFieldFocused = true
-                            }
-                        }
-                    }
-                })
-            pill.rankingKind = action.type == .cliTool ? "cliTool" : "adapter"
-            if action.type == .shortcut {
-                pill.menuItemImage = nil
-            }
-            pill.sourceBundleId = scopedBundleId
-            pill.sourceAppName = scopedAppName
-            pill.trackingIdentifier = "adapter:\(scopedBundleId):\(action.id)"
-            pill.searchTerms =
-                [action.name, pillName, action.description, action.type.displayName, cliCommand]
-                + action.triggers
-            pills.append(pill)
-
-            // For CLI tool adapter actions, also emit subcommand pills so the user
-            // gets the same scannable help-command pills as standalone CLI packages.
-            if action.type == .cliTool, !cliCommand.isEmpty,
-                let pkg = terminalPackageManager.packages.first(where: {
-                    $0.command.caseInsensitiveCompare(cliCommand) == .orderedSame
-                })
-            {
-                for sub in pkg.subcommands.prefix(5) {
-                    let fullCmd = "\(cliCommand) \(sub)"
-                    var subPill = DockPill(
-                        id: "adapter-sub-\(scopedBundleId)-\(fullCmd)",
-                        name: sub,
-                        icon: action.icon,
-                        accentColorName: action.accentColor ?? "green",
-                        badge: cliCommand,
-                        execute: {
-                            attachCLIToolToCurrentDock(
-                                command: fullCmd,
-                                package: pkg,
-                                runImmediately: true
-                            )
-                        }
-                    )
-                    subPill.rankingKind = "cliTool"
-                    subPill.sourceBundleId = scopedBundleId
-                    subPill.sourceAppName = scopedAppName
-                    subPill.trackingIdentifier = "adapter-sub:\(scopedBundleId):\(fullCmd)"
-                    subPill.searchTerms = [sub, fullCmd, action.name, cliCommand] + pkg.keywords
-                    pills.append(subPill)
-                }
-            }
-        }
+        pills += adapterActionPills(
+            actions: visibleAdapterActions,
+            scopedBundleId: scopedBundleId,
+            scopedAppName: scopedAppName,
+            scopedSearchQuery: scopedSearchQuery)
         } // end !isFinderDesktopOnlyMode
 
         if !useSeededMenuPills || hasStrongContextQuery {
@@ -5693,10 +5840,23 @@ extension LauncherView {
         // keep the Finder/menu surface broad. The selection state should feel like the native
         // menu bar after selecting a file: File/Edit/View/Go/Window/Help commands stay available,
         // while app launch/recent-app rows are still removed by the selection-scoped filter.
-        guard hasSelectionScopeSurface && !isExplicitAppScope else {
-            return enabled
-        }
-        return selectionScopedDockPills(enabled)
+        let resolved: [DockPill] =
+            (hasSelectionScopeSurface && !isExplicitAppScope)
+            ? selectionScopedDockPills(enabled)
+            : enabled
+        if resolved.contains(where: { !$0.isSeparator }) { return resolved }
+
+        // No match. Keep the result sheet open with an "Ask AI" row instead of collapsing the
+        // surface (which made the shell jump between bar and sheet while typing) or auto-arming
+        // the app chat (which swapped the whole outer layer out from under the query).
+        guard showContextInDock,
+            !isGlobalContextActive,
+            !hasSelectionScopeSurface,  // Selection Scope already floors with its own Ask AI row
+            !isFinderDesktopOnlyMode,
+            !isCompactSmartScope,
+            !q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return resolved }
+        return [contextDockNoResultFallbackPill(for: q)]
     }
 
 }

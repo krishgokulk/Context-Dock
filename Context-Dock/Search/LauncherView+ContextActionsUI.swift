@@ -70,7 +70,7 @@ extension LauncherView {
                     }
                 } label: { Label("Take Screenshot", systemImage: "camera.viewfinder") }
                 Button {
-                    captureScreenshotToAttachments(interactive: true) { url in
+                    captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                         withAnimation { aiMode.attachments.append(url) }
                     }
                 } label: { Label("Capture Area", systemImage: "crop") }
@@ -92,6 +92,21 @@ extension LauncherView {
             .fixedSize()
             .help("Attach file, photo, or screenshot")
 
+            // The same handover the frontmost-app chat has, for the conversation that most
+            // often outgrows the strip. General chat is where multi-step work and long
+            // answers land, and it was the one surface with no way out of a bar.
+            Button {
+                openGeneralChatInWindow()
+            } label: {
+                Image(systemName: "macwindow")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Continue this chat in the window")
+
             // App icon: compact, independently scrollable picker for chat focus.
             Button {
                 isShowingChatFocusAppPicker.toggle()
@@ -107,11 +122,15 @@ extension LauncherView {
                 chatFocusAppPicker
             }
 
-            if !chatFocusApps.isEmpty {
+            // "/" filter: the matches replace the focus chips while it is active, so the
+            // capsule shows one thing at a time — what you have, or what you are choosing.
+            if generalChatSlashFilter != nil {
+                generalChatSlashAppCapsule
+            } else if !chatFocusApps.isEmpty {
                 HStack(spacing: 5) {
                     ForEach(chatFocusApps) { focusedApp in
                         Button {
-                            chatFocusApps.removeAll { $0.bundleId == focusedApp.bundleId }
+                            switchDockWorkspace(to: chatFocusApps.filter { $0.bundleId != focusedApp.bundleId })
                         } label: {
                             ZStack {
                                 AppBundleIconView(
@@ -148,6 +167,22 @@ extension LauncherView {
                 .background(Color.accentColor.opacity(0.12), in: Capsule())
             }
 
+            // Artifact button: the answer built a chart, table or diagram, and this strip
+            // can only show its source. One press moves the thread to the window, which
+            // renders it beside the conversation.
+            if generalChatArtifact != nil {
+                Button(action: openGeneralChatArtifactInWindow) {
+                    Image(systemName: "macwindow")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color.accentColor.opacity(0.9))
+                        .frame(width: 22, height: 22)
+                        .background(Color.accentColor.opacity(0.14), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Show what this answer built")
+                .transition(.scale(scale: 0.85).combined(with: .opacity))
+            }
+
             // Clear chat button
             if !aiMode.messages.isEmpty {
                 Button(action: {
@@ -161,6 +196,7 @@ extension LauncherView {
                     aiMode.selectionFiles = []
                     aiMode.selectionURL = nil
                     aiMode.pendingShare = nil
+                    generalChatArtifact = nil
                     hasUserSentMessageInCurrentSession = false
                     clearGeneralAIConversation()
                     AIProviderService.shared.resetOnDeviceSession()
@@ -174,86 +210,26 @@ extension LauncherView {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: aiMode.attachments.count)
+        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: generalChatArtifact)
     }
 
     @ViewBuilder
     var chatFocusAppPicker: some View {
-        let apps = runningAppsForChatFocus()
-        ScrollView(.vertical, showsIndicators: apps.count > 4) {
-            LazyVStack(spacing: 2) {
-                ForEach(apps, id: \.bundleId) { app in
-                    Button {
-                        if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
-                            chatFocusApps.removeAll { $0.bundleId == app.bundleId }
-                        } else {
-                            chatFocusApps.append(.init(name: app.name, bundleId: app.bundleId))
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(nsImage: app.icon)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 18, height: 18)
-                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            Text(app.name)
-                                .font(.system(size: 13, weight: .medium))
-                                .lineLimit(1)
-                            Spacer(minLength: 8)
-                            if chatFocusApps.contains(where: { $0.bundleId == app.bundleId }) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                        .padding(.horizontal, 9)
-                        .frame(height: 32)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .fill(
-                                    hoveredChatFocusBundleId == app.bundleId
-                                        ? Color.accentColor.opacity(0.22)
-                                        : Color.clear
-                                )
-                                .shadow(
-                                    color: hoveredChatFocusBundleId == app.bundleId
-                                        ? Color.accentColor.opacity(0.38) : .clear,
-                                    radius: 7
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            hoveredChatFocusBundleId = hovering ? app.bundleId : nil
-                        }
-                    }
-                }
+        // Shared with the composer bar's picker: one list, one source, one set of states,
+        // so choosing an app is the same interaction wherever the chat is. Finder leads
+        // it — see ChatAppDirectory.
+        ScopedAppPickerList(
+            rows: ScopedAppPickerRow.allApps(),
+            selectedIDs: Set(chatFocusApps.map { $0.bundleId.lowercased() })
+        ) { row in
+            if chatFocusApps.contains(where: { $0.bundleId == row.bundleId }) {
+                switchDockWorkspace(to: chatFocusApps.filter { $0.bundleId != row.bundleId })
+            } else {
+                chatFocusApps.append(.init(name: row.name, bundleId: row.bundleId))
             }
-            .padding(4)
         }
-        .frame(width: 176, height: CGFloat(min(max(apps.count, 1), 4)) * 34 + 8)
     }
 
-    /// Regular (user-visible) running apps for the chat focus picker, excluding
-    /// Context-Dock itself, sorted by name.
-    func runningAppsForChatFocus() -> [(name: String, bundleId: String, icon: NSImage)] {
-        NSWorkspace.shared.runningApplications
-            .filter {
-                $0.activationPolicy == .regular
-                    && !$0.isTerminated
-                    && $0.bundleIdentifier != Bundle.main.bundleIdentifier
-            }
-            .compactMap { app -> (name: String, bundleId: String, icon: NSImage)? in
-                guard let name = app.localizedName, let bundleId = app.bundleIdentifier else {
-                    return nil
-                }
-                let icon = resolvedRunningAppIcon(for: app) ?? app.icon
-                    ?? NSWorkspace.shared.icon(forFile: app.bundleURL?.path ?? "")
-                return (name, bundleId, icon)
-            }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
 
     /// Open the file picker and append the chosen files to the AI chat attachments.
     func attachAIFiles(imagesOnly: Bool) {
@@ -267,79 +243,22 @@ extension LauncherView {
     /// Open panel that returns the chosen file URLs — shared by the general chat and
     /// the frontmost-app chat + menus.
     func pickFilesForChatAttachment(imagesOnly: Bool) -> [URL] {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = true
-        panel.allowedContentTypes = imagesOnly ? [.image] : [.image, .pdf, .plainText, .data]
-        panel.message = "Choose files to attach to your message"
-        return panel.runModal() == .OK ? panel.urls : []
+        ChatAttachmentCapture.pickFiles(imagesOnly: imagesOnly)
     }
 
-    /// Capture a screenshot via `screencapture` — full screen (`-x`) or an
-    /// interactive region (`-i`) — and hand the PNG to `append` on the main actor.
-    /// Requires Screen Recording permission; a denied capture simply writes nothing.
+    /// Capture a screenshot and hand the PNG to `append`. See ChatAttachmentCapture
+    /// for the modes — the implementation is shared with the chat window's "+" menu.
     func captureScreenshotToAttachments(
-        interactive: Bool, append: @escaping (URL) -> Void
+        interactive: Bool, windowFirst: Bool = false, append: @escaping (URL) -> Void
     ) {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("context-dock-shot-\(UUID().uuidString).png")
-        var args = interactive ? ["-i"] : ["-x"]
-        args.append(url.path)
-        Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            process.arguments = args
-            do {
-                try process.run()
-                process.waitUntilExit()
-            } catch {
-                return
-            }
-            if FileManager.default.fileExists(atPath: url.path),
-                (try? Data(contentsOf: url))?.isEmpty == false
-            {
-                await MainActor.run {
-                    // Also put the shot on the clipboard so it can be pasted anywhere,
-                    // matching Capture Text's behaviour.
-                    if let image = NSImage(contentsOf: url) {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.writeObjects([image])
-                    }
-                    append(url)
-                }
-            }
-        }
+        ChatAttachmentCapture.captureScreenshot(
+            interactive: interactive, windowFirst: windowFirst, append: append)
     }
 
     /// Select a screen region, recognize its text locally with Vision, copy the
     /// result to the clipboard, and return it to the active AI surface.
     func captureScreenText(append: @escaping (String) -> Void) {
-        captureScreenshotToAttachments(interactive: true) { url in
-            Task.detached(priority: .userInitiated) {
-                defer { try? FileManager.default.removeItem(at: url) }
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-                do {
-                    try VNImageRequestHandler(url: url, options: [:]).perform([request])
-                    let text = (request.results ?? [])
-                        .compactMap { $0.topCandidates(1).first?.string }
-                        .joined(separator: "\n")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return }
-                    await MainActor.run {
-                        let pasteboard = NSPasteboard.general
-                        pasteboard.clearContents()
-                        pasteboard.setString(text, forType: .string)
-                        append(text)
-                    }
-                } catch {
-                    return
-                }
-            }
-        }
+        ChatAttachmentCapture.captureScreenText(append: append)
     }
 
     var providerColor: SwiftUI.Color {
@@ -348,10 +267,12 @@ extension LauncherView {
         case .googleGemini: return .blue
         case .openAI: return .green
         case .anthropic: return .orange
+        case .claudeCode: return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts: return .indigo
         }
     }
@@ -584,11 +505,28 @@ extension LauncherView {
                                 message: message,
                                 onInstallExtension: installSuggestedExtension,
                                 onInstallProposal: { json in installFromProposal(json) },
-                                onRunOnceProposal: { json in runOnceFromProposal(json) }
+                                onRunOnceProposal: { json in runOnceFromProposal(json) },
+                                onPickAction: { choice in
+                                    runPickedActionChoice(choice, inDock: true)
+                                },
+                                onReminderAction: { reminder, operation in
+                                    offerReminderRowAction(reminder, operation: operation)
+                                }
                             )
                         } else {
-                            AIChatMessageView(message: message)
+                            AIChatMessageView(
+                                message: message,
+                                onPickAction: { choice in
+                                    runPickedActionChoice(choice, inDock: true)
+                                },
+                                onReminderAction: { reminder, operation in
+                                    offerReminderRowAction(reminder, operation: operation)
+                                }
+                            )
                         }
+                    }
+                    if l2.isLoading, !l2.routerTrace.isEmpty {
+                        LiveAgentStepsView(steps: l2.routerTrace)
                     }
                     if l2.isLoading { AILoadingView(status: l2.loadingStatus) }
                 }
@@ -1013,6 +951,143 @@ extension LauncherView {
                 : "Add \(folderName) as AI context — all queries will be scoped to this folder")
     }
 
+    /// Pins the folder being browsed into its own window — the same preview surface
+    /// Space opens, kept open. The dock is a place you pass through; a folder you are
+    /// working out of should be able to stay on screen after it closes.
+    @ViewBuilder
+    var pinBrowsedFinderFolderButton: some View {
+        if let path = finderBrowsePath {
+            let name = (path as NSString).lastPathComponent
+            Button {
+                guard let item = PreviewItem.file(path: path) else { return }
+                PreviewController.shared.presentDetached(items: [item], focus: 0)
+            } label: {
+                Image(systemName: "pin")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary.opacity(0.70))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.07), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .help("Pin \(name.isEmpty ? "this folder" : name) in its own window")
+        }
+    }
+
+    /// Opens a persistent AI thread for the folder Finder is showing. In Finder's
+    /// desktop-only mode, Desktop itself is the scope. The general chat window owns this
+    /// conversation so folder history, file tools, and the right-side preview stay together.
+    @ViewBuilder
+    var openFinderFolderInChatWindowButton: some View {
+        let folderURL = currentFinderAIChatFolderURL
+        let folderName =
+            folderURL.lastPathComponent.isEmpty ? "this folder" : folderURL.lastPathComponent
+        let isOpen = GeneralChatWindowModel.shared.sessions.contains {
+            $0.scope == .folder(path: folderURL.resolvingSymlinksInPath().path)
+        }
+
+        Button {
+            _ = openCurrentFinderFolderAIChatIfNeeded()
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(
+                    isOpen
+                        ? AnyShapeStyle(Color.green.opacity(0.9))
+                        : AnyShapeStyle(.secondary.opacity(0.70))
+                )
+                .frame(width: 28, height: 28)
+                .background(Color.white.opacity(0.07), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help(
+            isOpen
+                ? "Open the \(folderName) AI chat"
+                : "Chat with \(folderName) in the AI window")
+    }
+
+    /// The stable folder scope represented by Finder right now. Finder returns its last
+    /// browser directory even when every window is closed, so desktop-only mode must not
+    /// trust that cached value: its visible place is always `~/Desktop`.
+    var currentFinderAIChatFolderURL: URL {
+        if isFinderDesktopOnlyMode {
+            return FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Desktop", isDirectory: true)
+                .standardizedFileURL
+        }
+        return URL(fileURLWithPath: currentFinderFolderPath()).standardizedFileURL
+    }
+
+    /// What the dock's chat field offers to talk about.
+    ///
+    /// "Ask Finder" is the wrong noun in a Finder window: nobody wants to ask the file
+    /// manager anything — they want to ask about the folder they are looking at, which is
+    /// also the scope the answer will actually use. Naming the folder says which one, so
+    /// the same phrasing is honest in Downloads and in a project directory.
+    var contextDockChatPrompt: String {
+        if isFinderFrontmostWindowContext() {
+            let name = currentFinderAIChatFolderURL.lastPathComponent
+            return name.isEmpty ? "Ask about this folder" : "Ask about \(name)"
+        }
+        return "Ask \(contextDockChatDraftAppName)"
+    }
+
+    /// Mirrors the trailing Finder `+` for keyboard users. Empty-field Right Arrow opens
+    /// the persistent folder thread; it no longer enables the retired folder-search mode.
+    @discardableResult
+    func openCurrentFinderFolderAIChatIfNeeded() -> Bool {
+        guard showContextInDock,
+            !isGlobalContextActive,
+            isFinderFrontmostWindowContext()
+        else { return false }
+
+        let folderURL = currentFinderAIChatFolderURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: folderURL.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return false }
+
+        // The dock answers about the current folder in the dock. Opening the window here
+        // took the user out of the surface they were typing in to start a conversation
+        // they had not asked to move — and the window glyph beside this control exists
+        // precisely to say when they do want that. The folder thread is still created, so
+        // pressing the glyph later lands in the same conversation rather than a new one.
+        GeneralChatWindowModel.shared.openFolderSession(folderURL)
+        armContextDockChat()
+        return true
+    }
+
+    /// Sends an unmatched Finder-window query to the same persistent folder thread opened
+    /// by the trailing `+`. Real Finder menu/file rows get first refusal in the keyboard
+    /// handlers; this is the natural-language fallback once none of those executed.
+    @discardableResult
+    func submitCurrentFinderFolderAIQueryIfNeeded(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+            showContextInDock,
+            !isGlobalContextActive,
+            isFinderFrontmostWindowContext()
+        else { return false }
+
+        let folderURL = currentFinderAIChatFolderURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(
+            atPath: folderURL.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return false }
+
+        // Registered so the thread exists and the window glyph opens the same
+        // conversation, but the question itself is answered here: a folder question typed
+        // into the dock is a dock question. Returning false hands it to the dock's own
+        // Finder chat rather than sending it somewhere the user cannot see it.
+        //
+        // Deliberately not arming the chat from here. This runs before find-intent
+        // resolution, and arming flips wasContextDockChatActive — which would demote
+        // "search X" in a Finder window from a real search into a chat message.
+        GeneralChatWindowModel.shared.openFolderSession(folderURL)
+        return false
+    }
+
     @ViewBuilder
     var addMailContextButton: some View {
         let alreadyAdded = isCurrentMailContextAttached()
@@ -1041,54 +1116,288 @@ extension LauncherView {
     /// panel for live output, runs through the background/terminal executor (real exit code
     /// + captured output — no fragile PTY-marker wait), appends the result to the chat, and
     /// feeds it back to the model for a plain answer.
+    /// Ceiling on chained commands for one request. Three is enough for the common
+    /// wrong-command-then-right-command recovery without letting a failing tool loop.
+    static let maxScopedCommandAttempts = 3
+
+    /// The model asks to read documentation by putting `HELP: <subcommand>` on its own line.
+    static func parseLoopHelpRequest(_ reply: String) -> String? {
+        for raw in reply.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.uppercased().hasPrefix("HELP:") else { continue }
+            return line.dropFirst(5)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+        }
+        return nil
+    }
+
+    /// The model asks for another command by putting `RUN: <command>` on its own line.
+    static func parseLoopCommand(_ reply: String) -> String? {
+        for raw in reply.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard line.uppercased().hasPrefix("RUN:") else { continue }
+            let command = line.dropFirst(4)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            guard !command.isEmpty else { return nil }
+            // A capability id is not a shell command. The model is shown ids like
+            // "cli.list" and "browser.history" as things it can run, so it writes
+            // `RUN: cli.list` — and this loop, which accepts any string, classified it,
+            // asked the user to approve it, and handed it to zsh: "command not found:
+            // cli.list", exit 127. The user approved a real prompt for a command that never
+            // existed.
+            guard !isCapabilityID(command) else { return nil }
+            return command
+        }
+        return nil
+    }
+
+    /// Whether the first word names a registered capability rather than a binary.
+    ///
+    /// Checked against the registry rather than by shape, so a genuine command that happens
+    /// to contain a dot — `python3.12 -m http.server`, `./scripts/dev-run.sh` — still runs.
+    static func isCapabilityID(_ command: String) -> Bool {
+        guard let first = command.split(separator: " ").first.map(String.init) else {
+            return false
+        }
+        return CapabilityRegistry.shared.capability(id: first) != nil
+    }
+
+    /// Removes the directive line so a reply that both explains and proposes does not show
+    /// the user machine syntax.
+    static func strippingLoopDirective(_ reply: String) -> String {
+        let kept = reply.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix("RUN:") }
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return kept.isEmpty ? reply : kept
+    }
+
+    /// Prompt for one turn of the loop: everything run so far, and the two allowed replies.
+    func scopedLoopPrompt(
+        originalQuestion: String,
+        transcript: [(command: String, output: String, status: String)],
+        canRunAnother: Bool
+    ) -> String {
+        var lines = ["User asked:", originalQuestion, ""]
+        for (index, step) in transcript.enumerated() {
+            lines.append("Command \(index + 1): \(step.command)\(step.status)")
+            lines.append("Output \(index + 1):")
+            lines.append(step.output.isEmpty ? "(no output)" : step.output)
+            lines.append("")
+        }
+        if canRunAnother {
+            lines.append(
+                "If the output answers the request, answer it concisely and say nothing else.")
+            lines.append(
+                "If you need to know a subcommand's exact flags before using it, reply with "
+                + "exactly one line `HELP: <subcommand>` and its documented help will be given "
+                + "to you. Do this instead of guessing a flag.")
+            lines.append(
+                "If the output does not answer the request — wrong command, missing argument, "
+                + "empty or error output — reply with exactly one line `RUN: <command>` giving "
+                + "the single next command to try, using only documented subcommands and flags.")
+            lines.append(
+                "Never repeat a command already listed above, and never re-run one that failed "
+                + "for a reason a different flag cannot fix — a missing dependency, a tool that "
+                + "cannot run in this terminal, a permission error. Say what is wrong instead.")
+        } else {
+            lines.append(
+                "Answer the request from the output above. No more commands can be run, so "
+                + "if it still cannot be answered, say what is missing.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     func runApprovedScopedCommand(_ command: String, originalQuestion: String) {
-        if !livePanelVisible || livePanelMode != .terminal {
+        // Only an interactive command needs a visible terminal. Everything else already runs
+        // headless with its output captured, and that output is appended to the chat below —
+        // so opening a PTY panel for it showed the same result twice, the second time as raw
+        // escape-coded transcript. Reveal the terminal only when the command genuinely needs
+        // a tty (top, vim, a REPL); otherwise the answer stays in the conversation.
+        if TerminalAIBridge.shared.isTUICommand(command),
+            !livePanelVisible || livePanelMode != .terminal
+        {
             withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
                 livePanelMode = .terminal
                 livePanelVisible = true
             }
         }
         Task {
-            let result = await TerminalCommandExecutor.shared.runPreApproved(command)
-            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            await MainActor.run {
-                let body = output.isEmpty ? "(no output)" : output
-                l2.chatMessages.append(
-                    AIChatMessage(
-                        role: .tool,
-                        content: """
-                            \(command)
+            // Agentic loop: run, judge the result against what was asked, and either answer
+            // or take one more step. Bounded — an unbounded loop on a tool that keeps
+            // erroring would run commands forever.
+            var transcript: [(command: String, output: String, status: String)] = []
+            var current = command
 
-                            \(body)
-                            """,
-                        isError: !result.success
-                    )
-                )
-            }
-            guard result.success, !output.isEmpty else { return }
-            do {
-                let history = await MainActor.run { l2.chatMessages }
-                let answer = try await sendToAIProviderWithContext(
-                    query: """
-                        User asked:
-                        \(originalQuestion)
-
-                        CLI command:
-                        \(command)
-
-                        CLI output:
-                        \(output)
-
-                        Answer user from this CLI output. Be concise. Do not suggest another command unless output is incomplete.
-                        """,
-                    messageHistory: history
-                )
+            for attempt in 1...Self.maxScopedCommandAttempts {
                 await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(role: .assistant, content: answer))
+                    // Without this the chat sat silent until the command exited — `mole clean`
+                    // runs for minutes, and nothing on screen said it was working.
+                    l2.isLoading = true
+                    dockTraceStep(
+                        attempt == 1
+                            ? "Running \(current)…"
+                            : "Step \(attempt): running \(current)…")
                 }
-            } catch {
-                // Output is already shown in the tool message above.
+                // Same thread the chat window lists for this scope: a command approved in the
+                // dock belongs on that thread's console, whichever surface approved it.
+                let consoleScope = await MainActor.run {
+                    GeneralChatScope(dockBundleId: currentGlobalScopedBundleID)
+                }
+                let result = await TerminalCommandExecutor.shared.runPreApproved(
+                    current, consoleScope: consoleScope
+                ) { line in
+                    // Live progress: the tool's own latest line, cleaned of the escape codes it
+                    // prints for colour. Status only — the full output is kept for the answer.
+                    let clean = TerminalPackageManager.strippingANSI(line)
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !clean.isEmpty else { return }
+                    let shown = clean.count > 80 ? String(clean.prefix(80)) + "…" : clean
+                    Task { @MainActor in l2.loadingStatus = shown }
+                }
+                // Stored stripped: the collapsed output view is not a terminal emulator, so raw
+                // CSI sequences rendered as literal "[0;32m" noise around every line.
+                let output = TerminalPackageManager.strippingANSI(result.output)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let ranCommand = current
+                await MainActor.run {
+                    l2.isLoading = false
+                    dockTraceStep(
+                        result.success
+                            ? "Ran \(ranCommand)"
+                            : "\(ranCommand) failed (exit \(result.exitCode))")
+                    // Running is the proof a linked tool belongs to this scope: it promotes a
+                    // provisional link so the sweep stops treating it as a wrong guess.
+                    if result.success {
+                        let binary = ranCommand.split(separator: " ").first.map(String.init) ?? ""
+                        let leaf = (binary as NSString).lastPathComponent
+                        let scope = self.currentScopeBundleIDForToolTrust()
+                        if !leaf.isEmpty, !scope.isEmpty {
+                            CLILinkTrustStore.shared.markUsed(command: leaf, bundleID: scope)
+                        }
+                    }
+                }
+                if result.success {
+                    // Worked here, on this version, with these flags — worth more next time
+                    // than the documentation it was derived from.
+                    TerminalPackageManager.shared.recordSuccessfulInvocation(ranCommand)
+                }
+                transcript.append((
+                    ranCommand, output,
+                    result.success ? "" : "  [exited \(result.exitCode)]"
+                ))
+
+                // Ask what to do next. A failed or empty run is still worth judging: knowing
+                // the command was wrong is exactly what lets the next step be right, which is
+                // the behaviour that was missing — `pear help list` returned nothing useful
+                // and the loop simply stopped instead of trying `pear --help`.
+                let decision: String
+                do {
+                    let history = await MainActor.run { l2.chatMessages }
+                    decision = try await sendToAIProviderWithContext(
+                        query: scopedLoopPrompt(
+                            originalQuestion: originalQuestion,
+                            transcript: transcript,
+                            canRunAnother: attempt < Self.maxScopedCommandAttempts),
+                        messageHistory: history)
+                } catch {
+                    // No verdict arrived, so surface the raw output rather than losing it.
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .tool, content: ranCommand,
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
+                }
+
+                // Documentation first. Serving a HELP: request costs no attempt and runs
+                // nothing — it hands back the block the tool itself printed, which is the
+                // difference between using a flag and inventing one. `--json` in the loop
+                // that prompted this had never appeared in any help output.
+                if let wanted = Self.parseLoopHelpRequest(decision),
+                    Self.parseLoopCommand(decision) == nil
+                {
+                    // In a CLI scope every command starts with the tool itself.
+                    let tool = ranCommand.components(separatedBy: " ").first ?? ""
+                    let section = TerminalPackageManager.shared.helpSection(
+                        command: tool, subcommand: wanted)
+                    await MainActor.run {
+                        dockTraceStep(
+                            section == nil
+                                ? "No documented help for \(tool) \(wanted)"
+                                : "Read help for \(tool) \(wanted)")
+                    }
+                    transcript.append((
+                        "\(tool) \(wanted) --help",
+                        section ?? "(no documented help for this subcommand)",
+                        ""
+                    ))
+                    continue
+                }
+
+                // A next step is a command on its own line after RUN:. Anything else is the
+                // answer, which is also what an exhausted attempt budget produces.
+                guard let next = Self.parseLoopCommand(decision),
+                    attempt < Self.maxScopedCommandAttempts
+                else {
+                    await MainActor.run {
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content: Self.strippingLoopDirective(decision),
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
+                }
+
+                // Never run the same thing twice. The loop that prompted this ran `ls`, then
+                // `ls --all`, then `ls --all --json`, then `ls --all` again — the tool was
+                // reporting it could not control this terminal, which no flag fixes, and each
+                // retry burned an attempt and raised the risk prompt.
+                let alreadyTried = transcript.contains {
+                    $0.command.caseInsensitiveCompare(next) == .orderedSame
+                }
+                if alreadyTried {
+                    await MainActor.run {
+                        dockTraceStep("Stopped: \(next) was already tried")
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .assistant,
+                                content:
+                                    "I already ran `\(next)` and it did not answer the request, "
+                                    + "so repeating it would not help. Here is what it returned:",
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
+                }
+
+                // The app's own risk policy decides whether a follow-up may run unattended:
+                // safe and low are documented as auto-execute, everything above needs the
+                // user. Letting the model pick its own next command is only acceptable
+                // because that gate is here.
+                let classification = TerminalCommandClassifier.shared.classify(next)
+                guard classification.riskLevel <= .low else {
+                    await MainActor.run {
+                        dockTraceStep("Next step needs your approval: \(next)")
+                        l2.chatMessages.append(
+                            AIChatMessage(
+                                role: .approval,
+                                content: next,
+                                structuredData:
+                                    "Continue: \(originalQuestion)|||/\(classification.riskLevel.displayName)",
+                                trace: l2.routerTrace,
+                                runOutput: output.isEmpty ? nil : output))
+                    }
+                    return
+                }
+                await MainActor.run { dockTraceStep("Not answered yet — trying \(next)") }
+                current = next
             }
         }
     }
@@ -1163,12 +1472,14 @@ extension LauncherView {
                         guard !l2.handledApprovalIds.contains(msg.id) else { return }
                         l2.handledApprovalIds.insert(msg.id)
                         let command = msg.content
-                        // CLI tool scope: run the approved command LIVE in the scope's
-                        // embedded PTY (real-time output, interactive) instead of bouncing
-                        // to Terminal.app.
-                        if isInCLIToolScope {
-                            CLIScopeTerminalManager.shared.run(command)
-                            return
+                        // Route the bridge to the scoped PTY, then resume the pending tool
+                        // call. Sending directly to the PTY left the on-device loop waiting.
+                        // Same rule as runApprovedScopedCommand: the scoped PTY is revealed
+                        // only for commands that need a tty. prepareForExecution also expands
+                        // the panel, so calling it for every approval was what opened a
+                        // terminal for `mole clean`.
+                        if isInCLIToolScope, TerminalAIBridge.shared.isTUICommand(command) {
+                            _ = CLIScopeTerminalManager.shared.prepareForExecution()
                         }
                         // Bridge card whose tool loop is still awaiting THIS command →
                         // resume it (the loop runs it and feeds the result back to the
@@ -1588,7 +1899,8 @@ extension LauncherView {
                     NSPasteboard.general.setString(path, forType: .string)
                 },
                 PanelAction(icon: "eye", label: "Quick Look") {
-                    quickLookDataSource = QuickLookDataSource(urls: [URL(fileURLWithPath: path)])
+                    PreviewController.shared.present(
+                        url: URL(fileURLWithPath: path), toggleIfSame: true)
                 },
                 PanelAction(icon: "trash", label: "Move to Trash") {
                     try? FileManager.default.trashItem(
@@ -1612,7 +1924,8 @@ extension LauncherView {
                     NSAppleScript(source: script)?.executeAndReturnError(nil)
                 },
                 PanelAction(icon: "eye", label: "Quick Look") {
-                    quickLookDataSource = QuickLookDataSource(urls: [URL(fileURLWithPath: path)])
+                    PreviewController.shared.present(
+                        url: URL(fileURLWithPath: path), toggleIfSame: true)
                 },
             ]
 

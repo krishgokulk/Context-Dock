@@ -123,6 +123,22 @@ final class WindowManagementService {
         }
     }
 
+    /// The window command a menu path stands for, if it stands for one.
+    ///
+    /// "Window ▸ Minimize" is a window operation whoever is asked to perform it: Electron
+    /// apps like VS Code often expose no such menu item, and clicking a menu is the least
+    /// reliable way to do something the Accessibility API does directly. Full screen is
+    /// matched wherever it lives, because apps file it under View as often as Window.
+    func command(forMenuPath path: [String]) -> Command? {
+        let normalized = path.map(normalize)
+        guard let title = normalized.last else { return nil }
+        if title.contains("full screen") || title.contains("fullscreen") { return .fullScreen }
+        // Otherwise the path has to actually be the Window menu — "View ▸ Zoom" is a
+        // browser's page zoom, not the green button.
+        guard normalized.contains("window") else { return nil }
+        return command(for: title, path: normalized)
+    }
+
     func handlesMenuPath(_ path: [String]) -> Bool {
         let normalized = path.map(normalize)
         guard normalized.contains("window"), let title = normalized.last else { return false }
@@ -247,23 +263,23 @@ final class WindowManagementService {
     /// until a real window appears, then centers it. Unlike `execute(.center)` it
     /// never shows the "No window found" toast — centering here is implicit, not a
     /// user-issued window command, so a miss should stay silent.
-    func centerAfterActivate(_ app: NSRunningApplication, attempt: Int = 0) {
+    /// Un-minimises and raises the app's window after activation — nothing more. Moving
+    /// or resizing it here would relocate a window the user had placed themselves, so
+    /// activating a minimised app restores it exactly where it was, like the Dock does.
+    func restoreAfterActivate(_ app: NSRunningApplication, attempt: Int = 0) {
         let pid = app.processIdentifier
         // Kick off the restore for any minimized windows on every attempt — the app
         // may not have created its window yet on the first pass.
         unminimizeAllWindows(pid: pid)
-        if let window = frontmostEligibleWindow(pid: pid), let screen = screen(for: window) {
-            rememberFrame(window, pid: pid)
-            let visible = screen.visibleFrame
-            let centered = visible.insetBy(dx: visible.width * 0.10, dy: visible.height * 0.10)
-            _ = apply(centered, to: window)
+        if let window = frontmostEligibleWindow(pid: pid) {
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
             return
         }
         // Up to ~1.1s of polling (8 × 0.15s) to outlast the restore animation, then
         // give up quietly rather than nag with a toast.
         guard attempt < 8 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.centerAfterActivate(app, attempt: attempt + 1)
+            self?.restoreAfterActivate(app, attempt: attempt + 1)
         }
     }
 
@@ -586,13 +602,26 @@ final class WindowManagementService {
 
     private func toggleFullScreen(pid: pid_t, appName: String) -> Bool {
         guard let window = frontmostWindow(pid: pid) else { return showNoWindow(appName) }
+        if isFullScreen(window) {
+            return setFullScreen(false, on: window)
+        }
+        // Snapshot before filling the screen, so "put it back" has something to put back.
+        // Full screen is the most common way a window loses its size, and it was the one
+        // route that recorded nothing.
+        rememberFrame(window, pid: pid)
+        return setFullScreen(true, on: window)
+    }
+
+    private func isFullScreen(_ window: AXUIElement) -> Bool {
         var value: CFTypeRef?
-        let isFullScreen =
-            AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value) == .success
+        return AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value) == .success
             && (value as? Bool) == true
-        return AXUIElementSetAttributeValue(
-            window, "AXFullScreen" as CFString,
-            (isFullScreen ? kCFBooleanFalse : kCFBooleanTrue)) == .success
+    }
+
+    @discardableResult
+    private func setFullScreen(_ on: Bool, on window: AXUIElement) -> Bool {
+        AXUIElementSetAttributeValue(
+            window, "AXFullScreen" as CFString, on ? kCFBooleanTrue : kCFBooleanFalse) == .success
     }
 
     private func bringAllToFront(pid: pid_t, appName: String) -> Bool {
@@ -619,15 +648,36 @@ final class WindowManagementService {
         return AXUIElementPerformAction(next, kAXRaiseAction as CFString) == .success
     }
 
+    /// "Put the window back."
+    ///
+    /// Leaving full screen is part of that and used to be missing entirely: a full-screen
+    /// window cannot be reframed at all, so restoring one either did nothing or reported
+    /// that the app had no window. Exiting counts as a restore on its own, because a user
+    /// who asks for their window back while it fills the screen means exactly that.
     private func restorePreviousFrames(pid: pid_t, appName: String) -> Bool {
+        var changed = false
+        if let window = frontmostWindow(pid: pid), isFullScreen(window) {
+            changed = setFullScreen(false, on: window)
+        }
+
         guard let snapshots = previousFrames.removeValue(forKey: pid), !snapshots.isEmpty else {
+            if changed { return true }
             return showNoWindow(appName)
         }
-        var changed = false
-        for snapshot in snapshots {
-            changed = apply(snapshot.frame, to: snapshot.window) || changed
+        // The window is still animating out of full screen; framing it in the same
+        // runloop turn is ignored by most apps.
+        let apply: () -> Bool = {
+            var restored = false
+            for snapshot in snapshots {
+                restored = self.apply(snapshot.frame, to: snapshot.window) || restored
+            }
+            return restored
         }
-        return changed
+        if changed {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { _ = apply() }
+            return true
+        }
+        return apply()
     }
 
     private func windows(pid: pid_t) -> [AXUIElement] {

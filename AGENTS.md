@@ -42,7 +42,21 @@ Claude follows the same rule via CLAUDE.md.
 xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
 ```
 
-In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first. There are no automated tests — all verification is manual via the running app.
+In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first.
+
+```bash
+./scripts/test.sh        # runs the whole suite (offline: no API key, no network)
+```
+
+The suite lives in `Context-DockTests/` and uses **swift-testing** (`import Testing`, `@Test`),
+not XCTest. It was long believed this project could not have automated tests — the runner
+always died with "exited with code 0 before establishing connection". The cause was the app's
+own single-instance guard: the test bundle loads into a second copy of Context-Dock, the
+developer's copy is nearly always running, and the guard terminated the host before XCTest
+could attach. The guard stands down under XCTest now (`ILauncherApp.swift`), and the tests run.
+
+Anything needing a live model is NOT in this suite. Provider behaviour is still verified by
+hand against the running app.
 
 - **Deployment target**: macOS 26.1  
 - **Swift version**: 5.0  
@@ -195,3 +209,77 @@ Always fetch current Apple docs before using any API, especially macOS 26 Tahoe 
 These files are very large - read only the relevant range:
 - Search/ContentView.swift - 420+ @State vars; use awk NR>=X and NR<=Y
 - Search/LauncherView+ContextualActions.swift - use same awk pattern
+
+<!-- graft:start -->
+## Graft — repo context graph
+
+This repo is indexed in `graft/`: small linked markdown nodes that explain each
+system and carry exact file:line spans, kept in sync with the code through git.
+
+For ANY task here — understanding how something works, finding where code lives,
+or scoping a change — get context from the graph before grepping or opening
+source files. Re-ask freely (it's cheap) and reuse literal identifiers you
+already have (symbol, error string, file name) as the query. New to this repo?
+Run `graft map` first — a token-budgeted orientation (dir clusters, hubs,
+hotspots), no LLM, no key.
+
+- Run `graft ask "<your question>" --source` → ranked nodes with the relevant
+  code spans inlined (each hit's ≤8-line crux by default; `--full` for whole
+  definitions when the crux isn't enough). Match the tool to the task shape:
+  for understanding or editing, the top node IS the answer — cite its
+  `covers:` file:line spans and edit straight from `--source`. For
+  exhaustive tasks ("every occurrence / every caller of this pattern"), ranked
+  results are top-N, not complete — run `graft grep "<literal>"` instead
+  (exhaustive over indexed files, grouped by enclosing symbol), falling back
+  to raw `grep -rn` only for unindexed files.
+- `graft skeleton <file>` → every definition's signature + span, ~10× cheaper
+  than reading the file; use it to skim an API surface.
+- `graft callers <symbol>` gives precomputed, exact edges — who calls this.
+  Add `--direction out` for what it calls, or `--depth N` to walk
+  transitively for the full blast radius. For structural questions, skip
+  ranking and use this directly.
+- Or browse: `graft/INDEX.md` lists every node; follow the links.
+- Monorepos and folders of multiple repos rank fairly across sub-projects —
+  hits carry `[scope/]` labels naming which one they're from. Narrow with
+  `graft ask "<task>" --in <scope>/` once you know where you're working.
+
+If a returned span is truncated ("+N more lines"), open the file at that exact
+range before finalizing. Only open source files when a node genuinely lacks a
+needed detail, and then at the exact file:line the node points to — never
+re-read whole files.
+
+After big code changes, refresh the graph with `graft build` (deterministic,
+no API key, $0).
+<!-- graft:end -->
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, use the installed graphify skill or instructions before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Finish the started task before taking the next one
+
+Work in this repo is sequenced deliberately, and the sequence is the user's.
+
+When a task or feature is underway and the user asks for something else — a new
+feature, another bug, a question that turns into work — **finish the current
+task first**, then take the new one. Say plainly that the new item is queued and
+where it sits in the order; do not silently drop it, and do not abandon what is
+half-built to chase it. A half-finished feature is worse than an unstarted one:
+it looks done from the outside and nobody knows what it left behind.
+
+The exception is the user saying to switch, or the new item making the current
+task pointless. A defect found *inside* the current task is part of it and gets
+fixed on the spot.
+
+Keep the agreed order visible. When the plan is a numbered sequence, name the
+task being worked on and what comes next, so the user can reorder deliberately
+rather than by accident.

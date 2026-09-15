@@ -31,6 +31,13 @@ extension LauncherView {
                 terms += package.keywords
                 terms += package.subcommands
             }
+        } else if result.subtitle.hasPrefix("userext://") {
+            let id = String(result.subtitle.dropFirst("userext://".count))
+            if let uuid = UUID(uuidString: id),
+                let ext = UserGlobalExtensionStore.shared.extensions.first(where: { $0.id == uuid })
+            {
+                terms += ext.searchTerms
+            }
         } else if result.subtitle.hasPrefix("syscmd://") {
             let id = String(result.subtitle.dropFirst("syscmd://".count))
             if let uuid = UUID(uuidString: id),
@@ -107,11 +114,6 @@ extension LauncherView {
         }
 
         guard !query.isEmpty else {
-            if showFolderPreview {
-                searchState.results = []
-                debounceTask?.cancel()
-                return
-            }
             withAnimation(.easeInOut(duration: 0.2)) {
                 searchState.results = []
                 searchState.selectedIndex = nil
@@ -132,9 +134,6 @@ extension LauncherView {
             if detectSmartQuery(query: query) == nil {
                 searchState.isInSmartMode = false
                 searchState.lastSmartQuery = ""
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    showFolderPreview = false
-                }
             }
         }
 
@@ -313,7 +312,7 @@ extension LauncherView {
                 isKeyboardNavigation = false
             }
 
-            var candidates = allItems.filter { $0.type == .application || $0.type == .cliTool }
+            var candidates = allItems.filter { SearchCandidateEligibility.isSearchable($0.type) }
             if settings.enableSpotlightSearch {
                 candidates += indexedFileResults.filter(includeIndexedSearchResult)
             }
@@ -450,8 +449,11 @@ extension LauncherView {
                 return result
             }
             let displayResults: [SearchResult] = {
+                // A preset is a strong match, not the only one: it used to replace the
+                // whole list, so matching a Global Command by keyword hid every app and
+                // file that matched the same query (#15).
                 let presets = systemCommandPresetSearchResults(for: snap.query)
-                return presets.isEmpty ? sortedResults : presets
+                return SearchPresetMerge.merge(presets: presets, scored: sortedResults)
             }()
             let suggestedShortcutIDs = Set(
                 snap.candidates.filter(\.isSuggestedShortcut).map(\.id)

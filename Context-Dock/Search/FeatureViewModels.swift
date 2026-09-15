@@ -45,9 +45,7 @@ final class LauncherViewModel: ObservableObject {
     /// sheet height so it hugs the actually-rendered rows (no half-empty box, no
     /// count/state mismatch).
     @Published var measuredGlobalListContentHeight: CGFloat = 0
-    @Published var showFolderPreview = false
     @Published var folderPreviewPath: String?
-    @Published var folderPreviewSelectedFile: String?
     @Published var showContactPreview = false
     @Published var contactPreviewData: SearchResult?
     /// Bumped on field-editor selection changes so the inline-scope overlay
@@ -80,7 +78,6 @@ final class LauncherViewModel: ObservableObject {
     var debounceTask: Task<Void, Never>?
     var browserWarmupTask: Task<Void, Never>?
     var windowResizeTask: Task<Void, Never>?
-    var quickLookDataSource: QuickLookDataSource?
     var quickLookEventMonitor: Any?
     var cmdHoldTask: Task<Void, Never>?
     var cmdHoldMonitor: Any?
@@ -134,8 +131,17 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var liveSelectionPreviewText: String?
     @Published var suppressAutomaticGlobalContextUntil: Date = .distantPast
     @Published var typingSnapshot = GlobalContextTypingSnapshot()
+    /// Whether an app-scope capsule (Global Context with a running-app scope) has been
+    /// expanded into its result sheet. Typing keeps the capsule compact — the sheet opens
+    /// only on ↓, the same contract pure Global Context already follows through `typingSnapshot`.
+    /// Reset whenever the query or the scope changes.
+    @Published var scopedSheetExpanded = false
     @Published var preparedResults: GlobalContextPreparedResults?
     @Published var isResolvingFastMatches = false
+    /// Last resolved top match icon. Held across the in-flight window of a keystroke
+    /// (where `typingSnapshot.matchDockIcons` is momentarily empty) so the leading
+    /// input icon never blinks back to the DoraX glyph while the user types.
+    @Published var stickyLeadingMatchIcon: MatchDockIcon?
 
     var appMatchTask: Task<Void, Never>?
     var appMatchGeneration = 0
@@ -147,7 +153,14 @@ final class GlobalContextViewModel: ObservableObject {
     var autoExpandTask: Task<Void, Never>?
     var idleCollapseTask: Task<Void, Never>?
     var clipboardExpiryTimer: Timer?
+    /// Always-on pasteboard poll: the clipboard scope must record every copy, not just
+    /// the one that happened to be current when the dock was last opened.
+    var clipboardMonitorTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
+    /// Debounces history writes — a burst of copies used to trigger one full encode each.
+    var clipboardSaveTask: Task<Void, Never>?
+    /// Selection order for multi-clip paste (a Set alone loses "the order I picked them").
+    var clipboardSelectionOrder: [UUID] = []
 }
 
 @MainActor
@@ -171,6 +184,8 @@ final class ContextDockViewModel: ObservableObject {
     @Published var contextMenuPills: [AXMenuItem] = []
     @Published var previousEnabledIDs: Set<UUID> = []
     @Published var lastFinderSelectionRefresh: Date = .distantPast
+    /// Backup-poll throttle for the live selection read (event path is unthrottled).
+    @Published var lastLiveSelectionPoll: Date = .distantPast
     @Published var liveMenuItems: [AXMenuItem] = []
     @Published var lastLiveMenuStructureRefresh: Date = .distantPast
     @Published var lastLiveMenuSignature = ""

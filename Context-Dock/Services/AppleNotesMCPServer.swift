@@ -76,6 +76,11 @@ final class AppleNotesMCPServer {
         return await AppleNotesMetadataIndex.shared.search(query: "", maxResults: maxResults)
     }
 
+    func selectedNoteID() async throws -> String {
+        try assertEnabled()
+        return try await AppleNotesExecutionService.shared.selectedNoteID()
+    }
+
     // MARK: - Deep search (full note body scan via AppleScript — slower but thorough)
 
     func deepSearch(query: String, maxResults: Int = 20) async throws -> [NoteMetadata] {

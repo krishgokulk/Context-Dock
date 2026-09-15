@@ -10,10 +10,221 @@ class TerminalPackageManager: ObservableObject {
 
     @Published var packages: [TerminalPackage] = []
 
+    /// Did the user deliberately make this tool a global CLI scope?
+    ///
+    /// `packages` is not a user-curated list — BinaryWatcherService discovers executables on
+    /// PATH, so it holds hundreds of entries the user never chose (`tac`, `new-localization`).
+    /// Two places disagreed about that: Settings → CLI Tool Scope lists only the deliberate
+    /// ones, while the global search index accepted every enabled package, so typing "tac"
+    /// ghost-completed a scope the user never added and Settings could not show or remove.
+    ///
+    /// Deliberate means pinned, or wired into an App Adapter as a CLI tool. This is the one
+    /// definition; both the index and Settings must use it.
+    func isUserAddedGlobalScope(_ package: TerminalPackage) -> Bool {
+        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return false }
+        if AppSettings.shared.isCLIToolPinned(command) { return true }
+
+        let commandKey = command.lowercased()
+        let packageNameKey = package.name
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if AppAdapterManager.shared.adapters.contains(where: { adapter in
+            let adapterKey = adapter.bundleId.lowercased()
+            let adapterNameKey = adapter.appName
+                .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if adapterKey.hasPrefix("cli://") {
+                return adapterKey.contains(commandKey)
+                    || (!packageNameKey.isEmpty && adapterKey.contains(packageNameKey))
+                    || adapterNameKey == commandKey
+                    || (!packageNameKey.isEmpty && adapterNameKey == packageNameKey)
+            }
+            return adapter.actions.contains { action in
+                action.type == .cliTool
+                    && (action.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
+            }
+        }) {
+            return true
+        }
+        // Wired into a scope directly rather than through an adapter.
+        let scopeIds = Set(["cli://\(command)", "cli_\(command)", command])
+        return package.contextAppBundleIds.contains { scopeIds.contains($0) }
+    }
+
+    /// Commands the user marked as needing a real terminal, lowercased.
+    ///
+    /// Cached rather than scanned: isTUICommand runs on every command execution, and
+    /// `packages` holds ~950 discovered binaries. Rebuilt whenever packages change, which is
+    /// rare — a pin, a scan, a new binary appearing.
+    @Published private(set) var interactiveCommands: Set<String> = []
+
+    func refreshInteractiveCommands() {
+        interactiveCommands = Set(
+            packages
+                .filter(\.isInteractive)
+                .map { $0.command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+                .filter { !$0.isEmpty }
+        )
+    }
+
+    /// Records an invocation that exited zero, so the next task can start from something
+    /// known to work rather than from a guess at the documentation.
+    ///
+    /// Only for tools the user pinned — a scope's memory is worth keeping; a passing
+    /// reference to some discovered binary is not. Kept to the most recent few: this text
+    /// goes into a prompt, and an unbounded list would crowd out the documentation it sits
+    /// beside.
+    func recordSuccessfulInvocation(_ command: String) {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let tool = trimmed.components(separatedBy: " ").first ?? ""
+        guard !tool.isEmpty,
+            let index = packages.firstIndex(where: {
+                $0.command.caseInsensitiveCompare(tool) == .orderedSame
+            }),
+            isUserAddedGlobalScope(packages[index])
+        else { return }
+
+        var proven = packages[index].provenInvocations
+        proven.removeAll { $0.caseInsensitiveCompare(trimmed) == .orderedSame }
+        proven.insert(trimmed, at: 0)
+        packages[index].provenInvocations = Array(proven.prefix(8))
+        savePackages()
+    }
+
+    /// Current modification date of the tool's binary, following the symlinks Homebrew and
+    /// pipx install.
+    nonisolated static func binaryModificationDate(_ path: String?) -> Date? {
+        guard let path, !path.isEmpty else { return nil }
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        return (try? FileManager.default.attributesOfItem(atPath: resolved))?[.modificationDate]
+            as? Date
+    }
+
+    /// True when the binary has changed since its help was scanned, so what is cached may
+    /// describe a version the user no longer has.
+    func helpIsStale(_ package: TerminalPackage) -> Bool {
+        guard package.helpText?.isEmpty == false else { return false }
+        guard let scanned = package.scannedBinaryModified,
+            let current = Self.binaryModificationDate(package.installedPath)
+        else { return false }
+        return abs(current.timeIntervalSince(scanned)) > 1
+    }
+
+    /// Re-scans any pinned tool whose binary has changed since its last scan.
+    ///
+    /// Only pinned tools: those are the ones whose help reaches a prompt, and rescanning
+    /// hundreds of discovered binaries would spawn hundreds of processes for documentation
+    /// nobody is reading. Runs at most one tool at a time, off the typing path.
+    func refreshStaleHelpForPinnedTools() async {
+        let stale = packages.filter { isUserAddedGlobalScope($0) && helpIsStale($0) }
+        for package in stale {
+            await refreshHelpText(for: package.id)
+            await refreshManText(for: package.id)
+        }
+    }
+
+    /// Reads the tool's man page, once, and caches it.
+    ///
+    /// `col -b` strips the overstrike backspaces roff emits for bold and underline, which
+    /// would otherwise reach the model as "ffiinndd" and burn tokens on nothing. Tools with no
+    /// man page exit non-zero and are recorded as having none, so this is not retried on every
+    /// scope entry.
+    @discardableResult
+    func refreshManText(for packageID: UUID) async -> String? {
+        guard let index = packages.firstIndex(where: { $0.id == packageID }) else { return nil }
+        let command = packages[index].command
+        guard !command.isEmpty else { return nil }
+
+        let text = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            // MANWIDTH keeps lines from wrapping to the terminal width of whoever ran it.
+            process.arguments = ["-lc", "MANWIDTH=100 man \(command) 2>/dev/null | col -b"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            process.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
+            }
+            do { try process.run() } catch { continuation.resume(returning: "") }
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        await MainActor.run {
+            guard let i = self.packages.firstIndex(where: { $0.id == packageID }) else { return }
+            // Empty string, not nil: "checked, there is none" must be distinguishable from
+            // "never checked", or every scope entry pays for the same failed lookup.
+            self.packages[i].manText = trimmed
+            self.savePackages()
+        }
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// The stored `--help` for one subcommand, or the top-level help when `subcommand` is
+    /// empty. Nil when the tool has never been scanned or that path is not in the tree.
+    ///
+    /// scanDeepHelp records the tree as sections delimited by `--- <cmd path> --help ---`,
+    /// so a section can be handed back whole. That matters: a subcommand's flags are only
+    /// trustworthy as the block the tool printed, not as a relevance-ranked excerpt of a 30k
+    /// document, which is how invented flags get through.
+    func helpSection(command: String, subcommand: String) -> String? {
+        guard
+            let package = packages.first(where: {
+                $0.command.caseInsensitiveCompare(command) == .orderedSame
+            }),
+            let help = package.helpText, !help.isEmpty
+        else { return nil }
+
+        let wanted = subcommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !wanted.isEmpty else {
+            // Top-level: everything before the first subcommand section.
+            return help.components(separatedBy: "\n--- ").first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let marker = "\(command) \(wanted) --help ---"
+        for part in help.components(separatedBy: "\n--- ") {
+            guard part.lowercased().hasPrefix(marker.lowercased()) else { continue }
+            let body = part.dropFirst(marker.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return body.isEmpty ? nil : body
+        }
+        return nil
+    }
+
+    /// Marks a tool as needing a terminal, and persists it.
+    func setInteractive(_ isInteractive: Bool, for packageID: UUID) {
+        guard let index = packages.firstIndex(where: { $0.id == packageID }) else { return }
+        packages[index].isInteractive = isInteractive
+        savePackages()
+        refreshInteractiveCommands()
+        // The mark changed, so the per-subcommand verdicts learned under the old one are no
+        // longer evidence about anything.
+        CommandInteractivity.forget(tool: packages[index].command)
+    }
+
+    /// Directories holding the tools the user deliberately scoped, most-specific first.
+    ///
+    /// Prepended to PATH for every command DoraX runs. A tool installed to ~/.local/bin (pipx,
+    /// cargo, a curl installer) is on PATH only if one of the user's dotfiles puts it there —
+    /// so a tool DoraX had scanned, listed with its full path and let the user scope could
+    /// still come back "command not found" the moment the model invoked it by name.
+    func pinnedToolDirectories() -> [String] {
+        var seen = Set<String>()
+        return packages
+            .filter { $0.isEnabled && isUserAddedGlobalScope($0) }
+            .compactMap { $0.installedPath }
+            .filter { !$0.isEmpty }
+            .map { URL(fileURLWithPath: $0).deletingLastPathComponent().path }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
     private let packagesKey = "L2TerminalPackages"
 
     init() {
         loadPackages()
+        refreshInteractiveCommands()
         registerBuiltInMarkItDownIfAvailable()
         // Auto-add any binary that BinaryWatcherService discovers (installed via brew, curl, etc.)
         NotificationCenter.default.addObserver(
@@ -376,7 +587,7 @@ class TerminalPackageManager: ObservableObject {
         }
 
         for attempt in attempts {
-            let output = await runQuiet(attempt, env: env)
+            let output = Self.strippingANSI(await runQuiet(attempt, env: env))
             let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
             // Accept output that looks like real help (>20 chars, no error markers)
             if trimmed.count > 20
@@ -422,7 +633,7 @@ class TerminalPackageManager: ObservableObject {
         // Stop digging if we've already collected enough text
         guard await accumulator.text.count < 28000 else { return }
 
-        let subs = parseSubcommands(from: help)
+        let subs = parseSubcommands(from: help, binary: binary)
             .filter { !Self.metaSubcommands.contains($0) }
             .prefix(12)  // max breadth per level
 
@@ -440,48 +651,139 @@ class TerminalPackageManager: ObservableObject {
 
     /// Parse the subcommand list from --help output.
     /// Handles: "SUBCOMMANDS:", "COMMANDS:", "Available commands:", indented lists.
-    func parseSubcommands(from helpText: String) -> [String] {
+    /// `binary` (and any alias the help text invokes itself by) lets rows written as full
+    /// invocations — `mo clean    Free up disk space` — resolve to the subcommand rather
+    /// than to the binary name repeated 15 times.
+    func parseSubcommands(from helpText: String, binary: String? = nil) -> [String] {
+        let text = Self.strippingANSI(helpText)
         var subcommands: [String] = []
-        let lines = helpText.components(separatedBy: .newlines)
         var inSection = false
+        var rows: [[String]] = []
+        let invocations = Self.invocationNames(in: text, binary: binary)
 
-        for line in lines {
-            let lower = line.lowercased()
+        for line in text.components(separatedBy: .newlines) {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            let isIndented = line.hasPrefix(" ") || line.hasPrefix("\t")
 
-            // Detect section headers: "SUBCOMMANDS:", "COMMANDS:", "Available commands:"
-            if trimmedLine.hasSuffix(":") && (lower.contains("command") || lower.contains("subcommand")) {
+            if !isIndented, Self.isCommandSectionHeader(trimmedLine) {
                 inSection = true
                 continue
             }
             // New unindented section header ends the commands section
-            if inSection && !trimmedLine.isEmpty && !line.hasPrefix(" ") && !line.hasPrefix("\t") {
+            if inSection && !trimmedLine.isEmpty && !isIndented {
                 inSection = false
             }
             // Blank line ends section only if already well inside it
-            if inSection && trimmedLine.isEmpty && subcommands.count > 0 {
+            if inSection && trimmedLine.isEmpty && !rows.isEmpty {
                 inSection = false
             }
 
-            if inSection || line.hasPrefix("  ") || line.hasPrefix("\t") {
-                // Strip leading whitespace, then take the first token
-                var word = trimmedLine.components(separatedBy: .whitespaces).first ?? ""
-                // Strip trailing parenthetical like "(default)" or "[hidden]"
-                if word.hasPrefix("(") || word.hasPrefix("[") { continue }
-                // Strip trailing suffix like ":"
-                if word.hasSuffix(":") { word = String(word.dropLast()) }
-                guard word.count > 1, word.count < 30,
-                      !word.hasPrefix("-"), !word.hasPrefix("("), !word.hasPrefix("["),
-                      !word.hasPrefix("<"), !word.hasPrefix("{"),
-                      word == word.lowercased(),
-                      word.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
-                      !subcommands.contains(word),
-                      !Self.metaSubcommands.contains(word)
-                else { continue }
-                subcommands.append(word)
+            // Only inside a commands section, or on a line written as an invocation of the
+            // tool. Harvesting every indented line was the rule before, and a tool whose
+            // help is nothing but indented flag descriptions — HandBrakeCLI, and most
+            // C-era tools — had the first word of each wrapped description line recorded as
+            // one of its subcommands. That produced "write", "console", "marks" and
+            // "default" for a binary that takes no subcommands at all, and the assistant
+            // then worked through the list running `--help` on each invention in turn.
+            let tokens = trimmedLine.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+            guard !tokens.isEmpty else { continue }
+            let startsWithInvocation = tokens.first.map {
+                invocations.contains($0.lowercased())
+            } ?? false
+            guard inSection || startsWithInvocation else { continue }
+            rows.append(tokens)
+        }
+
+        var invocationNames = invocations
+        // Help written as invocations ("mo clean  Free up disk space") repeats one leading
+        // token on nearly every row. Whatever that token is — the binary or an installed
+        // alias the help is written against — it is not a subcommand.
+        if let dominant = Self.dominantLeadingToken(in: rows) {
+            invocationNames.insert(dominant)
+        }
+
+        for row in rows {
+            var tokens = row
+            if let first = tokens.first?.lowercased(), invocationNames.contains(first) {
+                tokens.removeFirst()
             }
+            guard var word = tokens.first else { continue }
+            // Strip trailing parenthetical like "(default)" or "[hidden]"
+            if word.hasPrefix("(") || word.hasPrefix("[") { continue }
+            // Strip trailing suffix like ":" or a list comma
+            if word.hasSuffix(":") || word.hasSuffix(",") { word = String(word.dropLast()) }
+            guard word.count > 1, word.count < 30,
+                  !word.hasPrefix("-"), !word.hasPrefix("("), !word.hasPrefix("["),
+                  !word.hasPrefix("<"), !word.hasPrefix("{"),
+                  word == word.lowercased(),
+                  word.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }),
+                  !invocationNames.contains(word),
+                  !subcommands.contains(word),
+                  !Self.metaSubcommands.contains(word)
+            else { continue }
+            subcommands.append(word)
         }
         return Array(subcommands.prefix(20))
+    }
+
+    /// The leading token shared by most command rows, when there is one — that is the
+    /// tool's own invocation name, not a subcommand.
+    private static func dominantLeadingToken(in rows: [[String]]) -> String? {
+        guard rows.count >= 3 else { return nil }
+        var counts: [String: Int] = [:]
+        for row in rows {
+            guard let first = row.first?.lowercased(), first.count > 1, !first.hasPrefix("-") else {
+                continue
+            }
+            counts[first, default: 0] += 1
+        }
+        guard let (token, count) = counts.max(by: { $0.value < $1.value }),
+            count >= 3,
+            Double(count) >= Double(rows.count) * 0.5
+        else { return nil }
+        return token
+    }
+
+    /// A commands heading. The colon is optional: plenty of CLIs (mole, many Go and Rust
+    /// tools) print a bare, colour-coded `COMMANDS` heading, and requiring the colon meant
+    /// their entire command list was skipped.
+    private static func isCommandSectionHeader(_ line: String) -> Bool {
+        let lower = line.lowercased()
+        guard lower.contains("command"), !lower.contains("usage") else { return false }
+        if line.hasSuffix(":") { return true }
+        let words = lower.split(separator: " ")
+        guard words.count <= 3 else { return false }
+        return line == line.uppercased()
+            || lower.hasPrefix("commands")
+            || lower.hasPrefix("subcommands")
+            || lower.hasPrefix("available")
+    }
+
+    /// Names the help text uses to invoke the tool: the binary itself plus whatever the
+    /// `Usage:` line names (Homebrew formulae often install a short alias — mole ships
+    /// `mo` — and the help text is written in terms of the alias).
+    private static func invocationNames(in helpText: String, binary: String?) -> Set<String> {
+        var names = Set<String>()
+        if let binary {
+            let base = binary.components(separatedBy: " ").first ?? binary
+            let trimmed = base.trimmingCharacters(in: .whitespaces).lowercased()
+            if !trimmed.isEmpty {
+                names.insert(trimmed)
+                names.insert((trimmed as NSString).lastPathComponent)
+            }
+        }
+        for line in helpText.components(separatedBy: .newlines) {
+            let lower = line.trimmingCharacters(in: .whitespaces).lowercased()
+            guard lower.hasPrefix("usage:") || lower.hasPrefix("usage ") else { continue }
+            let after = lower.drop(while: { $0 != ":" }).dropFirst()
+            let candidate = after.split(separator: " ").first.map(String.init)
+                ?? lower.split(separator: " ").dropFirst().first.map(String.init) ?? ""
+            let name = (candidate as NSString).lastPathComponent
+            if name.count > 1, name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }) {
+                names.insert(name)
+            }
+        }
+        return names
     }
 
     /// Parse the primary usage pattern line from --help output.
@@ -504,8 +806,12 @@ class TerminalPackageManager: ObservableObject {
         guard let topHelp = await scanHelpText(for: pkg.command) else { return }
         let deepHelp = await scanDeepHelp(for: pkg.command) ?? topHelp
         packages[index].helpText       = deepHelp
-        packages[index].subcommands    = parseSubcommands(from: topHelp)
+        packages[index].subcommands    = parseSubcommands(from: topHelp, binary: pkg.command)
         packages[index].usagePattern   = parseUsagePattern(from: topHelp)
+        // Stamp what was scanned, so a later upgrade is detectable rather than silently
+        // leaving the model describing flags the installed version no longer has.
+        packages[index].scannedBinaryModified = Self.binaryModificationDate(
+            packages[index].installedPath)
         savePackages()
     }
 
@@ -513,6 +819,45 @@ class TerminalPackageManager: ObservableObject {
     func refreshHelpTextByCommand(_ command: String) async {
         guard let index = packages.firstIndex(where: { $0.command == command }) else { return }
         await refreshHelpText(for: packages[index].id)
+    }
+
+    private var autoScanInFlight: Set<String> = []
+    private var autoScannedOnce: Set<String> = []
+
+    /// A tool needs (re)scanning when it has no help at all, when the stored help still
+    /// carries raw ANSI escapes, or when the scan produced no subcommands. The last two
+    /// cover everything pinned before the parser learned to strip colour codes and read
+    /// colon-less `COMMANDS` headings: those entries cached unusable help and an empty
+    /// command list, and would otherwise never be scanned again.
+    func needsHelpScan(_ package: TerminalPackage) -> Bool {
+        let help = (package.helpText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if help.isEmpty { return true }
+        if help.contains("\u{1B}") { return true }
+        return package.subcommands.isEmpty
+    }
+
+    /// Fire-and-forget `--help` scan for a linked CLI whose reference is still empty.
+    /// A newly pinned binary is registered WITHOUT a blocking scan, so its `helpText` is
+    /// empty until the user hits "Scan --help". Entering the tool's scope should not chat
+    /// blind — this scans on demand (deduped) so the model gets the real command set. Safe
+    /// to call repeatedly; it no-ops once help is present or a scan is already running.
+    func ensureHelpScanned(command: String) {
+        let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cmd.isEmpty,
+            let pkg = packages.first(where: { $0.command == cmd || $0.name == cmd }),
+            needsHelpScan(pkg),
+            !autoScanInFlight.contains(pkg.command),
+            // A tool that genuinely has no subcommands (jq, markitdown…) stays "needs
+            // scan" forever, so cap the automatic retry at once per launch.
+            !autoScannedOnce.contains(pkg.command)
+        else { return }
+        autoScanInFlight.insert(pkg.command)
+        autoScannedOnce.insert(pkg.command)
+        let target = pkg.command
+        Task { @MainActor in
+            await refreshHelpTextByCommand(target)
+            autoScanInFlight.remove(target)
+        }
     }
 
     // MARK: - Per-App Subcommand Intelligence
@@ -638,7 +983,31 @@ class TerminalPackageManager: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         let current = env["PATH"] ?? ""
         env["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:" + current
+        // Ask tools for plain help. Colour-coded output is the norm for modern CLIs and
+        // its escape sequences broke subcommand parsing outright; these three variables
+        // are what most CLI frameworks honour. Output is still sanitised after the fact
+        // for the tools that ignore them.
+        env["NO_COLOR"] = "1"
+        env["CLICOLOR"] = "0"
+        env["TERM"] = "dumb"
         return env
+    }
+
+    /// Strips ANSI colour/cursor escapes (CSI + OSC) and carriage returns. Coloured help
+    /// text turned every parsed token into `\u{1B}[0;32mclean`, which failed the
+    /// alphanumeric check and produced zero subcommands — and the raw escapes were also
+    /// being fed to the model as "command syntax".
+    static func strippingANSI(_ text: String) -> String {
+        text
+            .replacingOccurrences(
+                of: "\u{1B}\\[[0-9;?]*[ -/]*[@-~]", with: "", options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: "\u{1B}\\][^\u{07}\u{1B}]*(\u{07}|\u{1B}\\\\)", with: "",
+                options: .regularExpression
+            )
+            .replacingOccurrences(of: "\u{1B}", with: "")
+            .replacingOccurrences(of: "\r", with: "")
     }
 
     private func runQuiet(_ command: String, env: [String: String]) async -> String {
@@ -725,7 +1094,17 @@ class TerminalPackageManager: ObservableObject {
     func loadPackages() {
         if let data = UserDefaults.standard.data(forKey: packagesKey),
            let decoded = try? JSONDecoder().decode([TerminalPackage].self, from: data) {
-            packages = decoded
+            // Subcommands are derived from the stored help, so they are re-derived rather
+            // than trusted. A list parsed by an older, looser parser would otherwise outlive
+            // the fix to that parser forever: a tool only rescans when its subcommand list
+            // is empty, and a wrong list is not an empty one. HandBrakeCLI's invented
+            // "write", "console" and "marks" would have stayed on disk permanently.
+            packages = decoded.map { package in
+                guard let help = package.helpText, !help.isEmpty else { return package }
+                var repaired = package
+                repaired.subcommands = parseSubcommands(from: help, binary: package.command)
+                return repaired
+            }
             Task { @MainActor in
                 DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "cli-packages-loaded")
             }
@@ -767,6 +1146,25 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
 
     // --- Learned examples (built up over time) ---
     var contextualExamples: [ContextualExample]
+    /// Needs a real terminal. Full-screen tools (a pager, an editor, a TUI browser) cannot
+    /// run with their output piped: with no tty they either hang waiting for one or emit
+    /// escape sequences into what should be an answer. The built-in allowlist cannot know
+    /// every such tool, so this lets the user mark one without a code change.
+    var isInteractive: Bool = false
+    /// `man` output, plain text. Separate from helpText because they fail in opposite
+    /// directions: a system tool like `find` prints a usage stub for --help and documents
+    /// itself in man, while a modern CLI often ships no man page at all.
+    var manText: String?
+    /// Modification date of the binary when its help was last scanned. An upgrade rewrites
+    /// the file, so a mismatch means the cached help may describe a version that is gone —
+    /// flags removed, subcommands renamed. Nil for tools scanned before this was recorded.
+    var scannedBinaryModified: Date?
+    /// Invocations of this tool that ran and exited zero, most recent first.
+    ///
+    /// Help says what a tool *can* do; this says what worked on this Mac — the flag spelling
+    /// that exists in the installed version, the argument order it accepts. Capped, because
+    /// this goes into a prompt.
+    var provenInvocations: [String] = []
 
     init(
         id: UUID = UUID(),
@@ -808,10 +1206,12 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         installedPath != nil
     }
 
-    /// Truncated help text safe to embed in AI prompts (first 2000 chars).
+    /// Help text sized for a prompt. Cut on a line boundary and labelled when shortened —
+    /// a mid-flag cut reads to the model as a real flag, which is how invented flags get
+    /// into generated commands.
     var helpTextForPrompt: String? {
         guard let ht = helpText, !ht.isEmpty else { return nil }
-        return String(ht.prefix(2000))
+        return AIContextBudget.fitReference(ht, budget: 2_000)
     }
 
     func isAssociated(with bundleId: String) -> Bool {
@@ -838,6 +1238,10 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         case contextApps = "context_apps"
         case contextApp = "context_app"
         case contextualExamples
+        case isInteractive
+        case manText
+        case scannedBinaryModified
+        case provenInvocations
     }
 
     init(from decoder: Decoder) throws {
@@ -868,6 +1272,12 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         contextualExamples =
             try container.decodeIfPresent([ContextualExample].self, forKey: .contextualExamples)
             ?? []
+        isInteractive = try container.decodeIfPresent(Bool.self, forKey: .isInteractive) ?? false
+        manText = try container.decodeIfPresent(String.self, forKey: .manText)
+        scannedBinaryModified = try container.decodeIfPresent(
+            Date.self, forKey: .scannedBinaryModified)
+        provenInvocations =
+            try container.decodeIfPresent([String].self, forKey: .provenInvocations) ?? []
     }
 
     func encode(to encoder: Encoder) throws {
@@ -889,6 +1299,10 @@ struct TerminalPackage: Identifiable, Codable, Hashable {
         try container.encode(contextAppBundleIds, forKey: .contextApps)
         try container.encodeIfPresent(contextAppBundleIds.first, forKey: .contextApp)
         try container.encode(contextualExamples, forKey: .contextualExamples)
+        try container.encode(isInteractive, forKey: .isInteractive)
+        try container.encodeIfPresent(manText, forKey: .manText)
+        try container.encodeIfPresent(scannedBinaryModified, forKey: .scannedBinaryModified)
+        try container.encode(provenInvocations, forKey: .provenInvocations)
     }
 }
 

@@ -271,25 +271,11 @@ extension LauncherView {
         mailSemanticSearchIntent(from: rawScopedQuery)?.query
     }
 
+    /// Whether the sentence is asking something. Says nothing about whether it is asking
+    /// about mail — see `MailQuestionRouter.mentionsMailbox` for that half, which the
+    /// attach-context prompt now also requires.
     func isQuestionStyleMailQuery(_ rawScopedQuery: String) -> Bool {
-        let normalized = normalizedDockPillText(rawScopedQuery)
-        guard !normalized.isEmpty else { return false }
-
-        if rawScopedQuery.contains("?") { return true }
-
-        let questionPrefixes = [
-            "is", "are", "do", "does", "did", "have", "has", "what", "which", "who", "when",
-            "where", "why", "how", "can", "could", "would", "should", "any", "show me",
-            "tell me",
-        ]
-        if questionPrefixes.contains(where: { normalized == $0 || normalized.hasPrefix($0 + " ") })
-        {
-            return true
-        }
-
-        return normalized.contains("any mail")
-            || normalized.contains("any mails")
-            || normalized.contains("there any")
+        MailQuestionRouter.isQuestionShaped(rawScopedQuery)
     }
 
     func shouldExecuteMailMailboxSearch(for rawScopedQuery: String) -> MailSearchIntent? {

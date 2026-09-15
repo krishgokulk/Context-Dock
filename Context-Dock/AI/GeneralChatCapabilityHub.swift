@@ -9,6 +9,7 @@
 
 import AppKit
 import Foundation
+import OSLog
 
 @MainActor
 final class GeneralChatCapabilityHub {
@@ -16,16 +17,42 @@ final class GeneralChatCapabilityHub {
 
     private var cachedBlock: String?
     private var cachedAt: Date = .distantPast
-    private var cachedAllowlistFingerprint = ""
+    /// Identifies what the cached block was built *from*, not just which adapters are
+    /// enabled. The MCP section narrows to the app a question names, so a block built for
+    /// "what's in my Notes?" lists Notes tools and nothing else — serving that to the next
+    /// question tells the model the user's other apps have no tools at all.
+    private var cachedKey = ""
     private let cacheTTL: TimeInterval = 300
     private let chatPanelKeyPrefix = "dock_app_"
 
     private init() {}
 
+    /// Stage markers: the block is assembled from half a dozen sources, several of which
+    /// do synchronous work, and a stall inside it is invisible from outside.
+    private static let log = Logger(
+        subsystem: "com.krishgokul.ContextDock", category: "CapabilityHub")
+
     func invalidate() {
         cachedBlock = nil
         cachedAt = .distantPast
-        cachedAllowlistFingerprint = ""
+        cachedKey = ""
+    }
+
+    /// Runs `operation` and gives up on it after `seconds`.
+    ///
+    /// Detached and nonisolated on purpose. When this helper was a method on a @MainActor
+    /// type, both the work and the timer inherited that isolation, so the timer could not
+    /// be scheduled while the work held the actor — the cap never fired, and a stalled MCP
+    /// handshake took the whole turn down with it. The task-group version that replaced it
+    /// had the same end result for a different reason; AsyncTimeout explains it.
+    nonisolated static func withTimeout<T: Sendable>(
+        seconds: Double,
+        fallback: T,
+        label: String = "hub section",
+        operation: @escaping @Sendable () async -> T
+    ) async -> T {
+        await AsyncTimeout.run(
+            seconds: seconds, fallback: fallback, label: label, operation: operation)
     }
 
     // MARK: - Prompt block
@@ -33,52 +60,143 @@ final class GeneralChatCapabilityHub {
     /// System-prompt section listing all app tools General Chat may call.
     /// Cached for 5 minutes — connecting to every linked MCP server per message is too slow.
     /// `compact` trims descriptions and tool counts for small-context providers (on-device).
+    /// What this conversation has already done, appended outside the cache.
+    ///
+    /// The capability block is cached for five minutes because the tools change slowly.
+    /// Actions do not — they change every turn — so folding them into the cached text would
+    /// serve the model a history that is up to five minutes out of date, which is worse
+    /// than none: it would report work as pending that had already finished.
+    private func actionHistory(for scope: AIConversationScope) -> String {
+        let chatScope: GeneralChatScope
+        switch scope {
+        case .contextDock(let bundleID, _): chatScope = .app(bundleId: bundleID)
+        default: chatScope = .general
+        }
+        return ChatConsoleLog.shared.recentActionsBlock(for: chatScope)
+    }
+
     func capabilityPromptBlock(
         compact: Bool = false,
         query: String = "",
-        scope: AIConversationScope = .general
+        scope: AIConversationScope = .general,
+        characterBudget: Int = 12_000
     ) async -> String {
-        let discovery = await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
+        // Discovery reaches into the MCP actor for cached tools. Bounded, because "cached"
+        // only means it opens no connection — it still queues behind whatever that actor is
+        // doing, and waiting on it is not worth an unanswerable chat.
+        // Discovery and local evidence are independent of each other, and each is capped at
+        // five seconds. Run in series that is ten seconds of waiting before the model is
+        // asked anything — on every message, cache hit included, because the cache is
+        // checked further down and only covers the MCP section. Started together, the wait
+        // is the slower of the two rather than their sum.
+        Self.log.notice("hub: discovery + evidence")
+        async let discoveryTask = Self.withTimeout(
+            seconds: 5,
+            fallback: CapabilityDiscoveryResult(
+                scope: scope, query: query, candidates: [], generatedAt: Date())
+        ) {
+            await CapabilityDiscoveryService.shared.discover(query: query, scope: scope)
+        }
+        // Retrieved evidence for THIS question, not just an inventory of what exists.
+        // The inventory says which apps are installed; this says which cached menu command,
+        // history entry, recent document or indexed file actually matches what was asked —
+        // and that grounding is what stops the model answering app questions from memory.
+        async let evidenceTask = Self.withTimeout(seconds: 5, fallback: [String]()) {
+            await GeneralChatLocalEvidence.promptLines(query: query)
+        }
+        let discovery = await discoveryTask
         let discoveryLines = discovery.promptLines
         // Built-ins are cheap (in-memory registry) and toggle live — never cache them,
         // so a flipped toggle shows up on the very next message.
-        let builtinLines = builtInCapabilityLines()
-        let allowlistFingerprint = AppAdapterManager.shared.adapters
-            .filter(\.isEnabled)
+        Self.log.notice("hub: builtins")
+        let builtinLines = builtInCapabilityLines(scope: scope)
+        let enabledAdapters = AppAdapterManager.shared.adapters.filter(\.isEnabled)
+        let allowlistFingerprint = enabledAdapters
             .map { "\($0.bundleId):\($0.actions.count):\($0.contextReaders.count)" }
             .sorted()
             .joined(separator: "|")
-        let inventoryLines = appInventoryLines()
-            + discoveryLines
-            + targetedSkillLines(query: query, scope: scope)
-        if let cachedBlock,
-            cachedAllowlistFingerprint == allowlistFingerprint,
-            Date().timeIntervalSince(cachedAt) < cacheTTL
-        {
-            let block = withInventory(
-                cacheFreshnessLine() + "\n" + joinedBlock(cachedBlock, builtinLines: builtinLines),
-                inventoryLines: inventoryLines
-            )
-            return compact ? compacted(block) : block
-        }
 
-        var mcpLines: [String] = []
-        // Apps exposing a query-style tool (search/find/list/get/query/read). These are the
-        // fan-out / "which app?" targets for broad discovery questions that name no app.
-        var searchableApps: [(name: String, bundleId: String, tools: [String])] = []
-        let searchVerbs = ["search", "find", "list", "query", "get", "read", "lookup", "fetch"]
-        let enabledAdapters = AppAdapterManager.shared.adapters.filter { $0.isEnabled }
+        // Which adapters the MCP section will cover. A question that names an app is
+        // answered with that app's tools alone; a question that names none fans out to
+        // every enabled adapter. Decided here rather than inside the loop below, because
+        // the answer is part of the cache identity — two questions naming different apps
+        // must not share a block.
         let normalizedQuery = query.lowercased()
         let explicitlyNamed = enabledAdapters.filter {
             normalizedQuery.contains($0.appName.lowercased())
                 || normalizedQuery.contains($0.bundleId.lowercased())
         }
-        let adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
+        var adapters = explicitlyNamed.isEmpty ? enabledAdapters : explicitlyNamed
+        // A scoped thread gets one app's adapter and no other. This list feeds the MCP tool
+        // section below, which was still handing a Code conversation the MCP servers linked
+        // to Notes, Calendar and Reminders — the same leak as the built-in capabilities, one
+        // section further down.
+        if let scopedBundleID = scopedBundleID(for: scope) {
+            adapters = enabledAdapters.filter {
+                $0.bundleId.caseInsensitiveCompare(scopedBundleID) == .orderedSame
+            }
+        }
+        let cacheKey =
+            allowlistFingerprint + "##"
+            + adapters.map(\.bundleId).sorted().joined(separator: ",")
+            // Scoped blocks and the General catalogue are different documents. Sharing one
+            // cache entry between them would hand a Code thread's narrowed list to General
+            // Chat, or General Chat's full inventory to a Code thread — the second being the
+            // leak this scoping exists to close.
+            + "##" + (scopedBundleID(for: scope) ?? "general")
+        // Ranked best-first, capped per source, and appended last so it sits closest to the
+        // question in the prompt.
+        Self.log.notice("hub: evidence")
+        let evidenceLines = await evidenceTask
+        Self.log.notice("hub: inventory")
+        // The cross-app inventory is General Chat's whole point and a scoped thread's
+        // opposite: a Code conversation does not need a list of every app on the Mac, and
+        // being handed one is an invitation to reach for another.
+        let inventoryLines = (scopedBundleID(for: scope) == nil ? appInventoryLines() : [])
+            + discoveryLines
+            + targetedSkillLines(query: query, scope: scope)
+            + evidenceLines
+        if let cachedBlock,
+            cachedKey == cacheKey,
+            Date().timeIntervalSince(cachedAt) < cacheTTL
+        {
+            return fittedReference(
+                core: cacheFreshnessLine() + "\n"
+                    + joinedBlock(cachedBlock, builtinLines: builtinLines),
+                inventoryLines: inventoryLines,
+                compact: compact,
+                budget: characterBudget
+            ) + actionHistory(for: scope)
+        }
+
+        Self.log.notice("hub: mcp servers")
+        // Per-server caps do not bound the loop: three unreachable servers cost three
+        // timeouts in series, which is how a turn spent two and a half minutes here.
+        let mcpDeadline = Date().addingTimeInterval(10)
+        var mcpLines: [String] = []
+        // Apps exposing a query-style tool (search/find/list/get/query/read). These are the
+        // fan-out / "which app?" targets for broad discovery questions that name no app.
+        var searchableApps: [(name: String, bundleId: String, tools: [String])] = []
+        let searchVerbs = ["search", "find", "list", "query", "get", "read", "lookup", "fetch"]
         for adapter in adapters {
+            guard Date() < mcpDeadline else {
+                Self.log.notice("hub: mcp budget spent, skipping the rest")
+                break
+            }
             guard !MCPServerManager.shared.servers(forBundleId: adapter.bundleId).isEmpty else {
                 continue
             }
-            let tools = await MCPRuntime.shared.tools(forBundleId: adapter.bundleId)
+            // Bounded: `tools(forBundleId:)` may spawn a server process and wait on its
+            // handshake. One server that never answers used to hold the whole chat at
+            // "Looking for MCP and app tools…" with no way out. A server that is too slow
+            // to answer is treated as a server with no tools.
+            Self.log.notice("hub: asking \(adapter.appName, privacy: .public)")
+            let tools = await Self.withTimeout(
+                seconds: 6,
+                fallback: [(server: String, serverId: UUID, tool: MCPTool)]()
+            ) {
+                await MCPRuntime.shared.tools(forBundleId: adapter.bundleId)
+            }
             guard !tools.isEmpty else { continue }
             mcpLines.append("### \(adapter.appName) (\(adapter.bundleId))")
             for entry in tools.prefix(16) {
@@ -98,7 +216,16 @@ final class GeneralChatCapabilityHub {
             }
         }
 
-        let historyApps = savedChatApps()
+        Self.log.notice("hub: saved chats")
+        Self.log.notice("hub: mcp loop done")
+        // Saved conversations with OTHER apps are other conversations. Offering a Code
+        // thread the list of what the user has discussed with Mail is both a leak and an
+        // invitation to go and read it.
+        let scopedBundleIDForHistory = scopedBundleID(for: scope)
+        let historyApps = savedChatApps().filter { app in
+            guard let scopedBundleIDForHistory else { return true }
+            return app.bundleId.caseInsensitiveCompare(scopedBundleIDForHistory) == .orderedSame
+        }
         let historyLines = historyApps.map { "- \($0.appName) (\($0.bundleId))" }
 
         guard !mcpLines.isEmpty || !historyLines.isEmpty || !builtinLines.isEmpty
@@ -106,8 +233,8 @@ final class GeneralChatCapabilityHub {
         else {
             cachedBlock = ""
             cachedAt = Date()
-            cachedAllowlistFingerprint = allowlistFingerprint
-            return ""
+            cachedKey = cacheKey
+            return actionHistory(for: scope)
         }
 
         var lines: [String] = [
@@ -123,17 +250,52 @@ final class GeneralChatCapabilityHub {
             "in this launcher), reply with ONLY:",
             "{\"app_chat_history\": {\"app\": \"<bundleId or app name>\"}}",
             "",
+            // Parsed all along, never documented. Shown two JSON conventions and given
+            // capability ids by find_capability, a model invents its own third form —
+            // {"globalcmd.empty-trash":{}} — which used to match nothing and get printed at
+            // the user while the action never ran. Teaching the real envelope is the fix;
+            // tolerating the invented one is only the safety net.
+            "To run one of the capabilities listed below (ids like \"globalcmd.empty-trash\",",
+            "\"browser.history\", \"finder.trash\"), reply with ONLY:",
+            "{\"capability_call\": {\"capability\": \"<id>\", \"arguments\": { … }}}",
+            "Never write a capability id as the JSON key itself, and never show any of this",
+            "JSON to the user — it is how you act, not something to explain.",
+            "",
             "After the tool result returns, answer the user's actual question in plain language.",
             "If the user asks \"how many\", count the items in the result.",
             "",
             "Planning rules:",
             "- Prefer real DoraX routes over generic advice: app adapter/native actions, built-in capabilities, MCP tools, API/Shortcuts, native share, cached app menus, then CLI fallback, then launch/activate.",
-            "- Terminal/CLI is fallback-only. If an app has an adapter/native capability, MCP tool, API connection, Shortcut, or verified menu route that fits, use that instead of terminal_call.",
+            // Named explicitly because the generic advice above was not enough to find
+            // them. Asked to read a screenshot and paste it as markdown, the model read the
+            // attachment and then ran `pbpaste` — reaching for the shell for a job two
+            // registered capabilities do, because nothing told it they were the way to put
+            // text somewhere or press a menu item.
+            "- To put text into the app the user is looking at, run the capability "
+                + "`app.insertText` with {\"text\": \"…\"}. Never use pbpaste, pbcopy or any "
+                + "shell command to type, paste or insert text — they do not do it.",
+            "- To press a menu item in an app (Minimize, Save, Quit, Close, a View toggle), "
+                + "run `app.menu.click` with {\"path\": \"Window > Minimize\"}.",
+            "- Something the user attached to the message is read with the read_attachment "
+                + "tool, never guessed at from the clipboard.",
+            // Deliberately "when one FITS", not "when one EXISTS". The stronger phrasing was
+            // enforced in code for a while: run_command was refused whenever the scoped app
+            // had any adapter action at all, so "what is the recent commit I did?" was
+            // rejected in favour of ~40 scraped VS Code menu items, none of which can show a
+            // git log. Preferring a native route is right; refusing the shell when no native
+            // route answers the question is not.
+            "- Prefer an adapter/native capability, MCP tool, API connection, Shortcut or verified menu route when one FITS the request. When none of them can actually answer it, use run_command — that is what it is for, and saying you have no access is wrong when a shell command would work.",
             "- If a request names or implies an app, check the installed/running/app-adapter/menu inventory below before answering.",
             "- If execution is needed, explain the route and let DoraX approval run it; do not pretend the task is complete before approval/executor success.",
             "- Never ask for Accessibility, Vision, current-page, or app-context permission in chat text. DoraX presents native approval UI before verified context is supplied. If context is absent, state which detail was unavailable.",
             "- If the user asks to share/send to an app, use native macOS sharing or the app adapter route; do not invent a manual copy/paste workflow.",
-            "- DISCOVERY queries that name NO app (\"do any of my apps have X\", \"where did I save Y\", \"any links stored anywhere\"): NEVER answer that you lack access, and NEVER suggest grep / the current working directory / shell — you are DoraX, not a coding agent. Instead call the query tool of each relevant app under \"Searchable apps\" below and combine the results. If several apps could match and fanning out is too broad, first ask the user which of those specific apps to search (name them).",
+            // The original rule ended "NEVER suggest grep / the working directory / shell —
+            // you are DoraX, not a coding agent." The intent is right: "where did I save Y"
+            // should search the user's apps, not grep a directory that has nothing to do
+            // with the question. But as an absolute it also forbade the shell for questions
+            // only the shell can answer, which is how a git question became "I don't have
+            // access". Keep the priority, drop the prohibition.
+            "- DISCOVERY queries that name NO app (\"do any of my apps have X\", \"where did I save Y\", \"any links stored anywhere\"): NEVER answer that you lack access. Search the user's apps first — call the query tool of each relevant app under \"Searchable apps\" below and combine the results — because that is where their content lives, not in whatever directory happens to be current. If several apps could match and fanning out is too broad, ask which of those specific apps to search (name them). Fall back to run_command only when the question is genuinely about the file system or a repository.",
         ]
         if !searchableApps.isEmpty {
             lines.append("")
@@ -157,19 +319,33 @@ final class GeneralChatCapabilityHub {
         let block = lines.joined(separator: "\n")
         cachedBlock = block
         cachedAt = Date()
-        cachedAllowlistFingerprint = allowlistFingerprint
-        let full = withInventory(
-            cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
-            inventoryLines: inventoryLines
-        )
-        return compact ? compacted(full) : full
+        cachedKey = cacheKey
+        return fittedReference(
+            core: cacheFreshnessLine() + "\n" + joinedBlock(block, builtinLines: builtinLines),
+            inventoryLines: inventoryLines,
+            compact: compact,
+            budget: characterBudget
+        ) + actionHistory(for: scope)
     }
 
     /// Lines describing enabled built-in capabilities (Notes/Calendar/Contacts/Reminders/
     /// GitHub) — callable with server "builtin" through the same mcp_call JSON. Also
     /// names the DISABLED families so the model suggests enabling them instead of
     /// claiming it has no access.
-    private func builtInCapabilityLines() -> [String] {
+    /// The scoped app for a conversation, when it has one.
+    ///
+    /// A capability belonging to another app must not appear in a scoped chat's catalogue.
+    /// The dock narrows everything else this way — routes, access levels, the identity block
+    /// — and this list was the exception, so a Code thread was told it could read the user's
+    /// mail, messages and photos, and spent its tool rounds trying to.
+    private func scopedBundleID(for scope: AIConversationScope) -> String? {
+        if case .contextDock(let bundleID, _) = scope {
+            return bundleID.isEmpty ? nil : bundleID
+        }
+        return nil
+    }
+
+    private func builtInCapabilityLines(scope: AIConversationScope) -> [String] {
         let families: [(prefix: String, name: String, flag: String)] = [
             ("notes.", "Apple Notes", "noteMCPEnabled"),
             ("calendar.", "Calendar", "calendarMCPEnabled"),
@@ -178,12 +354,31 @@ final class GeneralChatCapabilityHub {
             ("messages.", "Messages", "messagesMCPEnabled"),
             ("github.", "GitHub (gh CLI)", "githubMCPEnabled"),
         ]
-        let prefixes = families.map(\.prefix)
-        let caps = CapabilityRegistry.shared.all.filter { cap in
-            prefixes.contains(where: cap.id.hasPrefix)
-                && cap.appBundleID.map {
-                    AppAdapterManager.shared.adapter(for: $0) != nil
-                } == true
+        // Advertise every registered capability, not a hand-maintained subset.
+        //
+        // This used to filter to the six `families` prefixes above, which meant a capability
+        // could be registered, executable through this very hub, and still invisible to the
+        // model. git.status / git.log / git.diff / git.branches were the clearest case:
+        // fully wired, dispatchable by id, and never mentioned — so "what is the recent
+        // commit I did?" was answered with "no information available" by a model that had
+        // the tool all along and no way to know it.
+        //
+        // `families` is kept, but only for the DISABLED-integrations notice below, which is
+        // genuinely about user-facing toggles. What the model is allowed to know about is
+        // now derived from the registry, so registering a capability is all it takes to make
+        // it callable.
+        //
+        // The app-bundle check stays: a capability belonging to an app with no installed
+        // adapter cannot run, and advertising it would invite a call that must fail.
+        let scopedBundleID = scopedBundleID(for: scope)
+        let caps = AgentToolRegistry.capabilitiesInScope(
+            CapabilityRegistry.shared.all, scopedBundleID: scopedBundleID
+        ).filter { cap in
+            guard let bundleID = cap.appBundleID else { return true }
+            // Self-executing capabilities name an app to be scoped by it, not to be
+            // dispatched through it — an adapter they never use must not gate them.
+            if cap.runsWithoutAdapter { return true }
+            return AppAdapterManager.shared.adapter(for: bundleID) != nil
         }
         let disabledNames = families
             .filter { family in !caps.contains { $0.id.hasPrefix(family.prefix) } }
@@ -203,7 +398,7 @@ final class GeneralChatCapabilityHub {
                 lines.append("- tool \"\(cap.id)\": \(cap.title) | input: [\(fields)]")
             }
         }
-        if !disabledNames.isEmpty {
+        if !disabledNames.isEmpty, scopedBundleID == nil {
             lines.append("")
             lines.append(
                 "Built-in integrations currently DISABLED: \(disabledNames.joined(separator: ", ")). "
@@ -259,13 +454,6 @@ final class GeneralChatCapabilityHub {
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
 
-        let mediaInfo = MediaInfoProvider.shared.getNowPlayingSourceInfo()
-        let mediaBundleId = mediaInfo.bundleID
-        let mediaDisplayName = MediaPlayerObserver.shared.appName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let observerMediaApp = MediaPlayerObserver.shared.appName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
         var lines: [String] = [
             "- App access is allowlisted by enabled App Adapters: \(adapterByBundle.count) app(s) available.",
             "- Inventory entries without an enabled adapter are awareness-only: never read their private data or execute their routes; explain that the app must be added in Settings → App Adapters.",
@@ -303,19 +491,6 @@ final class GeneralChatCapabilityHub {
             }
             if let summary = menuSummaryByBundle[app.bundleId] {
                 bits.append("\(summary.recordCount) cached menu command\(summary.recordCount == 1 ? "" : "s")")
-            }
-            if app.bundleId == mediaBundleId
-                || (!mediaDisplayName.isEmpty
-                    && mediaDisplayName.localizedCaseInsensitiveContains(app.name))
-                || (!observerMediaApp.isEmpty
-                    && app.name.localizedCaseInsensitiveContains(observerMediaApp)) {
-                let title = (mediaInfo.title ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if !title.isEmpty {
-                    bits.append("media \(mediaInfo.playbackRate > 0 ? "playing" : "paused"): \(title)")
-                } else {
-                    bits.append("media source")
-                }
             }
             if runningBundleIds.contains(app.bundleId) {
                 bits.append("AX/Vision available with approval")
@@ -378,15 +553,39 @@ final class GeneralChatCapabilityHub {
         return base + "\n" + builtinLines.joined(separator: "\n")
     }
 
-    private func withInventory(_ base: String, inventoryLines: [String]) -> String {
-        guard !inventoryLines.isEmpty else { return base }
+    /// The reference block, fitted so the capabilities survive the cut.
+    ///
+    /// fitReference keeps the first N characters and drops the tail, and the inventory
+    /// snapshot is written first — so on-device, where the whole allowance is 1 500
+    /// characters, the snapshot could spend it and the app's own actions, skills and menu
+    /// commands fell off the end. The model then said DoraX could not read that app's
+    /// capabilities, which was true of what it had been handed and false of what DoraX
+    /// knew: the panel beside it was listing them.
+    ///
+    /// The capabilities are the answer to "what can you do with this app", so they are
+    /// fitted first and the snapshot gets what is left. Reading order is unchanged —
+    /// the snapshot still comes first in the text, it is just no longer first in line for
+    /// the budget.
+    private func fittedReference(
+        core: String,
+        inventoryLines: [String],
+        compact: Bool,
+        budget: Int
+    ) -> String {
+        let fittedCore = AIContextBudget.fitReference(
+            compact ? compacted(core) : core, budget: budget)
+        guard !inventoryLines.isEmpty else { return fittedCore }
+
+        // A snapshot worth less than a couple of lines is noise at this size; the
+        // capabilities keep the whole budget rather than losing their tail to a stub.
+        let remaining = budget - fittedCore.count
+        guard remaining > 240 else { return fittedCore }
+
         let inventoryBlock = ([
             "## Running App Status Snapshot",
         ] + inventoryLines).joined(separator: "\n")
-        guard !base.isEmpty else {
-            return inventoryBlock
-        }
-        return inventoryBlock + "\n\n" + base
+        let fittedInventory = AIContextBudget.fitReference(inventoryBlock, budget: remaining)
+        return fittedInventory + "\n\n" + fittedCore
     }
 
     private func compacted(_ block: String) -> String {
@@ -537,6 +736,48 @@ final class GeneralChatCapabilityHub {
                     ? result.output + "\n\nVerification: \(result.verification.displayName)."
                     : "\(invocation.capabilityID) failed: \(result.error ?? "Unknown error")",
                 label: invocation.capabilityID)
+
+        case .adapterAction:
+            let actionId = invocation.arguments["actionId"] ?? ""
+            let bundleId = invocation.arguments["bundleId"] ?? invocation.arguments["bundleID"] ?? ""
+            guard !bundleId.isEmpty,
+                let adapter = AppAdapterManager.shared.adapter(for: bundleId),
+                let action = adapter.actions.first(where: { $0.id == actionId })
+            else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No adapter action '\(actionId)' is installed for that app. "
+                        + "Add it in Settings → App Adapters.",
+                    label: "adapter blocked")
+            }
+            let (ok, out) = await AppAdapterManager.shared.execute(
+                action, context: AXContextReader.shared.current,
+                targetBundleId: bundleId, query: invocation.arguments["query"] ?? "")
+            return ToolCallResult(
+                handled: true, success: ok,
+                output: out.isEmpty ? "Ran \(action.name)" : out,
+                label: "\(action.name) via adapter")
+
+        case .menuAction:
+            let path = (invocation.arguments["path"] ?? "")
+                .components(separatedBy: "\u{1F}")
+                .filter { !$0.isEmpty }
+            let bundleId = invocation.arguments["bundleId"]
+                ?? invocation.arguments["bundleID"]
+                ?? AXContextReader.shared.current.bundleId
+            guard !path.isEmpty, !bundleId.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No menu path or app given for the menu command.",
+                    label: "menu blocked")
+            }
+            let (ok, out) = await AppAdapterManager.shared.runMenuPath(
+                path, targetBundleId: bundleId,
+                appName: AXContextReader.shared.current.appName)
+            return ToolCallResult(
+                handled: true, success: ok,
+                output: out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out,
+                label: "\(path.joined(separator: " ▸ ")) via menu")
 
         case .terminal:
             let plan = AIActionPlan(

@@ -25,6 +25,7 @@ final class AXActionResolver {
         let pid      = app.processIdentifier
         let bundleId = app.bundleIdentifier ?? ""
 
+
         // Resolve the best strategy before activating the app
         let record = bundleId.isEmpty ? nil :
             AppMenuCapabilityCache.shared.record(path: menuPath, bundleIdentifier: bundleId)

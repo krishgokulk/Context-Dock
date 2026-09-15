@@ -33,6 +33,23 @@ final class MenuIntentRouter {
 
     /// Find the best matching menu item for `query` WITHOUT executing it.
     /// Returns the matched AXMenuItem, or nil if no good match found.
+    /// Same match, for an app that is not running — scored against its cached snapshot only.
+    ///
+    /// `scoredCandidates` already reads the cache first and only adds live items when a pid is
+    /// supplied, so passing 0 reuses the one scorer rather than introducing a second one that
+    /// could disagree with it.
+    ///
+    /// Deliberately strict: only an above-threshold match qualifies, because acting on this
+    /// launches an app as a side effect. A weak guess is not worth that.
+    func findCachedMatch(
+        query: String, bundleId: String, appName: String
+    ) async -> AXMenuItem? {
+        guard !bundleId.isEmpty else { return nil }
+        let candidates = scoredCandidates(query: query, bundleID: bundleId, pid: 0)
+        guard let top = candidates.first, top.score >= autoClickThreshold else { return nil }
+        return top.item
+    }
+
     func findMatch(query: String, app: NSRunningApplication) async -> AXMenuItem? {
         guard let bundleID = app.bundleIdentifier else { return nil }
         let candidates = scoredCandidates(query: query, bundleID: bundleID, pid: app.processIdentifier)

@@ -26,11 +26,89 @@ struct AICapabilityInputSchema: Codable {
 struct AICapabilityExecutionRequest {
     let input: [String: String]
     let context: UserContext
+    /// The thread this call was made in. Carries two things a capability needs: the folder
+    /// it may not reach outside of, and somewhere to file a report it produces.
+    var chatScope: GeneralChatScope? = nil
+
+    /// What the user actually asked, verbatim, when the caller knows it.
+    ///
+    /// A capability could see its inputs and the user's selection and never their intent,
+    /// so an interactive Global Command answered "turn on dark mode" with "Appearance
+    /// current value: true" — a reading is the right answer to a question and the wrong
+    /// answer to an instruction, and nothing here could tell them apart.
+    var userRequest: String = ""
+
+    /// The folder this conversation is confined to, when it is confined to one. Nil
+    /// everywhere else, where the scope is the machine.
+    var scopeRoot: URL? { chatScope?.folderURL }
 }
 
 struct AICapabilityExecutionResult {
     let success: Bool
     let output: String
+}
+
+/// Whether a capability's entire authority comes from the user's explicit selection.
+///
+/// Selection Scope is opened on a piece of text or a file the user picked, and its promise
+/// is that it acts on that and nothing else. Enforcing this by listing permitted capability
+/// ids would rot: every new capability defaults to allowed-by-omission or forgotten, and the
+/// list stops describing anything. So a capability declares what it needs and what it
+/// touches, and the scope decides.
+///
+/// Three questions, all of which must be answered narrowly for a capability to run here:
+/// what does it read, what does it change, and what does it aim at.
+struct SelectionSafety {
+    enum InputAuthority {
+        /// Everything it operates on comes from the explicit selection.
+        case selectionOnly
+        /// It reads app or system state the user did not select. Never selection-safe.
+        case systemOrApp
+    }
+
+    enum SideEffect {
+        case none
+        case clipboard
+        /// Rewrites the selected text in place.
+        case selectionReplacement
+        /// Changes something the selection does not name — files, apps, system state.
+        case unrelatedState
+    }
+
+    enum TargetScope {
+        case currentSelection
+        case appOrSystem
+    }
+
+    let inputAuthority: InputAuthority
+    let sideEffect: SideEffect
+    let targetScope: TargetScope
+
+    /// The default is deliberately the strict one. A capability that has not thought about
+    /// Selection Scope is not selection-safe, so adding one can never widen this scope by
+    /// omission — the failure mode an allowlist has by construction.
+    static let unsafe = SelectionSafety(
+        inputAuthority: .systemOrApp, sideEffect: .unrelatedState, targetScope: .appOrSystem)
+
+    /// Reads the selection and produces an answer or a clipboard write. Summarise, explain,
+    /// translate, copy-as.
+    static let readsSelection = SelectionSafety(
+        inputAuthority: .selectionOnly, sideEffect: .clipboard, targetScope: .currentSelection)
+
+    /// Rewrites the selected text in place.
+    static let rewritesSelection = SelectionSafety(
+        inputAuthority: .selectionOnly, sideEffect: .selectionReplacement,
+        targetScope: .currentSelection)
+
+    var isSelectionSafe: Bool {
+        guard inputAuthority == .selectionOnly, targetScope == .currentSelection else {
+            return false
+        }
+        switch sideEffect {
+        case .none, .clipboard, .selectionReplacement: return true
+        case .unrelatedState: return false
+        }
+    }
 }
 
 struct AICapability {
@@ -39,6 +117,24 @@ struct AICapability {
     let appBundleID: String?
     let inputSchema: AICapabilityInputSchema
     let riskLevel: AICapabilityRiskLevel
+    /// What this may touch when the conversation is scoped to a selection. Defaults to
+    /// unsafe, so a capability is only reachable from Selection Scope if it says so.
+    var selectionSafety: SelectionSafety = .unsafe
+    /// True when the capability runs itself rather than dispatching through the app's
+    /// adapter, so naming an app in `appBundleID` scopes it without requiring one.
+    ///
+    /// The file tools are the case: they belong to Finder so they surface in file-shaped
+    /// chats, but they execute through FileManager. Treating "names an app" as "needs an
+    /// adapter" hid all sixteen of them from every chat, because Finder ships no adapter.
+    var runsWithoutAdapter: Bool = false
+    /// Shell verbs this capability does better, for the user's own files.
+    ///
+    /// `rm` and finder.trash delete the same file; only one of them is recoverable, shows
+    /// the user what is about to go, and reads back whether it went. The shell gate used
+    /// to carry that knowledge as a hardcoded switch of verbs and advice strings, so a new
+    /// capability was not actually preferred until someone remembered to edit the gate.
+    /// The capability declares it here instead, and the gate reads the registry.
+    var supersedesShellVerbs: [String] = []
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 
@@ -84,12 +180,29 @@ final class CapabilityRegistry {
         capabilitiesByID[id]
     }
 
+    /// The capability that should be used instead of a shell verb, if one says so.
+    func capabilitySuperseding(shellVerb verb: String) -> AICapability? {
+        let needle = verb.lowercased()
+        return all.first { $0.supersedesShellVerbs.contains(needle) }
+    }
+
     func capabilities(for bundleID: String?) -> [AICapability] {
         all.filter { $0.appBundleID == nil || $0.appBundleID == bundleID }
     }
 
     func register(_ capability: AICapability) {
         capabilitiesByID[capability.id] = capability
+    }
+
+    /// Marks a family of already-registered capabilities as self-executing. Called once by
+    /// the family's own file, so the fact lives with the code that knows it rather than in
+    /// a list somewhere else that the next capability will not be added to.
+    func markRunsWithoutAdapter(idsWithPrefix prefix: String) {
+        for (id, capability) in capabilitiesByID where id.hasPrefix(prefix) {
+            var updated = capability
+            updated.runsWithoutAdapter = true
+            capabilitiesByID[id] = updated
+        }
     }
 
     func registerAppleNotesMCPIfNeeded() {
@@ -157,11 +270,26 @@ final class CapabilityRegistry {
     }
 
     private func registerBuiltIns() {
+        DoraXSurfaceCapabilities.register(in: self)
+        // The browser was the one surface with no capabilities at all: every page read,
+        // tab list and link open was a keyword-chosen Swift branch, so a phrasing nobody
+        // predicted made the whole thing impossible rather than slower.
+        BrowserCapabilities.register(in: self)
         GitCapabilities.register(in: self)
         TailscaleCapabilities.register(in: self)
         XcodeCapabilities.register(in: self)
+        ProjectBuildCapabilities.register(in: self)
+        LocalDataCapabilities.register(in: self)
+        AppControlCapabilities.register(in: self)
+        CaptureCapabilities.register(in: self)
         FinderFileChangeCapabilities.register(in: self)
         FinderCoworkerCapabilities.register(in: self)
+        FinderSearchCapabilities.register(in: self)
+        // The file tools carry Finder's bundle id for scoping, not for dispatch — they run
+        // through FileManager. Without this they were filtered out of every prompt as
+        // "app with no adapter", which is why a Finder chat could describe file work and
+        // never do any.
+        markRunsWithoutAdapter(idsWithPrefix: "finder.")
         AppWorkflowToolCatalog.shared.register(in: self)
         GlobalCommandCapabilities.register(in: self)
         // Apple Notes MCP — only registered when explicitly enabled
@@ -256,6 +384,9 @@ final class CapabilityRegistry {
                     guard FileManager.default.fileExists(atPath: outputURL.path) else {
                         return .init(success: false, output: "The screenshot command finished, but no file was created.")
                     }
+                    // Remember it: the next question about what the app is doing wrong should
+                    // be able to show the agent this shot rather than describe it.
+                    WorkbenchEvidence.shared.recordCapture(outputURL)
                     return .init(success: true, output: "Saved screenshot to \(outputURL.path).")
                 }
                 return .init(success: true, output: "Copied screenshot to the clipboard.")
@@ -399,18 +530,24 @@ final class CapabilityRegistry {
                 riskLevel: .low
             ) { _ in
                 let live = AXContextReader.shared.current
-                guard let snapshot = AXWebReader.shared.cachedSnapshot(for: live.pid),
-                      !snapshot.text.isEmpty
-                else {
+                let extensionContext = SafariBrowserBridge.shared.isFresh
+                    ? SafariBrowserBridge.shared.currentContext() : nil
+                let snapshot = AXWebReader.shared.cachedSnapshot(for: live.pid)
+                let pageText = extensionContext?.pageText ?? snapshot?.text ?? ""
+                let pageURL = extensionContext?.url ?? snapshot?.url ?? ""
+                let pageTitle = extensionContext?.title ?? snapshot?.title ?? ""
+                guard !pageText.isEmpty else {
                     return .init(
                         success: false,
-                        output: "Page text is not ready. Refresh browser context and try again."
+                        output: "Page text is not ready. Reload the page and allow the Context Dock Safari Extension for this website."
                     )
                 }
+                let compacted = MarkItDownService.compact(
+                    pageText, for: "summarize this page", limit: 5_000)
                 let response = try await AIProviderRouter.shared.send(
                     AIRequest(
                         text: "Summarize this page concisely.",
-                        context: .url(snapshot.url),
+                        context: .url(pageURL),
                         source: .contextDock,
                         liveContext: ContextSnapshot(
                             frontmostApp: live.appName,
@@ -422,15 +559,15 @@ final class CapabilityRegistry {
                             selectedFiles: live.selectedFilePaths,
                             currentDirectory: nil,
                             browserContext: BrowserContextSnapshot(
-                                url: snapshot.url,
-                                title: snapshot.title
+                                url: pageURL,
+                                title: pageTitle
                             ),
                             menuCapabilities: live.menuItems.filter(\.enabled).map(\.fullPath),
                             registeredCapabilities: CapabilityRegistry.shared
                                 .capabilities(for: live.bundleId)
                                 .map(\.id)
                         ),
-                        additionalContextPrompt: "Page content:\n\(snapshot.text)"
+                        additionalContextPrompt: "Page content:\n\(compacted)"
                     )
                 )
                 return .init(success: true, output: response)
@@ -543,13 +680,23 @@ final class AIExecutionEngine {
     func execute(
         _ plan: AIActionPlan,
         context: UserContext,
-        approved: Bool = false
+        approved: Bool = false,
+        chatScope: GeneralChatScope? = nil,
+        userRequest: String = ""
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
         }
         if capability.riskLevel == .critical {
             throw AICapabilityError.blocked("Capability is blocked")
+        }
+        // The folder chat's boundary, checked once for every capability rather than
+        // sixteen times with one of them forgotten.
+        if let reason = CapabilityScopeGuard.violation(
+            capabilityID: capability.id, input: plan.input, context: context,
+            scopeRoot: chatScope?.folderURL)
+        {
+            throw AICapabilityError.blocked(reason)
         }
         if capability.riskLevel.requiresApproval && !approved {
             throw AICapabilityError.approvalRequired(capability.title)
@@ -559,21 +706,35 @@ final class AIExecutionEngine {
                 throw AICapabilityError.missingInput(field.name)
             }
         }
-        return try await capability.executor(.init(input: plan.input, context: context))
+        return try await capability.executor(
+            .init(
+                input: plan.input, context: context, chatScope: chatScope,
+                userRequest: userRequest))
     }
 
     func executeWithApproval(
         _ plan: AIActionPlan,
-        context: UserContext
+        context: UserContext,
+        chatScope: GeneralChatScope? = nil,
+        userRequest: String = ""
     ) async throws -> AICapabilityExecutionResult {
         guard let capability = CapabilityRegistry.shared.capability(id: plan.capability) else {
             throw AICapabilityError.unknownCapability(plan.capability)
+        }
+        // Checked before the card is raised, not after: asking the user to approve
+        // something that will then be refused teaches them the card means nothing.
+        if let reason = CapabilityScopeGuard.violation(
+            capabilityID: capability.id, input: plan.input, context: context,
+            scopeRoot: chatScope?.folderURL)
+        {
+            throw AICapabilityError.blocked(reason)
         }
         if capability.riskLevel.requiresApproval {
             let approved = await AICapabilityApprovalCenter.shared.requestApproval(
                 plan: plan,
                 capability: capability,
-                context: context
+                context: context,
+                chatScope: chatScope
             )
             guard approved else {
                 AIAuditHistory.shared.record(
@@ -587,7 +748,9 @@ final class AIExecutionEngine {
             }
         }
         do {
-            let result = try await execute(plan, context: context, approved: true)
+            let result = try await execute(
+                plan, context: context, approved: true, chatScope: chatScope,
+                userRequest: userRequest)
             AIAuditHistory.shared.record(
                 capabilityID: capability.id,
                 risk: capability.riskLevel,
@@ -710,21 +873,68 @@ final class AICapabilityApprovalCenter: ObservableObject {
         let plan: AIActionPlan
         let capability: AICapability
         let context: UserContext
+        /// The thread that asked, so the card can say where this will happen rather than
+        /// only what.
+        var chatScope: GeneralChatScope? = nil
         let continuation: CheckedContinuation<Bool, Never>
+
+        var scopeRoot: URL? { chatScope?.folderURL }
     }
 
     @Published private(set) var pending: PendingApproval?
     private var expiryTask: Task<Void, Never>?
+    private var isResolving = false
 
     private init() {}
 
-    func requestApproval(plan: AIActionPlan, capability: AICapability, context: UserContext) async -> Bool {
-        await withCheckedContinuation { continuation in
+    /// Refuse every approval without showing one, and record what was asked.
+    ///
+    /// Set while an external agent drives DoraX through the MCP server. An agent looping over
+    /// fifty eval questions must not be able to send mail or empty the trash because a sheet
+    /// resolved on its own — and there is nobody at the keyboard to refuse one.
+    ///
+    /// This makes the evaluation better, not merely safer. The question an eval should ask is
+    /// "was the right approval requested?", which is a decision DoraX owns, rather than "did
+    /// the side effect happen?", which depends on a person and on the state of their Mac.
+    static var refusesEveryApprovalUnattended = false
+
+    /// What was asked for while unattended, in order, so an eval can assert on it.
+    static private(set) var approvalsRequestedUnattended: [String] = []
+
+    /// Record a refusal made somewhere other than this centre — adapter actions run their own
+    /// gate and never reach requestApproval, which is how a blank note got created during an
+    /// unattended run that reported no approvals at all.
+    static func recordUnattendedRefusal(_ what: String) {
+        approvalsRequestedUnattended.append(what)
+    }
+
+    static func beginUnattendedRun() {
+        refusesEveryApprovalUnattended = true
+        approvalsRequestedUnattended = []
+    }
+
+    static func endUnattendedRun() -> [String] {
+        refusesEveryApprovalUnattended = false
+        let asked = approvalsRequestedUnattended
+        approvalsRequestedUnattended = []
+        return asked
+    }
+
+    func requestApproval(
+        plan: AIActionPlan, capability: AICapability, context: UserContext,
+        chatScope: GeneralChatScope? = nil
+    ) async -> Bool {
+        if Self.refusesEveryApprovalUnattended {
+            Self.approvalsRequestedUnattended.append(capability.id)
+            return false
+        }
+        return await withCheckedContinuation { continuation in
             expiryTask?.cancel()
             pending = PendingApproval(
                 plan: plan,
                 capability: capability,
                 context: context,
+                chatScope: chatScope,
                 continuation: continuation
             )
             expiryTask = Task { [weak self] in
@@ -735,20 +945,25 @@ final class AICapabilityApprovalCenter: ObservableObject {
         }
     }
 
-    func approve() {
-        guard let pending else { return }
-        expiryTask?.cancel()
-        expiryTask = nil
-        self.pending = nil
-        pending.continuation.resume(returning: true)
-    }
+    func approve() { resolve(true) }
 
-    func deny() {
-        guard let pending else { return }
+    func deny() { resolve(false) }
+
+    /// One answer per request, even when answering it re-enters this method.
+    ///
+    /// @Published notifies on willSet, so clearing `pending` runs every observer while
+    /// the old value is still stored. The dock closes the approval window on that
+    /// notification, the window's willClose handler denies "the pending request", it
+    /// reads the value still sitting there, and the same continuation is resumed twice —
+    /// which traps. The flag closes that window; nil-ing first is not enough on its own.
+    private func resolve(_ granted: Bool) {
+        guard !isResolving, let request = pending else { return }
+        isResolving = true
         expiryTask?.cancel()
         expiryTask = nil
-        self.pending = nil
-        pending.continuation.resume(returning: false)
+        pending = nil
+        isResolving = false
+        request.continuation.resume(returning: granted)
     }
 }
 

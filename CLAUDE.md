@@ -42,7 +42,21 @@ Codex follows the same rule via AGENTS.md.
 xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock -configuration Release build
 ```
 
-In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first. There are no automated tests — all verification is manual via the running app.
+In Xcode: **Cmd+B** to build, **Cmd+Shift+K** to clean first.
+
+```bash
+./scripts/test.sh        # runs the whole suite (offline: no API key, no network)
+```
+
+The suite lives in `Context-DockTests/` and uses **swift-testing** (`import Testing`, `@Test`),
+not XCTest. It was long believed this project could not have automated tests — the runner
+always died with "exited with code 0 before establishing connection". The cause was the app's
+own single-instance guard: the test bundle loads into a second copy of Context-Dock, the
+developer's copy is nearly always running, and the guard terminated the host before XCTest
+could attach. The guard stands down under XCTest now (`ILauncherApp.swift`), and the tests run.
+
+Anything needing a live model is NOT in this suite. Provider behaviour is still verified by
+hand against the running app.
 
 - **Deployment target**: macOS 26.1  
 - **Swift version**: 5.0  
@@ -217,3 +231,80 @@ Always fetch current Apple docs before using any API, especially macOS 26 Tahoe 
 These files are very large - read only the relevant range:
 - Search/ContentView.swift - 420+ @State vars; use awk NR>=X and NR<=Y
 - Search/LauncherView+ContextualActions.swift - use same awk pattern
+
+## Diagnosing an AI turn
+
+OSLog is not reliable here. On the development Mac, notice-level logging from third-party
+processes is not persisted — a marker emitted from a separate process under this app's
+subsystem never reaches the store either, so every `log.notice("stage: …")` in the chat
+pipeline is invisible. That is a `sudo log config` setting on the machine, not an app bug, and
+chasing a chat bug without knowing it cost a day.
+
+Use the app's own turn log instead. Off by default, because it names the apps and questions
+somebody asks:
+
+```bash
+defaults write com.krishgokul.ContextDock doraxTurnLogEnabled -bool YES
+tail -f ~/Library/Application\ Support/Context-Dock/turns.log
+```
+
+It records the two facts that settle most "why did it not do that" questions: the provider a
+turn ran on and whether it carries native tools, and the exact tool names sent to the model.
+A provider without native tools (Claude Code, Apple Intelligence) is handed none of DoraX's
+tools by design — it answers, the app acts.
+
+## Working alongside other agents
+
+2-4 Claude/Codex sessions run against this repo at once. Assume a file you did not
+touch is being edited by someone else **right now**, and that HEAD moves under you.
+
+- **Never `git add -A` / `git commit -a`.** Stage explicit paths only — anything else
+  sweeps up another session's half-finished work.
+- **Never** `git checkout -- .`, `git stash`, `git reset --hard`, or branch switches on
+  the shared tree. Those destroy uncommitted work you cannot see.
+- **Re-check before you conclude.** `git log --oneline -3` and `git status` at the start
+  of a task, and again before reporting counts or "this is all the usages" — both change
+  mid-task.
+- **Isolate risky work in a worktree** (`.claude/worktrees/`) rather than the shared tree.
+- If `git status` shows modifications you did not make, leave them alone and say so.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+## Finish the started task before taking the next one
+
+Work in this repo is sequenced deliberately, and the sequence is the user's.
+
+When a task or feature is underway and the user asks for something else — a new
+feature, another bug, a question that turns into work — **finish the current
+task first**, then take the new one. Say plainly that the new item is queued and
+where it sits in the order; do not silently drop it, and do not abandon what is
+half-built to chase it. A half-finished feature is worse than an unstarted one:
+it looks done from the outside and nobody knows what it left behind.
+
+The exception is the user saying to switch, or the new item making the current
+task pointless. A defect found *inside* the current task is part of it and gets
+fixed on the spot.
+
+Keep the agreed order visible. When the plan is a numbered sequence, name the
+task being worked on and what comes next, so the user can reorder deliberately
+rather than by accident.
+
+### The current sequence (2026-09-06)
+
+`docs/superpowers/plans/2026-09-06-corner-general-chat-parity.md`
+
+1. ✅ Task 1 — carry out a resolved call in every scope
+2. ✅ Task 2 — a combined chat names every app it is with
+3. ✅ Task 3 — corner General shows its steps
+4. ✅ Task 6 — "no linked route" is not "cannot": the approval-gated command rung
+5. ✅ Task 8 — ask in options, not prose
+6. Worker layer (Claude Code / Codex as specialist workers, with an authority
+   envelope) — its own plan, after the above

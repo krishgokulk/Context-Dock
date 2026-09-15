@@ -197,7 +197,7 @@ final class GlobalContextSearchCoordinator {
                 guard !bundleId.isEmpty else { continue }
                 let current = cachedMenuCounts[bundleId]
                 cachedMenuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
-            case .systemCommandScope:
+            case .systemCommandScope, .cliScope:
                 if isPrefixMatch(doc) {
                     if commandExactPrefix == nil { commandExactPrefix = doc }
                 } else if commandFuzzy == nil {
@@ -333,6 +333,10 @@ final class GlobalContextSearchCoordinator {
                 return 30_000 + Double(menuCount)
             case .systemCommandScope:
                 return 20_000 + doc.rankingBoost
+            case .cliScope:
+                // A typed command name is an explicit scope request, not a document
+                // search. Put it ahead of menu owners and recent-file matches.
+                return (prefix ? 60_000 : 20_000) + doc.rankingBoost
             default:
                 if prefix, doc.sourceKind == .running {
                     return 40_000 + doc.rankingBoost
@@ -354,7 +358,7 @@ final class GlobalContextSearchCoordinator {
                 guard !bundleId.isEmpty else { continue }
                 let current = menuCounts[bundleId]
                 menuCounts[bundleId] = (current?.doc ?? doc, (current?.count ?? 0) + 1)
-            case .systemCommandScope:
+            case .systemCommandScope, .cliScope:
                 if commandDocs.count < limit {
                     commandDocs.append(doc)
                 }
@@ -380,7 +384,7 @@ final class GlobalContextSearchCoordinator {
                 )
                 for doc in tokenDocs {
                     switch doc.action {
-                    case .cachedMenu, .systemCommandScope:
+                    case .cachedMenu, .systemCommandScope, .cliScope:
                         continue
                     default:
                         guard isPrefixMatch(doc, against: token) else { continue }
@@ -491,13 +495,49 @@ final class GlobalContextSearchCoordinator {
             ))
         }
 
-        let items = orderedIDs.compactMap { itemsByID[$0] }
+        var ranked = orderedIDs.compactMap { itemsByID[$0] }
             .sorted {
                 if $0.score != $1.score { return $0.score > $1.score }
                 return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
             }
-            .prefix(limit)
-        let output = Array(items)
+
+        // Spotlight's rule: text that spells an app's own name puts that app first.
+        // The raw index window above is shared with menu items, and an app whose name
+        // is also a common menu command ("home" → Safari's Home, DuckDuckGo's Home, …)
+        // gets crowded out of it entirely — leaving the menu owner's icon on top while
+        // the ghost text completed the app. Re-query apps only and restore the head.
+        let headIsNamePrefix = ranked.first?.title.lowercased()
+            .hasPrefix(query) ?? false
+        if !headIsNamePrefix {
+            let appOnlyDocs = GlobalSearchService.shared.query(
+                query,
+                limit: 12,
+                includeCachedMenus: false,
+                includeRunningCachedMenus: false
+            )
+            let appDoc = appOnlyDocs.first { doc in
+                switch doc.action {
+                case .cachedMenu, .browserURL: return false
+                default: return doc.normalizedTitle.hasPrefix(query)
+                }
+            }
+            if let appDoc {
+                let promoted = MatchDockIcon(
+                    id: appDoc.bundleId.isEmpty ? appDoc.id : "match-dock:\(appDoc.bundleId)",
+                    bundleID: appDoc.bundleId.isEmpty ? nil : appDoc.bundleId,
+                    title: appDoc.title,
+                    icon: appDoc.icon ?? NSWorkspace.shared.icon(forFileType: "app"),
+                    isRunning: appDoc.sourceKind == .running,
+                    isExpandable: false,
+                    score: (ranked.first?.score ?? 0) + 1,
+                    isExactAppPrefix: true
+                )
+                ranked.removeAll { $0.id == promoted.id }
+                ranked.insert(promoted, at: 0)
+            }
+        }
+
+        let output = Array(ranked.prefix(limit))
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 4 {
             SearchPerformanceLog.shared.record(

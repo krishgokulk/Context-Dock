@@ -666,12 +666,22 @@ final class ShareIntentRouter {
 
         let hasAction = !tokens.intersection(actionWords).isEmpty
         let hasPayloadHint = !tokens.intersection(payloadHints).isEmpty
-        let hasRecipientMarker = query.contains(" to ") || query.contains(" with ")
         let hasChannel = channelHint != nil
         let hasRecipient = recipientQuery != nil
 
-        return (hasAction && (hasPayloadHint || hasRecipientMarker || hasChannel))
-            || (hasChannel && (hasRecipientMarker || hasPayloadHint || hasRecipient))
+        // Sharing needs something to share, or someone to share it with. Requiring one of
+        // those in every case is what stops a noun being read as a verb: "open deleted
+        // message in messages app" is *about* messages, but "message" is both an action word
+        // and a channel word, so hasAction && hasChannel was satisfied twice over by that one
+        // noun — and the share branch claimed a query that wanted a menu command.
+        //
+        // "message john" is unaffected in practice: an addressed compose is resolveMessagingIntent's
+        // job, and a recipient makes hasRecipient true here anyway.
+        // A preposition by itself is not a recipient: “open message to deleted items”
+        // must still be free to match a menu. `extractRecipient` validates that there is
+        // actual recipient content after the marker.
+        let hasTarget = hasPayloadHint || hasRecipient
+        return (hasAction || hasChannel) && hasTarget
     }
 
     private func extractRecipient(from query: String) -> String? {

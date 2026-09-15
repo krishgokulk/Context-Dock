@@ -292,27 +292,79 @@ extension LauncherView {
     /// menu (Capture Text, screenshots, uploads) — injected so the scoped model can
     /// act on what's visible (e.g. a captured Messages thread).
     func contextDockChatAttachmentPromptBlock() -> String {
+        contextDockChatAttachmentPromptBlock(
+            files: contextDockChatFiles,
+            capturedText: contextDockChatCapturedText
+        )
+    }
+
+    func contextDockChatAttachmentPromptBlock(files: [URL], capturedText: String?) -> String {
         var parts: [String] = []
-        if let captured = contextDockChatCapturedText?
+        if let captured = capturedText?
             .trimmingCharacters(in: .whitespacesAndNewlines), !captured.isEmpty
         {
             parts.append(
                 "CAPTURED ON-SCREEN TEXT (use this to answer the user):\n"
                     + String(captured.prefix(4000)))
         }
-        if !contextDockChatFiles.isEmpty {
-            let analyzed = ContextDetector.shared.analyzeFiles(Array(contextDockChatFiles.prefix(10)))
-            let blocks = analyzed.map { item -> String in
-                guard let content = item.content?.trimmingCharacters(in: .whitespacesAndNewlines),
-                    !content.isEmpty
-                else { return "- \(item.url.lastPathComponent) (\(item.type))" }
-                return "### \(item.url.lastPathComponent) (\(item.type))\n\(String(content.prefix(3000)))"
+        if !files.isEmpty {
+            let imageExts: Set<String> = [
+                "png", "jpg", "jpeg", "gif", "bmp", "tiff", "heic", "webp",
+            ]
+            let submittedFiles = Array(files.prefix(10))
+            let imageFiles = submittedFiles.filter { imageExts.contains($0.pathExtension.lowercased()) }
+            let docFiles = submittedFiles.filter { !imageExts.contains($0.pathExtension.lowercased()) }
+
+            // Screenshots / Capture Area are images — the scoped agentic path can't send vision,
+            // so OCR them locally and inject the recognized text. This is what makes a captured
+            // screen actually usable in the chat (e.g. "summarize this error").
+            var blocks: [String] = []
+            for url in imageFiles {
+                let text = ocrTextFromImageFile(url)
+                if text.isEmpty {
+                    blocks.append("- \(url.lastPathComponent) (screenshot — no text recognized)")
+                } else {
+                    blocks.append(
+                        "### \(url.lastPathComponent) (screenshot, recognized text)\n"
+                            + String(text.prefix(3000)))
+                }
+            }
+            if !docFiles.isEmpty {
+                let analyzed = ContextDetector.shared.analyzeFiles(docFiles)
+                for item in analyzed {
+                    guard let content = item.content?
+                        .trimmingCharacters(in: .whitespacesAndNewlines), !content.isEmpty
+                    else {
+                        blocks.append("- \(item.url.lastPathComponent) (\(item.type))")
+                        continue
+                    }
+                    blocks.append(
+                        "### \(item.url.lastPathComponent) (\(item.type))\n"
+                            + String(content.prefix(3000)))
+                }
             }
             if !blocks.isEmpty {
                 parts.append("ATTACHED FILES (use these):\n\n" + blocks.joined(separator: "\n\n"))
             }
         }
         return parts.isEmpty ? "" : "\n\n" + parts.joined(separator: "\n\n")
+    }
+
+    /// Local Vision OCR for an image file the user attached/captured in the scoped chat.
+    /// Synchronous (Vision `perform` is sync) — fine for a single user-initiated capture.
+    func ocrTextFromImageFile(_ url: URL) -> String {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        do {
+            try VNImageRequestHandler(url: url, options: [:]).perform([request])
+            return (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string }
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            return ""
+        }
     }
 
     func buildIntelligentL2Prompt(

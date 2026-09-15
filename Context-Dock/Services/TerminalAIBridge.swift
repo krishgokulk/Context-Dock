@@ -36,6 +36,7 @@ class TerminalAIBridge: ObservableObject {
     @Published var executionHistory: [CommandExecution] = []
     @Published var pendingApproval: PendingCommand?
     private var approvalExpiryTask: Task<Void, Never>?
+    private var isResolvingApproval = false
 
     /// Optional per-line streaming callback set by the active panel.
     /// Called on a background thread — callers must dispatch to MainActor themselves.
@@ -74,11 +75,30 @@ class TerminalAIBridge: ObservableObject {
         }
     }
 
+    /// Which surface asked, so its approval card appears there and only there.
+    ///
+    /// The pending command is one global value and both surfaces render it, so a command
+    /// requested in the chat window put its "Run command?" card into whatever dock chat
+    /// happened to be open — the user watched Finder's conversation fill up with Safari
+    /// commands it had never asked for.
+    enum ApprovalOrigin: Equatable { case dock, window, preview }
+
+    static func resolveApprovalOrigin(
+        explicit: ApprovalOrigin?,
+        previewIsKey: Bool,
+        generalChatIsKey: Bool
+    ) -> ApprovalOrigin {
+        if let explicit { return explicit }
+        if previewIsKey { return .preview }
+        return generalChatIsKey ? .window : .dock
+    }
+
     struct PendingCommand: Identifiable {
         let id = UUID()
         let command: String
         let purpose: String
         let classification: TerminalCommandClassifier.CommandClassification
+        let origin: ApprovalOrigin
         let continuation: CheckedContinuation<CommandResult, Never>
     }
 
@@ -125,7 +145,17 @@ class TerminalAIBridge: ObservableObject {
     // MARK: - Command Execution
 
     /// Process an AI-generated terminal command
-    func processAICommand(_ command: String, purpose: String) async -> (success: Bool, output: String) {
+    /// `modelRequiresApproval` is the model's own `requires_approval` answer from the
+    /// run_command tool call. It can only ever *add* friction: true forces the approval
+    /// sheet, false grants nothing on its own. The classifier stays the authority on
+    /// what is allowed to auto-run, so a model that lies with `false` changes nothing.
+    func processAICommand(
+        _ command: String,
+        purpose: String,
+        modelRequiresApproval: Bool = false,
+        workingDirectory: URL? = nil,
+        approvalOrigin: ApprovalOrigin? = nil
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         // AI placeholder tokens (CURRENT_VIDEO_URL, <url>, PASTE_LINK_HERE…) must never
         // reach the shell. URL-shaped placeholders are substituted with the live page
         // URL when we have one; anything else unresolved blocks with a clear message.
@@ -139,7 +169,8 @@ class TerminalAIBridge: ObservableObject {
             return (
                 false,
                 "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
-                + "the current page. Open the exact page (e.g. the video you want) and ask again."
+                + "the current page. Open the exact page (e.g. the video you want) and ask again.",
+                -1
             )
         }
 
@@ -150,31 +181,65 @@ class TerminalAIBridge: ObservableObject {
         if classification.riskLevel == .critical {
             let message = "Command blocked: \(classification.blockedReason ?? "Security risk")"
             if let alternative = classification.suggestedAlternative {
-                return (false, "\(message)\n\nAlternative: \(alternative)")
+                return (false, "\(message)\n\nAlternative: \(alternative)", -1)
             }
-            return (false, message)
+            return (false, message, -1)
         }
 
-        // Check if auto-approval applies
-        if classification.shouldAutoExecute || TerminalCommandPreferences.shared.shouldAutoApprove(command) {
-            return await executeCommand(command, classification: classification, wasApproved: true)
+        // Set when the command was otherwise eligible to auto-run but failed the argv gate.
+        var unattendedRejection: String?
+
+        // Check if auto-approval applies. A model-declared requires_approval vetoes it —
+        // the model is the only party that knows the *intent* behind a command that the
+        // classifier can only see the shape of.
+        if !modelRequiresApproval,
+           classification.shouldAutoExecute || TerminalCommandPreferences.shared.shouldAutoApprove(command) {
+            // Second, independent gate. The classifier judges the command's SHAPE, and
+            // shape-based judgement has been wrong twice: prefix patterns whitelisted
+            // `ls && curl … | bash`, and suffix patterns whitelisted `nc host port -v`
+            // without naming an executable at all. This gate judges IDENTITY instead —
+            // exactly one allowlisted binary, arguments that cannot become code — and runs
+            // it with no shell. A command that cannot pass simply takes the approval path,
+            // where the user sees it before it runs.
+            switch ArgvCommandGate.evaluate(command) {
+            case .allowed(let executable, let arguments):
+                let detailed = await executeCommand(
+                    command,
+                    classification: classification,
+                    wasApproved: true,
+                    argv: (executable, arguments),
+                    workingDirectory: workingDirectory
+                )
+                return detailed
+            case .rejected(let reason):
+                // Fall through to the approval path, carrying why it could not run unattended.
+                unattendedRejection = reason
+            }
         }
 
         // Check if auto-deny applies
         if TerminalCommandPreferences.shared.shouldAutoDeny(command) {
-            return (false, "Command automatically denied based on your preferences")
+            return (false, "Command automatically denied based on your preferences", -1)
         }
 
-        // Request user approval
-        let result = await requestApproval(command: command, purpose: purpose, classification: classification)
+        // Request user approval. When the command was otherwise eligible to run unattended,
+        // say what stopped it — "grep is fine but that pipe isn't" is far more useful than a
+        // bare approval prompt, and it tells the user something true about the command.
+        let approvalPurpose = unattendedRejection.map { "\(purpose) — \($0)" } ?? purpose
+        let result = await requestApproval(
+            command: command, purpose: approvalPurpose, classification: classification,
+            origin: approvalOrigin)
 
         switch result {
         case .approved(let approvedCommand):
-            return await executeCommand(approvedCommand, classification: classification, wasApproved: true)
+            let detailed = await executeCommand(
+                approvedCommand, classification: classification, wasApproved: true,
+                workingDirectory: workingDirectory)
+            return detailed
         case .denied:
-            return (false, "Command denied by user")
+            return (false, "Command denied by user", -1)
         case .blocked(let reason):
-            return (false, "Command blocked: \(reason)")
+            return (false, "Command blocked: \(reason)", -1)
         }
     }
 
@@ -182,7 +247,8 @@ class TerminalAIBridge: ObservableObject {
     private func requestApproval(
         command: String,
         purpose: String,
-        classification: TerminalCommandClassifier.CommandClassification
+        classification: TerminalCommandClassifier.CommandClassification,
+        origin explicitOrigin: ApprovalOrigin?
     ) async -> CommandResult {
         await withCheckedContinuation { continuation in
             approvalExpiryTask?.cancel()
@@ -190,6 +256,11 @@ class TerminalAIBridge: ObservableObject {
                 command: command,
                 purpose: purpose,
                 classification: classification,
+                origin: Self.resolveApprovalOrigin(
+                    explicit: explicitOrigin,
+                    previewIsKey: PreviewController.shared.isKeyWindow,
+                    generalChatIsKey: GeneralChatWindowController.shared.isKeyWindow
+                ),
                 continuation: continuation
             )
             approvalExpiryTask = Task { [weak self] in
@@ -202,20 +273,28 @@ class TerminalAIBridge: ObservableObject {
 
     /// Called when user approves the command
     func approveCommand(_ command: String) {
-        guard let pending = pendingApproval else { return }
-        approvalExpiryTask?.cancel()
-        approvalExpiryTask = nil
-        pending.continuation.resume(returning: .approved(command: command))
-        pendingApproval = nil
+        resolveApproval(.approved(command: command))
     }
 
     /// Called when user denies the command
     func denyCommand() {
-        guard let pending = pendingApproval else { return }
+        resolveApproval(.denied)
+    }
+
+    /// One answer per request, even when answering it re-enters this method.
+    ///
+    /// @Published notifies on willSet, so clearing `pendingApproval` runs every observer
+    /// while the old value is still stored. A surface that closes its approval window on
+    /// that notification denies "the pending request", reads the value still sitting
+    /// there, and the same continuation is resumed twice — which traps.
+    private func resolveApproval(_ result: CommandResult) {
+        guard !isResolvingApproval, let pending = pendingApproval else { return }
+        isResolvingApproval = true
         approvalExpiryTask?.cancel()
         approvalExpiryTask = nil
-        pending.continuation.resume(returning: .denied)
         pendingApproval = nil
+        isResolvingApproval = false
+        pending.continuation.resume(returning: result)
     }
 
     /// Run a command the user already approved via an inline chat card. Applies the same
@@ -223,7 +302,13 @@ class TerminalAIBridge: ObservableObject {
     /// re-prompts and NEVER touches the pending-approval continuation. Uses the reliable
     /// background/terminal executor (real exit code + captured output), not a PTY marker
     /// wait — so an inline "Approve & Run" always produces output.
-    func runPreApprovedCommand(_ command: String) async -> (success: Bool, output: String) {
+    /// - Parameter onLine: receives each output line as it arrives, so a caller can show
+    ///   live progress instead of a frozen spinner until the command exits.
+    func runPreApprovedCommand(
+        _ command: String,
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         var command = command
         switch Self.resolvePlaceholders(in: command, pageURL: currentPageURLForSubstitution()) {
         case .clean:
@@ -234,28 +319,37 @@ class TerminalAIBridge: ObservableObject {
             return (
                 false,
                 "The command contains the placeholder \"\(token)\" and I couldn't fill it from "
-                + "the current page. Open the exact page and ask again."
+                + "the current page. Open the exact page and ask again.",
+                -1
             )
         }
         let classification = TerminalCommandClassifier.shared.classify(command)
         if classification.riskLevel == .critical {
             let message = "Command blocked: \(classification.blockedReason ?? "Security risk")"
             if let alternative = classification.suggestedAlternative {
-                return (false, "\(message)\n\nAlternative: \(alternative)")
+                return (false, "\(message)\n\nAlternative: \(alternative)", -1)
             }
-            return (false, message)
+            return (false, message, -1)
         }
-        return await executeCommand(command, classification: classification, wasApproved: true)
+        return await executeCommand(
+            command, classification: classification, wasApproved: true, onLine: onLine,
+            workingDirectory: workingDirectory)
     }
 
     // MARK: - Direct Execution
 
     /// Execute a command directly in the terminal
+    /// `argv` is supplied only by the unattended path, where ArgvCommandGate has resolved an
+    /// allowlisted executable. When present the command runs as that process directly — no
+    /// shell is involved — instead of going through `zsh -lc`.
     private func executeCommand(
         _ command: String,
         classification: TerminalCommandClassifier.CommandClassification,
-        wasApproved: Bool
-    ) async -> (success: Bool, output: String) {
+        wasApproved: Bool,
+        argv: (executable: URL, arguments: [String])? = nil,
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
+    ) async -> (success: Bool, output: String, exitCode: Int32) {
         isExecuting = true
         currentCommand = command
         let startTime = Date()
@@ -265,8 +359,52 @@ class TerminalAIBridge: ObservableObject {
             currentCommand = nil
         }
 
-        // Execute in terminal if available, otherwise background
-        let (output, exitCode) = await executeInTerminalOrBackground(command)
+        // Long jobs (downloads, transcodes, clones) produce nothing visible until they finish —
+        // the chat says "downloading…" and then the app looks idle for minutes. Post a running
+        // entry so the work is visible in the notification scope while it happens.
+        let progressLabel = Self.longRunningLabel(for: command)
+        var progressID: UUID?
+        if let progressLabel {
+            progressID = ILauncherNotificationManager.shared.post(
+                title: progressLabel,
+                body: "Running… \(command.prefix(80))",
+                icon: "arrow.down.circle",
+                accentColor: "blue")
+        }
+
+        // Execute in terminal if available, otherwise background. An argv-gated command
+        // bypasses both: it runs as a resolved process with no shell, which is the whole
+        // point of the gate — a login shell would re-introduce the interpretation the gate
+        // exists to remove.
+        let (output, exitCode): (String, Int32)
+        if let argv {
+            (output, exitCode) = await Self.runArgv(
+                executable: argv.executable, arguments: argv.arguments, onLine: onLine,
+                workingDirectory: workingDirectory)
+        } else {
+            (output, exitCode) = await executeInTerminalOrBackground(
+                command, onLine: onLine, workingDirectory: workingDirectory)
+        }
+
+        // CLI scope terminals are transcript surfaces for non-interactive work:
+        // execute once for a real result, then render that result in the visible PTY.
+        if terminalController?.showsCapturedExecutionTranscript == true,
+            !isTUICommand(command)
+        {
+            terminalController?.appendExecutionTranscript(
+                command: command, output: output, exitCode: exitCode)
+        }
+
+        if let progressID { ILauncherNotificationManager.shared.remove(progressID) }
+        if let progressLabel {
+            ILauncherNotificationManager.shared.post(
+                title: exitCode == 0 ? "\(progressLabel) finished" : "\(progressLabel) failed",
+                body: exitCode == 0
+                    ? "Completed in \(Int(Date().timeIntervalSince(startTime)))s"
+                    : String(output.suffix(160)),
+                icon: exitCode == 0 ? "checkmark.circle" : "exclamationmark.triangle",
+                accentColor: exitCode == 0 ? "green" : "red")
+        }
 
         let duration = Date().timeIntervalSince(startTime)
         lastOutput = output
@@ -294,7 +432,7 @@ class TerminalAIBridge: ObservableObject {
                 name: produced.lastPathComponent, url: produced)
         }
 
-        return (exitCode == 0, output)
+        return (exitCode == 0, output, exitCode)
     }
 
     // MARK: - Placeholder resolution
@@ -367,6 +505,26 @@ class TerminalAIBridge: ObservableObject {
 
     /// Best-effort: find the file a download/convert command produced, from its
     /// output ("Destination: …", "Merging formats into …") or its output argument.
+    /// Human label for jobs worth showing progress for. Downloads, transcodes and clones can run
+    /// for minutes; everything else finishes fast enough that a notification would be noise.
+    static func longRunningLabel(for command: String) -> String? {
+        let lowered = command.lowercased()
+        let jobs: [(needle: String, label: String)] = [
+            ("yt-dlp", "Download"),
+            ("youtube-dl", "Download"),
+            ("ffmpeg", "Convert"),
+            ("handbrakecli", "Convert"),
+            ("git clone", "Clone"),
+            ("brew install", "Install"),
+            ("brew upgrade", "Upgrade"),
+            ("curl ", "Download"),
+            ("wget ", "Download"),
+            ("ditto ", "Archive"),
+            ("rsync", "Sync"),
+        ]
+        return jobs.first { lowered.contains($0.needle) }?.label
+    }
+
     static func detectProducedFile(command: String, output: String) -> URL? {
         let fm = FileManager.default
         let home = fm.homeDirectoryForCurrentUser
@@ -435,68 +593,146 @@ class TerminalAIBridge: ObservableObject {
     /// Uses the explicit allowlist and a tight keyword heuristic only — NOT the intent registry,
     /// which produces too many false positives (e.g. brew mentioning "services"/"daemon").
     func isTUICommand(_ command: String) -> Bool {
+        routing(for: command) == .terminal
+    }
+
+    /// Where a command should run.
+    enum CommandRoute {
+        case terminal
+        case headless
+        /// Unknown subcommand of an interactive tool: try headless behind a deadline.
+        case probe
+    }
+
+    /// Decided per invocation, not per tool.
+    ///
+    /// The per-tool "Needs a terminal" mark says *some* of this tool's commands take over the
+    /// tty — for terminal-browser that is `open` and nothing else. Treating the mark as a
+    /// verdict on every invocation sent `ls` and `setup` to the PTY too, where they produced
+    /// no output for the chat, the console or the verifier to work with.
+    func routing(for command: String) -> CommandRoute {
         let parts = command.trimmingCharacters(in: .whitespaces)
             .components(separatedBy: .whitespaces)
         let executable = (parts.first ?? "").components(separatedBy: "/").last ?? ""
         let execLower = executable.lowercased()
 
-        // Primary: explicit allowlist of known interactive TUI apps
-        if Self.knownTUIApps.contains(execLower) { return true }
-
-        // Secondary: tight keyword heuristic on the binary name only (not args)
+        // The allowlist cannot know every TUI tool — terminal-browser, for one — so the
+        // user's own mark counts alongside it. Both are statements about the *tool*; which
+        // of its commands are interactive is CommandInteractivity's question. This is a Set
+        // lookup kept by TerminalPackageManager, not a scan of ~950 packages.
         let tuiKeywords = ["tui", "ncurses", "curses"]
-        return tuiKeywords.contains(where: { execLower.contains($0) })
+        let toolIsInteractive =
+            TerminalPackageManager.shared.interactiveCommands.contains(execLower)
+            || Self.knownTUIApps.contains(execLower)
+            || tuiKeywords.contains(where: { execLower.contains($0) })
+
+        switch CommandInteractivity.verdict(
+            for: command, toolIsMarkedInteractive: toolIsInteractive)
+        {
+        case .interactive: return .terminal
+        case .headless: return .headless
+        case .unknown: return .probe
+        }
     }
 
     /// Execute command either in visible terminal or background
-    private func executeInTerminalOrBackground(_ command: String) async -> (output: String, exitCode: Int32) {
+    private func executeInTerminalOrBackground(
+        _ command: String,
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
+    ) async -> (output: String, exitCode: Int32) {
+        let route = routing(for: command)
+
         // TUI / interactive apps MUST go to the visible terminal (real PTY)
-        if isTUICommand(command) {
-            if let controller = terminalController {
-                controller.sendCommand(command)
-
-                // Register as PTY worker in the pool
-                let executable = command.trimmingCharacters(in: .whitespaces)
-                    .components(separatedBy: .whitespaces).first ?? command
-                let workerIntent = detectWorkerIntent(for: executable)
-                let workerID = BackgroundWorkerPool.shared.registerPTYWorker(
-                    command: command,
-                    purpose: "Interactive terminal command",
-                    intent: workerIntent
-                )
-
-                // Show mini-player if this is a music tool
-                if workerIntent == .musicPlayer {
-                    MiniPlayerController.shared.show(
-                        workerID: workerID,
-                        toolName: executable,
-                        intent: .musicPlayer
-                    )
-                }
-
-                return ("Launched '\(command)' in terminal (interactive mode, worker: \(workerID.uuidString.prefix(6)))", 0)
-            }
-            return ("Cannot run '\(command)': requires an interactive terminal. Open the Terminal tab first.", 1)
+        if route == .terminal {
+            return launchInTerminal(command, purpose: "Interactive terminal command")
         }
 
-        // Non-interactive commands: stream line-by-line to active panel, capture full output
         let lineHandler = streamLineHandler
-        let bgResult = await executeInBackground(command, onLine: lineHandler)
+
+        // Unknown subcommand of a tool the user marked interactive. Run it headless with a
+        // deadline: a one-shot answers well inside it, and anything still alive afterwards
+        // was waiting for a terminal it was never given. Either way the answer is recorded,
+        // so this costs one probe per subcommand, not one per question.
+        let bgResult: (output: String, exitCode: Int32)
+        if route == .probe {
+            let probe = await executeInBackground(
+                command, onLine: onLine ?? lineHandler,
+                probeDeadline: CommandInteractivity.probeDeadline,
+                workingDirectory: workingDirectory)
+            if probe.exitCode == Self.probeDeadlineExitCode {
+                CommandInteractivity.record(true, for: command)
+                return launchInTerminal(command, purpose: "Interactive terminal command")
+            }
+            // It finished, but it may still have refused for want of a tty — that is the
+            // check below, and it gets to record the verdict instead of this line.
+            bgResult = probe
+        } else {
+            // Non-interactive commands: stream line-by-line to active panel, capture full output
+            bgResult = await executeInBackground(
+                command, onLine: onLine ?? lineHandler, workingDirectory: workingDirectory)
+        }
 
         // If the command itself complains it needs a TTY, re-route to visible terminal
-        let interactivePhrases = ["requires an interactive terminal", "is running interactively", "needs a terminal", "not a tty", "no tty present"]
+        // A tool that wants a tty says so, but not always by failing: `terminal-browser ls`
+        // prints "cannot control this terminal" and exits 0, so keying this off a non-zero
+        // exit missed it and the user got the refusal as their answer. The length guard is
+        // what keeps a help page that happens to mention "not a tty" from being read as a
+        // refusal — a refusal is one line, documentation is not.
+        let interactivePhrases = [
+            "requires an interactive terminal", "is running interactively", "needs a terminal",
+            "not a tty", "no tty present", "cannot control this terminal",
+            "no controlling terminal", "must be run in a terminal", "requires a terminal",
+        ]
         let lowerOutput = bgResult.output.lowercased()
-        if bgResult.exitCode != 0, interactivePhrases.contains(where: { lowerOutput.contains($0) }) {
-            if let controller = terminalController {
-                controller.sendCommand(command)
-                let executable = command.trimmingCharacters(in: .whitespaces).components(separatedBy: .whitespaces).first ?? command
-                let workerIntent = detectWorkerIntent(for: executable)
-                _ = BackgroundWorkerPool.shared.registerPTYWorker(command: command, purpose: "Interactive fallback", intent: workerIntent)
+        if lowerOutput.count < 400, interactivePhrases.contains(where: { lowerOutput.contains($0) })
+        {
+            // The command said so itself — the most reliable signal there is, so it is worth
+            // remembering rather than rediscovering on every ask.
+            CommandInteractivity.record(true, for: command)
+            if terminalController != nil {
+                _ = launchInTerminal(command, purpose: "Interactive fallback")
                 return ("'\(command)' requires an interactive terminal — launched in the Terminal tab.", 0)
             }
+        } else if route == .probe {
+            // Ran to completion and did not ask for a tty: a real headless command.
+            CommandInteractivity.record(false, for: command)
         }
 
         return bgResult
+    }
+
+    /// Hands a command to the visible PTY and registers it as a worker.
+    ///
+    /// One place, so the direct route, the probe result and the "needs a tty" fallback all
+    /// launch identically — they used to be three near-copies that had already drifted.
+    private func launchInTerminal(
+        _ command: String, purpose: String
+    ) -> (output: String, exitCode: Int32) {
+        guard let controller = terminalController else {
+            return (
+                "Cannot run '\(command)': requires an interactive terminal. Open the Terminal tab first.",
+                1
+            )
+        }
+        controller.sendCommand(command)
+
+        let executable = command.trimmingCharacters(in: .whitespaces)
+            .components(separatedBy: .whitespaces).first ?? command
+        let workerIntent = detectWorkerIntent(for: executable)
+        let workerID = BackgroundWorkerPool.shared.registerPTYWorker(
+            command: command, purpose: purpose, intent: workerIntent)
+
+        // Show mini-player if this is a music tool
+        if workerIntent == .musicPlayer {
+            MiniPlayerController.shared.show(
+                workerID: workerID, toolName: executable, intent: .musicPlayer)
+        }
+
+        return (
+            "Launched '\(command)' in terminal (interactive mode, worker: \(workerID.uuidString.prefix(6)))",
+            0
+        )
     }
 
     // MARK: - Worker Intent Detection
@@ -563,25 +799,138 @@ class TerminalAIBridge: ObservableObject {
 
     /// Execute command in background, streaming each line to `onLine` as it arrives.
     /// Returns the full combined output + exit code when the process finishes.
-    func executeInBackground(
-        _ command: String,
-        onLine: (@Sendable (String) -> Void)? = nil
+    /// Printed on stderr by the command script before the command runs. Everything the shell
+    /// emitted before it came from the user's dotfiles, not from the command.
+    nonisolated static let stderrBeginMarker = "__DORAX_CMD_STDERR_BEGIN__"
+
+    /// Drops shell-startup output that precedes the marker. Without a marker the text is
+    /// returned unchanged — better to show extra noise than to swallow a real error.
+    /// `nonisolated`: called from the process termination handler, off the main actor.
+    nonisolated static func commandStderr(_ raw: String) -> String {
+        guard let range = raw.range(of: stderrBeginMarker) else { return raw }
+        return String(raw[range.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Runs an ArgvCommandGate-approved command as a process, with no shell anywhere in the
+    /// chain. The environment is rebuilt rather than inherited: the user's dotfiles are the
+    /// reason `zsh -lc` exists on the approved path, and they are exactly what must not
+    /// influence a command running without approval.
+    nonisolated static func runArgv(
+        executable: URL,
+        arguments: [String],
+        onLine: (@Sendable (String) -> Void)? = nil,
+        workingDirectory: URL? = nil
     ) async -> (output: String, exitCode: Int32) {
+        await CancellableProcessRunner.run { box in
         await withCheckedContinuation { continuation in
             let process = Process()
+            process.executableURL = executable
+            process.arguments = arguments
+            process.environment = [
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+                "LANG": "en_US.UTF-8",
+                "TERM": "dumb",
+            ]
+            // Where the thread is about a directory, that is where its commands run.
+            process.currentDirectoryURL =
+                workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
+
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+
+            var finished = false
+            let lock = NSLock()
+            func finish(_ result: (String, Int32)) {
+                lock.lock()
+                defer { lock.unlock() }
+                guard !finished else { return }
+                finished = true
+                continuation.resume(returning: result)
+            }
+
+            process.terminationHandler = { proc in
+                let out = String(
+                    data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8) ?? ""
+                let err = String(
+                    data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                    encoding: .utf8) ?? ""
+                let combined = out.isEmpty ? err : (err.isEmpty ? out : out + "\n" + err)
+                if let onLine {
+                    for line in combined.split(separator: "\n") { onLine(String(line)) }
+                }
+                finish((combined.trimmingCharacters(in: .whitespacesAndNewlines),
+                        proc.terminationStatus))
+            }
+
+            // Stop may already have been pressed while the gate was deciding. A process
+            // started after that is one nothing is left watching.
+            guard box.adopt(process) else {
+                finish(("Stopped before it started.", 15))
+                return
+            }
+            do {
+                try process.run()
+            } catch {
+                finish(("Failed to run \(executable.lastPathComponent): "
+                        + error.localizedDescription, 127))
+            }
+        }
+        }
+    }
+
+    func executeInBackground(
+        _ command: String,
+        onLine: (@Sendable (String) -> Void)? = nil,
+        probeDeadline: TimeInterval? = nil,
+        workingDirectory: URL? = nil
+    ) async -> (output: String, exitCode: Int32) {
+        let toolDirectories = TerminalPackageManager.shared.pinnedToolDirectories()
+        return await CancellableProcessRunner.run { box in
+        return await withCheckedContinuation { continuation in
+            let process = Process()
             process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            process.arguments = ["-lc", command]
+            // A login shell sources the user's dotfiles, and anything they print lands on this
+            // process's stderr before the command has even started. One broken line in
+            // ~/.zshenv (a rakubrew init whose Perl cache no longer compiles) therefore
+            // appeared in chat as though `brew search` had produced it.
+            //
+            // The shell still sources those files — commands rely on the aliases, functions and
+            // PATH they set — but the script announces itself on stderr first, so everything
+            // before that marker is provably startup noise and not this command's output.
+            // null_glob: zsh aborts an ENTIRE command when any pattern matches nothing, so
+            // `mv *.jpg *.png *.dng Images/` moved not one file because no .dng existed.
+            // nocaseglob: *.jpg must match IMG_4722.JPG — on a case-insensitive volume the
+            // user cannot see why it would not, and neither can the model.
+            process.arguments = [
+                "-lc",
+                "setopt null_glob nocaseglob\n" + "printf '%s\\n' '\(Self.stderrBeginMarker)' >&2\n" + command,
+            ]
 
             // Set up environment with full tool paths (Homebrew Apple Silicon + Intel)
             var environment = ProcessInfo.processInfo.environment
             environment["TERM"] = "xterm-256color"
             environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
             let currentPath = environment["PATH"] ?? "/usr/bin:/bin"
-            environment["PATH"] = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:" + currentPath
+            // The directories the user's own pinned tools actually live in come first.
+            // terminal-browser installs to ~/.local/bin, which is on PATH only if a dotfile
+            // puts it there — so a tool DoraX scanned, listed and scoped could still fail to
+            // run as "command not found". We know each tool's resolved path; use it.
+            environment["PATH"] =
+                (toolDirectories
+                    + [
+                        "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+                        "/usr/bin", "/bin",
+                    ]).joined(separator: ":") + ":" + currentPath
             process.environment = environment
 
-            // Set working directory to home
-            process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+            // The thread's directory when it has one, home otherwise.
+            process.currentDirectoryURL =
+                workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser
 
             let outputPipe = Pipe()
             let errorPipe  = Pipe()
@@ -608,25 +957,48 @@ class TerminalAIBridge: ObservableObject {
                         onLine(trimmed)
                     }
                 }
+                // Streaming counterpart of the marker split: nothing on stderr counts as
+                // output until the command announces itself.
+                let commandStarted = TerminalStderrGate()
                 errorPipe.fileHandleForReading.readabilityHandler = { fh in
                     let data = fh.availableData
                     guard !data.isEmpty, let chunk = String(data: data, encoding: .utf8) else { return }
                     for line in chunk.components(separatedBy: "\n") {
                         let trimmed = line.trimmingCharacters(in: .controlCharacters)
                         guard !trimmed.isEmpty else { continue }
+                        if trimmed.contains(Self.stderrBeginMarker) {
+                            commandStarted.open()
+                            continue
+                        }
+                        guard commandStarted.isOpen else { continue }
                         appendCollectedLine(trimmed)
                         onLine(trimmed)
                     }
                 }
             }
 
+            // Set when the probe deadline fires, so the termination handler can report a
+            // command that was killed for hanging rather than one that failed on its own.
+            let deadlineExpired = TerminalStderrGate()
+
             process.terminationHandler = { proc in
+                if deadlineExpired.isOpen {
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    continuation.resume(
+                        returning: (
+                            "'\(command)' did not finish — it is waiting for a terminal.",
+                            Self.probeDeadlineExitCode
+                        ))
+                    return
+                }
                 // Drain any remaining bytes when no streaming handler
                 if onLine == nil {
                     let outData = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     let errData = errorPipe.fileHandleForReading.readDataToEndOfFile()
                     var output = String(data: outData, encoding: .utf8) ?? ""
-                    if let err = String(data: errData, encoding: .utf8), !err.isEmpty {
+                    let err = Self.commandStderr(String(data: errData, encoding: .utf8) ?? "")
+                    if !err.isEmpty {
                         output += "\n" + err
                     }
                     continuation.resume(returning: (output.trimmingCharacters(in: .whitespacesAndNewlines), proc.terminationStatus))
@@ -638,12 +1010,38 @@ class TerminalAIBridge: ObservableObject {
             }
 
             do {
+                // Stop reaches the process, not just the loop that was waiting on it.
+                guard box.adopt(process) else {
+                    continuation.resume(returning: ("Stopped before it started.", 15))
+                    return
+                }
                 try process.run()
+                if let probeDeadline {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + probeDeadline) {
+                        guard process.isRunning else { return }
+                        deadlineExpired.open()
+                        // The command runs under `zsh -lc`, so terminating the process kills
+                        // the shell and can leave the tool itself parented to launchd. Take
+                        // the children first, or the probe leaves a second copy running that
+                        // the PTY relaunch then competes with.
+                        let reaper = Process()
+                        reaper.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+                        reaper.arguments = ["-TERM", "-P", "\(process.processIdentifier)"]
+                        try? reaper.run()
+                        reaper.waitUntilExit()
+                        process.terminate()
+                    }
+                }
             } catch {
                 continuation.resume(returning: ("Error: \(error.localizedDescription)", 1))
             }
         }
+        }
     }
+
+    /// Exit code for a probe the deadline killed. Outside the 0…255 range a real process can
+    /// return, so it cannot collide with a command's own failure.
+    static let probeDeadlineExitCode: Int32 = -777
 
     // MARK: - Multi-Step Workflow
 
@@ -672,7 +1070,7 @@ class TerminalAIBridge: ObservableObject {
             }
 
             // Execute the step
-            let (success, output) = await processAICommand(step.command, purpose: step.description)
+            let (success, output, _) = await processAICommand(step.command, purpose: step.description)
 
             results.append(WorkflowResult.StepResult(
                 step: step,
@@ -846,5 +1244,25 @@ extension TerminalHostController {
         }
 
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Tiny thread-safe latch for the streaming stderr gate. The pipe's readability handler runs
+/// off the main thread, so the "has the command started" flag it shares with its own later
+/// invocations needs a lock rather than a captured `var`.
+final class TerminalStderrGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+
+    var isOpen: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return opened
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        lock.unlock()
     }
 }

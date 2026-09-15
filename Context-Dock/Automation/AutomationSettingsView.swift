@@ -84,6 +84,7 @@ struct AutomationSettingsView: View {
     @ObservedObject private var pkgMgr          = TerminalPackageManager.shared
     @ObservedObject private var l2Mgr           = L2ExtensionManager.shared
     @ObservedObject private var adapterMgr      = AppAdapterManager.shared
+    @ObservedObject private var layeredExtensionManager = LayeredExtensionManager.shared
 
     @State private var selectedCategory: AutomationCategory = .appActions
     @State private var searchText = ""
@@ -95,6 +96,7 @@ struct AutomationSettingsView: View {
     @State private var selectedMenuCacheBundleID: String?
     @State private var selectedSystemCommandID: UUID?
     @StateObject private var sysRegistry = SystemCommandsRegistryObservable.shared
+    @ObservedObject private var userExtStore = UserGlobalExtensionStore.shared
     @State private var installedAppsByBundleId: [String: InstalledApplicationEntry] = [:]
     @State private var menuCacheSummaries: [String: AppMenuCapabilitySummary] = [:]
     @State private var refreshingMenuCacheBundleID: String?
@@ -105,6 +107,7 @@ struct AutomationSettingsView: View {
     @State private var showAdapterSheet = false
     @State private var showGlobalCLIPicker = false
     @State private var showSystemCommandSheet = false
+    @State private var showUserExtensionSheet = false
     @State private var showAIImportSheet = false
     @State private var importPreview: AdapterPackPreview?
     @State private var importError: String?
@@ -186,6 +189,12 @@ struct AutomationSettingsView: View {
                 showGlobalCLIPicker = false
             }
         }
+        .sheet(isPresented: $showUserExtensionSheet) {
+            UserGlobalExtensionCreateSheet { ext in
+                UserGlobalExtensionStore.shared.add(ext)
+                showUserExtensionSheet = false
+            }
+        }
         .sheet(isPresented: $showSystemCommandSheet) {
             SystemCommandCreateSheet { command in
                 sysRegistry.add(command)
@@ -239,6 +248,20 @@ struct AutomationSettingsView: View {
             guard shouldLoadAppCatalog else { return }
             await loadInstalledAppsCatalogIfNeeded()
             reloadMenuCacheSummaries()
+        }
+        // Deep link from the chat window's side panel: open this app's adapter directly,
+        // so "add a tool for Reminders" lands on Reminders instead of a list to hunt in.
+        .onReceive(NotificationCenter.default.publisher(for: .openAppAdapter)) { note in
+            guard let bundleId = note.userInfo?["bundleId"] as? String, !bundleId.isEmpty
+            else { return }
+            selectedCategory = .appActions
+            selectedExtensionID = nil
+            selectedPackageID = nil
+            selectedSystemCommandID = nil
+            selectedRuleID = nil
+            selectedMenuCacheBundleID = nil
+            selectedAdapterActionID = nil
+            selectedAdapterID = bundleId
         }
         .onChange(of: selectedExtensionID) { _, newValue in
             guard newValue != nil else { return }
@@ -420,7 +443,11 @@ struct AutomationSettingsView: View {
             }
 
         case .contextTriggers:
-            if let id = selectedRuleID,
+            if settingsPage == .shortcutSheetWorkflows,
+               let id = selectedRuleID,
+               let ext = selectionScopeExtensions.first(where: { $0.id == id }) {
+                SelectionScopeExtensionDetailView(extensionItem: ext)
+            } else if let id = selectedRuleID,
                let idx = settings.axTriggerRules.firstIndex(where: { $0.id == id }) {
                 AXRuleDetailView(rule: $settings.axTriggerRules[idx])
             } else {
@@ -553,7 +580,7 @@ struct AutomationSettingsView: View {
                 listEmpty(icon: "scope", label: "No trigger rules", action: { presentCreateFlow() })
             } else {
                 List(selection: $selectedRuleID) {
-                    Section(settingsPage == .shortcutSheetWorkflows ? "Selection Scope Extensions" : "Triggers") {
+                    Section(settingsPage == .shortcutSheetWorkflows ? "Built-in & legacy rules" : "Triggers") {
                         ForEach(filteredTriggers) { rule in
                             let displayPill = rule.pills.first
                             AutomationRow(
@@ -564,6 +591,20 @@ struct AutomationSettingsView: View {
                                 isEnabled: rule.isEnabled
                             )
                             .tag(rule.id)
+                        }
+                    }
+                    if settingsPage == .shortcutSheetWorkflows, !selectionScopeExtensions.isEmpty {
+                        Section("Selection Scope extensions") {
+                            ForEach(selectionScopeExtensions) { ext in
+                                AutomationRow(
+                                    icon: ext.icon,
+                                    color: .indigo,
+                                    title: ext.name,
+                                    subtitle: selectionScopeTriggerSummary(ext),
+                                    isEnabled: ext.enabled
+                                )
+                                .tag(ext.id)
+                            }
                         }
                     }
                 }
@@ -726,11 +767,25 @@ struct AutomationSettingsView: View {
                 }
 
             case .extensionsGlobalWithoutSelection:
-                if cmds.isEmpty {
+                if cmds.isEmpty && userExtStore.extensions.isEmpty {
                     listEmpty(icon: "globe", label: "No global commands", action: { showSystemCommandSheet = true })
                 } else {
                     List(selection: $selectedSystemCommandID) {
-                        globalCommandSection(cmds)
+                        if !userExtStore.extensions.isEmpty {
+                            userExtensionSection
+                        }
+                        // Built-ins split by behaviour: ones that open a control or a list
+                        // are extensions, the rest are one-shot commands. Keeping them in
+                        // one "Global Commands" bucket stopped making sense once users
+                        // could author extensions of their own.
+                        let panels = cmds.filter(\.behavesAsPanel)
+                        let oneShots = cmds.filter { !$0.behavesAsPanel }
+                        if !panels.isEmpty {
+                            builtInExtensionSection(panels)
+                        }
+                        if !oneShots.isEmpty {
+                            globalCommandSection(oneShots)
+                        }
                     }
                     .listStyle(.inset)
                 }
@@ -782,6 +837,61 @@ struct AutomationSettingsView: View {
             $0.name.localizedCaseInsensitiveContains(searchText)
                 || $0.description.localizedCaseInsensitiveContains(searchText)
                 || $0.keywords.contains { $0.localizedCaseInsensitiveContains(searchText) }
+        }
+    }
+
+    /// User-authored panel extensions. Listed above commands because they are the
+    /// heavier, stateful thing — a command runs and vanishes, an extension opens a window.
+    private var userExtensionSection: some View {
+        Section("Global Extensions") {
+            ForEach(userExtStore.extensions) { ext in
+                HStack(spacing: 10) {
+                    AutomationRow(
+                        icon: ext.icon,
+                        color: .teal,
+                        title: ext.name,
+                        subtitle: ext.aiEnabled ? "\(ext.description) · AI" : ext.description,
+                        isEnabled: ext.isEnabled
+                    )
+                    Spacer(minLength: 4)
+                    Button {
+                        ExtensionPanelManager.shared.open(ext)
+                    } label: {
+                        Image(systemName: "macwindow")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open this panel now")
+                }
+            }
+            .onDelete { idx in
+                idx.map { userExtStore.extensions[$0] }.forEach { userExtStore.remove($0) }
+            }
+        }
+    }
+
+    /// Built-ins that open a panel or a live control rather than firing once.
+    private func builtInExtensionSection(_ cmds: [SystemCommand]) -> some View {
+        Section("Built-in Extensions") {
+            ForEach(cmds) { cmd in
+                AutomationRow(
+                    icon: cmd.icon,
+                    color: .teal,
+                    title: cmd.name,
+                    subtitle: cmd.description,
+                    isEnabled: cmd.isEnabled
+                )
+                .tag(cmd.id)
+            }
+            .onDelete { idx in
+                let toRemove = idx.map { cmds[$0] }
+                toRemove.forEach { sysRegistry.remove($0) }
+                if let selectedSystemCommandID,
+                   toRemove.contains(where: { $0.id == selectedSystemCommandID }) {
+                    self.selectedSystemCommandID = nil
+                }
+            }
         }
     }
 
@@ -854,21 +964,10 @@ struct AutomationSettingsView: View {
         }
     }
 
+    /// Delegates to the shared definition so this list and the global search index can never
+    /// disagree about which tools the user actually added.
     private func isUserAddedGlobalCLITool(_ package: TerminalPackage) -> Bool {
-        let command = package.command.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return false }
-        if settings.isCLIToolPinned(command) { return true }
-        let commandKey = command.lowercased()
-        return adapterMgr.adapters.contains { adapter in
-            if adapter.bundleId.lowercased().hasPrefix("cli://") {
-                return adapter.bundleId.lowercased().contains(commandKey)
-                    || adapter.appName.lowercased() == commandKey
-            }
-            return adapter.actions.contains {
-                $0.type == .cliTool
-                    && ($0.cliToolCommand ?? "").caseInsensitiveCompare(command) == .orderedSame
-            }
-        }
+        pkgMgr.isUserAddedGlobalScope(package)
     }
 
     private var filteredTriggers: [AXTriggerRule] {
@@ -891,6 +990,36 @@ struct AutomationSettingsView: View {
         }
         guard !searchText.isEmpty else { return rules }
         return rules.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    /// The current executable Selection Scope extensions. They share this Settings page with
+    /// legacy AX rules so imported, AI-created, and manually-created actions are inspectable in
+    /// one place instead of becoming invisible after creation.
+    private var selectionScopeExtensions: [ILExtension] {
+        guard settingsPage == .shortcutSheetWorkflows else { return [] }
+        return layeredExtensionManager.allExtensions
+            .filter { $0.layer == .l2_context && $0.category == "shortcutSheet" }
+            .filter { ext in
+                guard !searchText.isEmpty else { return true }
+                return ext.name.localizedCaseInsensitiveContains(searchText)
+                    || ext.description.localizedCaseInsensitiveContains(searchText)
+                    || ext.tags.contains { $0.rawValue.localizedCaseInsensitiveContains(searchText) }
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func selectionScopeTriggerSummary(_ ext: ILExtension) -> String {
+        let triggers = ext.triggers.map { trigger -> String in
+            switch trigger {
+            case .selection: return "selection"
+            case .always: return "always"
+            case .keyword(let words): return "keyword: \(words.first ?? "")"
+            case .fileType(let types): return ".\(types.first ?? "file")"
+            case .appContext(let app): return app
+            case .urlPattern(let pattern): return "URL: \(pattern)"
+            }
+        }.joined(separator: " · ")
+        return triggers.isEmpty ? "Selection-aware script" : triggers
     }
 
     private var filteredAdapters: [AppAdapter] {
@@ -1021,6 +1150,7 @@ struct AutomationSettingsView: View {
 
     private var createButtonTitle: String {
         if settingsPage == .extensionsCLIToolScope { return "Pin CLI" }
+        if settingsPage == .shortcutSheetWorkflows { return "Create Extension" }
         if selectedCategory == .appActions { return "Choose App" }
         return "New"
     }
@@ -1047,6 +1177,55 @@ struct AutomationSettingsView: View {
         }
         guard !missing.isEmpty else { return }
         settings.axTriggerRules.append(contentsOf: missing)
+    }
+
+    /// A portable contract for an external AI.  The app only imports the final JSON; questions
+    /// stay in the user's chosen provider, where they can answer them before pasting a draft.
+    private func copySelectionScopeAuthoringPrompt() {
+        let prompt = """
+        Create one Context Dock Selection Scope extension for macOS.
+
+        First, ask concise clarifying questions only if the goal is ambiguous: required input
+        (selected text, URL, files/folders, or a file extension), expected output/location, and
+        whether it may write files, use the network, control another app, or change clipboard.
+        After the user answers, output ONLY valid JSON in the exact schema below — no Markdown
+        fence and no explanation.
+
+        {
+          "version": "1.0",
+          "source": "AI name",
+          "extensions": [{
+            "name": "Short action name",
+            "description": "One sentence",
+            "icon": "SF Symbol",
+            "layer": "l2_context",
+            "tags": ["automation"],
+            "triggers": [
+              {"type": "selection"},
+              {"type": "fileType", "value": "pdf"}
+            ],
+            "scriptType": "bash",
+            "script": "Complete runnable script",
+            "permissions": [],
+            "outputMode": "text",
+            "version": "1.0"
+          }]
+        }
+
+        Valid trigger types: selection, fileType, appContext, urlPattern, keyword.
+        Use selection for every Selection Scope extension. Add fileType only for file-specific
+        actions. All non-keyword triggers are requirements, so never use unrelated triggers.
+        Valid scriptType values: bash, python, applescript, jxa, swift.
+        Available values: {selectedText}, {file}, {files}, {url}, {appName}, {bundleId}.
+        Quote every shell value (for example: "{file}"). Never hard-code personal paths.
+        Prefer macOS-native tools and check optional CLIs with `command -v` before use.
+        Do not use rm. Declare "network" or "automation" in permissions when applicable.
+        The app asks for confirmation before risky scripts run and captures a 60-second bounded
+        execution result. Make the script print a concise, truthful result or error.
+        """
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(prompt, forType: .string)
+        AppToast.show("Selection Scope AI prompt copied", icon: "doc.on.doc", tint: .indigo)
     }
 
     private func colorForAccentName(_ name: String?) -> Color? {
@@ -1093,6 +1272,13 @@ struct AutomationSettingsView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             } else if settingsPage == .extensionsGlobalWithoutSelection {
+                Button(action: { showUserExtensionSheet = true }) {
+                    Label("Add Extension", systemImage: "square.grid.2x2")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("An extension opens a floating panel with rows and optional AI, "
+                      + "instead of running once like a command.")
                 Button(action: { showSystemCommandSheet = true }) {
                     Label("Add Command", systemImage: "plus")
                 }
@@ -1148,7 +1334,7 @@ struct AutomationSettingsView: View {
         case .extensionsGlobalWithSelection:
             return "Actions that require selected text, files, URLs, images, or media."
         case .extensionsGlobalWithoutSelection:
-            return "Always-available system and global commands."
+            return "Extensions open a panel; commands run once."
         case .extensionsCLIToolScope:
             return "Pinned command-line tools available everywhere."
         case .frontmostAppAdapters:
@@ -1344,6 +1530,27 @@ struct AutomationSettingsView: View {
                     onboardingStep(number: "3", title: "Attach one clear action", detail: "Use an AI prompt for answers in-place, a shell command for local transforms, a Shortcut for user automation, or an app adapter when the target app exposes a real capability.")
                     onboardingStep(number: "4", title: "Respect approval and scope", detail: "Read-only actions can run immediately. Anything that writes, deletes, sends, moves, or opens another app should ask first and should only receive the selected content.")
                 }
+
+                HStack(spacing: 10) {
+                    Button {
+                        showingImportPanel = true
+                    } label: {
+                        Label("Create Selection Extension", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        copySelectionScopeAuthoringPrompt()
+                    } label: {
+                        Label("Copy AI Authoring Prompt", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Paste this into Claude, ChatGPT, or another AI. Answer its clarifying questions, then paste its final JSON into Import Extension.")
+                }
+
+                Text("The authoring prompt is provider-neutral: it makes the AI ask clarifying questions first when needed, then return one validated JSON extension for this Selection Scope only.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
 
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Useful starter actions")
@@ -1576,7 +1783,14 @@ struct AutomationSettingsView: View {
         case .cliTools:
             showPackageSheet = true
         case .contextTriggers:
-            showRuleSheet = true
+            // Selection Scope extensions use the same LayeredExtensionManager-backed format
+            // that the sheet executes.  Do not send a new Selection Scope action through the
+            // older AX-rule-only editor, or import/AI-created actions become uneditable twins.
+            if settingsPage == .shortcutSheetWorkflows {
+                showingImportPanel = true
+            } else {
+                showRuleSheet = true
+            }
         case .appActions:
             showAdapterSheet = true
         case .clipboardActions:
@@ -1623,31 +1837,10 @@ struct AutomationSettingsView: View {
     }
 
     private func removeAppActionAdapter(_ bundleId: String) async {
-        await adapterMgr.deleteAdapter(bundleId: bundleId)
+        // The sequence itself lives in IntegrationRemovalService so this page and the
+        // Integrations workspace remove an integration the same way.
+        await IntegrationRemovalService.removeAppIntegration(bundleId: bundleId)
         await MainActor.run {
-            settings.customAppEntries.removeAll {
-                $0.key == bundleId || $0.appPath == bundleId
-            }
-            settings.appToolExtensions.removeAll { $0.appKey == bundleId }
-            for package in pkgMgr.packages where package.contextAppBundleIds.contains(bundleId) {
-                var updated = package
-                updated.contextAppBundleIds.removeAll { $0 == bundleId }
-                pkgMgr.updatePackage(updated)
-            }
-            if bundleId.hasPrefix("cli://") {
-                let command = String(bundleId.dropFirst("cli://".count))
-                settings.unpinCLITool(command)
-                settings.customAppEntries.removeAll {
-                    $0.key == "cli_\(command)" || $0.appPath == "cli://\(command)"
-                }
-                if let package = pkgMgr.packages.first(where: { $0.command == command }) {
-                    var updated = package
-                    updated.contextAppBundleIds.removeAll {
-                        $0 == bundleId || $0 == "cli_\(command)"
-                    }
-                    pkgMgr.updatePackage(updated)
-                }
-            }
             selectedAdapterID = nil
             selectedAdapterActionID = nil
         }
@@ -2894,6 +3087,18 @@ struct GlobalCLIToolPickerSheet: View {
 struct GlobalCLIScopeDetailView: View {
     @ObservedObject private var pkgMgr = TerminalPackageManager.shared
     let package: TerminalPackage
+
+    /// Writes through the manager so the cached interactive-command set stays in step with
+    /// what is persisted; reads the live package so the switch reflects saved state.
+    private var interactiveBinding: Binding<Bool> {
+        Binding(
+            get: {
+                TerminalPackageManager.shared.packages
+                    .first(where: { $0.id == package.id })?.isInteractive ?? package.isInteractive
+            },
+            set: { TerminalPackageManager.shared.setInteractive($0, for: package.id) }
+        )
+    }
     let onRemove: () -> Void
     @State private var scanning = false
 
@@ -2939,6 +3144,26 @@ struct GlobalCLIScopeDetailView: View {
                     }
                 }
 
+                AutomationDetailSection(title: "HOW IT RUNS") {
+                    Toggle(isOn: interactiveBinding) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Needs a terminal")
+                                .font(.system(size: 12, weight: .medium))
+                            Text(
+                                "Turn on for full-screen tools — a browser, editor, pager or "
+                                + "dashboard. They open in the terminal panel instead of being "
+                                + "run with their output captured, which such a tool cannot "
+                                + "survive: with no tty it either hangs or prints escape codes."
+                            )
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                }
+
                 AutomationDetailSection(title: "HELP SCAN") {
                     HStack(spacing: 10) {
                         Text((package.helpText?.isEmpty == false)
@@ -2951,6 +3176,11 @@ struct GlobalCLIScopeDetailView: View {
                             scanning = true
                             Task {
                                 await pkgMgr.refreshHelpText(for: package.id)
+                                // The man page is fetched with the help scan: a tool with a
+                                // stub --help is exactly the one whose documentation lives in
+                                // man, and asking the user to run two scans to find that out
+                                // would be a worse answer than doing both.
+                                await pkgMgr.refreshManText(for: package.id)
                                 await MainActor.run { scanning = false }
                             }
                         } label: {
@@ -3097,6 +3327,8 @@ struct AutomationAdapterDetailView: View {
     @ObservedObject private var mcpManager = MCPServerManager.shared
     @ObservedObject private var apiStore = APIConnectionStore.shared
     @ObservedObject private var skillStore = SkillStore.shared
+    @ObservedObject private var consentStore = AdapterActionConsentStore.shared
+    @ObservedObject private var safariBridge = SafariBrowserBridge.shared
     @State private var showAPIConnectSheet = false
     @State private var apiName = ""
     @State private var apiBaseURL = ""
@@ -3428,6 +3660,154 @@ struct AutomationAdapterDetailView: View {
 
     private var browserExtensionActions: [AdapterAction] {
         visibleActions.filter { $0.type == .pageJS }
+    }
+
+    // MARK: Safari extension health
+
+    /// Live state of the Safari Web Extension pipeline. Without this a broken bridge is
+    /// invisible — every consumer just silently falls back to AppleScript/AX.
+    @ViewBuilder
+    private var safariBridgeStatusRow: some View {
+        let (symbol, tint, label): (String, Color, String) = {
+            switch safariBridge.connection {
+            case .live(let seen):
+                return ("checkmark.circle.fill", .green,
+                        "Safari extension connected — last page \(Self.relativeTime(seen))")
+            case .idle(let seen):
+                return ("pause.circle.fill", .yellow,
+                        "Safari extension idle — last page \(Self.relativeTime(seen))")
+            case .neverConnected:
+                return ("xmark.circle.fill", .red,
+                        "Safari extension has never sent a page. Enable “Context Dock” in "
+                        + "Safari → Settings → Extensions and grant it site access.")
+            }
+        }()
+
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: symbol)
+                .font(.system(size: 10))
+                .foregroundStyle(tint)
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var safariExtensionIntegrationCard: some View {
+        let isLive = safariBridge.isFresh
+        let status: String = {
+            switch safariBridge.connection {
+            case .live(let seen): return "Live · page received \(Self.relativeTime(seen))"
+            case .idle(let seen): return "Installed · last page \(Self.relativeTime(seen))"
+            case .neverConnected: return "Setup required"
+            }
+        }()
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 9)
+                        .fill(Color.blue.opacity(0.14))
+                        .frame(width: 34, height: 34)
+                    Image(systemName: "safari.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.blue)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Context Dock Safari Extension")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("built-in")
+                            .font(.system(size: 9, weight: .medium))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Color.blue.opacity(0.16), in: Capsule())
+                            .foregroundStyle(.blue)
+                    }
+                    Text("Page context bridge · v1.2")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Label(status, systemImage: isLive ? "checkmark.circle.fill" : "circle.dashed")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(isLive ? Color.green : Color.orange)
+            }
+
+            Text("Provides current-page text, selected text, links, metadata, scroll position, and safe page actions directly to Safari-scoped AI. Data stays local until the selected AI provider is used.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 7) {
+                ForEach(["Page text", "Selection", "Links", "Metadata"], id: \.self) { item in
+                    Text(item)
+                        .font(.system(size: 9, weight: .medium))
+                        .padding(.horizontal, 7).padding(.vertical, 3)
+                        .background(Color.blue.opacity(0.10), in: Capsule())
+                        .foregroundStyle(.blue)
+                }
+                Spacer()
+                Button("Open Safari Settings") { openSafariExtensionSettings() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+
+            if !isLive {
+                safariBridgeStatusRow
+            }
+        }
+        .padding(14)
+        .background(Color.blue.opacity(0.055), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blue.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private func openSafariExtensionSettings() {
+        let script = """
+        tell application "Safari" to activate
+        delay 0.2
+        tell application "System Events" to keystroke "," using command down
+        """
+        DispatchQueue.global(qos: .userInitiated).async {
+            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        }
+    }
+
+    private static func relativeTime(_ date: Date) -> String {
+        let fmt = RelativeDateTimeFormatter()
+        fmt.unitsStyle = .short
+        return fmt.localizedString(for: date, relativeTo: Date())
+    }
+
+    /// Standing-grant control. Mirrors the "Always allow" choice from the approval
+    /// dialog so a grant can be inspected and revoked without triggering the action.
+    @ViewBuilder
+    private func trustToggle(for action: AdapterAction) -> some View {
+        let bundleId = currentAdapter.bundleId
+        let trusted = consentStore.isAllowed(bundleId: bundleId, actionId: action.id)
+
+        Button {
+            if trusted {
+                consentStore.revoke(bundleId: bundleId, actionId: action.id)
+            } else {
+                consentStore.allowAlways(bundleId: bundleId, actionId: action.id)
+            }
+        } label: {
+            Image(systemName: trusted ? "checkmark.shield.fill" : "shield")
+                .font(.system(size: 11))
+                .foregroundStyle(trusted ? Color.green : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(trusted
+              ? "Always allowed — runs without asking. Click to revoke."
+              : "Asks for approval before each run. Click to always allow.")
     }
 
     /// macOS Shortcuts linked to this adapter (stored as `.shortcut` actions).
@@ -4100,6 +4480,28 @@ struct AutomationAdapterDetailView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
 
+                        safariBridgeStatusRow
+
+                        // Safari Web Apps expose no AppleScript interface, so pageJS can't
+                        // reach them. Say so up front rather than letting each run fail.
+                        if currentAdapter.bundleId.hasPrefix("com.apple.Safari.WebApp.") {
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.orange)
+                                Text("This is a Safari Web App. Web apps expose no AppleScript "
+                                     + "interface, so Browser JavaScript can't run here yet — "
+                                     + "open the site in Safari proper to use these actions.")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.orange.opacity(0.08),
+                                        in: RoundedRectangle(cornerRadius: 8))
+                        }
+
                         ForEach(browserExtensionActions) { action in
                             HStack(spacing: 10) {
                                 ZStack {
@@ -4118,6 +4520,7 @@ struct AutomationAdapterDetailView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
+                                trustToggle(for: action)
                                 Button {
                                     editingAction = action
                                     showAddActionSheet = true
@@ -4146,6 +4549,12 @@ struct AutomationAdapterDetailView: View {
 
                 if detailTab == .tools {
                 toolGroupOverview
+
+                if currentAdapter.bundleId == "com.apple.Safari" {
+                    safariExtensionIntegrationCard
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                }
 
                 // MARK: API Connections section
                 VStack(alignment: .leading, spacing: 12) {
@@ -6101,8 +6510,22 @@ struct AutomationImportPanel: View {
 
     // MARK: Logic
 
+    /// AI chat UIs (and macOS "smart quotes") turn straight quotes into curly ones, which
+    /// is invalid JSON — the #1 reason a pasted pack fails "Check format". Normalize them
+    /// back before parsing so a copy-paste from any chat just works.
+    static func normalizeSmartQuotes(_ s: String) -> String {
+        s.replacingOccurrences(of: "\u{201C}", with: "\"")   // " left double
+            .replacingOccurrences(of: "\u{201D}", with: "\"")   // " right double
+            .replacingOccurrences(of: "\u{201E}", with: "\"")   // „ low double
+            .replacingOccurrences(of: "\u{2033}", with: "\"")   // ″ double prime
+            .replacingOccurrences(of: "\u{FF02}", with: "\"")   // ＂ fullwidth double
+            .replacingOccurrences(of: "\u{2018}", with: "'")    // ' left single
+            .replacingOccurrences(of: "\u{2019}", with: "'")    // ' right single
+            .replacingOccurrences(of: "\u{FF07}", with: "'")    // ＇ fullwidth single
+    }
+
     private func parseAndDetect(_ text: String) {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = Self.normalizeSmartQuotes(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else {
             parsed = nil
             parsedSystemCommands = []
@@ -6158,7 +6581,7 @@ struct AutomationImportPanel: View {
 
     private func pasteFromClipboard() {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = Self.normalizeSmartQuotes(text).trimmingCharacters(in: .whitespacesAndNewlines)
         guard t.hasPrefix("{") || t.hasPrefix("```") else { return }
         jsonText = t
         parseAndDetect(t)
@@ -6504,6 +6927,110 @@ private struct CreatedExtensionDraft {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count > 1 }
         return words.isEmpty ? [value.lowercased()] : Array(Set(words)).sorted()
+    }
+}
+
+/// Inspector for the one Selection Scope extension format used by Import, AI proposals, and
+/// the manual creator. Keeping it here makes an extension visible and controllable after it is
+/// saved instead of leaving only the legacy AX-rule inspector on this Settings page.
+private struct SelectionScopeExtensionDetailView: View {
+    let extensionItem: ILExtension
+    @ObservedObject private var manager = LayeredExtensionManager.shared
+    @State private var confirmDelete = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 12) {
+                    Image(systemName: extensionItem.icon)
+                        .font(.system(size: 24, weight: .semibold))
+                        .foregroundStyle(.indigo)
+                        .frame(width: 42, height: 42)
+                        .background(.indigo.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(extensionItem.name).font(.title3.bold())
+                        Text(extensionItem.description).font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+
+                Toggle("Enabled in Selection Scope", isOn: Binding(
+                    get: { extensionItem.enabled },
+                    set: { enabled in
+                        var updated = extensionItem
+                        updated.enabled = enabled
+                        manager.updateExtension(updated)
+                    }
+                ))
+
+                GroupBox("Eligibility") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("All of these requirements must match the frozen selection before this action is shown.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(Array(extensionItem.triggers.enumerated()), id: \.offset) { _, trigger in
+                            Label(triggerDescription(trigger), systemImage: "checkmark.circle")
+                                .font(.subheadline)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                }
+
+                GroupBox("Runner & safety") {
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("\(extensionItem.scriptType.rawValue.capitalized) · \(extensionItem.author) · v\(extensionItem.version)")
+                        if SelectionScopeExtensionPolicy.needsApproval(extensionItem) {
+                            Label("Confirmation required before this script runs", systemImage: "lock.shield")
+                                .foregroundStyle(.orange)
+                        } else {
+                            Label("Local read-only script", systemImage: "checkmark.shield")
+                                .foregroundStyle(.green)
+                        }
+                        if !extensionItem.requiresPermissions.isEmpty {
+                            Text("Permissions: \(extensionItem.requiresPermissions.joined(separator: ", "))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(4)
+                }
+
+                GroupBox("Script") {
+                    ScrollView(.horizontal) {
+                        Text(extensionItem.scriptContent ?? "No inline script was saved.")
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(minHeight: 120, maxHeight: 220)
+                }
+
+                HStack {
+                    Spacer()
+                    Button("Delete Extension", role: .destructive) { confirmDelete = true }
+                }
+            }
+            .padding(20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .alert("Delete \(extensionItem.name)?", isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) { manager.deleteExtension(extensionItem) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes the script and its Selection Scope action. This cannot be undone.")
+        }
+    }
+
+    private func triggerDescription(_ trigger: ExtensionTrigger) -> String {
+        switch trigger {
+        case .selection: return "A text, URL, or file selection exists"
+        case .always: return "Always available for a selection"
+        case .keyword(let values): return "Search terms: \(values.joined(separator: ", "))"
+        case .fileType(let values): return "File type: \(values.map { ".\($0)" }.joined(separator: ", "))"
+        case .appContext(let value): return "Frontmost app: \(value)"
+        case .urlPattern(let value): return "URL matches: \(value)"
+        }
     }
 }
 
@@ -6906,19 +7433,23 @@ end tell
                             }
                         }
                         .pickerStyle(.menu)
-                        Picker("Dynamic list", selection: $scopeProvider) {
-                            Text("None").tag("none")
+                        // This picker — not the Type picker above — is what decides
+                        // whether the thing runs once or opens a panel. Named for that
+                        // consequence, since "Dynamic list" read like a minor detail.
+                        Picker("Opens a panel", selection: $scopeProvider) {
+                            Text("No — runs once on Return").tag("none")
                             Text("Bluetooth devices").tag("bluetooth")
                             Text("Wi-Fi networks").tag("wifi")
                             Text("Window layouts").tag("windows")
                             Text("Quick notes").tag("notepad")
-                            Text("List Extension (custom rows)").tag("custom")
+                            Text("Yes — my own rows (List Extension)").tag("custom")
                         }
                         .pickerStyle(.menu)
                         if scopeProvider == "custom" {
                             Text("Script above = JSON rows source. Undo field = per-row action ($CD_ROW_ID). Add keyword refresh:N for auto-refresh.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(.secondary)
+                            ListExtensionTester(script: script, scriptType: scriptType)
                         }
                         TextField("Optional rows: Home, Work, Settings", text: $scopeItems)
                             .textFieldStyle(.roundedBorder)
@@ -7320,6 +7851,11 @@ struct SystemCommandEditorView: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.tertiary)
                         .textSelection(.enabled)
+                        Text("Put an absolute file path in \"id\" to get the real file icon, "
+                             + "Return-to-open and Space-to-preview.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                        ListExtensionTester(script: script, scriptType: scriptType)
                         Text("Only title (or id) is required. icon = an SF Symbol name or a file/app path. Non-JSON lines become title-only rows.")
                             .font(.system(size: 11))
                             .foregroundStyle(.tertiary)
@@ -7582,4 +8118,11 @@ struct AddMCPServerSheet: View {
                 .font(.system(size: 12, design: .monospaced))
         }
     }
+}
+
+
+extension Notification.Name {
+    /// Deep-link request to open Settings → App Adapters focused on one app.
+    /// userInfo["bundleId"] carries the app's bundle identifier.
+    static let openAppAdapter = Notification.Name("openAppAdapter")
 }

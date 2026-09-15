@@ -1,6 +1,8 @@
 import Foundation
 
 struct OllamaToolProviderAdapter: OpenAIToolTransport {
+    var ledgerProvider: AIProvider { .ollama }
+
     func send(
         endpoint: String,
         apiKey: String?,

@@ -81,6 +81,13 @@ extension LauncherView {
             if globalFinderFileScope {
                 return visibleDockPills
             }
+            // Browsing a folder: its contents are the rows, and the field is empty by
+            // design. Without this the empty-query branch below returned no pills at all,
+            // so the sheet had nothing to draw however many visibility gates said it
+            // should be on screen.
+            if isBrowsingFinderFolder {
+                return visibleDockPills
+            }
             if (pureGlobalAppSearch || pillQuery.isEmpty) && !inSelectionScope && l2.targetApp == nil {
                 return []
             }
@@ -274,7 +281,7 @@ extension LauncherView {
                     }
                 },
                 onCaptureArea: {
-                    captureScreenshotToAttachments(interactive: true) { url in
+                    captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                         notepadAttachments.append(url)
                     }
                 },
@@ -307,11 +314,20 @@ extension LauncherView {
         // continuously from the first key press.
         let scopedGlobalMenuActive =
             isGlobalContextActive && currentGlobalScopedBundleID != nil && !isFinderDesktopOnlyMode
-        let expanded =
-            isGlobalContextActive && shouldUsePureGlobalAppSearch && !scopedGlobalMenuActive
-            ? hasExpandedGlobalContextResults
-            : (!globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
-                && !isDeferredMenuOnlyPresentation(presentation))
+        // An app-scope capsule stays compact while the user types and opens only on ↓ —
+        // the same contract pure Global Context follows. Its expansion was previously
+        // ungated, so every keystroke threw the full sheet open under the input.
+        let expanded: Bool = {
+            if isGlobalContextActive && shouldUsePureGlobalAppSearch && !scopedGlobalMenuActive {
+                return hasExpandedGlobalContextResults
+            }
+            if scopedGlobalMenuActive {
+                return isDockResultSheetRevealed
+                    && !isDeferredMenuOnlyPresentation(presentation)
+            }
+            return !globalContextViewModel.typingSnapshot.shouldShowOnlyTopMatch
+                && !isDeferredMenuOnlyPresentation(presentation)
+        }()
         globalAppSearchListView(
             query: presentation.query,
             matches: presentation.matches,
@@ -336,6 +352,21 @@ extension LauncherView {
 
     @ViewBuilder
     func l2DockPillContent(_ presentation: L2DockRowPresentation) -> some View {
+        // Geometry alone made rows appear fully formed the instant the clip lifted. A short
+        // opacity ramp with a few points of rise lets them arrive with the panel, which is
+        // what reads as one motion. Only opacity and offset animate — animating the subtree's
+        // HEIGHT here would fight the panel and bring back the flicker this surface had.
+        dockPillContentBody(presentation)
+            .frame(maxHeight: isDockResultSheetRevealed ? nil : 0, alignment: .top)
+            .opacity(isDockResultSheetRevealed ? 1 : 0)
+            .offset(y: isDockResultSheetRevealed ? 0 : -6)
+            .animation(.easeOut(duration: 0.18), value: isDockResultSheetRevealed)
+            .clipped()
+            .allowsHitTesting(isDockResultSheetRevealed)
+    }
+
+    @ViewBuilder
+    private func dockPillContentBody(_ presentation: L2DockRowPresentation) -> some View {
         if activeNotepadScopeCommand != nil {
             NotepadScopeView(
                 selectedNoteID: $notepadSelectedNoteID,
@@ -353,7 +384,7 @@ extension LauncherView {
                     }
                 },
                 onCaptureArea: {
-                    captureScreenshotToAttachments(interactive: true) { url in
+                    captureScreenshotToAttachments(interactive: true, windowFirst: true) { url in
                         notepadAttachments.append(url)
                     }
                 },
@@ -388,6 +419,44 @@ extension LauncherView {
         }
     }
 
+    /// Whether the result sheet is revealed. The rows stay MOUNTED either way: building the
+    /// list only when ↓ is pressed rebuilt view identity at exactly the moment the window was
+    /// animating, which is the stutter this replaces. Compact simply clips them to zero.
+    var isDockResultSheetRevealed: Bool {
+        // Surfaces that ARE their result list — they have no compact form to fall back to,
+        // so gating them left a half-drawn or transparent shell. Listed once, here, because
+        // the sheet's height, its chrome and the ↓ handler must all agree.
+        if hasSelectionScopeSurface || isFinderDesktopOnlyMode || isInCLIToolScope
+            || isCompactSmartScope || isContextDockChatRoutingLocked
+        {
+            return true
+        }
+        // A System Command / CLI extension scope draws its own rows (Bluetooth devices, a
+        // tool's output) — the scope IS the sheet.
+        if let bundle = currentGlobalScopedBundleID,
+            bundle.hasPrefix("syscmd://") || bundle.hasPrefix("cli://")
+        {
+            return true
+        }
+        // Pure Global Context has its own phase-driven reveal in l2GlobalSearchListContent.
+        if isGlobalContextActive, !isActiveGlobalRunningAppMenuScope() { return true }
+        return globalContextViewModel.scopedSheetExpanded
+    }
+
+    /// The scoped SystemCommand when the user is inside a user-authored list
+    /// extension (`provider:custom`), else nil. Drives the pin control in the result
+    /// header — pinning belongs to the scope, not to any one row.
+    var activeCustomListScopeCommand: SystemCommand? {
+        guard isGlobalContextActive,
+            let bundle = currentGlobalScopedBundleID,
+            bundle.hasPrefix("syscmd://"),
+            let id = UUID(uuidString: String(bundle.dropFirst("syscmd://".count))),
+            let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == id }),
+            CustomListProviderService.isListProvider(command)
+        else { return nil }
+        return command
+    }
+
     /// The scoped SystemCommand when the user is inside a provider:notepad scope,
     /// else nil. Drives the Quick Note split editor surface.
     var activeNotepadScopeCommand: SystemCommand? {
@@ -417,6 +486,9 @@ extension LauncherView {
             l2.appCompletion = nil
             l2.showResultsPopover = false
             if currentGlobalScopedBundleID != nil || globalInlineAppScope != nil {
+                // Editing the query starts a new search: back to the compact capsule, so the
+                // sheet only ever opens because the user pressed ↓.
+                collapseScopedCapsuleSheet()
                 scheduleGlobalGroupedListRebuild(query: newQuery)
             } else {
                 updateGlobalContextTypingSnapshot(query: newQuery)
@@ -429,6 +501,8 @@ extension LauncherView {
             return
         }
         if newQuery != lastPillQuery {
+            // A changed query starts a new search: back to the compact capsule.
+            collapseScopedCapsuleSheet()
             scheduleDockPillRebuild(
                 query: newQuery,
                 delayNanoseconds: 20_000_000,
@@ -508,7 +582,7 @@ extension LauncherView {
         } else if !showMediaLayer && settings.enableLayer3 {
             Task {
                 await mediaObserver.refreshNowPlaying()
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                withAnimation(.dockSheet) {
                     showContextInDock = true
                     showMediaLayer = true
                 }

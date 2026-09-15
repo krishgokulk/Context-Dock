@@ -17,18 +17,9 @@ enum AIRequestKind: String, Codable, Sendable {
     case multiStepWorkflow
 }
 
-enum AICapabilityKind: String, Codable, Hashable, Sendable {
-    case appAction
-    case appData
-    case fileContent
-    case sharing
-    case workflow
-}
-
 struct AIIntentResolution: Equatable, Sendable {
     let kind: AIRequestKind
     let targetApps: [String]
-    let requiredCapabilityKinds: Set<AICapabilityKind>
     let confidence: Double
     let requiresPlanning: Bool
 }

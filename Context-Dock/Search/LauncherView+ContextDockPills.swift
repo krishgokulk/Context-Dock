@@ -36,10 +36,21 @@ extension LauncherView {
         let text: String
         let timestamp: Date
         var filePaths: [String] = []
+        /// Full image bytes, held in memory only for the newest clips. Older clips keep
+        /// their blob in `ClipboardImageStore` and load it on demand — see `imageFileName`.
+        /// Never persisted inside the history JSON (that used to rewrite tens of MB of
+        /// base64 on every single copy).
         var imageData: Data? = nil
+        /// PNG sidecar name in `ClipboardImageStore`; the durable form of `imageData`.
+        var imageFileName: String? = nil
         var ocrText: String = ""
         var sourceAppName: String = ""
         var sourceBundleId: String = ""
+        /// Produced by Capture Text / Capture Area / Screenshot rather than a Cmd-C.
+        var isScreenCapture: Bool = false
+        /// Stable de-duplication key. Persisted because an image clip's bytes are lazy —
+        /// hashing `imageData` at compare time stopped working once blobs moved to disk.
+        var contentHash: String = ""
 
         init(
             id: UUID = UUID(),
@@ -47,21 +58,67 @@ extension LauncherView {
             timestamp: Date,
             filePaths: [String] = [],
             imageData: Data? = nil,
+            imageFileName: String? = nil,
             ocrText: String = "",
             sourceAppName: String = "",
-            sourceBundleId: String = ""
+            sourceBundleId: String = "",
+            isScreenCapture: Bool = false,
+            contentHash: String = ""
         ) {
             self.id = id
             self.text = text
             self.timestamp = timestamp
             self.filePaths = filePaths
             self.imageData = imageData
+            self.imageFileName = imageFileName
             self.ocrText = ocrText
             self.sourceAppName = sourceAppName
             self.sourceBundleId = sourceBundleId
+            self.isScreenCapture = isScreenCapture
+            self.contentHash = contentHash
         }
 
-        var isImage: Bool { imageData != nil }
+        enum CodingKeys: String, CodingKey {
+            case id, text, timestamp, filePaths, imageData, imageFileName
+            case ocrText, sourceAppName, sourceBundleId, isScreenCapture, contentHash
+        }
+
+        /// Decoding still reads `imageData` so histories written by older builds keep
+        /// their images (they get migrated to a sidecar blob on the next save); encoding
+        /// deliberately drops it. Every optional-with-default key decodes leniently so a
+        /// history written by an older build never fails to load as a whole.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            text = try container.decodeIfPresent(String.self, forKey: .text) ?? ""
+            timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+            filePaths = try container.decodeIfPresent([String].self, forKey: .filePaths) ?? []
+            imageData = try container.decodeIfPresent(Data.self, forKey: .imageData)
+            imageFileName = try container.decodeIfPresent(String.self, forKey: .imageFileName)
+            ocrText = try container.decodeIfPresent(String.self, forKey: .ocrText) ?? ""
+            sourceAppName = try container.decodeIfPresent(String.self, forKey: .sourceAppName) ?? ""
+            sourceBundleId =
+                try container.decodeIfPresent(String.self, forKey: .sourceBundleId) ?? ""
+            isScreenCapture =
+                try container.decodeIfPresent(Bool.self, forKey: .isScreenCapture) ?? false
+            contentHash = try container.decodeIfPresent(String.self, forKey: .contentHash) ?? ""
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(text, forKey: .text)
+            try container.encode(timestamp, forKey: .timestamp)
+            try container.encode(filePaths, forKey: .filePaths)
+            try container.encodeIfPresent(imageFileName, forKey: .imageFileName)
+            try container.encode(ocrText, forKey: .ocrText)
+            try container.encode(sourceAppName, forKey: .sourceAppName)
+            try container.encode(sourceBundleId, forKey: .sourceBundleId)
+            try container.encode(isScreenCapture, forKey: .isScreenCapture)
+            try container.encode(contentHash, forKey: .contentHash)
+        }
+
+        var isImage: Bool { imageData != nil || imageFileName != nil }
         var isURL: Bool {
             filePaths.isEmpty && !isImage && URL(string: text)?.scheme != nil
                 && text.contains("://")
@@ -838,13 +895,17 @@ extension LauncherView {
         let records = contextDockViewModel.finderDesktopSearchRecords
         contextDockViewModel.finderDesktopFastMatchTask = Task { @MainActor in
             let matches = await Task.detached(priority: .userInitiated) {
-                records.compactMap { record -> (String, Int)? in
+                records.compactMap { record -> (pathKey: String, score: Int, isDirectory: Bool)? in
                     guard let score = record.score(for: q) else { return nil }
-                    return (record.pathKey, score)
+                    return (record.pathKey, score, record.isDirectory)
                 }
                 .sorted {
-                    if $0.1 != $1.1 { return $0.1 > $1.1 }
-                    return $0.0 < $1.0
+                    // Finder desktop search is place-first: matching folders lead so Right
+                    // Arrow can drill into the likely destination before individual files.
+                    // Text quality still determines order inside each type.
+                    if $0.isDirectory != $1.isDirectory { return $0.isDirectory }
+                    if $0.score != $1.score { return $0.score > $1.score }
+                    return $0.pathKey < $1.pathKey
                 }
                 .prefix(80)
                 .map { $0 }
@@ -857,7 +918,7 @@ extension LauncherView {
 
             var pills: [DockPill] = []
             pills.reserveCapacity(matches.count)
-            for (pathKey, score) in matches {
+            for (pathKey, score, _) in matches {
                 guard var pill = contextDockViewModel.finderDesktopPillsByPath[pathKey] else { continue }
                 pill.rankingScore = Double(score)
                 pills.append(pill)
@@ -955,6 +1016,7 @@ extension LauncherView {
             let indexed = pills.enumerated().map { (order: $0.offset, pill: $0.element) }
             let groups = Dictionary(grouping: indexed) { finderDesktopTypeGroup($0.pill) }
             let groupOrder = groups.keys.sorted { a, b in
+                if a == "Folders" || b == "Folders" { return a == "Folders" }
                 let fa = groups[a]?.map { openCount($0.pill) }.max() ?? 0
                 let fb = groups[b]?.map { openCount($0.pill) }.max() ?? 0
                 if fa != fb { return fa > fb }
@@ -980,6 +1042,9 @@ extension LauncherView {
         }
         let groups = Dictionary(grouping: scored) { finderDesktopTypeGroup($0.pill) }
         let groupOrder = groups.keys.sorted { a, b in
+            // Place-first Finder behavior: a matching directory is more useful than an
+            // individual file because it can be drilled into and scopes what follows.
+            if a == "Folders" || b == "Folders" { return a == "Folders" }
             let ma = groups[a]?.map(\.score).max() ?? 0
             let mb = groups[b]?.map(\.score).max() ?? 0
             if ma != mb { return ma > mb }
@@ -3132,32 +3197,27 @@ extension LauncherView {
     }
 
     nonisolated func normalizedDockPillText(_ text: String) -> String {
-        let lowered = text.lowercased()
-        let mapped = lowered.unicodeScalars.map { scalar -> Character in
-            if CharacterSet.alphanumerics.contains(scalar)
-                || CharacterSet.whitespacesAndNewlines.contains(scalar)
-            {
-                return Character(scalar)
-            }
-            return " "
-        }
-        return String(mapped)
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
+        DockTextMatch.normalized(text)
     }
 
     func dockPillTokens(_ text: String) -> [String] {
-        normalizedDockPillText(text).split(separator: " ").flatMap { rawToken -> [String] in
-            let token = String(rawToken)
-            switch token {
-            case "fav", "favs", "favourite", "favourites", "favorite", "favorites", "favourate",
-                "favourates":
-                return [token, "favorite"]
-            default:
-                return [token]
-            }
+        DockTextMatch.tokens(text)
+    }
+
+    /// Raycast-style fuzzy match: every character of `needle` appears in `haystack`
+    /// in order (not necessarily contiguous). Spaces in both are ignored so a query
+    /// can span word boundaries ("nwf" → "New Window File", "what" → "Window ... Tab").
+    func dockPillFuzzySubsequence(_ needle: String, in haystack: String) -> Bool {
+        let n = Array(needle.replacingOccurrences(of: " ", with: ""))
+        guard !n.isEmpty else { return true }
+        let h = Array(haystack.replacingOccurrences(of: " ", with: ""))
+        guard n.count <= h.count else { return false }
+        var ni = 0
+        for ch in h where ch == n[ni] {
+            ni += 1
+            if ni == n.count { return true }
         }
+        return false
     }
 
     /// Returns a human-readable parent menu label from an AXMenuItem path.
@@ -3201,14 +3261,7 @@ extension LauncherView {
     }
 
     nonisolated func isGenericAppMenu(_ item: AXMenuItem) -> Bool {
-        let title = normalizedDockPillText(item.title)
-        let genericPatterns = [
-            "about", "help", "quit", "exit", "close",
-            "settings", "preferences", "options",
-            "hide", "show", "reveal",
-            "services", "documentation",
-        ]
-        return genericPatterns.contains { title.contains($0) }
+        FrontmostMenuMatcher.isGenericAppMenu(item)
     }
 
     func menuItemsVisibleInActiveDockMode(_ items: [AXMenuItem]) -> [AXMenuItem] {
@@ -3459,25 +3512,7 @@ extension LauncherView {
 
     /// Levenshtein edit distance (capped early at 3 for performance).
     func pillEditDistance(_ a: String, _ b: String) -> Int {
-        let a = Array(a)
-        let b = Array(b)
-        let m = a.count
-        let n = b.count
-        if abs(m - n) > 3 { return 4 }
-        var prev = Array(0...n)
-        var curr = [Int](repeating: 0, count: n + 1)
-        for i in 1...m {
-            curr[0] = i
-            var rowMin = i
-            for j in 1...n {
-                curr[j] =
-                    a[i - 1] == b[j - 1] ? prev[j - 1] : 1 + min(prev[j - 1], prev[j], curr[j - 1])
-                rowMin = min(rowMin, curr[j])
-            }
-            if rowMin > 3 { return 4 }
-            swap(&prev, &curr)
-        }
-        return prev[n]
+        DockTextMatch.editDistance(a, b)
     }
 
     func rankDockPills(

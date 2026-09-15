@@ -1,188 +1,21 @@
 import Foundation
 
+/// How much room a tool loop leaves the model to answer in.
+///
+/// This was 1000 for every OpenAI-shaped provider — which is Kimi, Ollama, any custom
+/// endpoint, and both subscription bridges. Those bridges serve a coding agent that narrates
+/// before it acts, so a thousand tokens ran out mid-sentence; and a `tool_use` block cut in
+/// half is not a malformed call the loop can report, it is a turn that ends having done
+/// nothing while claiming to be finished. Anthropic's own loop was raised to 16000 for
+/// exactly this reason and the others were left behind.
+private enum ToolLoopBudget {
+    /// Providers whose models think before they write spend part of this budget before the
+    /// first visible token, so it has to cover both.
+    static let maxTokens = 8192
+}
+
 extension AIProviderService {
     // MARK: - Tool Definitions
-
-    private enum ToolDefinitions {
-
-        // run_command — blocking, returns output
-        // spawn_worker — non-blocking, starts in background, returns worker_id immediately
-
-        static let openAI: [[String: Any]] = [
-            [
-                "type": "function",
-                "function": [
-                    "name": "run_command",
-                    "description": "Execute a terminal command on the user's Mac and return its output. Use for quick commands that complete fast (ls, git status, find, etc.). For long-running tools like music players or downloads, use spawn_worker instead.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command":           ["type": "string",  "description": "The exact shell command to run"],
-                            "purpose":           ["type": "string",  "description": "One-line explanation of what this command does"],
-                            "requires_approval": ["type": "boolean", "description": "True when the command modifies files, installs software, or has irreversible effects"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "spawn_worker",
-                    "description": "Start a long-running command in the background without waiting for it to finish. Use for music players (ymc, ncspot), downloaders, timers, and any process that should keep running while you do other things. Returns a worker_id you can reference later.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "The shell command to start in background"],
-                            "purpose": ["type": "string", "description": "What this background process is doing"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "send_keys",
-                    "description": "Inject keystrokes directly into the active TUI app running in the live terminal panel. Use this AFTER spawn_worker has launched a TUI app to navigate its menus, press buttons, or send input. Supports: plain text, \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), \\u{1B}[A/B/C/D (arrow keys).",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "keys":    ["type": "string", "description": "The keystroke sequence to inject. Use \\r for Enter, \\u{1B}[A for up-arrow, etc."],
-                            "purpose": ["type": "string", "description": "What action this keystroke performs in the TUI"]
-                        ],
-                        "required": ["keys", "purpose"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "get_messages_conversations",
-                    "description": "Read recent Messages conversations. Use in Messages scope for questions like unread/recent messages, latest chats, or conversation summaries.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "contact_filter": ["type": "string", "description": "Optional contact name, phone, email, or empty string."],
-                            "limit": ["type": "integer", "description": "Maximum conversations to return, 1-30."]
-                        ],
-                        "required": []
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "search_messages",
-                    "description": "Open Messages and search for a contact, keyword, or phrase using the Messages search UI.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "query": ["type": "string", "description": "Contact name, phone, email, keyword, or phrase to search."]
-                        ],
-                        "required": ["query"]
-                    ]
-                ]
-            ],
-            [
-                "type": "function",
-                "function": [
-                    "name": "compose_message",
-                    "description": "Open a Messages compose window for a recipient with optional draft body. Does not send automatically; user reviews and sends.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "recipient": ["type": "string", "description": "Recipient phone, email, or contact name."],
-                            "body": ["type": "string", "description": "Optional draft message body."]
-                        ],
-                        "required": ["recipient"]
-                    ]
-                ]
-            ]
-        ]
-
-        static let anthropic: [[String: Any]] = [
-            [
-                "name": "run_command",
-                "description": "Execute a terminal command and return its output. For quick commands. For music players or long downloads, use spawn_worker.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "command":           ["type": "string",  "description": "The shell command to run"],
-                        "purpose":           ["type": "string",  "description": "Why this command is being run"],
-                        "requires_approval": ["type": "boolean", "description": "True for destructive or write operations"]
-                    ],
-                    "required": ["command", "purpose"]
-                ]
-            ],
-            [
-                "name": "spawn_worker",
-                "description": "Start a long-running command in the background. Returns immediately with a worker_id. Use for music players, downloads, timers.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "command": ["type": "string", "description": "The command to run in background"],
-                        "purpose": ["type": "string", "description": "What this process is doing"]
-                    ],
-                    "required": ["command", "purpose"]
-                ]
-            ],
-            [
-                "name": "send_keys",
-                "description": "Inject keystrokes into the active TUI app in the live terminal panel. Use after spawn_worker to navigate menus, select options, or send input. Supports \\r (Enter), \\u{1B} (Esc), \\u{03} (Ctrl-C), arrow keys.",
-                "input_schema": [
-                    "type": "object",
-                    "properties": [
-                        "keys":    ["type": "string", "description": "Keystroke sequence to inject into the TUI"],
-                        "purpose": ["type": "string", "description": "What this keystroke does"]
-                    ],
-                    "required": ["keys", "purpose"]
-                ]
-            ]
-        ]
-
-        static let gemini: [String: Any] = [
-            "function_declarations": [
-                [
-                    "name": "run_command",
-                    "description": "Execute a terminal command and return its output.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "The shell command to run"],
-                            "purpose": ["type": "string", "description": "Why this command is being run"],
-                            "requires_approval": ["type": "boolean"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ],
-                [
-                    "name": "spawn_worker",
-                    "description": "Start a long-running background command. Returns a worker_id immediately.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "command": ["type": "string", "description": "Command to run in background"],
-                            "purpose": ["type": "string", "description": "What the process does"]
-                        ],
-                        "required": ["command", "purpose"]
-                    ]
-                ],
-                [
-                    "name": "send_keys",
-                    "description": "Inject keystrokes into the active TUI app in the live terminal. Use after spawn_worker.",
-                    "parameters": [
-                        "type": "object",
-                        "properties": [
-                            "keys":    ["type": "string", "description": "Keystroke sequence to inject"],
-                            "purpose": ["type": "string", "description": "What this keystroke does"]
-                        ],
-                        "required": ["keys", "purpose"]
-                    ]
-                ]
-            ]
-        ]
-    }
 
     /// Dispatch a custom L2 extension tool call. Returns (success, output).
     private func dispatchCustomTool(name: String, arguments: [String: Any]) async -> (Bool, String) {
@@ -197,7 +30,7 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String?,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         endpoint: String,
@@ -205,20 +38,77 @@ extension AIProviderService {
         timeout: TimeInterval = 60,
         extraHeaders: [String: String] = [:],
         transport: any OpenAIToolTransport,
-        simulateAllTools: Bool
+        imageAttachments: [URL] = [],
+        userContext: UserContext = .none,
+        chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
-        var executedCommands: [ExecutedCommand] = []
+        // A repeated call is only pointless *within* one turn. Asking the same question in
+        // the next message is the user asking again, and deserves a fresh reading.
+        let turn = await AgentToolRegistry.shared.beginTurn()
+        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
+        // record goes with it rather than sitting in the registry until age evicts it.
+        defer { AgentToolRegistry.shared.endTurn(turn) }
 
-        var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
+        var executedCommands: [ExecutedCommand] = []
+        /// Set when a streaming attempt fails on an endpoint that turned out not to speak
+        /// SSE. Custom endpoints and subscription bridges vary; one buffered round is the
+        /// right answer to that, and asking again every round is not.
+        var streamingUnavailable = false
+
+        // Subscription bridges serve a coding agent with its own sandboxed tools; without this
+        // it "checks" the wrong filesystem instead of using the tools we hand it below.
+        var messages: [[String: Any]] = [
+            ["role": "system", "content": contextPrompt + OpenAICompatibleProviderAdapter.hostRuntimeNote]
+        ]
+        // Budgeted by size, not by a fixed count of turns, and told when something was
+        // left out — see ChatHistoryBudget.
+        for msg in ChatHistoryBudget.fit(history, provider: .openAI) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
-        messages.append(["role": "user", "content": message])
+        // Vision: when the user attached/captured images, send the first user turn as a
+        // text+image content array so the model actually sees them (not just OCR text).
+        let openAIImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        if openAIImageBlocks.isEmpty {
+            messages.append(["role": "user", "content": message])
+        } else {
+            var content: [[String: Any]] = [["type": "text", "text": message]]
+            for block in openAIImageBlocks {
+                content.append([
+                    "type": "image_url",
+                    "image_url": ["url": "data:\(block.mediaType);base64,\(block.data)"],
+                ])
+            }
+            messages.append(["role": "user", "content": content])
+        }
 
-        let allTools = ToolDefinitions.openAI + customTools
+        let allTools = await AgentToolRegistry.shared.schemas(format: .openAI) + customTools
+        onStatus?("Found \(allTools.count) available tools; choosing the best route…")
+        // Whether the endpoint even engages with tools is otherwise unknowable from the
+        // outside: a proxy that drops the `tools` field answers in one round with prose, and
+        // looks exactly like a model that chose not to call anything. One line per turn says
+        // which it was.
+        var roundsUsed = 0
+        var toolCallsSeen = 0
+        defer {
+            AgentTurnDiagnostics.record(
+                model: model, toolsOffered: allTools.count,
+                rounds: roundsUsed, toolCalls: toolCallsSeen)
+        }
 
         for _ in 0..<maxIterations {
+            // Stop is a decision the user already made. Without this check the loop kept
+            // going after Stop was pressed — running more tools, spending more tokens, and
+            // in a scoped chat still driving the app — because cancellation was only read
+            // once the whole loop had returned.
+            if Task.isCancelled {
+                return ("Stopped.", executedCommands)
+            }
+            roundsUsed += 1
             var body: [String: Any] = [
                 "model": model,
                 "messages": messages,
@@ -226,18 +116,54 @@ extension AIProviderService {
                 "tool_choice": "auto",
                 // No temperature: newer Claude models served through OpenAI-compatible
                 // proxies reject sampling parameters with HTTP 400.
-                "max_tokens": 1000
+                "max_tokens": ToolLoopBudget.maxTokens
             ]
-            if apiKey == nil { body["stream"] = false; body.removeValue(forKey: "max_tokens") }
-            let decoded = try await transport.send(
-                endpoint: endpoint,
-                apiKey: apiKey,
-                body: body,
-                timeout: timeout,
-                extraHeaders: extraHeaders
-            )
+            if apiKey == nil { body.removeValue(forKey: "max_tokens") }
+            let mayStream = onStream != nil && !streamingUnavailable
+            // A buffered round must say so explicitly: Ollama defaults `stream` to true and
+            // would otherwise answer a buffered request with an event stream the transport
+            // cannot decode.
+            if !mayStream { body["stream"] = false }
+            var streamed: OpenAIToolResponse?
+            if mayStream, let onStream {
+                do {
+                    streamed = try await AIProviderStreaming.openAI(
+                        endpoint: endpoint,
+                        apiKey: apiKey,
+                        body: body,
+                        timeout: timeout,
+                        extraHeaders: extraHeaders,
+                        onEvent: onStream)
+                } catch let error as AIServiceError {
+                    // An authentication failure is the endpoint's real answer and is not
+                    // improved by asking again without streaming.
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                }
+            }
+            let decoded: OpenAIToolResponse
+            if let streamed {
+                decoded = streamed
+            } else {
+                decoded = try await transport.send(
+                    endpoint: endpoint,
+                    apiKey: apiKey,
+                    body: body,
+                    timeout: timeout,
+                    extraHeaders: extraHeaders
+                )
+            }
+            // What the round cost, from the provider's own counters. Streamed rounds report
+            // nothing, and that is filed as nothing rather than as zero.
+            if let usage = decoded.usage {
+                AITokenLedger.shared.record(
+                    provider: transport.ledgerProvider, model: model,
+                    inputTokens: usage.prompt_tokens ?? 0,
+                    outputTokens: usage.completion_tokens ?? 0)
+            }
             guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
 
+            toolCallsSeen += choice.message.tool_calls?.count ?? 0
             if let toolCalls = choice.message.tool_calls, !toolCalls.isEmpty {
                 var assistantMsg: [String: Any] = ["role": "assistant"]
                 if let content = choice.message.content { assistantMsg["content"] = content }
@@ -252,64 +178,57 @@ extension AIProviderService {
                     else { continue }
 
                     var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
                     if simulateAllTools {
                         success = true
                         output = "Simulated \(tc.function.name) tool call"
                         executedCommands.append(ExecutedCommand(command: tc.function.name, output: output, success: true))
-                    } else if tc.function.name == "run_command",
-                       let command = args["command"] as? String,
-                       let purpose = args["purpose"] as? String {
-                        (success, output) = await commandExecutor(command, purpose)
-                        executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(command))", output: output, success: success))
-                    } else if tc.function.name == "spawn_worker",
-                              let command = args["command"] as? String,
-                              let purpose = args["purpose"] as? String {
-                        let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
-                        output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\", \"message\": \"'\(command)' started in background.\"}"
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                    } else if tc.function.name == "send_keys",
-                              let keys = args["keys"] as? String {
-                        let purpose = args["purpose"] as? String ?? ""
-                        output = await TerminalCommandExecutor.shared.sendKeys(keys)
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                        // Small delay after key injection so TUI can react before next tool call
-                        try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
-                        _ = purpose
-                    } else if tc.function.name == "get_messages_conversations" {
-                        let contactFilter = args["contact_filter"] as? String ?? ""
-                        let limit = args["limit"] as? Int ?? 15
-                        output = MessagesAutomation.conversationSnapshot(
-                            contactFilter: contactFilter,
-                            limit: limit
-                        )
-                        success = true
-                        executedCommands.append(ExecutedCommand(command: "get_messages_conversations", output: output, success: true))
-                    } else if tc.function.name == "search_messages",
-                              let query = args["query"] as? String {
-                        output = await MessagesAutomation.openSearch(query: query)
-                        success = !output.hasPrefix("❌")
-                        executedCommands.append(ExecutedCommand(command: "search_messages(\(query))", output: output, success: success))
-                    } else if tc.function.name == "compose_message",
-                              let recipient = args["recipient"] as? String {
-                        let body = args["body"] as? String ?? ""
-                        output = await MessagesAutomation.composeMessage(to: recipient, body: body)
-                        success = !output.hasPrefix("❌")
-                        executedCommands.append(ExecutedCommand(command: "compose_message(\(recipient))", output: output, success: success))
+                    } else if let result = await AgentToolRegistry.shared.dispatch(
+                        name: tc.function.name,
+                        arguments: args,
+                        context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
+                    ) {
+                        success = result.success
+                        output = result.output
+                        exitCode = result.exitCode
+                        executedCommands.append(ExecutedCommand(
+                            command: result.displayCommand,
+                            output: output,
+                            success: success,
+                            isVerification: tc.function.name == "verify_outcome"))
                     } else {
-                        // Custom L2 extension tool call
+                        // Not a registered tool — an L2 extension, resolved by name at run time.
                         (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
                         executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
                     }
-                    messages.append(["role": "tool", "tool_call_id": tc.id,
-                                     "content": output.isEmpty ? "(no output)" : output])
+                    messages.append([
+                        "role": "tool", "tool_call_id": tc.id,
+                        "content": AgentToolTranscript.payload(
+                            success: success, output: output, exitCode: exitCode),
+                    ])
                 }
+                onStatus?("Understanding the returned tool data…")
             } else {
+                onStatus?("Preparing the final response…")
                 return (choice.message.content ?? "(no response)", executedCommands)
             }
         }
-        return ("Commands completed.", executedCommands)
+        // The loop ran out of steps with the model still calling tools. "Commands completed"
+        // read as success and hid that: the user was told the work was done when the turn had
+        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
+        // actually ran.
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
     }
 
     // MARK: - Anthropic Tool Loop
@@ -319,45 +238,154 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
         model: String,
-        simulateAllTools: Bool
+        imageAttachments: [URL] = [],
+        userContext: UserContext = .none,
+        chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
+        // A repeated call is only pointless *within* one turn. Asking the same question in
+        // the next message is the user asking again, and deserves a fresh reading.
+        let turn = await AgentToolRegistry.shared.beginTurn()
+        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
+        // record goes with it rather than sitting in the registry until age evicts it.
+        defer { AgentToolRegistry.shared.endTurn(turn) }
+
         var executedCommands: [ExecutedCommand] = []
+        var streamingUnavailable = false
 
         var messages: [[String: Any]] = []
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
+        for msg in ChatHistoryBudget.fit(history, provider: .anthropic) {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
-        messages.append(["role": "user", "content": message])
+        // Vision: attach captured/uploaded images as image blocks before the text so the
+        // model sees them, not just their OCR text.
+        let anthropicImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        if anthropicImageBlocks.isEmpty {
+            messages.append(["role": "user", "content": message])
+        } else {
+            var content: [[String: Any]] = anthropicImageBlocks.map { block in
+                [
+                    "type": "image",
+                    "source": [
+                        "type": "base64", "media_type": block.mediaType, "data": block.data,
+                    ],
+                ]
+            }
+            content.append(["type": "text", "text": message])
+            messages.append(["role": "user", "content": content])
+        }
+
+        let usesAdaptiveThinking = AnthropicModelCatalog.supportsAdaptiveThinking(model)
+
+        let registryTools = await AgentToolRegistry.shared.schemas(format: .anthropic)
+        onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
+        var roundsUsed = 0
+        var toolCallsSeen = 0
+        defer {
+            AgentTurnDiagnostics.record(
+                model: model, toolsOffered: registryTools.count + customTools.count,
+                rounds: roundsUsed, toolCalls: toolCallsSeen)
+        }
 
         for _ in 0..<maxIterations {
-            let body: [String: Any] = [
+            // Stop is a decision the user already made. Without this check the loop kept
+            // going after Stop was pressed — running more tools, spending more tokens, and
+            // in a scoped chat still driving the app — because cancellation was only read
+            // once the whole loop had returned.
+            if Task.isCancelled {
+                return ("Stopped.", executedCommands)
+            }
+            // Prompt caching. Every iteration re-sends the same system prompt and tool set
+            // plus the whole conversation so far; the breakpoint on the last system block
+            // covers tools + system (they render first), and the one on the newest message
+            // extends the cached span over the history. Markers go on this copy only —
+            // writing them back into `messages` would add one per iteration and blow the
+            // 4-breakpoint limit.
+            var body: [String: Any] = [
                 "model": model,
-                "system": contextPrompt,
-                "messages": messages,
-                "tools": ToolDefinitions.anthropic + customTools,
-                "max_tokens": 1024
+                "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
+                "messages": AnthropicPromptCache.markingLastBlock(messages),
+                "tools": registryTools + customTools,
+                // 1024 was far too small for an agentic loop: on models that think by default
+                // it caps thinking AND the reply together, so answers were cut mid-sentence
+                // and a truncated tool_use block ended the loop with no error.
+                "max_tokens": 16000,
             ]
-            let decoded = try await AnthropicToolProviderAdapter().send(apiKey: apiKey, body: body)
+            if usesAdaptiveThinking {
+                // Claude decides how much to think per step. `effort` is the depth/spend dial;
+                // high is the right floor for tool-driven work.
+                body["thinking"] = ["type": "adaptive"]
+                body["output_config"] = ["effort": "high"]
+            }
+            var streamed: AnthropicToolResponse?
+            if onStream != nil, !streamingUnavailable, let onStream {
+                do {
+                    streamed = try await AIProviderStreaming.anthropic(
+                        apiKey: apiKey, body: body, onEvent: onStream)
+                } catch let error as AIServiceError {
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                }
+            }
+            let decoded: AnthropicToolResponse
+            if let streamed {
+                decoded = streamed
+            } else {
+                decoded = try await AnthropicToolProviderAdapter().send(
+                    apiKey: apiKey, body: body)
+            }
+            AnthropicPromptCache.logUsage(decoded.usage, label: "toolLoop")
+            if let usage = decoded.usage {
+                AITokenLedger.shared.record(
+                    provider: .anthropic, model: model,
+                    inputTokens: usage.input_tokens ?? 0,
+                    cachedInputTokens: (usage.cache_read_input_tokens ?? 0)
+                        + (usage.cache_creation_input_tokens ?? 0),
+                    outputTokens: usage.output_tokens ?? 0)
+            }
+            roundsUsed += 1
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
+            toolCallsSeen += toolUseBlocks.count
+
+            // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
+            // empty or partial, so reading it as an answer produces a blank or half reply.
+            if decoded.stop_reason == "refusal" {
+                let partial = textBlocks.compactMap { $0.text }.joined(separator: "\n")
+                return (
+                    partial.isEmpty
+                        ? "The provider declined this request."
+                        : "The provider declined this request partway through:\n\n\(partial)",
+                    executedCommands
+                )
+            }
 
             if toolUseBlocks.isEmpty {
                 let text = textBlocks.compactMap { $0.text }.joined(separator: "\n")
+                onStatus?("Preparing the final response…")
                 return (text.isEmpty ? "(no response)" : text, executedCommands)
             }
 
-            // Echo full assistant content block array back
+            // Echo the full assistant content array back. Thinking blocks must round-trip
+            // unchanged (signature included) or the next turn is rejected — dropping them is
+            // what makes adaptive thinking break a tool loop instead of improving it.
             let assistantBlocks: [[String: Any]] = decoded.content.map { block in
                 var d: [String: Any] = ["type": block.type]
                 if let t = block.text  { d["text"] = t }
                 if let id = block.id   { d["id"] = id }
                 if let n = block.name  { d["name"] = n }
                 if let input = block.input { d["input"] = input.mapValues { $0.value } }
+                if let thinking = block.thinking { d["thinking"] = thinking }
+                if let signature = block.signature { d["signature"] = signature }
+                if let data = block.data { d["data"] = data }
                 return d
             }
             messages.append(["role": "assistant", "content": assistantBlocks])
@@ -371,30 +399,31 @@ extension AIProviderService {
 
                 let args = inputDict.mapValues { $0.value }
                 var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
 
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(toolName) tool call"
                     executedCommands.append(ExecutedCommand(command: toolName, output: output, success: true))
-                } else if toolName == "run_command",
-                   let command = args["command"] as? String,
-                   let purpose = args["purpose"] as? String {
-                    (success, output) = await commandExecutor(command, purpose)
-                    executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
-                } else if toolName == "spawn_worker",
-                          let command = args["command"] as? String,
-                          let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
-                    output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                } else if toolName == "send_keys",
-                          let keys = args["keys"] as? String {
-                    output = await TerminalCommandExecutor.shared.sendKeys(keys)
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                } else if let result = await AgentToolRegistry.shared.dispatch(
+                    name: toolName,
+                    arguments: args,
+                        context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
+                ) {
+                    success = result.success
+                    output = result.output
+                    exitCode = result.exitCode
+                    executedCommands.append(ExecutedCommand(
+                        command: result.displayCommand,
+                        output: output,
+                        success: success,
+                        isVerification: toolName == "verify_outcome"))
                 } else {
+                    // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: toolName, arguments: args)
                     executedCommands.append(ExecutedCommand(command: "\(toolName)(\(args))", output: output, success: success))
                 }
@@ -402,12 +431,26 @@ extension AIProviderService {
                 resultBlocks.append([
                     "type": "tool_result",
                     "tool_use_id": toolId,
-                    "content": output.isEmpty ? "(no output)" : output
+                    "is_error": !success,
+                    "content": AgentToolTranscript.payload(
+                        success: success, output: output, exitCode: exitCode),
                 ])
             }
             messages.append(["role": "user", "content": resultBlocks])
+            onStatus?("Understanding the returned tool data…")
         }
-        return ("Commands completed.", executedCommands)
+        // The loop ran out of steps with the model still calling tools. "Commands completed"
+        // read as success and hid that: the user was told the work was done when the turn had
+        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
+        // actually ran.
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
     }
 
     // MARK: - Gemini Tool Loop
@@ -417,31 +460,89 @@ extension AIProviderService {
         contextPrompt: String,
         apiKey: String,
         history: [ChatMessage],
-        commandExecutor: @escaping (String, String) async -> (Bool, String),
+        commandExecutor: @escaping (String, String, Bool) async -> (Bool, String, Int32),
         customTools: [[String: Any]] = [],
         maxIterations: Int,
-        simulateAllTools: Bool
+        imageAttachments: [URL] = [],
+        userContext: UserContext = .none,
+        chatScope: GeneralChatScope? = nil,
+        grantedApps: [String: String] = [:],
+        simulateAllTools: Bool,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> (finalResponse: String, executedCommands: [ExecutedCommand]) {
 
+        // A repeated call is only pointless *within* one turn. Asking the same question in
+        // the next message is the user asking again, and deserves a fresh reading.
+        let turn = await AgentToolRegistry.shared.beginTurn()
+        // However this loop leaves — answer, refusal, throw, or step limit — the turn's
+        // record goes with it rather than sitting in the registry until age evicts it.
+        defer { AgentToolRegistry.shared.endTurn(turn) }
+
         var executedCommands: [ExecutedCommand] = []
+        var streamingUnavailable = false
 
         var contents: [[String: Any]] = [
             ["role": "user",  "parts": [["text": contextPrompt]]],
             ["role": "model", "parts": [["text": "Understood. I'll help with the context provided."]]]
         ]
-        for msg in history.suffix(10).filter({ $0.role != .system }) {
+        for msg in ChatHistoryBudget.fit(history, provider: .googleGemini) {
             let role = msg.role == .assistant ? "model" : "user"
             contents.append(["role": role, "parts": [["text": msg.content]]])
         }
-        contents.append(["role": "user", "parts": [["text": message]]])
+        // Vision: add inline image parts alongside the text so Gemini sees the captures.
+        let geminiImageBlocks = AIAttachmentPreparer.imageBlocks(forURLs: imageAttachments)
+        var userParts: [[String: Any]] = [["text": message]]
+        for block in geminiImageBlocks {
+            userParts.append(["inline_data": ["mime_type": block.mediaType, "data": block.data]])
+        }
+        contents.append(["role": "user", "parts": userParts])
+
+        let registryTools = await AgentToolRegistry.shared.schemas(format: .gemini)
+        onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
 
         for _ in 0..<maxIterations {
+            // Stop is a decision the user already made. Without this check the loop kept
+            // going after Stop was pressed — running more tools, spending more tokens, and
+            // in a scoped chat still driving the app — because cancellation was only read
+            // once the whole loop had returned.
+            if Task.isCancelled {
+                return ("Stopped.", executedCommands)
+            }
             let body: [String: Any] = [
                 "contents": contents,
-                "tools": [ToolDefinitions.gemini] + customTools.map { ["function_declarations": [$0]] },
-                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 1000]
+                "tools": [["function_declarations": registryTools]]
+                    + customTools.map { ["function_declarations": [$0]] },
+                "generationConfig": [
+                    "temperature": 0.7, "maxOutputTokens": ToolLoopBudget.maxTokens,
+                ],
             ]
-            let decoded = try await GeminiToolProviderAdapter().send(apiKey: apiKey, body: body)
+            let geminiModel = AppSettings.shared.selectedGeminiModel
+            var streamed: GeminiToolResponse?
+            if onStream != nil, !streamingUnavailable, let onStream {
+                do {
+                    streamed = try await AIProviderStreaming.gemini(
+                        apiKey: apiKey, body: body, model: geminiModel, onEvent: onStream)
+                } catch let error as AIServiceError {
+                    if case .authenticationFailed = error { throw error }
+                    streamingUnavailable = true
+                }
+            }
+            let decoded: GeminiToolResponse
+            if let streamed {
+                decoded = streamed
+            } else {
+                decoded = try await GeminiToolProviderAdapter().send(
+                    apiKey: apiKey, body: body, model: geminiModel)
+            }
+            if let usage = decoded.usageMetadata {
+                AITokenLedger.shared.record(
+                    provider: .googleGemini,
+                    model: AppSettings.shared.selectedGeminiModel,
+                    inputTokens: usage.promptTokenCount ?? 0,
+                    cachedInputTokens: usage.cachedContentTokenCount ?? 0,
+                    outputTokens: usage.candidatesTokenCount ?? 0)
+            }
             guard let candidate = decoded.candidates.first else { throw AIServiceError.emptyResponse("No response") }
 
             let textParts     = candidate.content.parts.filter { $0.text != nil }
@@ -449,6 +550,7 @@ extension AIProviderService {
 
             if functionParts.isEmpty {
                 let text = textParts.compactMap { $0.text }.joined(separator: "\n")
+                onStatus?("Preparing the final response…")
                 return (text.isEmpty ? "(no response)" : text, executedCommands)
             }
 
@@ -467,29 +569,30 @@ extension AIProviderService {
                 let args = fc.args.mapValues { $0.value }
 
                 var (success, output): (Bool, String) = (false, "")
+                    var exitCode: Int32?
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(fc.name) tool call"
                     executedCommands.append(ExecutedCommand(command: fc.name, output: output, success: true))
-                } else if fc.name == "run_command",
-                   let command = args["command"] as? String,
-                   let purpose = args["purpose"] as? String {
-                    (success, output) = await commandExecutor(command, purpose)
-                    executedCommands.append(ExecutedCommand(command: command, output: output, success: success))
-                } else if fc.name == "spawn_worker",
-                          let command = args["command"] as? String,
-                          let purpose = args["purpose"] as? String {
-                    let workerID = await TerminalCommandExecutor.shared.spawnWorker(command: command, purpose: purpose)
-                    output = "{\"worker_id\": \"\(workerID)\", \"status\": \"running\"}"
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "spawn_worker(\(command))", output: output, success: true))
-                } else if fc.name == "send_keys",
-                          let keys = args["keys"] as? String {
-                    output = await TerminalCommandExecutor.shared.sendKeys(keys)
-                    success = true
-                    executedCommands.append(ExecutedCommand(command: "send_keys(\(keys))", output: output, success: true))
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                } else if let result = await AgentToolRegistry.shared.dispatch(
+                    name: fc.name,
+                    arguments: args,
+                        context: AgentToolContext(
+                            commandExecutor: commandExecutor, userContext: userContext,
+                            userRequest: message,
+                            attachments: imageAttachments, chatScope: chatScope,
+                            grantedApps: grantedApps, turn: turn, onStatus: onStatus)
+                ) {
+                    success = result.success
+                    output = result.output
+                    exitCode = result.exitCode
+                    executedCommands.append(ExecutedCommand(
+                        command: result.displayCommand,
+                        output: output,
+                        success: success,
+                        isVerification: fc.name == "verify_outcome"))
                 } else {
+                    // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: fc.name, arguments: args)
                     executedCommands.append(ExecutedCommand(command: "\(fc.name)(\(args))", output: output, success: success))
                 }
@@ -497,12 +600,27 @@ extension AIProviderService {
                 functionResultParts.append([
                     "functionResponse": [
                         "name": fc.name,
-                        "response": ["content": output.isEmpty ? "(no output)" : output]
+                        "response": [
+                            "content": AgentToolTranscript.payload(
+                                success: success, output: output, exitCode: exitCode)
+                        ],
                     ]
                 ])
             }
             contents.append(["role": "function", "parts": functionResultParts])
+            onStatus?("Understanding the returned tool data…")
         }
-        return ("Commands completed.", executedCommands)
+        // The loop ran out of steps with the model still calling tools. "Commands completed"
+        // read as success and hid that: the user was told the work was done when the turn had
+        // simply been cut off mid-way. Say which it is, and let the receipts speak for what
+        // actually ran.
+        return (
+            executedCommands.isEmpty
+                ? "I hit this turn's step limit before finishing, and nothing was run. Ask "
+                    + "again with a narrower request."
+                : "I hit this turn's step limit before finishing. What ran so far is listed "
+                    + "below — ask me to continue if that is not enough.",
+            executedCommands
+        )
     }
 }

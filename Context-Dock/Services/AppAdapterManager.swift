@@ -91,6 +91,11 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     var cliToolCommand: String?     // .cliTool — command from TerminalPackageManager
     var shortcutName: String?       // .shortcut
     var aiPromptTemplate: String?   // .aiPrompt — context vars resolved before sending
+    /// Ids of actions in the *same* adapter to run, in order, before this one.
+    /// e.g. a "History" navigation chains ["yt-pip"] so the playing video pops out
+    /// before the page navigates away. Links are best-effort — prefix an id with `!`
+    /// to make it a hard prerequisite whose failure cancels the action.
+    var chain: [String]?
     // UX
     var requiresApproval: Bool      // Show confirmation dialog before executing
     var isDestructive: Bool         // Show red warning in approval UI
@@ -104,17 +109,54 @@ struct AdapterAction: Identifiable, Codable, Hashable {
          triggers: [String] = [], category: String? = nil, type: AdapterActionType,
          menuPath: [String]? = nil, script: String? = nil, scriptFile: String? = nil,
          urlScheme: String? = nil, cliToolCommand: String? = nil, shortcutName: String? = nil,
-         aiPromptTemplate: String? = nil,
-         requiresApproval: Bool = false, isDestructive: Bool = false,
+         aiPromptTemplate: String? = nil, chain: [String]? = nil,
+         requiresApproval: Bool? = nil, isDestructive: Bool = false,
          accentColor: String? = nil) {
         self.id = id; self.name = name; self.icon = icon
         self.description = description; self.triggers = triggers; self.category = category
         self.type = type
         self.menuPath = menuPath; self.script = script; self.scriptFile = scriptFile
         self.urlScheme = urlScheme; self.cliToolCommand = cliToolCommand; self.shortcutName = shortcutName
-        self.aiPromptTemplate = aiPromptTemplate
-        self.requiresApproval = requiresApproval; self.isDestructive = isDestructive
+        self.aiPromptTemplate = aiPromptTemplate; self.chain = chain
+        // Unspecified means "derive from risk", not "safe". .shell / .applescript /
+        // .jxa / .scriptFile / .cliTool are .high and therefore ask before running.
+        self.requiresApproval = requiresApproval ?? (type.riskLevel == .high)
+        self.isDestructive = isDestructive
         self.accentColor = accentColor
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, icon, description, triggers, category, type, menuPath, script,
+             scriptFile, urlScheme, cliToolCommand, shortcutName, aiPromptTemplate,
+             chain, requiresApproval, isDestructive, accentColor
+    }
+
+    // Tolerant decode: AI-generated actions may omit icon/description/triggers/flags.
+    // Only id/name/type are required; everything else defaults.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "bolt"
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        triggers = try c.decodeIfPresent([String].self, forKey: .triggers) ?? []
+        category = try c.decodeIfPresent(String.self, forKey: .category)
+        type = try c.decode(AdapterActionType.self, forKey: .type)
+        menuPath = try c.decodeIfPresent([String].self, forKey: .menuPath)
+        script = try c.decodeIfPresent(String.self, forKey: .script)
+        scriptFile = try c.decodeIfPresent(String.self, forKey: .scriptFile)
+        urlScheme = try c.decodeIfPresent(String.self, forKey: .urlScheme)
+        cliToolCommand = try c.decodeIfPresent(String.self, forKey: .cliToolCommand)
+        shortcutName = try c.decodeIfPresent(String.self, forKey: .shortcutName)
+        aiPromptTemplate = try c.decodeIfPresent(String.self, forKey: .aiPromptTemplate)
+        chain = try c.decodeIfPresent([String].self, forKey: .chain)
+        // An imported or AI-authored action that omits the flag does not get a free
+        // pass — the default is derived from the action type's risk, so a .shell or
+        // .applescript action must ask before it runs.
+        requiresApproval = try c.decodeIfPresent(Bool.self, forKey: .requiresApproval)
+            ?? (type.riskLevel == .high)
+        isDestructive = try c.decodeIfPresent(Bool.self, forKey: .isDestructive) ?? false
+        accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor)
     }
 }
 
@@ -138,19 +180,49 @@ struct AppAdapter: Identifiable, Codable {
     var isBuiltIn: Bool
     var actions: [AdapterAction]
     var contextReaders: [AdapterContextReader]
+    /// The product's own page, when the user has told us where it is.
+    ///
+    /// Never guessed from the bundle id: deriving "microsoft.com" from
+    /// com.microsoft.VSCode would send a request somewhere the user never named. Absent
+    /// unless configured, and only read when app-website knowledge is switched on.
+    var website: String?
     /// Non-codable: set at load time — path to the JSON file on disk (user adapters only)
     var sourceFileURL: URL?
 
     init(id: String, appName: String, bundleId: String, icon: String,
          isEnabled: Bool = true, isBuiltIn: Bool = true,
-         actions: [AdapterAction], contextReaders: [AdapterContextReader] = []) {
+         actions: [AdapterAction], contextReaders: [AdapterContextReader] = [],
+         website: String? = nil) {
         self.id = id; self.appName = appName; self.bundleId = bundleId
         self.icon = icon; self.isEnabled = isEnabled; self.isBuiltIn = isBuiltIn
         self.actions = actions; self.contextReaders = contextReaders
+        self.website = website
     }
 
     enum CodingKeys: String, CodingKey {
         case id, appName, bundleId, icon, isEnabled, isBuiltIn, actions, contextReaders
+        case website
+    }
+
+    // Tolerant decode: AI-generated packs (Adapter Pack Builder) legitimately omit
+    // isBuiltIn / contextReaders / isEnabled / icon. Swift's synthesized Decodable would
+    // throw keyNotFound on any missing non-optional key, so every generated pack would
+    // fail to import. Decode identity strictly-ish (any of id/bundleId/appName), default
+    // everything else.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let rid = try c.decodeIfPresent(String.self, forKey: .id)
+        let rbundle = try c.decodeIfPresent(String.self, forKey: .bundleId)
+        let rname = try c.decodeIfPresent(String.self, forKey: .appName)
+        bundleId = rbundle ?? rid ?? ""
+        id = rid ?? rbundle ?? ""
+        appName = rname ?? bundleId
+        icon = try c.decodeIfPresent(String.self, forKey: .icon) ?? "app.badge"
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        isBuiltIn = try c.decodeIfPresent(Bool.self, forKey: .isBuiltIn) ?? false
+        actions = try c.decodeIfPresent([AdapterAction].self, forKey: .actions) ?? []
+        contextReaders = try c.decodeIfPresent([AdapterContextReader].self, forKey: .contextReaders) ?? []
+        website = try c.decodeIfPresent(String.self, forKey: .website)
     }
 }
 
@@ -168,6 +240,9 @@ struct AdapterActionRequest: Identifiable {
     let adapter: AppAdapter
     var onApprove: () -> Void
     var onDeny: () -> Void
+    /// Approve and remember, so this action never prompts again. Nil when the
+    /// action isn't eligible for a standing grant (destructive actions always ask).
+    var onApproveAlways: (() -> Void)?
 }
 
 // MARK: - AppAdapterManager
@@ -227,57 +302,137 @@ final class AppAdapterManager: ObservableObject {
 
     /// Return actions for a bundle ID, optionally filtered by a search query.
     func actions(for bundleId: String, query: String = "") -> [AdapterAction] {
+        scoredActions(for: bundleId, query: query).map(\.action)
+    }
+
+    /// Same ranking as `actions(for:query:)`, keeping each action's match score.
+    ///
+    /// Callers that turn an action into a route need the score, not just the order: a score
+    /// of 120 means the query *is* this action's name, while 58 can mean a single shared
+    /// word ("new" in "new private window" vs. "New Tab"). Collapsing both into "best match"
+    /// is how a one-word overlap got executed as if it were an exact hit.
+    func scoredActions(
+        for bundleId: String, query: String = ""
+    ) -> [(action: AdapterAction, score: Double)] {
         guard let adapter = adapter(for: bundleId) else { return [] }
         let visibleActions = adapter.visibleActions
-        guard !query.isEmpty else { return visibleActions }
+        guard !query.isEmpty else { return visibleActions.map { ($0, 0) } }
         let normalizedQuery = normalizedAdapterSearchText(query)
-        let ranked = visibleActions.compactMap { action -> (AdapterAction, Double)? in
+        let ranked = visibleActions.compactMap { action -> (action: AdapterAction, score: Double)? in
             let score = adapterActionMatchScore(action, query: normalizedQuery)
             guard score > 0 else { return nil }
             return (action, score)
         }
 
-        return ranked
-            .sorted { lhs, rhs in
-                if lhs.1 == rhs.1 {
-                    return lhs.0.name.localizedCaseInsensitiveCompare(rhs.0.name) == .orderedAscending
-                }
-                return lhs.1 > rhs.1
+        return ranked.sorted { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.action.name.localizedCaseInsensitiveCompare(rhs.action.name) == .orderedAscending
             }
-            .map(\.0)
+            return lhs.score > rhs.score
+        }
     }
+
+    /// Scores at or above this mean the query named the action (exact name, or one string
+    /// containing the other). Below it, the match rests on partial token overlap, a category
+    /// or a description — a hint worth offering, not a route worth running unprompted.
+    static let adapterActionStrongMatchScore: Double = 88
 
     // MARK: - Execution
 
     /// Execute an adapter action, showing an approval sheet if needed.
     /// For `.aiPrompt` actions this returns the resolved prompt string as output
     /// so ContentView can inject it into the search field.
+    /// Why this call must not run, or nil when it may.
+    ///
+    /// A decision rather than a side effect, so it can be asserted without pressing anything.
+    /// The first version of its tests called `execute` and clicked File ▸ New Note for real —
+    /// the very bug they were written for — and a later version still reached runChain, which
+    /// activates an app, which writes to the turn log and broke an unrelated test.
+    static func refusalReason(
+        for action: AdapterAction, query: String, unattended: Bool
+    ) -> String? {
+        // Nobody is at the keyboard. Refuse everything, whatever the action claims about
+        // needing approval.
+        //
+        // An adapter action with requiresApproval == false runs immediately, so the refusal in
+        // AICapabilityApprovalCenter never saw it. Asked "how many notes do i have?" through
+        // dorax_ask, DoraX reached the Notes adapter's only action — New Note — and created a
+        // blank note on the user's Mac. An eval loop must not be able to do that fifty times.
+        if unattended {
+            return "Refused: adapter actions do not run unattended."
+        }
+
+        // A question is not an instruction. AgentToolRegistry already strips run_adapter_action
+        // from a turn whose query only asks; this path had no such guard, so a counting
+        // question ran a write because that write was the only route the adapter offered.
+        //
+        // Narrowed to what actually commands the app. Some adapter actions are readers —
+        // Spotify's current-track is AppleScript that returns what is playing — and refusing
+        // those would break "what's playing?", a question whose only good route is an action.
+        // A menu click is never a reader: it presses a command, and reading a menu is a
+        // different thing entirely (menuSnapshotEvidence).
+        //
+        // Only when a query came with the call: a dock pill or menu click passes none, and
+        // that is the user pressing the thing themselves.
+        let commandsTheApp = action.type == .menubar || action.requiresApproval
+            || action.isDestructive
+        guard commandsTheApp,
+            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            GeneralAIActionResolver.shared.asksOnly(query)
+        else { return nil }
+        return "Refused: \"\(query)\" asks a question, and \(action.name) changes something. "
+            + "Answer it from a reader instead."
+    }
+
     func execute(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "") async -> (Bool, String) {
-        if action.requiresApproval {
-            guard let adp = adapters.first(where: { $0.actions.contains(where: { $0.id == action.id }) }) else {
+        let unattended = AICapabilityApprovalCenter.refusesEveryApprovalUnattended
+        if let refusal = Self.refusalReason(for: action, query: query, unattended: unattended) {
+            if unattended {
+                AICapabilityApprovalCenter.recordUnattendedRefusal("adapter:\(action.id)")
+            }
+            return (false, refusal)
+        }
+
+        let owningAdapter = adapters.first { $0.actions.contains { $0.id == action.id } }
+        let consentBundleId = targetBundleId ?? owningAdapter?.bundleId ?? ""
+
+        // A standing "Always Allow" grant skips the prompt. Destructive actions never
+        // qualify — those re-ask every time regardless of what the user granted.
+        let hasStandingGrant = !action.isDestructive
+            && AdapterActionConsentStore.shared.isAllowed(bundleId: consentBundleId,
+                                                          actionId: action.id)
+
+        if action.requiresApproval && !hasStandingGrant {
+            guard let adp = owningAdapter else {
                 return (false, "Adapter not found")
             }
             return await withCheckedContinuation { continuation in
+                let run: () -> Void = { [weak self] in
+                    Task { [weak self] in
+                        await MainActor.run {
+                            self?.pendingApproval = nil
+                        }
+                        let result = await self?.runChain(action, context: context, targetBundleId: targetBundleId, query: query) ?? (false, "")
+                        await MainActor.run {
+                            self?.lastResult = result
+                        }
+                        continuation.resume(returning: result)
+                    }
+                }
                 let request = AdapterActionRequest(
                     action: action,
                     adapter: adp,
-                    onApprove: { [weak self] in
-                        Task { [weak self] in
-                            await MainActor.run {
-                                self?.pendingApproval = nil
-                            }
-                            let result = await self?.runAction(action, context: context, targetBundleId: targetBundleId, query: query) ?? (false, "")
-                            await MainActor.run {
-                                self?.lastResult = result
-                            }
-                            continuation.resume(returning: result)
-                        }
-                    },
+                    onApprove: run,
                     onDeny: { [weak self] in
                         Task { @MainActor in
                             self?.pendingApproval = nil
                         }
                         continuation.resume(returning: (false, "Cancelled"))
+                    },
+                    onApproveAlways: action.isDestructive ? nil : {
+                        AdapterActionConsentStore.shared.allowAlways(
+                            bundleId: consentBundleId, actionId: action.id)
+                        run()
                     }
                 )
                 Task { @MainActor in
@@ -285,10 +440,152 @@ final class AppAdapterManager: ObservableObject {
                 }
             }
         }
-        let result = await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+        let result = await runChain(action, context: context, targetBundleId: targetBundleId, query: query)
         await MainActor.run {
             self.lastResult = result
         }
+        return result
+    }
+
+    /// Run an action's `chain` prerequisites (in declared order) and then the action
+    /// itself. Chained ids resolve within the same adapter only — a chain must never
+    /// reach across apps.
+    ///
+    /// Links are **best-effort**: a link that fails is noted and the primary action still
+    /// runs. Most chains are enhancements rather than prerequisites — YouTube's navigation
+    /// actions chain "pip" so a playing video pops out before the page changes — and an
+    /// aborting chain meant every one of them silently did nothing the moment Picture-in-
+    /// Picture was unavailable (a Safari Web App without the extension enabled, or simply
+    /// no video playing). Prefix a link id with `!` when it genuinely is a prerequisite and
+    /// its failure must cancel the action.
+    private func runChain(_ action: AdapterAction, context: AXContext,
+                          targetBundleId: String?, query: String) async -> (Bool, String) {
+        let links = action.chain ?? []
+        guard !links.isEmpty else {
+            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+        }
+
+        guard let adapter = adapters.first(where: { $0.actions.contains { $0.id == action.id } }) else {
+            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+        }
+
+        var seen: Set<String> = [action.id]
+        var skipped: [String] = []
+        for rawId in links {
+            let isRequired = rawId.hasPrefix("!")
+            let linkId = isRequired ? String(rawId.dropFirst()) : rawId
+            guard !seen.contains(linkId) else { continue }   // cycle guard
+            seen.insert(linkId)
+            guard let link = adapter.actions.first(where: { $0.id == linkId }) else {
+                if isRequired { return (false, "Chained action not found: \(linkId)") }
+                skipped.append(linkId)
+                continue
+            }
+            let (ok, output) = await runAction(link, context: context,
+                                               targetBundleId: targetBundleId, query: query)
+            if !ok {
+                if isRequired { return (false, "\(link.name) failed: \(output)") }
+                skipped.append(link.name)
+            }
+        }
+
+        let (ok, output) = await runAction(action, context: context,
+                                           targetBundleId: targetBundleId, query: query)
+        guard ok, !skipped.isEmpty else { return (ok, output) }
+        let note = "Skipped \(skipped.joined(separator: ", "))"
+        return (true, output.isEmpty ? note : "\(output) · \(note)")
+    }
+
+    // MARK: - Menu command (universal control surface)
+
+    /// Click a verified app menu item by its menu path — the route the scoped/general AI
+    /// chat uses to actually DO things (Minimize, New Tab, Export…) instead of narrating.
+    /// Safe items run immediately; destructive-sounding paths (Close, Quit, Delete…) prompt
+    /// once, and approving one remembers it ("allow always") so it runs unattended next time.
+    /// Ask before a destructive menu command, once, and remember the answer.
+    ///
+    /// This lived inside `runMenuPath`, which meant it was consent belonging to one way of
+    /// clicking a menu rather than to menu clicks. Anything that reached a menu item by
+    /// another route — the shared executor's `.verifiedMenu`, for one — skipped it
+    /// entirely. On a surface that draws no approval card of its own it is the only thing
+    /// asking, so it has to be reachable from every path that clicks.
+    ///
+    /// Returns true when the command may proceed: not destructive, already granted, or
+    /// just approved.
+    func ensureMenuConsent(
+        path: [String], targetBundleId: String, appName: String
+    ) async -> Bool {
+        let consent = AppMenuConsentStore.shared
+        guard consent.isDestructive(path: path),
+            !consent.isAllowed(bundleId: targetBundleId, path: path)
+        else { return true }
+
+        let label = path.joined(separator: " ▸ ")
+        let action = AdapterAction(
+            id: "menu:\(targetBundleId):\(path.joined(separator: ">"))",
+            name: label,
+            icon: "filemenu.and.selection",
+            description: "Menu command in \(appName.isEmpty ? "the app" : appName)",
+            type: .menubar,
+            menuPath: path,
+            requiresApproval: true,
+            isDestructive: true)
+        let adp = AppAdapter(
+            id: targetBundleId, appName: appName.isEmpty ? targetBundleId : appName,
+            bundleId: targetBundleId, icon: "app.badge",
+            isBuiltIn: false, actions: [action])
+
+        return await withCheckedContinuation { continuation in
+            let request = AdapterActionRequest(
+                action: action,
+                adapter: adp,
+                onApprove: { [weak self] in
+                    Task { @MainActor in
+                        self?.pendingApproval = nil
+                        // Approving a destructive menu command grants "allow always" so
+                        // DoraX runs it unattended next time.
+                        AppMenuConsentStore.shared.allowAlways(
+                            bundleId: targetBundleId, path: path)
+                        continuation.resume(returning: true)
+                    }
+                },
+                onDeny: { [weak self] in
+                    Task { @MainActor in
+                        self?.pendingApproval = nil
+                        continuation.resume(returning: false)
+                    }
+                }
+            )
+            Task { @MainActor in self.pendingApproval = request }
+        }
+    }
+
+    func runMenuPath(
+        _ path: [String], targetBundleId: String, appName: String
+    ) async -> (Bool, String) {
+        let cleaned = path
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !cleaned.isEmpty else { return (false, "No menu path given") }
+
+        guard await ensureMenuConsent(
+            path: cleaned, targetBundleId: targetBundleId, appName: appName)
+        else { return (false, "Cancelled") }
+
+        let action = AdapterAction(
+            id: "menu:\(targetBundleId):\(cleaned.joined(separator: ">"))",
+            name: cleaned.joined(separator: " ▸ "),
+            icon: "filemenu.and.selection",
+            description: "Menu command in \(appName.isEmpty ? "the app" : appName)",
+            type: .menubar,
+            menuPath: cleaned,
+            // Consent is settled above; the action's own flag would ask a second time.
+            requiresApproval: false,
+            isDestructive: AppMenuConsentStore.shared.isDestructive(path: cleaned))
+
+        let result = await runAction(
+            action, context: AXContext.empty, targetBundleId: targetBundleId)
+        await MainActor.run { self.lastResult = result }
         return result
     }
 
@@ -331,10 +628,24 @@ final class AppAdapterManager: ObservableObject {
             }
             if var a = try? camelDecoder.decode(AppAdapter.self, from: data) {
                 a.isBuiltIn = false; a.sourceFileURL = url
-                userAdapters.append(a)
+                let contractErrors = AppAdapterContract.errors(in: a)
+                if contractErrors.isEmpty {
+                    userAdapters.append(a)
+                } else {
+                    errors.append((url.lastPathComponent, contractErrors.map {
+                        "\($0.path): \($0.message)"
+                    }.joined(separator: "\n")))
+                }
             } else if var a = try? snakeDecoder.decode(AppAdapter.self, from: data) {
                 a.isBuiltIn = false; a.sourceFileURL = url
-                userAdapters.append(a)
+                let contractErrors = AppAdapterContract.errors(in: a)
+                if contractErrors.isEmpty {
+                    userAdapters.append(a)
+                } else {
+                    errors.append((url.lastPathComponent, contractErrors.map {
+                        "\($0.path): \($0.message)"
+                    }.joined(separator: "\n")))
+                }
             } else {
                 // Capture the real decode error for display
                 do { _ = try camelDecoder.decode(AppAdapter.self, from: data) } catch {
@@ -367,6 +678,9 @@ final class AppAdapterManager: ObservableObject {
         await seedStarterActionsIntoAdapters()
         await AdapterIntegrationSeeder.seedIfNeeded()
         AdapterSkillSeeder.seedIfNeeded()
+        // What the app itself says it is, refreshed when the app's version changes.
+        // Read from the menu cache and the registry — nothing is opened to learn it.
+        AppKnowledgeSkillRefresher.refreshAll()
     }
 
     /// Add the current built-in pack to every adapter once per catalog version.
@@ -607,7 +921,6 @@ final class AppAdapterManager: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .replacingOccurrences(of: "/", with: "-")
         let fileName = (safeName.isEmpty ? fallback : safeName).isEmpty ? "ImportedAdapter" : (safeName.isEmpty ? fallback : safeName)
-        let fileURL = adaptersDirectory.appendingPathComponent("\(fileName).json")
         var export = adapter
         export.id = export.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.bundleId : export.id
         export.appName = export.appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? export.id : export.appName
@@ -615,6 +928,51 @@ final class AppAdapterManager: ObservableObject {
         export.icon = export.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "app.fill" : export.icon
         export.isEnabled = true
         export.isBuiltIn = false
+
+        let contractErrors = AppAdapterContract.errors(in: export)
+        guard contractErrors.isEmpty else {
+            loadErrors.append((file: fileName + ".json", message: contractErrors.map {
+                "\($0.path): \($0.message)"
+            }.joined(separator: "\n")))
+            return
+        }
+
+        // MERGE into an existing pack for the same app (by actionId): the AI can send a
+        // follow-up pack with only NEW actions and Context-Dock adds them while keeping
+        // every previously-installed action. Matching ids are updated in place; the rest
+        // are preserved. (Delete the adapter first for a clean replace.)
+        if let existing = adapters.first(where: { $0.bundleId == export.bundleId }) {
+            var mergedActions = existing.actions
+            for incoming in export.actions {
+                if let idx = mergedActions.firstIndex(where: { $0.id == incoming.id }) {
+                    mergedActions[idx] = incoming
+                } else {
+                    mergedActions.append(incoming)
+                }
+            }
+            var mergedReaders = existing.contextReaders
+            for r in export.contextReaders where !mergedReaders.contains(where: { $0.id == r.id }) {
+                mergedReaders.append(r)
+            }
+            var merged = existing
+            merged.isBuiltIn = false
+            merged.isEnabled = true
+            merged.actions = mergedActions
+            merged.contextReaders = mergedReaders
+            if merged.appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                merged.appName = export.appName
+            }
+            if merged.icon.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                merged.icon = export.icon
+            }
+            let fileURL = existing.sourceFileURL
+                ?? adaptersDirectory.appendingPathComponent("\(fileName).json")
+            persistAdapter(merged, to: fileURL)
+            await loadUserAdapters()
+            return
+        }
+
+        let fileURL = adaptersDirectory.appendingPathComponent("\(fileName).json")
         persistAdapter(export, to: fileURL)
         await loadUserAdapters()
     }
@@ -803,13 +1161,35 @@ final class AppAdapterManager: ObservableObject {
 
         case .menubar:
             guard let path = action.menuPath else { return (false, "No menu path defined") }
+            // Counted before resolveOrLaunchTargetApp, which may launch the app: one that
+            // had to be started has not published its menu bar to accessibility by the
+            // time it reports itself launched, and needs the longer wait.
+            let wasRunning = targetBundleId.map { id in
+                NSWorkspace.shared.runningApplications.contains {
+                    $0.bundleIdentifier == id && !$0.isTerminated
+                }
+            } ?? true
             let explicitTargetApp = await resolveOrLaunchTargetApp(for: targetBundleId)
             let targetApp = explicitTargetApp ?? AppDelegate.shared?.previousFrontmostApp
-            guard let frontApp = targetApp else {
+            guard let frontApp = targetApp, let bundleID = frontApp.bundleIdentifier else {
                 return (false, "No target app")
             }
-            AXActionResolver.shared.execute(menuPath: path, in: frontApp)
-            return (true, "Done")
+            // This was `AXActionResolver.execute(…)` followed by `return (true, "Done")` —
+            // a blind click that could not fail. Context Dock Chat reported "Done" for menu
+            // commands that were greyed out, absent from the app, or sent somewhere else
+            // entirely, and nothing downstream could tell the difference.
+            //
+            // The coordinator checks the item is present and enabled before clicking, tries
+            // the item's own shortcut first, and says what actually happened. It is the same
+            // one General AI's .verifiedMenu route uses, so the app now has one
+            // menu-clicking implementation instead of two that disagreed about honesty.
+            //
+            // Some previously "successful" actions will start reporting failure. Those were
+            // already failing; only the report is new.
+            return await MenuExecutionCoordinator.shared.executeVerifiedMenuAction(
+                bundleIdentifier: bundleID,
+                path: path,
+                allowSlowMenuBar: !wasRunning)
 
         case .applescript:
             guard let script = action.script else { return (false, "No script defined") }
@@ -833,7 +1213,7 @@ final class AppAdapterManager: ObservableObject {
                 || lower.contains("download")
             return await runShell(
                 inlineScript, scriptFile: shellFile, context: context,
-                progressLabel: showsProgress ? action.name : nil)
+                progressLabel: showsProgress ? action.name : nil, query: query)
 
         case .cliTool:
             guard let command = action.cliToolCommand, !command.isEmpty else {
@@ -862,7 +1242,7 @@ final class AppAdapterManager: ObservableObject {
                 return (false, "No script file defined")
             }
             let resolvedPath = inject(rawPath, context: context, query: query)
-            return await runExternalScriptFile(resolvedPath, context: context)
+            return await runExternalScriptFile(resolvedPath, context: context, query: query)
 
         case .shortcut:
             guard let name = action.shortcutName else { return (false, "No shortcut name") }
@@ -879,6 +1259,38 @@ final class AppAdapterManager: ObservableObject {
             }
             // Resolve context vars (including $PAGE_TEXT and $SELECTED_TEXT from bridge)
             let resolved = injectPageContext(script, context: context, query: query)
+
+            let owner = targetBundleId
+                ?? adapters.first { $0.actions.contains { $0.id == action.id } }?.bundleId
+            let isWebApp = owner?.hasPrefix("com.apple.Safari.WebApp.") ?? false
+
+            // Preferred path: run it through our own Safari Web Extension. This is the
+            // only route that reaches a Safari Web App (they have no AppleScript
+            // dictionary) and the only one that carries user activation.
+            if let owner, let app = await resolveOrLaunchTargetApp(for: owner),
+               await SafariExtensionCommandBridge.shared.isAvailable(in: app) {
+                do {
+                    // "pip" runs as a real function rather than injected source — gated
+                    // media APIs need the activation that only a genuine call carries.
+                    let output = isPictureInPictureScript(resolved)
+                        ? try await SafariExtensionCommandBridge.shared.requestPictureInPicture(in: app)
+                        : try await SafariExtensionCommandBridge.shared.runJavaScript(resolved, in: app)
+                    if output.hasPrefix("JS error:") { return (false, output) }
+                    return (true, output.isEmpty ? "Script executed" : output)
+                } catch {
+                    if isWebApp {
+                        // No AppleScript fallback exists for web apps — report honestly.
+                        return (false, error.localizedDescription)
+                    }
+                    // Real Safari: fall through to AppleScript below.
+                }
+            } else if isWebApp {
+                return (false, """
+                Context Dock isn't enabled as an extension in this web app. Open it, go to \
+                Settings ▸ Extensions, turn on Context Dock and allow it for this site — \
+                web apps expose no AppleScript interface, so there is no other route in.
+                """)
+            }
             // Execute directly in the active Safari page via SafariTabManager
             let result = await SafariTabManager.shared.executeJS(resolved)
             if result == nil {
@@ -895,12 +1307,27 @@ final class AppAdapterManager: ObservableObject {
         }
     }
 
+    /// A userscript whose whole job is Picture-in-Picture. Detected so it can be run as a
+    /// native function instead of injected source: `requestPictureInPicture()` demands
+    /// transient user activation, which survives a real call but not an eval'd string.
+    private func isPictureInPictureScript(_ source: String) -> Bool {
+        let lower = source.lowercased()
+        return lower.contains("requestpictureinpicture")
+            || lower.contains("webkitsetpresentationmode")
+    }
+
     private func resolvedTargetApp(for bundleId: String?) -> NSRunningApplication? {
         guard let bundleId, !bundleId.isEmpty else { return nil }
 
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
             .first { !$0.isTerminated }
         return running
+    }
+
+    /// Launch (or return the already-running) app for a bundle id, activating it. Public so
+    /// General Chat can open a picked-but-closed focus app before warming its menu cache.
+    func launchAndActivate(bundleId: String) async -> NSRunningApplication? {
+        await resolveOrLaunchTargetApp(for: bundleId)
     }
 
     private func resolveOrLaunchTargetApp(for bundleId: String?) async -> NSRunningApplication? {
@@ -1131,7 +1558,7 @@ final class AppAdapterManager: ObservableObject {
 
     private func runShell(
         _ script: String, scriptFile: URL? = nil, context: AXContext,
-        progressLabel: String? = nil
+        progressLabel: String? = nil, query: String? = nil
     ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
@@ -1144,6 +1571,12 @@ final class AppAdapterManager: ObservableObject {
             if let url   = context.currentURL   { env["CURRENT_URL"]      = url }
             if let title = context.windowTitle  { env["WINDOW_TITLE"]     = title }
             if let sel   = context.selectedText { env["AX_SELECTED_TEXT"] = sel }
+            // The user's natural-language request, so a script-file adapter can parameterize
+            // itself ($CD_QUERY) — e.g. a weather skill reading the location from it. Opt-in:
+            // scripts that ignore it behave exactly as before.
+            if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
+                env["CD_QUERY"] = q
+            }
             task.environment = env
             task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
             if let file = scriptFile {
@@ -1224,7 +1657,9 @@ final class AppAdapterManager: ObservableObject {
         return last
     }
 
-    private func runExternalScriptFile(_ rawPath: String, context: AXContext) async -> (Bool, String) {
+    private func runExternalScriptFile(
+        _ rawPath: String, context: AXContext, query: String? = nil
+    ) async -> (Bool, String) {
         guard let fileURL = resolveScriptFile(rawPath) ?? resolveOpenTarget(rawPath) else {
             return (false, "Invalid script file: \(rawPath)")
         }
@@ -1234,12 +1669,12 @@ final class AppAdapterManager: ObservableObject {
 
         switch fileURL.pathExtension.lowercased() {
         case "sh", "bash", "zsh":
-            return await runShell("", scriptFile: fileURL, context: context)
+            return await runShell("", scriptFile: fileURL, context: context, query: query)
         case "py":
             return await runProcess(
                 executable: "/usr/bin/env",
                 arguments: ["python3", fileURL.path],
-                context: context
+                context: context, query: query
             )
         case "js":
             return await runJXA("", scriptFile: fileURL, context: context)
@@ -1247,16 +1682,19 @@ final class AppAdapterManager: ObservableObject {
             return await runProcess(
                 executable: "/usr/bin/env",
                 arguments: ["ruby", fileURL.path],
-                context: context
+                context: context, query: query
             )
         case "scpt", "applescript":
             return await runAppleScript("", scriptFile: fileURL)
         default:
-            return await runProcess(executable: fileURL.path, arguments: [], context: context)
+            return await runProcess(
+                executable: fileURL.path, arguments: [], context: context, query: query)
         }
     }
 
-    private func runProcess(executable: String, arguments: [String], context: AXContext) async -> (Bool, String) {
+    private func runProcess(
+        executable: String, arguments: [String], context: AXContext, query: String? = nil
+    ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
             task.executableURL = URL(fileURLWithPath: executable)
@@ -1268,6 +1706,9 @@ final class AppAdapterManager: ObservableObject {
             if let url = context.currentURL { env["CURRENT_URL"] = url }
             if let title = context.windowTitle { env["WINDOW_TITLE"] = title }
             if let sel = context.selectedText { env["AX_SELECTED_TEXT"] = sel }
+            if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
+                env["CD_QUERY"] = q
+            }
             task.environment = env
             task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
@@ -1289,16 +1730,33 @@ final class AppAdapterManager: ObservableObject {
 
     // MARK: - Context readers
 
-    /// Run all contextReaders for the given adapter and return their output keyed by reader id.
-    /// Called when L2 opens so the AI has richer, app-specific context.
-    func runContextReaders(for bundleId: String, axContext: AXContext) async -> [String: String] {
-        guard let adapter = adapter(for: bundleId) else { return [:] }
-        var results: [String: String] = [:]
+    /// Run all contextReaders for the given adapter and return typed, scoped evidence.
+    func runGroundedContextReaders(
+        for bundleId: String, axContext: AXContext
+    ) async -> [GroundedContextEvidence] {
+        guard let adapter = adapter(for: bundleId) else { return [] }
+        var results: [GroundedContextEvidence] = []
         for reader in adapter.contextReaders {
             let (ok, output) = await runReader(reader, context: axContext)
-            if ok, !output.isEmpty { results[reader.id] = output }
+            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard ok, !trimmed.isEmpty else { continue }
+            results.append(GroundedContextEvidence(
+                readerID: reader.id,
+                source: "App Adapter · \(reader.name)",
+                scopeBundleID: adapter.bundleId,
+                capturedAt: Date(),
+                text: trimmed,
+                completeness: .complete))
         }
         return results
+    }
+
+    /// Compatibility view for existing callers. New reasoning paths should retain the typed
+    /// evidence so source, scope and capture time are not lost.
+    /// Called when L2 opens so the AI has richer, app-specific context.
+    func runContextReaders(for bundleId: String, axContext: AXContext) async -> [String: String] {
+        Dictionary(uniqueKeysWithValues: await runGroundedContextReaders(
+            for: bundleId, axContext: axContext).map { ($0.readerID, $0.text) })
     }
 
     private func runReader(_ reader: AdapterContextReader, context: AXContext) async -> (Bool, String) {
@@ -1442,7 +1900,9 @@ final class AppAdapterManager: ObservableObject {
     private func injectPageContext(_ text: String, context: AXContext, query: String = "") -> String {
         let bridge = SafariBrowserBridge.shared
         var s = inject(text, context: context, query: query)
-        s = s.replacingOccurrences(of: "$PAGE_TEXT",     with: bridge.latestContext?.pageTextForAI ?? "")
+        s = s.replacingOccurrences(
+            of: "$PAGE_TEXT",
+            with: bridge.latestContext?.compactedPageText(for: query, limit: 5_000) ?? "")
         s = s.replacingOccurrences(of: "$SELECTED_TEXT", with: bridge.latestContext?.selectedText  ?? "")
         s = s.replacingOccurrences(of: "$PAGE_TITLE",    with: bridge.latestContext?.title         ?? "")
         return s

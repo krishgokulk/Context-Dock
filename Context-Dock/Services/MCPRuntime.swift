@@ -120,18 +120,48 @@ actor MCPRuntime {
             bundleId: bundleId, server: server, tool: tool, arguments: arguments)
     }
 
+    /// Servers whose connect attempt hung or failed, and when to stop skipping them.
+    /// A server that never completes its handshake occupies this actor, and because every
+    /// other call — including `cachedTools`, which touches no process — is serialised
+    /// behind it, one dead server stalled every chat surface in the app. Now it fails
+    /// fast and is left alone for a while.
+    private var connectCooldown: [UUID: Date] = [:]
+    private static let connectTimeout: Double = 8
+    private static let cooldownAfterFailure: Double = 120
+
     private func connectedClient(for config: MCPServerConfig) async -> MCPClient? {
         if let existing = clients[config.id], await existing.isConnected {
             return existing
         }
+        if let until = connectCooldown[config.id], until > Date() { return nil }
+
         let client = MCPClient(config: config)
-        do {
-            try await client.connect()
-            clients[config.id] = client
-            return client
-        } catch {
+        let connected = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    try await client.connect()
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(
+                    nanoseconds: UInt64(Self.connectTimeout * 1_000_000_000))
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+
+        guard connected else {
+            connectCooldown[config.id] = Date().addingTimeInterval(Self.cooldownAfterFailure)
             return nil
         }
+        connectCooldown[config.id] = nil
+        clients[config.id] = client
+        return client
     }
 
     // MARK: - Global (all-apps) access — used by the general AI chat

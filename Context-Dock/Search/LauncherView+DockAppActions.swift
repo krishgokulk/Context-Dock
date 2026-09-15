@@ -167,11 +167,11 @@ extension LauncherView {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
             DockActionFeedback.complete(switchId)
         }
-        // Un-minimize the app's windows and centre once restored. Minimized windows
-        // animate back in asynchronously, so this polls until a real window appears
-        // instead of firing one premature attempt that finds only a minimized frame
-        // (which used to surface a spurious "No window found" toast and skip centring).
-        WindowManagementService.shared.centerAfterActivate(app)
+        // Un-minimize the app's windows and raise them — never move or resize. Minimized
+        // windows animate back in asynchronously, so this polls until a real window
+        // appears instead of firing one premature attempt that finds only a minimized
+        // frame.
+        WindowManagementService.shared.restoreAfterActivate(app)
         // Don't steal focus back — the activated app should remain frontmost
     }
 
@@ -278,6 +278,7 @@ extension LauncherView {
     func terminateRunningAppFromDock(_ app: NSRunningApplication) {
         let name = app.localizedName ?? "App"
         let bundleID = app.bundleIdentifier ?? ""
+        beginGlobalQuitBatchPresentation()
         hoveredDockAppKey = nil
         if !bundleID.isEmpty {
             launcherViewModel.appQuitFeedbackPhases[bundleID] = .progress
@@ -293,6 +294,31 @@ extension LauncherView {
         refocusLauncherWindowAfterAppAction(delay: 0.06)
         scheduleDockRefreshAfterTerminationAttempt(for: app, feedbackID: feedbackID)
         refreshGlobalSearchAfterRunningAppMutation()
+    }
+
+    /// Spotlight-style multi-quit: retain the filtered Global Context result list while
+    /// the app exit changes focus, refresh rows inline, then dismiss only after the
+    /// user leaves it idle. This owns one sleeping task, never a repeating timer.
+    func beginGlobalQuitBatchPresentation() {
+        guard isGlobalContextActive else { return }
+        globalQuitIdleDismissTask?.cancel()
+        globalQuitIdleDismissGeneration &+= 1
+        let generation = globalQuitIdleDismissGeneration
+        let queryAtLastQuit = searchState.query
+
+        AppDelegate.shared?.holdDockForGlobalQuitBatch(seconds: 10)
+        DispatchQueue.main.async { self.reclaimSearchInputFocus() }
+
+        globalQuitIdleDismissTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            guard !Task.isCancelled,
+                generation == globalQuitIdleDismissGeneration,
+                isGlobalContextActive,
+                searchState.query == queryAtLastQuit
+            else { return }
+            isSearchFieldFocused = false
+            AppDelegate.shared?.hideLauncher()
+        }
     }
 
     func appQuitFeedbackPhase(bundleID: String?) -> DockInlineFeedback.Phase? {
@@ -631,8 +657,11 @@ extension LauncherView {
         }
     }
 
+    /// - Parameter launchBundleId: pass alongside `sourcePID: 0` to click a menu path that
+    ///   came from a cached snapshot — the app is launched and its menus prepared first.
     func executeDockMenuAction(
         sourcePID: pid_t,
+        launchBundleId: String? = nil,
         path: [String],
         shortcutChar: String?,
         shortcutModifiers: Int
@@ -640,6 +669,7 @@ extension LauncherView {
         MenuExecutionCoordinator.shared.executeDockMenuAction(
             request: .init(
                 sourcePID: sourcePID,
+                launchBundleId: launchBundleId,
                 path: path,
                 shortcutChar: shortcutChar,
                 shortcutModifiers: shortcutModifiers,
@@ -1220,13 +1250,13 @@ extension LauncherView {
         if !cached.isEmpty,
             cached.map(\.id) != safariTabPickerTabs.map(\.id)
         {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+            withAnimation(.dockSoft) {
                 safariTabPickerTabs = cached
             }
         }
         SafariTabManager.shared.refreshCachedTabsIfNeeded(force: force) { tabs in
             guard tabs.map(\.id) != safariTabPickerTabs.map(\.id) else { return }
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+            withAnimation(.dockSoft) {
                 safariTabPickerTabs = tabs
             }
         }
@@ -1252,7 +1282,7 @@ extension LauncherView {
                 } else {
                     tabs.insert(tab, at: 0)
                 }
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                withAnimation(.dockSoft) {
                     safariTabPickerTabs = tabs
                     if isContextDockChatConnected {
                         attachBrowserPageSnapshotToCurrentChat(
