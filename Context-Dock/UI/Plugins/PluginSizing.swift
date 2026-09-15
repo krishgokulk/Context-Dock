@@ -46,7 +46,7 @@ enum PluginSizing {
                 .map { detailHeight(of: $0, traits: traits) } ?? 0
             return max(list, detail)
 
-        case "hstack":
+        case "hstack", "buttonRow":
             let heights = node.children.map { height(of: $0, traits: traits, binding: binding) }
             return heights.max() ?? 0
 

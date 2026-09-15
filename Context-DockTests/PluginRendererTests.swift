@@ -329,6 +329,76 @@ struct PluginRendererTests {
         }
     }
 
+    // MARK: The preview harness (Task 10)
+
+    @Test func thePreviewOffersOnlyTheTraitsAManifestDeclares() {
+        let manifest = PluginManifest(
+            id: "sonos", name: "Sonos",
+            sample: ["room": .string("Kitchen")],
+            views: PluginViews(panel: PluginPanelView(root: PluginNode(component: "list"))))
+        let traits = PluginPreviewHarness.traitsAvailable(for: manifest)
+        #expect(traits.map(\.presentation) == [.panel, .panel])  // dock sheet and corner
+        #expect(traits.map(\.widthClass) == [.regular, .compact])
+    }
+
+    @Test func thePreviewBindsToTheManifestsSampleData() {
+        let manifest = PluginManifest(
+            id: "sonos", name: "Sonos", sample: ["room": .string("Kitchen")],
+            views: PluginViews(panel: PluginPanelView(root: PluginNode(component: "list"))))
+        #expect(PluginPreviewHarness.binding(for: manifest).text(.string("{{room}}")) == "Kitchen")
+    }
+
+    @Test func aDeclaredViewWithNoRootPreviewsAsADiagnosticNotABlank() {
+        // Phase 1 makes widget/window roots optional and calls an empty declared view a schema
+        // error — but the Creator previews manifests that have not been validated yet, so the
+        // harness is the one path that meets a nil root in the wild.
+        let empty = PluginManifest(
+            id: "half-built", name: "Half Built",
+            views: PluginViews(widget: PluginWidgetView(family: .medium, root: nil)))
+        #expect(PluginPreviewHarness.traitsAvailable(for: empty).map(\.presentation) == [.widget])
+        #expect(PluginPreviewHarness.diagnostics(for: empty).isEmpty == false)
+    }
+
+    @Test func aManifestWithDiagnosticsPreviewsThemInsteadOfPretendingToRender() {
+        let broken = PluginManifest(
+            id: "Bad Id", name: "Broken",
+            views: PluginViews(panel: PluginPanelView(root: PluginNode(component: "orbitCluster"))))
+        #expect(PluginPreviewHarness.diagnostics(for: broken).isEmpty == false)
+    }
+
+    @Test func aButtonRowHoldsItsButtons() throws {
+        // It was catalogued as a leaf while the renderer drew it from children, so every real
+        // button row failed validation and could not be shipped.
+        #expect(PluginComponentCatalog.takesChildren("buttonRow"))
+        let row = try node(#"{ "buttonRow": [ { "button": { "title": "A", "action": "go" } } ] }"#)
+        #expect(row.children.count == 1)
+        // As wide as it likes, but only as tall as one button.
+        #expect(PluginSizing.height(of: row, traits: .dockSheet, binding: PluginBinding())
+            == PluginKit.leafHeight("button", traits: .dockSheet))
+    }
+
+    @Test func theShippedExamplesAreCleanAndDrawSomethingInEveryHost() throws {
+        // The exit condition, as a test: the examples the Inspector offers must validate, and
+        // every host they declare must have a root with a height above zero — a preview that
+        // is honest about nothing is worse than no preview.
+        for example in PluginExamples.all {
+            #expect(PluginSchema.validate(example).filter { $0.severity == .error }.isEmpty,
+                "\(example.id) does not validate")
+            #expect(PluginPreviewHarness.diagnostics(for: example).isEmpty,
+                "\(example.id) previews with diagnostics")
+            let binding = PluginPreviewHarness.binding(for: example)
+            for traits in PluginPreviewHarness.traitsAvailable(for: example) {
+                let root = try #require(
+                    PluginPreviewHarness.root(of: example, for: traits),
+                    "\(example.id) declares \(traits.presentation.rawValue) with no root")
+                let compact = PluginCompactRules.apply(to: root, traits: traits)
+                #expect(
+                    PluginSizing.treeHeight(compact, traits: traits, binding: binding) > 0,
+                    "\(example.id) draws nothing in \(traits.presentation.rawValue)")
+            }
+        }
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))

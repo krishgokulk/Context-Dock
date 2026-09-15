@@ -10,6 +10,10 @@ enum PluginComponentCatalog {
     static let containers: Set<String> = [
         "card", "vstack", "hstack", "grid", "section", "footerCard",
         "list", "listDetail", "detail", "form", "actionPanel", "capsule",
+        // A row of buttons holds the buttons. It was a leaf here while the renderer drew it
+        // from its children, so every real button row failed validation with
+        // "\"buttonRow\" does not take children" and nobody could ship one.
+        "buttonRow",
     ]
 
     static let leaves: Set<String> = [
@@ -20,7 +24,7 @@ enum PluginComponentCatalog {
         // panel states
         "emptyState", "loading",
         // controls
-        "button", "iconButton", "buttonRow", "toggle", "slider", "stateButton",
+        "button", "iconButton", "toggle", "slider", "stateButton",
         // chips
         "tag", "statusBadge", "chipRow", "segment",
         // live
