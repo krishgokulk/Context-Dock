@@ -377,7 +377,8 @@ final class CornerDockController: NSObject {
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
             attachments: prompt.attachments.count,
             running: prompt.stripIcons.count,
-            pinned: DockPinStore.shared.pins.count)
+            pinned: DockPinStore.shared.pins.count,
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible))
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -606,10 +607,12 @@ final class CornerDockController: NSObject {
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
               chatPresentation.isVisible,
               prompt.phase.showsInput,
-              !ClipboardPanelController.shared.model.isKeyboardArmed,
-              chatPresentation.handleLeftArrow(draft: prompt.query)
+              !ClipboardPanelController.shared.model.isKeyboardArmed
         else { return event }
-        return nil
+        // ← on an empty Global field folds it into the dock, before the presentation's
+        // own walk between scopes is considered.
+        if chatPresentation.mode != .general, prompt.foldToDock() { return nil }
+        return chatPresentation.handleLeftArrow(draft: prompt.query) ? nil : event
     }
 
     private func handleChatSwipe(_ event: NSEvent) -> NSEvent? {

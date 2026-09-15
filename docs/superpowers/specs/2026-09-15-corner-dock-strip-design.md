@@ -32,7 +32,7 @@ and no custom metaball drawing.
 `AppChatPromptPhase` gains `.dock`.
 
 ```
-hidden ─summon─► prompt ──1 s idle, setting on, isGlobalScope──► dock
+hidden ─summon─► prompt ──2 s idle, setting on, isGlobalScope──► dock
                         ──5 s idle, otherwise────────────────► mini ─8 s─► hidden   (today)
 dock ──printable key / click field stub / re-summon──► prompt
 dock ──Esc / click outside / Space switch───────────► hidden
@@ -57,7 +57,7 @@ dock ──Esc / click outside / Space switch───────────�
 - Frontmost-app change while `.dock`: the strip updates in place; no phase change.
 - `.suggesting` still idles back to `.prompt` first (today's rule), and `.prompt` then idles to
   `.dock` — so the list closes, then the field folds.
-- `AppChatPromptModel.dockDwell: TimeInterval = 1`.
+- `AppChatPromptModel.dockDwell: TimeInterval = 2`.
 
 ## 2. Shell, layout, morph
 
@@ -174,7 +174,7 @@ Capture stays off the main actor as it does now.
 
 **Setting.** `GeneralSettingsView` gains a row in its existing corner/behaviour section:
 "Auto-shrink the search field" — `@AppStorage("autoShrinkInputField") var autoShrinkInputField
-= true`. Help text: *After 1 second with nothing typed, the corner's search field folds into the
+= true`. Help text: *After 2 seconds with nothing typed, the corner's search field folds into the
 dock strip. Typing brings it back.* Off → behaviour identical to HEAD.
 
 **Failure.**

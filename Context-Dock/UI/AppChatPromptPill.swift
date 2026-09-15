@@ -50,6 +50,8 @@ enum AppChatPromptMetrics {
     /// gap + hairline + gap between the running section and the pins.
     static let dockDividerSpan: CGFloat = 17
     static let dockHeight: CGFloat = 68
+    /// The field, folded: a magnifier as the strip's first item, one icon slot wide.
+    static var dockSearchStubSpan: CGFloat { dockIconSize + dockIconGap }
     /// Wider than the field, never wider than the corner can hold.
     static var dockMaximumWidth: CGFloat { width * 1.6 }
 
@@ -57,6 +59,8 @@ enum AppChatPromptMetrics {
         /// Running icons actually drawn; the rest are the `+N` pill.
         let shownRunning: Int
         let overflow: Int
+        /// Clipboard / selection affordances drawn after the pins.
+        let tools: Int
         let width: CGFloat
     }
 
@@ -67,9 +71,12 @@ enum AppChatPromptMetrics {
 
     /// Pure: counts in, geometry out. Pins are never dropped — the user chose them — so
     /// the running section is what gives way, keeping one slot for the `+N` pill.
-    static func dockLayout(running: Int, pinned: Int) -> DockLayout {
+    /// `tools` are the corner's own affordances — clipboard, selection — that sit in the
+    /// field's row when it is up and join the strip when it is not.
+    static func dockLayout(running: Int, pinned: Int, tools: Int = 0) -> DockLayout {
         let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) : 0
-        let available = dockMaximumWidth - 2 * dockInset - pinsWidth
+        let toolsWidth = tools > 0 ? dockDividerSpan + runWidth(tools) : 0
+        let available = dockMaximumWidth - dockSearchStubSpan - 2 * dockInset - pinsWidth - toolsWidth
         // How many running icons fit in what is left, at least one slot.
         let capacity = max(1, Int((available + dockIconGap) / (dockIconSize + dockIconGap)))
         let shownRunning: Int
@@ -82,8 +89,10 @@ enum AppChatPromptMetrics {
             overflow = running - shownRunning
         }
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
-        let width = 2 * dockInset + runWidth(max(1, runningSlots)) + pinsWidth
-        return DockLayout(shownRunning: shownRunning, overflow: overflow, width: width)
+        let width = dockSearchStubSpan + 2 * dockInset + runWidth(max(1, runningSlots))
+            + pinsWidth + toolsWidth
+        return DockLayout(
+            shownRunning: shownRunning, overflow: overflow, tools: tools, width: width)
     }
 
     /// What sits over the field — an approval waiting on a yes, attached files — is part
@@ -107,7 +116,8 @@ enum AppChatPromptMetrics {
         attachments: Int = 0,
         hasSelectionRow: Bool = false,
         running: Int = 0,
-        pinned: Int = 0
+        pinned: Int = 0,
+        tools: Int = 0
     ) -> CGSize {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
@@ -116,7 +126,8 @@ enum AppChatPromptMetrics {
             return miniSize
         case .dock:
             return CGSize(
-                width: dockLayout(running: running, pinned: pinned).width, height: dockHeight)
+                width: dockLayout(running: running, pinned: pinned, tools: tools).width,
+                height: dockHeight)
         case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field.
             return CGSize(width: width, height: inputHeight + sheet)
@@ -136,6 +147,8 @@ struct AppChatPromptPill: View {
     @ObservedObject private var selection = CornerDockController.shared.selection
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Namespace private var glassNamespace
 
     private var size: CGSize {
         AppChatPromptMetrics.size(
@@ -146,18 +159,79 @@ struct AppChatPromptPill: View {
             attachments: model.attachments.count,
             hasSelectionRow: model.isShowingSelectionScope,
             running: model.stripIcons.count,
-            pinned: DockPinStore.shared.pins.count)
+            pinned: DockPinStore.shared.pins.count,
+            tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
     }
 
     var body: some View {
-        // Both layers stay mounted and cross-fade. Swapping them with a transition looked
-        // right in isolation and wrong in the shell: the 372-point input stack is still
-        // laid out at full width while the frame shrinks to the 52-point badge, and the
-        // clip outside this frame cuts it off mid-word — the badge showed an app icon and
-        // the first letter of its name, over the outgoing card's glass.
-        //
-        // The wide layer is also faded out faster than the frame collapses, so it is
-        // already invisible by the time the pill is narrow enough to slice it.
+        Group {
+            if model.isGlobalScope {
+                globalBody
+            } else {
+                legacyBody
+            }
+        }
+        .onHover { pointerInside = $0 }
+        // One rule decides who holds the caret, and this field asks it rather than
+        // asserting. Before, every phase change and focus token pulled focus back here —
+        // so arming the clipboard armed a card that never got the keys.
+        // Claimed when named, and on appear too: a board that mounts after the owner was
+        // decided has no change to react to, which is exactly how the clipboard ended up
+        // armed and keyless.
+        .onAppear { syncFocus() }
+        .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
+        .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
+        // A panel minimised or restored changes the pills without anything being typed, so
+        // the row has to be asked again rather than waiting for the next keystroke.
+        .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in
+            model.updateGlobalTyping(for: model.query)
+        }
+    }
+
+    /// Global Context: field and strip are two glass shapes in one container, so when the
+    /// field goes the container morphs it into the strip, and when the strip goes it
+    /// morphs back into the field. Reduced motion crossfades.
+    private var globalBody: some View {
+        GlassEffectContainer(spacing: 24) {
+            ZStack(alignment: .bottomTrailing) {
+                if model.phase.showsInput {
+                    inputStack
+                        .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+                        .glassEffectID("field", in: glassNamespace)
+                        .transition(reduceMotion ? .opacity : .identity)
+                }
+                if model.phase == .dock {
+                    CornerDockStrip(model: model)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .glassEffectID("dock", in: glassNamespace)
+                        .transition(reduceMotion ? .opacity : .identity)
+                }
+                if model.phase == .mini {
+                    miniContent
+                        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+                        .glassEffectID("field", in: glassNamespace)
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
+        .animation(
+            reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.45),
+            value: model.phase)
+        .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+    }
+
+    /// Everything that is not Global keeps the shell it had.
+    ///
+    /// Both layers stay mounted and cross-fade. Swapping them with a transition looked
+    /// right in isolation and wrong in the shell: the 372-point input stack is still
+    /// laid out at full width while the frame shrinks to the 52-point badge, and the
+    /// clip outside this frame cuts it off mid-word — the badge showed an app icon and
+    /// the first letter of its name, over the outgoing card's glass.
+    ///
+    /// The wide layer is also faded out faster than the frame collapses, so it is
+    /// already invisible by the time the pill is narrow enough to slice it.
+    private var legacyBody: some View {
         ZStack(alignment: .bottomLeading) {
             inputStack
                 .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
@@ -182,21 +256,6 @@ struct AppChatPromptPill: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        }
-        .onHover { pointerInside = $0 }
-        // One rule decides who holds the caret, and this field asks it rather than
-        // asserting. Before, every phase change and focus token pulled focus back here —
-        // so arming the clipboard armed a card that never got the keys.
-        // Claimed when named, and on appear too: a board that mounts after the owner was
-        // decided has no change to react to, which is exactly how the clipboard ended up
-        // armed and keyless.
-        .onAppear { syncFocus() }
-        .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
-        .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
-        // A panel minimised or restored changes the pills without anything being typed, so
-        // the row has to be asked again rather than waiting for the next keystroke.
-        .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in
-            model.updateGlobalTyping(for: model.query)
         }
     }
 

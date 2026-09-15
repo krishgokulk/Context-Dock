@@ -251,7 +251,7 @@ struct GeneralSettingsView: View {
                     SettingsDivider()
                     SettingsRow {
                         GeneralToggleLabel("Auto-shrink the search field",
-                            caption: "After 1 second with nothing typed, the corner's search "
+                            caption: "After 2 seconds with nothing typed, the corner's search "
                                 + "field folds into the dock strip. Typing brings it back.")
                         Toggle("", isOn: $settings.autoShrinkInputField).labelsHidden()
                     }

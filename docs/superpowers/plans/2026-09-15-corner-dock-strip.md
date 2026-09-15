@@ -14,7 +14,7 @@
 
 - Surface: corner **Global Context only** — `model.isGlobalScope`. Never scoped app chat, General chat (`chatPresentation.mode == .general`), CLI scope, or the `.chat` phase.
 - Setting key: `autoShrinkInputField`, default `true`. Off → behaviour identical to HEAD.
-- Dwell: `AppChatPromptModel.dockDwell = 1` second. `.dock` has **no** idle timer.
+- Dwell: `AppChatPromptModel.dockDwell = 2` seconds. `.dock` has **no** idle timer.
 - Strip geometry: icon 48 pt, gap 8 pt, inset 10 pt, divider span 17 pt (8 + 1 + 8), height 68 pt, max width `AppChatPromptMetrics.width * 1.6`.
 - Window row: thumbnails 160 × 100, max 6, 250 ms show delay, 150 ms hide delay.
 - Sizes come from metrics functions of model state only (memory `corner-pill-size-must-be-pure`).

@@ -67,7 +67,7 @@ final class AppChatPromptModel: ObservableObject {
     /// until the arrow keys ask for it, and this offer is the same kind of thing.
     static let suggestionsDwell: TimeInterval = 2
     /// How long an untouched, empty Global field waits before folding into the dock.
-    static let dockDwell: TimeInterval = 1
+    static let dockDwell: TimeInterval = 2
 
     /// Read through a closure so a test can flip it without touching UserDefaults. The
     /// key is the General settings toggle; absent means on.
@@ -689,6 +689,12 @@ final class AppChatPromptModel: ObservableObject {
         hiddenRunningBundleIDs.insert(bundleID)
     }
 
+    /// The corner's own affordances that join the strip: the clipboard when a copy just
+    /// happened, the selection when there is one. Same rules as the field's own row.
+    func dockToolCount(clipboardVisible: Bool) -> Int {
+        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
+    }
+
     /// The first printable character brings the field back and lands in it. Anything the
     /// field would have done with the key itself — arrows, Return, Esc — is not this.
     @discardableResult
@@ -700,6 +706,15 @@ final class AppChatPromptModel: ObservableObject {
             queryChanged()
         }
         armForIdle()
+        return true
+    }
+
+    /// ← on an empty Global field folds it now rather than waiting out the dwell.
+    @discardableResult
+    func foldToDock() -> Bool {
+        guard phase == .prompt, canRestAsDock, !isPinned, !isAnswering else { return false }
+        cancel()
+        set(.dock)
         return true
     }
 

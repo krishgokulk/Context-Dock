@@ -114,6 +114,22 @@ struct CornerDockPhaseTests {
         #expect(model.hiddenRunningBundleIDs == ["com.apple.Safari"])
     }
 
+    @Test func leftArrowFoldsAnEmptyGlobalFieldAtOnce() {
+        let (model, _) = globalModel()
+        #expect(model.foldToDock())
+        #expect(model.phase == .dock)
+        // Not with text in it, not with the setting off, not in a scope.
+        let (typed, _) = globalModel()
+        typed.query = "s"
+        #expect(!typed.foldToDock())
+        let (off, _) = globalModel(autoShrink: false)
+        #expect(!off.foldToDock())
+        let (scoped, _) = globalModel()
+        scoped.scopeIntoApp(name: "Safari", bundleID: "com.apple.Safari")
+        scoped.set(.prompt)
+        #expect(!scoped.foldToDock())
+    }
+
     @Test func dockIsNotAnInputPhase() {
         #expect(!AppChatPromptPhase.dock.showsInput)
         #expect(AppChatPromptPhase.dock.isVisible)
