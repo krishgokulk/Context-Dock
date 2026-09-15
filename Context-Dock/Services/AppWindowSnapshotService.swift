@@ -33,7 +33,7 @@ final class AppWindowSnapshotService: ObservableObject {
 
     /// Every eligible window of an app, for the strip's hover row.
     @Published private(set) var windowSets: [String: [WindowSnapshot]] = [:]
-    fileprivate var windowsInFlight: Set<String> = []
+    @Published fileprivate(set) var windowsInFlight: Set<String> = []
     fileprivate var windowsCaptured: [String: Date] = [:]
 
     /// How stale a snapshot may be before scoping in takes another. Short enough to feel
@@ -129,13 +129,14 @@ extension AppWindowSnapshotService {
 
     /// This app's ordinary windows, front to back, at most `limit`. Layer 0 is a normal
     /// window; palettes, tooltips and menus sit above it. The size floor drops the
-    /// one-line palettes that pass as layer 0.
+    /// one-line palettes that pass as layer 0. Windows on another Space or minimised are
+    /// kept — "no windows" for an app whose windows are simply elsewhere was the row lying.
     nonisolated static func eligibleWindows(
         _ all: [WindowCandidate], bundleID: String, limit: Int = windowRowLimit
     ) -> [WindowCandidate] {
         Array(
             all.filter {
-                $0.bundleID == bundleID && $0.isOnScreen && $0.layer == 0
+                $0.bundleID == bundleID && $0.layer == 0
                     && $0.frame.width > 80 && $0.frame.height > 80
             }
             .prefix(limit))
@@ -143,6 +144,16 @@ extension AppWindowSnapshotService {
 
     func windowSnapshots(for bundleID: String) -> [WindowSnapshot] {
         windowSets[bundleID] ?? []
+    }
+
+    func isCapturingWindows(for bundleID: String) -> Bool {
+        windowsInFlight.contains(bundleID)
+    }
+
+    /// Drop the cached set and its timestamp, so the next refresh captures again at once —
+    /// after a window was closed or moved from here, the picture is known to be stale.
+    func forgetWindows(bundleID: String) {
+        windowsCaptured[bundleID] = nil
     }
 
     /// Every eligible window of one app, captured one by one. The 2 s freshness rule is
@@ -169,7 +180,7 @@ extension AppWindowSnapshotService {
     private static func captureWindows(bundleID: String) async -> [WindowSnapshot]? {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(
-                true, onScreenWindowsOnly: true)
+                true, onScreenWindowsOnly: false)
             let candidates = content.windows.map {
                 WindowCandidate(
                     id: $0.windowID, bundleID: $0.owningApplication?.bundleIdentifier,

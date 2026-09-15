@@ -15,13 +15,15 @@ struct WindowSnapshotFilterTests {
             frame: CGRect(x: 0, y: 0, width: w, height: h), isOnScreen: onScreen, layer: layer)
     }
 
-    @Test func keepsOnlyThisAppsOnScreenNormalWindows() {
+    @Test func keepsThisAppsNormalWindowsIncludingOnesOnOtherSpaces() {
         let all = [
             window(1), window(2, bundle: "com.y"), window(3, onScreen: false),
             window(4, layer: 25), window(5, w: 40, h: 40), window(6, title: ""),
         ]
+        // Off-screen (another Space, minimised) stays; other apps, palettes and tiny
+        // windows go.
         #expect(
-            AppWindowSnapshotService.eligibleWindows(all, bundleID: "com.x").map(\.id) == [1, 6])
+            AppWindowSnapshotService.eligibleWindows(all, bundleID: "com.x").map(\.id) == [1, 3, 6])
     }
 
     @Test func keepsFrontToBackOrderAndCapsAtTheLimit() {

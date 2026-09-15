@@ -183,9 +183,10 @@ final class CornerDockController: NSObject {
         shelf.$phase.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
-        selection.$phase.sink { [weak self] _ in
+        selection.$phase.sink { [weak self] phase in
             Task { @MainActor in
                 guard let self else { return }
+                self.selectionPhaseDidChange(phase.isVisible)
                 self.refresh()
                 // The selection card carries a field, and it is summoned by a hotkey — as
                 // explicit a request for the keyboard as the chat's own. Without arming,
@@ -249,23 +250,27 @@ final class CornerDockController: NSObject {
         guard let panel else { return }
         // Moving between an edge and the centre changes the shape of the window, not only
         // where it sits: a row needs three cards' width, a column needs one.
-        let wanted = CornerDockLayout.panelSize(for: anchor)
-        if panel.frame.size != wanted {
-            panel.setContentSize(wanted)
-            hostView?.frame = CGRect(origin: .zero, size: wanted)
-        }
         let screen =
             NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
             ?? NSScreen.main
         guard let visible = screen?.visibleFrame else { return }
         let pad = CornerDockLayout.pad
         let margin: CGFloat = 20
+        // Centred, the panel spans the screen: the field sits in the middle and the
+        // clipboard keeps the right-hand corner, the same spot the right anchor gives it.
+        let wanted = CornerDockLayout.panelSize(
+            for: anchor,
+            panelWidth: anchor == .center ? visible.width - 2 * margin + 2 * pad : nil)
+        if panel.frame.size != wanted {
+            panel.setContentSize(wanted)
+            hostView?.frame = CGRect(origin: .zero, size: wanted)
+        }
         let size = panel.frame.size
         let x: CGFloat
         switch anchor {
         case .right: x = visible.maxX - margin + pad - size.width
         case .left: x = visible.minX + margin - pad
-        case .center: x = visible.midX - size.width / 2
+        case .center: x = visible.minX + margin - pad
         }
         panel.setFrameOrigin(NSPoint(x: x, y: visible.minY + margin - pad))
     }
@@ -331,7 +336,28 @@ final class CornerDockController: NSObject {
                         ? AppChatListMetrics.size(rows: prompt.listRowCount)
                         : (showsWindowRow ? windowRowSize : nil))),
             prompt: chatPresentation.isVisible ? promptSize : nil,
-            anchor: anchor)
+            anchor: anchor, panelWidth: panel?.frame.width)
+    }
+
+    /// Set while the dock stood aside for the selection card; the card's dismissal brings
+    /// the dock back.
+    private var dockStoodAsideForSelection = false
+
+    /// The dock's selection icon: the dock becomes the selection card. One shell, one place
+    /// — the card takes the dock's slot rather than stacking over it, and Backspace on its
+    /// empty field (or Esc) brings the dock back.
+    func showSelectionScopeFromDock() {
+        AppDelegate.shared?.activateSelectionScope(sourceBundleID: nil)
+        guard selection.phase.isVisible else { return }
+        dockStoodAsideForSelection = true
+        chatPresentation.dismiss()
+    }
+
+    private func selectionPhaseDidChange(_ visible: Bool) {
+        guard !visible, dockStoodAsideForSelection else { return }
+        dockStoodAsideForSelection = false
+        chatPresentation.showGlobalContext()
+        prompt.foldToDock()
     }
 
     /// The window row takes the list's slot: both sit directly above the field, and a
@@ -407,7 +433,7 @@ final class CornerDockController: NSObject {
             selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
-            anchor: anchor
+            anchor: anchor, panelWidth: panel?.frame.width
         ).shelf
     }
 
@@ -592,6 +618,18 @@ final class CornerDockController: NSObject {
         commandTapStarted = nil
         pendingCommandSwitch?.cancel()
         pendingCommandSwitch = nil
+
+        // Backspace on the selection card's empty field leaves it — the way out of a
+        // scope everywhere else in the corner, and the way back to the dock it replaced.
+        if event.keyCode == 51,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            selection.phase.isVisible, selection.query.isEmpty,
+            keyboardState.owner == .selection
+        {
+            selection.dismiss()
+            return nil
+        }
 
         // The dock has no field, so nothing below can answer for it. Printable characters
         // bring the field back with the character in it; every other key keeps doing what

@@ -11,6 +11,11 @@ struct CornerDockStrip: View {
     @State private var hoveredID: String?
     @State private var isDropTarget = false
     @State private var draggingPinID: UUID?
+    /// The magnifier is being hovered and the field is about to come back. The icons draw
+    /// themselves condensing while this is true, so the glass morph has something to morph
+    /// *from* rather than a strip that blinks out. Cancelled if the pointer leaves first.
+    @State private var condensing = false
+    @State private var hoverIntent: Task<Void, Never>?
     /// The icon whose Dock-style menu is up — a popover over the icon, arrow down, the
     /// way the Dock does it, rather than a menu at the pointer.
     @State private var menuID: String?
@@ -28,7 +33,14 @@ struct CornerDockStrip: View {
             // The field, folded: the first item in the strip. Hovering it, or clicking
             // it, widens it back.
             toolIcon("magnifyingglass", title: "Search") { expandField() }
-                .onHover { inside in if inside { expandField() } }
+                .scaleEffect(condensing ? 1.12 : 1)
+                .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
+            // Everything but the magnifier condenses toward it while the field comes back:
+            // each icon shrinks in place and fades, so the capsule reads as gathering itself
+            // into the field rather than being replaced by it. Sizes are untouched — the
+            // strip's own layout stays exactly as wide as the metrics say (memory
+            // `corner-pill-size-must-be-pure`); only what is drawn inside it moves.
+            Group {
             ForEach(Array(model.stripIcons.prefix(layout.shownRunning))) { icon in
                 runningIcon(icon)
             }
@@ -49,19 +61,32 @@ struct CornerDockStrip: View {
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
+                // The corner's own cards, not the field's scope chips: a dock icon opens a
+                // surface beside the dock, it does not bring the field back with a chip in it.
                 if clipboard.phase.isVisible {
                     toolIcon("doc.on.clipboard", title: "Clipboard") {
-                        AppDelegate.shared?.activateClipboardScope()
+                        ClipboardPanelController.shared.show()
+                    }
+                    // Hovering opens the card without taking the keyboard; a click arms it.
+                    .onHover { inside in
+                        guard inside else { return }
+                        let controller = ClipboardPanelController.shared
+                        controller.model.reload()
+                        controller.model.summon()
                     }
                 }
                 if model.selection != nil {
                     toolIcon("text.cursor", title: "Selection") {
-                        model.expandFromDock(seeding: nil)
-                        model.toggleSelectionScope()
+                        CornerDockController.shared.showSelectionScopeFromDock()
                     }
                 }
             }
+            }
+            .scaleEffect(condensing ? 0.55 : 1, anchor: .center)
+            .opacity(condensing ? 0 : 1)
+            .blur(radius: condensing ? 1.5 : 0)
         }
+        .animation(.smooth(duration: 0.22), value: condensing)
         .padding(.horizontal, M.dockInset)
         .frame(height: M.dockHeight)
         .contentShape(Rectangle())
@@ -229,9 +254,35 @@ struct CornerDockStrip: View {
     // MARK: Actions
 
     private func expandField() {
+        hoverIntent?.cancel()
+        hoverIntent = nil
+        condensing = false
         if model.expandFromDock(seeding: nil) {
             CornerDockController.shared.requestComposerFocus()
         }
+    }
+
+    /// Hovering the magnifier opens the field — but not on the first pixel. A pointer on its
+    /// way to an app icon crosses the magnifier, and expanding there means the strip pulls
+    /// itself out from under the hand. It waits `Self.hoverDwell`, condensing while it waits,
+    /// so the gesture is visible before it is committed and leaving cancels it cleanly.
+    private static let hoverDwell: TimeInterval = 0.18
+
+    private func beginHoverExpand() {
+        guard model.phase == .dock, hoverIntent == nil else { return }
+        condensing = true
+        hoverIntent = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(Self.hoverDwell * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            hoverIntent = nil
+            expandField()
+        }
+    }
+
+    private func cancelHoverExpand() {
+        hoverIntent?.cancel()
+        hoverIntent = nil
+        condensing = false
     }
 
     private func activate(bundleID: String?) {

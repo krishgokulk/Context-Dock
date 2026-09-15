@@ -78,7 +78,9 @@ enum CornerDockLayout {
     ///
     /// The window stays no wider than it needs to be. It is transparent but not inert:
     /// every point of it is a point the pointer cannot use for the app underneath.
-    static func panelSize(for anchor: CornerDockAnchor) -> CGSize {
+    /// `panelWidth` overrides the centre panel's width: centred, the shell spans the screen
+    /// so the clipboard can stand at the right-hand corner while the field stays centred.
+    static func panelSize(for anchor: CornerDockAnchor, panelWidth: CGFloat? = nil) -> CGSize {
         // Worst case: one surface fully expanded, the preview above it, and both other
         // pills stacked above that.
         let height =
@@ -88,8 +90,10 @@ enum CornerDockLayout {
         case .left, .right:
             return CGSize(width: cardWidth + pad * 2, height: height)
         case .center:
-            // Three cards abreast, which is the widest the row can be.
-            return CGSize(width: cardWidth * 3 + gap * 2 + pad * 2, height: height)
+            // Three cards abreast at least; the controller widens this to the screen so the
+            // clipboard can keep its corner.
+            return CGSize(
+                width: max(panelWidth ?? 0, cardWidth * 3 + gap * 2 + pad * 2), height: height)
         }
     }
 
@@ -106,14 +110,14 @@ enum CornerDockLayout {
     static func slots(
         shelf: CGSize? = nil, preview: CGSize? = nil, clipboard: CGSize? = nil,
         selection: CGSize? = nil, list: CGSize? = nil, prompt: CGSize? = nil,
-        anchor: CornerDockAnchor = .right
+        anchor: CornerDockAnchor = .right, panelWidth: CGFloat? = nil
     ) -> (
         shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
         list: CGRect?, prompt: CGRect?
     ) {
         var baseline = pad
 
-        let panel = panelSize(for: anchor)
+        let panel = panelSize(for: anchor, panelWidth: panelWidth)
 
         /// Cards line up with each other along the anchored edge, so a narrow pill sits
         /// under the wide card it belongs to rather than drifting away from it.
@@ -146,10 +150,11 @@ enum CornerDockLayout {
         // question is being answered with — the list, the selection — still sits above,
         // because that belongs to the field and not to the row.
         if anchor == .center, let prompt {
-            // One row, centred as a whole: shelf, field, clipboard. Measured the way the
-            // view stacks it, so the rect drawn and the rect hit-tested are the same
-            // arithmetic rather than two guesses that agree most of the time.
-            let widths = [shelf?.width, prompt.width, clipboard?.width].compactMap { $0 }
+            // One row, centred as a whole: shelf and field. The clipboard is not in it — it
+            // keeps the right-hand corner whatever the anchor, so a copy lands where the
+            // hand already knows to look. Measured the way the view stacks it, so the rect
+            // drawn and the rect hit-tested are the same arithmetic.
+            let widths = [shelf?.width, prompt.width].compactMap { $0 }
             let total = widths.reduce(0, +) + CGFloat(widths.count - 1) * gap
             var cursor = (panel.width - total) / 2
 
@@ -162,7 +167,9 @@ enum CornerDockLayout {
 
             let shelfRect = placeInRow(shelf)
             let rowPromptRect = placeInRow(prompt)!
-            let clipboardRect = placeInRow(clipboard)
+            let clipboardRect: CGRect? = clipboard.map {
+                CGRect(x: panel.width - pad - $0.width, y: pad, width: $0.width, height: $0.height)
+            }
 
             // What answers the field sits above the field, centred on it.
             func placeAbovePrompt(_ size: CGSize?, y: CGFloat) -> CGRect? {
