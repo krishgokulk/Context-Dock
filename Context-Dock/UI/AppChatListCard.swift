@@ -136,6 +136,7 @@ struct AppChatListCard: View {
                                         cliSuggestionRow(word, isFocused: index == effectiveFocus)
                                     }
                                 }
+                                .contextMenu { pinMenu(for: row) }
                                 .id(row.id)
                             }
                         }
@@ -297,6 +298,33 @@ struct AppChatListCard: View {
 
     /// A Global Context result: whatever the machine offers for this query, with its own
     /// icon where the index has one.
+    /// "Pin to dock" on any row that stands for something pinnable; nothing on the rest.
+    /// One rule (`DockPinKind(row:)`) decides, the same one the strip's drop uses.
+    @ViewBuilder
+    private func pinMenu(for row: AppChatRow) -> some View {
+        if let kind = DockPinKind(row: row) {
+            if DockPinStore.shared.isPinned(kind) {
+                Button("Unpin from Dock") {
+                    if let pin = DockPinStore.shared.pins.first(where: { $0.kind == kind }) {
+                        DockPinStore.shared.unpin(pin.id)
+                    }
+                }
+            } else {
+                Button("Pin to Dock") {
+                    let (title, documentID): (String, String?) = {
+                        switch row {
+                        case .global(let doc): return (doc.title, doc.id)
+                        case .file(let url): return (url.lastPathComponent, nil)
+                        case .dock(let pill): return (pill.name, nil)
+                        default: return ("", nil)
+                        }
+                    }()
+                    DockPinStore.shared.pin(kind, title: title, documentID: documentID)
+                }
+            }
+        }
+    }
+
     private func globalRow(_ doc: GlobalSearchService.SearchDocument, isFocused: Bool)
         -> some View
     {
