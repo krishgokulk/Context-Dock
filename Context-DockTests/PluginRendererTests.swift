@@ -280,6 +280,55 @@ struct PluginRendererTests {
         #expect(model.durationChip == "15m")
     }
 
+    // MARK: Live, media and input (Task 8)
+
+    @Test func liveComponentsFreezeWhenTheHostHasNoBudget() {
+        var hidden = HostTraits.cornerPanel
+        hidden.liveBudget = .none
+        #expect(PluginLiveView.isAnimating(hidden) == false)
+        #expect(PluginLiveView.isAnimating(.dockSheet) == true)
+    }
+
+    @Test func aMediaCardReadsItsTransportAndVolumeActions() throws {
+        let card = try node(#"""
+        { "mediaCard": { "title": "{{room}}", "artist": "{{artist}}",
+                         "transport": "toggle", "volume": "volume" } }
+        """#)
+        let binding = PluginBinding(data: ["room": .string("Kitchen"), "artist": .string("Casio")])
+        let model = PluginMediaView.model(of: card, binding: binding)
+        #expect(model.title == "Kitchen")
+        #expect(model.transport == "toggle")
+        #expect(model.volume == "volume")
+    }
+
+    @Test func progressReadsAFractionAndClampsIt() throws {
+        let bar = try node(#"{ "progress": { "value": "{{done}}", "total": "{{all}}" } }"#)
+        let binding = PluginBinding(data: ["done": .number(15), "all": .number(10)])
+        #expect(PluginLiveView.fraction(of: bar, binding: binding) == 1.0)
+        let half = PluginBinding(data: ["done": .number(5), "all": .number(10)])
+        #expect(PluginLiveView.fraction(of: bar, binding: half) == 0.5)
+    }
+
+    @Test func progressWithNoTotalIsAFractionOfOne() throws {
+        // `{ "progress": { "value": "{{done}}" } }` is the common spelling for a 0–1 value,
+        // and a zero total must not divide.
+        let bar = try node(#"{ "progress": { "value": "{{done}}" } }"#)
+        #expect(PluginLiveView.fraction(of: bar, binding: PluginBinding(data: ["done": .number(0.25)])) == 0.25)
+        let zero = try node(#"{ "progress": { "value": "1", "total": "0" } }"#)
+        #expect(PluginLiveView.fraction(of: zero, binding: PluginBinding()) == 0)
+    }
+
+    @Test func everyCatalogNameNowHasAView() {
+        // The catalog and the renderer are the same set — no name a manifest may write falls
+        // through to the placeholder, and no name the renderer claims is absent from the
+        // catalog. A set comparison says both at once; a `Set<String> = []` of exceptions,
+        // which the plan proposed, would assert nothing at all.
+        #expect(PluginRenderer.implemented == PluginComponentCatalog.v1)
+        for component in PluginComponentCatalog.v1 {
+            #expect(PluginRenderer.supports(component), "no renderer for \(component)")
+        }
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))

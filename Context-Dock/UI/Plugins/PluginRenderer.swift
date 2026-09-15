@@ -49,6 +49,10 @@ struct PluginRenderer: View {
         // Task 7 — controls and card rows
         "button", "iconButton", "buttonRow", "toggle", "slider", "stateButton",
         "eventRow", "activityRow", "fileRow", "checkRow", "compareRow",
+        // Task 8 — live, media, input. With these the set equals the catalog.
+        "progress", "timer", "waveform", "liveText", "pulse",
+        "mediaCard", "thumbnail", "avatar", "cell",
+        "textField", "searchField", "dropzone", "ai", "native",
     ]
 
     static func supports(_ component: String) -> Bool { implemented.contains(component) }
@@ -106,6 +110,12 @@ struct PluginRenderer: View {
             PluginControlView(node: node, traits: traits, binding: binding, sink: sink)
         case "eventRow", "activityRow", "fileRow", "checkRow", "compareRow":
             PluginCardRowView(node: node, traits: traits, binding: binding, sink: sink)
+        case "progress", "timer", "waveform", "liveText", "pulse":
+            PluginLiveView(node: node, traits: traits, binding: binding)
+        case "mediaCard", "thumbnail", "avatar", "cell":
+            PluginMediaView(node: node, traits: traits, binding: binding, sink: sink)
+        case "textField", "searchField", "dropzone", "ai", "native":
+            PluginInputView(node: node, traits: traits, binding: binding, sink: sink)
         case "emptyState":
             PluginEmptyStateView(
                 title: binding.text(node.props["title"] ?? node.props["text"]),
@@ -114,8 +124,8 @@ struct PluginRenderer: View {
             PluginLoadingView(
                 message: binding.text(node.props["message"]), traits: traits)
         default:
-            // Filled in by Tasks 4–8; until then a node the kit knows but has no view for
-            // holds its space rather than drawing a wrong guess.
+            // Unreachable while `implemented` equals the catalog, which
+            // `everyCatalogNameNowHasAView` holds. It stays as the floor under that test.
             Color.clear.frame(height: PluginKit.leafHeight(node.component, traits: traits))
         }
     }
