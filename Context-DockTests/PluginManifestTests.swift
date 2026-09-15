@@ -58,7 +58,7 @@ struct PluginManifestTests {
     {
       "id": "sonos-now-playing", "name": "Sonos", "icon": "hifispeaker.fill",
       "keywords": ["sonos", "music"], "inputs": ["query"],
-      "data": { "type": "bash", "script": "data.sh", "refresh": { "icon": 30, "widget": 5 }, "timeout": 5 },
+      "data": { "type": "bash", "script": "data.sh", "refresh": { "icon": 30, "widget": 5, "panel": 0, "window": 1 }, "timeout": 5 },
       "actions": {
         "toggle": { "type": "bash", "script": "actions/toggle.sh", "optimistic": "playing" },
         "volume": { "type": "bash", "script": "actions/volume.sh", "risk": "low" },
@@ -82,8 +82,8 @@ struct PluginManifestTests {
         #expect(m.id == "sonos-now-playing")
         #expect(m.data?.format == .json)                       // default
         #expect(m.data?.refresh[.icon] == 30)
-        #expect(m.data?.refresh[.panel] == nil)
-        #expect(m.actions["toggle"]?.risk == .read)            // default
+        #expect(m.data?.refresh[.panel] == 0)                  // 0 = never auto-refresh
+        #expect(m.actions["toggle"]?.risk == .low)              // a bash action with no declared risk is .low
         #expect(m.actions["volume"]?.risk == .low)
         #expect(m.actions["openApp"]?.type == "open")
         #expect(m.agent?.tools == ["toggle", "volume"])
@@ -127,5 +127,42 @@ struct PluginManifestTests {
         let m = try JSONDecoder().decode(PluginManifest.self, from: Data(Self.sonos.utf8))
         let again = try JSONDecoder().decode(PluginManifest.self, from: JSONEncoder().encode(m))
         #expect(again == m)
+    }
+
+    @Test("A script action defaults to low risk; a built-in stays read; an explicit risk always wins")
+    func riskDefaults() throws {
+        let bash = try JSONDecoder().decode(PluginAction.self, from: Data(#"{ "type": "bash", "script": "true" }"#.utf8))
+        #expect(bash.risk == .low)
+        let open = try JSONDecoder().decode(PluginAction.self, from: Data(#"{ "type": "open", "value": "https://example.com" }"#.utf8))
+        #expect(open.risk == .read)
+        let explicitRead = try JSONDecoder().decode(PluginAction.self, from: Data(#"{ "type": "bash", "script": "true", "risk": "read" }"#.utf8))
+        #expect(explicitRead.risk == .read)
+    }
+
+    @Test("Icon and window accept the bare-node shorthand panel does")
+    func bareNodeShorthandForIconAndWindow() throws {
+        let icon = try JSONDecoder().decode(PluginIconView.self, from: Data(#"{ "thumbnail": "{{art}}" }"#.utf8))
+        #expect(icon.root?.component == "thumbnail")
+        #expect(icon.capsule == nil)
+
+        let window = try JSONDecoder().decode(PluginWindowView.self, from: Data(#"{ "vstack": [ { "title": "Up next" } ] }"#.utf8))
+        #expect(window.root?.component == "vstack")
+        #expect(window.width == .regular)
+    }
+
+    @Test("A declared view with nothing to render is a schema error, not a blank or a crash")
+    func emptyDeclaredViewIsAnError() throws {
+        let emptyIcon = try JSONDecoder().decode(PluginManifest.self, from: Data(
+            #"{ "id": "x", "name": "X", "views": { "icon": {} } }"#.utf8))
+        #expect(emptyIcon.declaredPresentations == [.icon])
+        #expect(PluginSchema.validate(emptyIcon).contains { $0.severity == .error && $0.path == "views.icon" })
+
+        let widgetWithNoRoot = try JSONDecoder().decode(PluginManifest.self, from: Data(
+            #"{ "id": "x", "name": "X", "views": { "widget": { "family": "small" } } }"#.utf8))
+        #expect(PluginSchema.validate(widgetWithNoRoot).contains { $0.severity == .error && $0.path == "views.widget" })
+
+        let windowWithNoRoot = try JSONDecoder().decode(PluginManifest.self, from: Data(
+            #"{ "id": "x", "name": "X", "views": { "window": { "width": "wide" } } }"#.utf8))
+        #expect(PluginSchema.validate(windowWithNoRoot).contains { $0.severity == .error && $0.path == "views.window" })
     }
 }

@@ -124,17 +124,59 @@ struct PluginSchemaTests {
         #expect(errors(bad).contains { $0.contains("input \"mood\"") })
     }
 
-    @Test("refresh and timeout bounds")
+    @Test("timeout bounds, and a negative refresh is an error while 0 (never) is not")
     func bounds() throws {
-        let m = try manifest(#"{ "id": "x", "name": "X", "data": { "type": "bash", "script": "true", "refresh": { "panel": 0 }, "timeout": 61 }, "views": { "panel": { "title": "{{v}}" } } }"#)
+        let m = try manifest(#"{ "id": "x", "name": "X", "data": { "type": "bash", "script": "true", "refresh": { "panel": -1 }, "timeout": 61 }, "views": { "panel": { "title": "{{v}}" } } }"#)
         let e = errors(m)
         #expect(e.contains { $0.contains("refresh.panel") })
         #expect(e.contains { $0.contains("timeout") })
+
+        // 0 means "never auto-refresh" (spec §7's Sonos manifest uses it for "panel") and
+        // must not be flagged.
+        let never = try manifest(#"{ "id": "x", "name": "X", "data": { "type": "bash", "script": "true", "refresh": { "panel": 0 } }, "views": { "panel": { "title": "{{v}}" } } }"#)
+        #expect(errors(never).isEmpty)
     }
 
     @Test("ids are lowercase slugs")
     func idSlug() throws {
         let m = try manifest(#"{ "id": "My Plugin", "name": "X", "views": { "panel": { "title": "a" } } }"#)
         #expect(errors(m).contains { $0.contains("id") && $0.contains("slug") })
+    }
+
+    @Test("An unrecognised action type is an error that names it")
+    func unknownActionType() throws {
+        let m = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "opne", "script": "true" } }, "primaryAction": "run" }"#)
+        #expect(errors(m).contains { $0.contains("action type \"opne\"") })
+    }
+
+    @Test("Every recognised action type validates: the script types, the built-ins, and push:<view>")
+    func recognisedActionTypesAreClean() throws {
+        for type in ["bash", "applescript", "jxa", "scriptFile", "shortcut", "http"] {
+            let m = try manifest(#"{ "id": "x", "name": "X", "permissions": ["system:shortcuts", "network:local"], "actions": { "run": { "type": "\#(type)", "script": "true" } }, "primaryAction": "run" }"#)
+            #expect(!errors(m).contains { $0.contains("action type") }, Comment(rawValue: type))
+        }
+        let copy = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "copy", "value": "hi" } }, "primaryAction": "run" }"#)
+        #expect(!errors(copy).contains { $0.contains("action type") })
+    }
+
+    @Test("A script action with an empty or whitespace-only script is an error")
+    func emptyScriptIsAnError() throws {
+        let empty = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "bash", "script": "" } }, "primaryAction": "run" }"#)
+        #expect(errors(empty).contains { $0.contains("non-empty script") })
+
+        let whitespace = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "bash", "script": "   \n " } }, "primaryAction": "run" }"#)
+        #expect(errors(whitespace).contains { $0.contains("non-empty script") })
+    }
+
+    @Test("An open action with neither value nor app is an error")
+    func openNeedsValueOrApp() throws {
+        let bad = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "open" } }, "primaryAction": "run" }"#)
+        #expect(errors(bad).contains { $0.contains("open action needs a value or an app") })
+
+        let byValue = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "open", "value": "https://x" } }, "primaryAction": "run" }"#)
+        #expect(!errors(byValue).contains { $0.contains("open action needs") })
+
+        let byApp = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "open", "app": "Sonos" } }, "primaryAction": "run" }"#)
+        #expect(!errors(byApp).contains { $0.contains("open action needs") })
     }
 }

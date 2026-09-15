@@ -23,6 +23,14 @@ enum PluginSchema {
         "clipboard.text", "clipboard.files", "clipboard.image", "clipboard.history",
     ]
 
+    /// Built-in action types that are not one of `PluginScriptType`'s script interpreters.
+    static let builtInActionTypes: Set<String> = ["copy", "open", "reveal", "paste"]
+
+    /// Rebuilt once, not per `validate(_:)` call — a manifest can be validated many times
+    /// (every reload, every Creator keystroke), and `try!` on a hardcoded pattern is only
+    /// safe to force because it never runs on a per-call, per-input path.
+    private static let slugPattern = try! NSRegularExpression(pattern: "^[a-z0-9][a-z0-9-]*$")
+
     static func hasErrors(_ diagnostics: [PluginDiagnostic]) -> Bool {
         diagnostics.contains { $0.severity == .error }
     }
@@ -33,8 +41,7 @@ enum PluginSchema {
         func warn(_ path: String, _ message: String) { out.append(.init(severity: .warning, path: path, message: message)) }
 
         // 12. id
-        let slug = try! NSRegularExpression(pattern: "^[a-z0-9][a-z0-9-]*$")
-        if slug.firstMatch(in: m.id, range: NSRange(m.id.startIndex..., in: m.id)) == nil {
+        if slugPattern.firstMatch(in: m.id, range: NSRange(m.id.startIndex..., in: m.id)) == nil {
             error("id", "id \"\(m.id)\" must be a lowercase slug (a-z, 0-9, -)")
         }
 
@@ -72,8 +79,10 @@ enum PluginSchema {
                     error("data.script", "http data script \"\(data.script)\" is not a URL")
                 }
             }
-            for (presentation, seconds) in data.refresh where seconds < 1 {
-                error("data.refresh.\(presentation.rawValue)", "refresh.\(presentation.rawValue) must be at least 1 second")
+            // 0 means "never auto-refresh" (spec §7's Sonos manifest declares "panel": 0
+            // for exactly this) — only a negative interval is nonsensical.
+            for (presentation, seconds) in data.refresh where seconds < 0 {
+                error("data.refresh.\(presentation.rawValue)", "refresh.\(presentation.rawValue) must not be negative")
             }
             if data.timeout < 1 || data.timeout > 60 {
                 error("data.timeout", "timeout must be between 1 and 60 seconds")
@@ -82,21 +91,45 @@ enum PluginSchema {
 
         // 8, 9. actions
         for (name, action) in m.actions {
+            let path = "actions.\(name)"
             if action.type == "shortcut" && !m.permissions.contains("system:shortcuts") {
-                warn("actions.\(name)", "a shortcut action usually needs permission \"system:shortcuts\"")
+                warn(path, "a shortcut action usually needs permission \"system:shortcuts\"")
             }
             if let target = action.pushTarget {
                 if let presentation = PluginPresentation(rawValue: target) {
                     if !m.declaredPresentations.contains(presentation) {
-                        error("actions.\(name)", "push:\(target) targets a view this plugin has not declared")
+                        error(path, "push:\(target) targets a view this plugin has not declared")
                     }
                 } else {
-                    error("actions.\(name)", "push:\(target) is not a presentation")
+                    error(path, "push:\(target) is not a presentation")
                 }
+            } else if PluginScriptType(rawValue: action.type) == nil && !builtInActionTypes.contains(action.type) {
+                // Not a script type, not a built-in, not push:<view> — nothing recognises it.
+                error(path, "action type \"\(action.type)\" is not a script type, a built-in (\(builtInActionTypes.sorted().joined(separator: ", "))), or push:<view>")
             }
             if let undo = action.undo, m.actions[undo] == nil {
-                error("actions.\(name)", "undo \"\(undo)\" is not a declared action")
+                error(path, "undo \"\(undo)\" is not a declared action")
             }
+            if action.isScript, (action.script ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                error(path, "a \(action.type) action needs a non-empty script")
+            }
+            if action.type == "open", action.value == nil, action.app == nil {
+                error(path, "an open action needs a value or an app")
+            }
+        }
+
+        // A declared view with nothing to render is a diagnostic, never a crash or a blank
+        // (spec §7). The node-shorthand forms (`PluginIconView`/`PluginWindowView`) and a
+        // widget missing its required "root" all decode successfully with `root == nil` —
+        // this is what catches that instead of leaving the presentation silently empty.
+        if let icon = m.views.icon, icon.root == nil, (icon.capsule?.isEmpty ?? true) {
+            error("views.icon", "icon has no root and no capsule to render")
+        }
+        if let widget = m.views.widget, widget.root == nil {
+            error("views.widget", "widget has no root to render")
+        }
+        if let window = m.views.window, window.root == nil {
+            error("views.window", "window has no root to render")
         }
 
         // 1–4. views

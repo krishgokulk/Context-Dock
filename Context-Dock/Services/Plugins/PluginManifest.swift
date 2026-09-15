@@ -86,7 +86,16 @@ struct PluginAction: Codable, Equatable {
         value = try c.decodeIfPresent(String.self, forKey: .value)
         app = try c.decodeIfPresent(String.self, forKey: .app)
         title = try c.decodeIfPresent(String.self, forKey: .title)
-        risk = try c.decodeIfPresent(PluginRisk.self, forKey: .risk) ?? .read
+        // Spec §11.3 gates anything beyond read through the approval centre. A script
+        // action (bash, applescript, jxa, scriptFile, shortcut, http) that omits `risk`
+        // defaults to `.low` so an unannotated shell action still prompts; the built-ins
+        // (copy, open, reveal, paste, push:<view>) keep the old `.read` default. An
+        // explicit `risk` in the JSON always wins over either default.
+        if let declared = try c.decodeIfPresent(PluginRisk.self, forKey: .risk) {
+            risk = declared
+        } else {
+            risk = PluginScriptType(rawValue: type) != nil ? .low : .read
+        }
         optimistic = try c.decodeIfPresent(String.self, forKey: .optimistic)
         undo = try c.decodeIfPresent(String.self, forKey: .undo)
         success = try c.decodeIfPresent(PluginActionFeedback.self, forKey: .success)
@@ -117,14 +126,63 @@ struct PluginAgent: Codable, Equatable {
     }
 }
 
+/// `"icon": { "thumbnail": "{{art}}" }` — the node shorthand `PluginPanelView` accepts — is
+/// also valid here: a single-key object whose key is neither `root` nor `capsule` IS the
+/// root node, the same shorthand rule as the panel and the window. Without this, that shape
+/// used to decode to `root: nil, capsule: nil` — silently blank — while still counting as a
+/// declared presentation; `PluginSchema` now catches the remaining "declared but nothing to
+/// render" case (an explicit `{}` or `{"capsule": []}`).
 struct PluginIconView: Codable, Equatable {
     var root: PluginNode?
     var capsule: [PluginNode]?
+
+    init(root: PluginNode? = nil, capsule: [PluginNode]? = nil) {
+        self.root = root
+        self.capsule = capsule
+    }
+
+    private enum CodingKeys: String, CodingKey { case root, capsule }
+
+    private struct AnyKey: CodingKey {
+        var stringValue: String; var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    init(from decoder: Decoder) throws {
+        let any = try decoder.container(keyedBy: AnyKey.self)
+        if any.allKeys.count == 1, !["root", "capsule"].contains(any.allKeys[0].stringValue) {
+            root = try PluginNode(from: decoder)
+            capsule = nil
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        root = try c.decodeIfPresent(PluginNode.self, forKey: .root)
+        capsule = try c.decodeIfPresent([PluginNode].self, forKey: .capsule)
+    }
 }
 
+/// A widget always needs `family`, so unlike the icon/window views it has no bare-node
+/// shorthand — there is no key in a single-key object that could stand in for `family`.
+/// `root` stays optional purely so `{ "family": "small" }` with no root decodes (rather than
+/// throwing a raw `DecodingError` that would surface as an unreadable `loadErrors` string)
+/// and lands as a named `PluginSchema` diagnostic instead.
 struct PluginWidgetView: Codable, Equatable {
     var family: PluginWidgetFamily
-    var root: PluginNode
+    var root: PluginNode?
+
+    init(family: PluginWidgetFamily, root: PluginNode?) {
+        self.family = family
+        self.root = root
+    }
+
+    private enum CodingKeys: String, CodingKey { case family, root }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        family = try c.decode(PluginWidgetFamily.self, forKey: .family)
+        root = try c.decodeIfPresent(PluginNode.self, forKey: .root)
+    }
 }
 
 /// `"panel": { "list": {...} }` — the panel's body *is* a node, so the whole object decodes
@@ -155,18 +213,34 @@ struct PluginPanelView: Codable, Equatable {
     }
 }
 
+/// Accepts the same bare-node shorthand as `PluginPanelView`: a single-key object whose key
+/// is neither `width` nor `root` IS the root node (e.g. `"window": { "vstack": [...] } }`).
+/// `root` is optional so a window that names neither shape — `{ "width": "wide" }` alone —
+/// decodes instead of throwing, and `PluginSchema` reports the missing root by name.
 struct PluginWindowView: Codable, Equatable {
     var width: PluginWindowWidth
-    var root: PluginNode
+    var root: PluginNode?
 
     enum CodingKeys: String, CodingKey { case width, root }
 
-    init(width: PluginWindowWidth = .regular, root: PluginNode) { self.width = width; self.root = root }
+    init(width: PluginWindowWidth = .regular, root: PluginNode?) { self.width = width; self.root = root }
+
+    private struct AnyKey: CodingKey {
+        var stringValue: String; var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
 
     init(from decoder: Decoder) throws {
+        let any = try decoder.container(keyedBy: AnyKey.self)
+        if any.allKeys.count == 1, !["width", "root"].contains(any.allKeys[0].stringValue) {
+            width = .regular
+            root = try PluginNode(from: decoder)
+            return
+        }
         let c = try decoder.container(keyedBy: CodingKeys.self)
         width = try c.decodeIfPresent(PluginWindowWidth.self, forKey: .width) ?? .regular
-        root = try c.decode(PluginNode.self, forKey: .root)
+        root = try c.decodeIfPresent(PluginNode.self, forKey: .root)
     }
 }
 
