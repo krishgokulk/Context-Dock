@@ -35,7 +35,63 @@
 
 import Foundation
 
+/// One legacy item, converted, with enough of where it came from to show it honestly and to
+/// avoid migrating the same thing twice.
+struct MigratedPlugin: Identifiable, Equatable {
+    enum Source: String, Equatable {
+        case globalCommand = "Global Command"
+        case globalExtension = "Global Extension"
+    }
+
+    let manifest: PluginManifest
+    let source: Source
+    /// The legacy record's own UUID, as a string.
+    let legacyID: String
+    let isEnabled: Bool
+
+    var id: String { manifest.id }
+}
+
 enum PluginMigration {
+
+    /// Every Global Command and Global Extension at once — the two systems Plugins replaces.
+    ///
+    /// Ids are made unique here, which single-item conversion cannot do: `slug()` drops the
+    /// legacy UUID, so two commands called "Deploy" both become `deploy`, and `PluginPack`
+    /// keeps only the first plugin it sees for an id and silently drops the rest. Commands
+    /// come first and keep the plain slug; later collisions get `-2`, `-3`.
+    ///
+    /// Pure, like the rest of this file: it reads no store and writes nothing. The caller
+    /// passes what it has and decides what to do with the result.
+    static func migrateAll(commands: [SystemCommand], extensions: [UserGlobalExtension])
+        -> [MigratedPlugin]
+    {
+        var taken: Set<String> = []
+        var out: [MigratedPlugin] = []
+
+        func add(_ manifest: PluginManifest, _ source: MigratedPlugin.Source,
+                 _ legacyID: String, _ isEnabled: Bool) {
+            var unique = manifest
+            unique.id = uniqueID(manifest.id, taken: &taken)
+            out.append(MigratedPlugin(
+                manifest: unique, source: source, legacyID: legacyID, isEnabled: isEnabled))
+        }
+
+        for command in commands {
+            add(manifest(from: command), .globalCommand, command.id.uuidString, command.isEnabled)
+        }
+        for ext in extensions {
+            add(manifest(from: ext), .globalExtension, ext.id.uuidString, ext.isEnabled)
+        }
+        return out
+    }
+
+    private static func uniqueID(_ wanted: String, taken: inout Set<String>) -> String {
+        if taken.insert(wanted).inserted { return wanted }
+        var n = 2
+        while !taken.insert("\(wanted)-\(n)").inserted { n += 1 }
+        return "\(wanted)-\(n)"
+    }
 
     private static let destructiveNames: Set<String> = ["Sleep", "Restart...", "Shut Down...", "Empty Trash"]
     private static let metaPrefixes = ["provider:", "refresh:", "query:"]

@@ -190,4 +190,54 @@ struct PluginMigrationTests {
         #expect(m.agent?.instructions == "You help with git branches.")
         #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
     }
+    // MARK: The batch — every legacy item at once (what the Plugins page shows)
+
+    @Test("Two commands with the same name get different ids")
+    func batchUniquifiesIDs() {
+        let commands = [
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "a"),
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "b"),
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "c"),
+        ]
+        let ids = PluginMigration.migrateAll(commands: commands, extensions: []).map(\.manifest.id)
+        #expect(ids == ["deploy", "deploy-2", "deploy-3"])
+        #expect(Set(ids).count == ids.count)
+    }
+
+    @Test("A command and an extension of the same name do not collide")
+    func batchUniquifiesAcrossBothSources() {
+        let command = SystemCommand(name: "Branches", icon: "gear", keywords: [], scriptType: "bash", script: "a")
+        let ext = UserGlobalExtension(name: "Branches", icon: "arrow.triangle.branch", keywords: [],
+                                      rowsScript: "git branch", rowActionScript: "git switch x")
+        let out = PluginMigration.migrateAll(commands: [command], extensions: [ext])
+        #expect(out.map(\.manifest.id) == ["branches", "branches-2"])
+        #expect(out.map(\.source) == [.globalCommand, .globalExtension])
+    }
+
+    @Test("Each migrated plugin carries the id it came from, so nothing is migrated twice")
+    func batchRemembersItsOrigin() {
+        let command = SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "a")
+        let out = PluginMigration.migrateAll(commands: [command], extensions: [])
+        #expect(out.first?.legacyID == command.id.uuidString)
+    }
+
+    @Test("Nothing in, nothing out")
+    func batchOfNothing() {
+        #expect(PluginMigration.migrateAll(commands: [], extensions: []).isEmpty)
+    }
+
+    @Test("Every item the batch produces validates")
+    func batchProducesValidManifests() {
+        let commands = [
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "a"),
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "b"),
+            SystemCommand(name: "Café", icon: "cup.and.saucer", keywords: [], scriptType: "bash", script: "c"),
+        ]
+        let ext = UserGlobalExtension(name: "Branches", icon: "arrow.triangle.branch", keywords: ["git"],
+                                      rowsScript: "git branch", rowActionScript: "git switch x")
+        for migrated in PluginMigration.migrateAll(commands: commands, extensions: [ext]) {
+            let errors = PluginSchema.validate(migrated.manifest).filter { $0.severity == .error }
+            #expect(errors.isEmpty, "\(migrated.manifest.id): \(errors.map(\.message))")
+        }
+    }
 }
