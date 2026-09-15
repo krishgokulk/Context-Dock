@@ -20,6 +20,15 @@ struct PluginRenderer: View {
         self.sink = sink
     }
 
+    /// The entry point a host uses. The corner's rules are applied once here, at the root,
+    /// so no component below ever asks whether it is compact.
+    static func root(_ node: PluginNode, traits: HostTraits, binding: PluginBinding,
+                     sink: (any PluginActionSink)? = nil) -> PluginRenderer {
+        PluginRenderer(
+            node: PluginCompactRules.apply(to: node, traits: traits),
+            traits: traits, binding: binding, sink: sink)
+    }
+
     enum RenderState: Equatable { case loading, empty, content }
 
     /// Which of the three states a node is in. `nil` binding means the data script has not

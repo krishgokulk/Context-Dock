@@ -52,6 +52,11 @@ enum PluginValue: Codable, Equatable {
         return nil
     }
 
+    var numberValue: Double? {
+        if case .number(let n) = self { return n }
+        return nil
+    }
+
     var boolValue: Bool? {
         if case .bool(let b) = self { return b }
         return nil
