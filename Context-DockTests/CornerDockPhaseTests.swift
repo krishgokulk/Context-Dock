@@ -9,8 +9,6 @@ struct CornerDockPhaseTests {
     private func globalModel(autoShrink: Bool = true)
         -> (AppChatPromptModel, AppChatConversation)
     {
-        // A pin is a stored preference; a previous run's must not leak in.
-        UserDefaults.standard.removeObject(forKey: AppChatPromptModel.pinnedDefaultsKey)
         let conversation = AppChatConversation()
         let model = AppChatPromptModel(
             conversation: conversation, globalResultSource: GlobalContextResultSource())
@@ -58,17 +56,14 @@ struct CornerDockPhaseTests {
         #expect(model.phase == .mini)
     }
 
-    @Test func pinnedAndAnsweringBlockTheDock() {
+    /// The pin's own block is the shared `standDown` guard, held by `AppChatPromptTests`;
+    /// toggling it here would write UserDefaults under a suite running in parallel.
+    @Test func answeringBlocksTheDock() {
         let (model, conversation) = globalModel()
-        model.togglePin()
-        model.standDown()
-        #expect(model.phase == .prompt)
-        model.togglePin()
-        UserDefaults.standard.removeObject(forKey: AppChatPromptModel.pinnedDefaultsKey)
-        model.set(.prompt)
         conversation.isLoading = true
         model.standDown()
         #expect(model.phase == .prompt)
+        #expect(!model.foldToDock())
     }
 
     @Test func aPrintableCharacterExpandsAndSeeds() {

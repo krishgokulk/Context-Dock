@@ -1,6 +1,13 @@
 # Corner Global Context — the dock strip
 
 **Date:** 2026-09-15 · **Branch:** `general-chat-agent` · **Brain issue:** #24
+**As built (owner's review during Task 5, decision `8aa25547`):** dwell is **2 s**; the fold is
+one morph — the field capsule becomes the strip capsule with the **magnifier as its first
+item** (no separate circle, no two-stage split); hovering or clicking the magnifier, hovering
+the field's small running-app pills, ← on an empty field, or any typed character moves between
+the two; right-click on a strip icon is a **Dock-style card above the icon**; clipboard and
+selection affordances join the strip as a **tools section** after the pins; the window row
+takes the list's slot, centred over the field. Where the text below disagrees, this note wins.
 **Surface:** the corner's **Global Context** pill only. Scoped app chat, General chat, CLI
 scope and the `.chat` phase are untouched.
 
