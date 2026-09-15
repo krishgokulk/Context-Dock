@@ -31,9 +31,14 @@ final class AppWindowSnapshotService: ObservableObject {
     private var inFlight: Set<String> = []
     private var lastCaptured: [String: Date] = [:]
 
+    /// Every eligible window of an app, for the strip's hover row.
+    @Published private(set) var windowSets: [String: [WindowSnapshot]] = [:]
+    fileprivate var windowsInFlight: Set<String> = []
+    fileprivate var windowsCaptured: [String: Date] = [:]
+
     /// How stale a snapshot may be before scoping in takes another. Short enough to feel
     /// live, long enough that walking the pills does not capture continuously.
-    private static let freshness: TimeInterval = 2
+    fileprivate static let freshness: TimeInterval = 2
 
     private init() {}
 
@@ -95,6 +100,102 @@ final class AppWindowSnapshotService: ObservableObject {
                 contentFilter: filter, configuration: config)
             return NSImage(
                 cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        } catch {
+            await MainActor.run { AppWindowSnapshotService.shared.isDenied = true }
+            return nil
+        }
+    }
+}
+
+/// What the window filter needs from an `SCWindow`, as a value so the rule can be tested
+/// without ScreenCaptureKit in the room.
+struct WindowCandidate: Equatable {
+    let id: CGWindowID
+    let bundleID: String?
+    let title: String
+    let frame: CGRect
+    let isOnScreen: Bool
+    let layer: Int
+}
+
+struct WindowSnapshot: Identifiable, Equatable {
+    let id: CGWindowID
+    let title: String
+    let image: NSImage?
+}
+
+extension AppWindowSnapshotService {
+    static let windowRowLimit = 6
+
+    /// This app's ordinary windows, front to back, at most `limit`. Layer 0 is a normal
+    /// window; palettes, tooltips and menus sit above it. The size floor drops the
+    /// one-line palettes that pass as layer 0.
+    nonisolated static func eligibleWindows(
+        _ all: [WindowCandidate], bundleID: String, limit: Int = windowRowLimit
+    ) -> [WindowCandidate] {
+        Array(
+            all.filter {
+                $0.bundleID == bundleID && $0.isOnScreen && $0.layer == 0
+                    && $0.frame.width > 80 && $0.frame.height > 80
+            }
+            .prefix(limit))
+    }
+
+    func windowSnapshots(for bundleID: String) -> [WindowSnapshot] {
+        windowSets[bundleID] ?? []
+    }
+
+    /// Every eligible window of one app, captured one by one. The 2 s freshness rule is
+    /// the single-window path's; walking the strip must not capture continuously.
+    func refreshWindows(bundleID: String) {
+        guard !bundleID.isEmpty, !windowsInFlight.contains(bundleID) else { return }
+        if let last = windowsCaptured[bundleID],
+            Date().timeIntervalSince(last) < Self.freshness
+        {
+            return
+        }
+        windowsInFlight.insert(bundleID)
+        Task { [weak self] in
+            let set = await Self.captureWindows(bundleID: bundleID)
+            guard let self else { return }
+            self.windowsInFlight.remove(bundleID)
+            guard let set else { return }
+            self.windowsCaptured[bundleID] = Date()
+            self.isDenied = false
+            self.windowSets[bundleID] = set
+        }
+    }
+
+    private static func captureWindows(bundleID: String) async -> [WindowSnapshot]? {
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(
+                true, onScreenWindowsOnly: true)
+            let candidates = content.windows.map {
+                WindowCandidate(
+                    id: $0.windowID, bundleID: $0.owningApplication?.bundleIdentifier,
+                    title: $0.title ?? "", frame: $0.frame, isOnScreen: $0.isOnScreen,
+                    layer: $0.windowLayer)
+            }
+            let wanted = eligibleWindows(candidates, bundleID: bundleID).map(\.id)
+            var result: [WindowSnapshot] = []
+            for id in wanted {
+                guard let window = content.windows.first(where: { $0.windowID == id }) else { continue }
+                let filter = SCContentFilter(desktopIndependentWindow: window)
+                let config = SCStreamConfiguration()
+                // A 160-point thumbnail: a quarter-size capture is already more than it shows.
+                config.width = max(Int(window.frame.width / 4), 1)
+                config.height = max(Int(window.frame.height / 4), 1)
+                config.showsCursor = false
+                let image = try? await SCScreenshotManager.captureImage(
+                    contentFilter: filter, configuration: config)
+                result.append(
+                    WindowSnapshot(
+                        id: window.windowID, title: window.title ?? "",
+                        image: image.map {
+                            NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height))
+                        }))
+            }
+            return result
         } catch {
             await MainActor.run { AppWindowSnapshotService.shared.isDenied = true }
             return nil

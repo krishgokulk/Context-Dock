@@ -328,9 +328,25 @@ final class CornerDockController: NSObject {
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil)),
+                        ? AppChatListMetrics.size(rows: prompt.listRowCount)
+                        : (showsWindowRow ? windowRowSize : nil))),
             prompt: chatPresentation.isVisible ? promptSize : nil,
             anchor: anchor)
+    }
+
+    /// The window row takes the list's slot: both sit directly above the field, and a
+    /// docked pill has no list. Reusing the slot keeps the layout arithmetic in one place.
+    var showsWindowRow: Bool {
+        chatPresentation.isVisible && chatPresentation.mode != .general
+            && prompt.phase == .dock && prompt.windowRowBundleID != nil
+    }
+
+    private var windowRowSize: CGSize {
+        CornerWindowRowMetrics.size(
+            count: max(
+                1,
+                AppWindowSnapshotService.shared
+                    .windowSnapshots(for: prompt.windowRowBundleID ?? "").count))
     }
 
     /// The app's commands, or what it can do — a card of its own above the field, and only
@@ -777,6 +793,12 @@ struct CornerDockSurface: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppChatList {
                 AppChatListCard(model: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsWindowRow,
+                let bundleID = prompt.windowRowBundleID
+            {
+                CornerWindowRow(bundleID: bundleID, model: prompt)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }

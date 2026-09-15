@@ -80,7 +80,15 @@ final class AppChatPromptModel: ObservableObject {
     @Published var hiddenRunningBundleIDs: Set<String> = []
 
     /// The app whose icon the pointer is over in the strip, for the window row.
-    @Published var hoveredStripBundleID: String?
+    @Published var hoveredStripBundleID: String? {
+        didSet { scheduleWindowRowUpdate() }
+    }
+    /// Which app the window row is showing, once the pointer has rested long enough. The
+    /// strip sets `hoveredStripBundleID` on every icon; this follows it after 250 ms and
+    /// lets go 150 ms after the pointer has left both the icon and the row.
+    @Published private(set) var windowRowBundleID: String?
+    private var windowRowTask: Task<Void, Never>?
+    private var pointerInWindowRow = false
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
@@ -709,6 +717,23 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    func windowRowHovered(_ inside: Bool) {
+        pointerInWindowRow = inside
+        if inside { windowRowTask?.cancel() } else { scheduleWindowRowUpdate() }
+    }
+
+    private func scheduleWindowRowUpdate() {
+        windowRowTask?.cancel()
+        let target = hoveredStripBundleID
+        let delay: TimeInterval = target == nil ? 0.15 : 0.25
+        windowRowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            if target == nil, self.pointerInWindowRow { return }
+            self.windowRowBundleID = target
+        }
+    }
+
     /// ← on an empty Global field folds it now rather than waiting out the dwell.
     @discardableResult
     func foldToDock() -> Bool {
@@ -741,6 +766,9 @@ final class AppChatPromptModel: ObservableObject {
 
     func dismiss() {
         cancel()
+        windowRowTask?.cancel()
+        windowRowBundleID = nil
+        hoveredStripBundleID = nil
         query = ""
         suggestions = []
         capabilitySummary = ""

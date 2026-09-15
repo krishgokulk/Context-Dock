@@ -552,6 +552,9 @@ struct AppChatPromptPill: View {
                     isSearching: false,
                     onSelect: { icon in model.openGlobalMatchIcon(icon) })
                     .transition(.opacity)
+                    // Resting the pointer on the small pills asks for the big ones: the
+                    // field folds into the dock at once rather than waiting out the dwell.
+                    .onHover { inside in if inside { model.foldToDock() } }
                 // Beside the running-app capsule, not inside it: the clipboard used to
                 // lead that list as one of its icons, which put a permanent member in a
                 // row meant to be "what's running" and made a stale old copy look as
