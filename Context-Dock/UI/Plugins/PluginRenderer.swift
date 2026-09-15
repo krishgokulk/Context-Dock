@@ -38,6 +38,8 @@ struct PluginRenderer: View {
     /// Tasks 4–8 adds its group here in the same commit as its views.
     static let implemented: Set<String> = [
         "emptyState", "loading",
+        // Task 4 — panel views
+        "list", "row", "section", "actionPanel",
     ]
 
     static func supports(_ component: String) -> Bool { implemented.contains(component) }
@@ -67,6 +69,16 @@ struct PluginRenderer: View {
     @ViewBuilder
     private var component: some View {
         switch node.component {
+        case "list":
+            PluginListView(node: node, traits: traits, binding: binding, sink: sink)
+        case "row":
+            PluginRowView(
+                model: PluginRowModel.make(from: node, binding: binding, index: 0),
+                traits: traits, sink: sink)
+        case "section":
+            PluginSectionView(node: node, traits: traits, binding: binding, sink: sink)
+        case "actionPanel":
+            PluginActionPanelView(node: node, traits: traits, binding: binding, sink: sink)
         case "emptyState":
             PluginEmptyStateView(
                 title: binding.text(node.props["title"] ?? node.props["text"]),

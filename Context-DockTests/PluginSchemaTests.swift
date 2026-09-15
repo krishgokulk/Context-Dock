@@ -186,6 +186,24 @@ struct PluginSchemaTests {
         #expect(errors(m).contains { $0.contains("action \"nope\" is not declared") })
     }
 
+    @Test("An action list inside a row is checked item by item")
+    func rowActionListMustBeDeclared() throws {
+        // A row's secondary actions are an ARRAY of objects, not a string prop, so the
+        // action-prop rule above never saw them — #27 made the schema reach the row node
+        // itself, not inside the arrays it carries. PluginMigration emits exactly this shape,
+        // so an undeclared name here reaches a user as a row that does nothing.
+        let m = try manifest(#"{ "id": "x", "name": "X", "actions": { "play": { "type": "bash", "script": "true" } }, "views": { "panel": { "list": { "items": "{{lines}}", "row": { "title": "{{item.title}}", "actions": [ { "title": "Play", "action": "play" }, { "title": "Beam", "action": "teleport" } ] } } } } }"#)
+        let found = errors(m).filter { $0.contains("is not declared") }
+        #expect(found.count == 1)
+        #expect(found[0].contains("teleport"))
+    }
+
+    @Test("An action list whose names are all declared is clean")
+    func rowActionListThatIsDeclaredIsClean() throws {
+        let m = try manifest(#"{ "id": "x", "name": "X", "actions": { "play": { "type": "bash", "script": "true" } }, "views": { "panel": { "list": { "items": "{{lines}}", "row": { "title": "{{item.title}}", "actions": [ { "title": "Play", "action": "play" } ] } } } } }"#)
+        #expect(errors(m).isEmpty)
+    }
+
     @Test("An unknown component inside a row template is an error")
     func unknownComponentInsideARow() throws {
         let m = try manifest(#"{ "id": "x", "name": "X", "views": { "panel": { "list": { "items": "{{lines}}", "row": { "hologram": {} } } } } }"#)

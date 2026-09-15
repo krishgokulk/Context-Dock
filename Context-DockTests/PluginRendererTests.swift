@@ -50,6 +50,69 @@ struct PluginRendererTests {
         #expect(messages.contains { $0.contains("orbitCluster") })
     }
 
+    // MARK: Panel views (Task 4)
+
+    @Test func aListBuildsOneRowModelPerItemInOrder() throws {
+        let list = try node(#"""
+        { "list": { "items": "{{queue}}",
+                    "row": { "title": "{{item.title}}", "subtitle": "{{item.artist}}" } } }
+        """#)
+        let binding = PluginBinding(data: ["queue": .array([
+            .object(["title": .string("Jungle"), "artist": .string("Casio")]),
+            .object(["title": .string("For Ever"), "artist": .string("Casio")]),
+        ])])
+        let models = PluginListView.rowModels(for: list, binding: binding)
+        #expect(models.map(\.title) == ["Jungle", "For Ever"])
+        #expect(models[0].subtitle == "Casio")
+    }
+
+    @Test func aLocalFilterNarrowsRowsWithoutRunningAnything() throws {
+        let list = try node(#"""
+        { "list": { "filter": "local", "items": "{{queue}}", "row": { "title": "{{item.title}}" } } }
+        """#)
+        let binding = PluginBinding(data: ["queue": .array([
+            .object(["title": .string("Jungle")]), .object(["title": .string("For Ever")]),
+        ])])
+        #expect(PluginListView.rowModels(for: list, binding: binding, query: "ever").map(\.title)
+            == ["For Ever"])
+        // filter: query hands the typing to the data script instead, so the rows stand.
+        let queryList = try node(#"""
+        { "list": { "filter": "query", "items": "{{queue}}", "row": { "title": "{{item.title}}" } } }
+        """#)
+        #expect(PluginListView.rowModels(for: queryList, binding: binding, query: "ever").count == 2)
+    }
+
+    @Test func aRowsActionsCarryTheirResolvedValue() throws {
+        let list = try node(#"""
+        { "list": { "items": "{{queue}}",
+                    "row": { "title": "{{item.title}}",
+                             "actions": [ { "title": "Play", "action": "play", "value": "{{item.id}}" } ] } } }
+        """#)
+        let binding = PluginBinding(data: ["queue": .array([
+            .object(["id": .string("t1"), "title": .string("Jungle")])
+        ])])
+        let models = PluginListView.rowModels(for: list, binding: binding)
+        #expect(models[0].actions.first?.request
+            == PluginActionRequest(name: "play", value: .string("t1")))
+    }
+
+    @Test func aListWithNoRowTemplateStillNamesItsItems() throws {
+        // The fallback template is what a migrated provider:custom list leans on; without it
+        // a list with data draws a column of blank rows and looks broken rather than bare.
+        let list = try node(#"{ "list": { "items": "{{lines}}" } }"#)
+        let binding = PluginBinding(data: ["lines": .array([
+            .object(["title": .string("8080")])
+        ])])
+        #expect(PluginListView.rowModels(for: list, binding: binding).map(\.title) == ["8080"])
+    }
+
+    @Test func runningARowsPrimaryActionReachesTheSink() {
+        let sink = RecordingActionSink()
+        let action = PluginRowAction(title: "Play", request: .init(name: "play", value: .string("t1")))
+        PluginListView.perform(action, sink: sink)
+        #expect(sink.requests.map(\.name) == ["play"])
+    }
+
     @Test func aSinkReceivesWhatAComponentAsksToRun() {
         let sink = RecordingActionSink()
         sink.run(PluginActionRequest(name: "toggle", value: .string("kitchen")))

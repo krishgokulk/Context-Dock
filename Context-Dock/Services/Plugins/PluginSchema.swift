@@ -154,6 +154,26 @@ enum PluginSchema {
                     if m.actions[name] == nil {
                         error("\(path).\(prop)", "action \"\(name)\" is not declared")
                     }
+                } else if let list = value.arrayValue {
+                    // A row's secondary actions are an array of objects
+                    // (`"actions": [ { "title": …, "action": … } ]`), so the rule above never
+                    // reaches them: it reads string props only. #27 made the schema descend
+                    // into the row node; this makes it descend into the lists that node
+                    // carries. PluginMigration emits this shape for every converted
+                    // provider:custom list, so an undeclared name here is not hypothetical —
+                    // it is a row that silently does nothing when a user clicks it.
+                    for (index, entry) in list.enumerated() {
+                        guard let object = entry.objectValue else { continue }
+                        for (key, inner) in object
+                        where PluginComponentCatalog.actionProps.contains(key) {
+                            guard let name = inner.stringValue, m.actions[name] == nil else {
+                                continue
+                            }
+                            error(
+                                "\(path).\(prop)[\(index)].\(key)",
+                                "action \"\(name)\" is not declared")
+                        }
+                    }
                 }
             }
         }
