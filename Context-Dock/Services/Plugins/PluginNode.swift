@@ -14,11 +14,25 @@ struct PluginNode: Codable, Equatable {
     let component: String
     let props: [String: PluginValue]
     let children: [PluginNode]
+    /// View nodes held in props rather than in `children`: a list's `row`, a grid's `cell`,
+    /// a listDetail's `detail`. They are templates — instantiated per item, never drawn once —
+    /// so they are deliberately NOT children. Keyed by the prop name so a diagnostic can say
+    /// `row` rather than an index. Derived from `props`, so `Equatable` needs no special case.
+    let nodeProps: [String: PluginNode]
 
     init(component: String, props: [String: PluginValue] = [:], children: [PluginNode] = []) {
         self.component = component
         self.props = props
         self.children = children
+        self.nodeProps = Self.nodeProps(from: props)
+    }
+
+    private static func nodeProps(from props: [String: PluginValue]) -> [String: PluginNode] {
+        props.reduce(into: [:]) { out, pair in
+            if let node = PluginComponentCatalog.nodeProp(key: pair.key, value: pair.value) {
+                out[pair.key] = node
+            }
+        }
     }
 
     private struct AnyKey: CodingKey {
@@ -47,15 +61,19 @@ struct PluginNode: Codable, Equatable {
             }
             self.props = props
             self.children = kids
+            self.nodeProps = Self.nodeProps(from: props)
         case .array(let a):
             props = [:]
             children = try a.map { try PluginNode(value: $0) }
+            nodeProps = [:]
         case .string, .number, .bool:
             props = ["text": body]
             children = []
+            nodeProps = [:]
         case .null:
             props = [:]
             children = []
+            nodeProps = [:]
         }
     }
 
@@ -81,6 +99,10 @@ struct PluginNode: Codable, Equatable {
         }
     }
 
-    /// Every node in the tree, depth first, self included.
-    var flattened: [PluginNode] { [self] + children.flatMap(\.flattened) }
+    /// Every node in the tree, depth first, self included — children and node props alike,
+    /// so a validator that walks this reaches a list's row template (#27).
+    var flattened: [PluginNode] {
+        [self] + children.flatMap(\.flattened)
+            + nodeProps.sorted { $0.key < $1.key }.flatMap { $0.value.flattened }
+    }
 }

@@ -179,4 +179,16 @@ struct PluginSchemaTests {
         let byApp = try manifest(#"{ "id": "x", "name": "X", "actions": { "run": { "type": "open", "app": "Sonos" } }, "primaryAction": "run" }"#)
         #expect(!errors(byApp).contains { $0.contains("open action needs") })
     }
+
+    @Test("A row action that is not declared is an error the schema now sees")
+    func rowActionMustBeDeclared() throws {
+        let m = try manifest(#"{ "id": "x", "name": "X", "views": { "panel": { "list": { "items": "{{lines}}", "row": { "title": "{{item.title}}", "action": "nope" } } } } }"#)
+        #expect(errors(m).contains { $0.contains("action \"nope\" is not declared") })
+    }
+
+    @Test("An unknown component inside a row template is an error")
+    func unknownComponentInsideARow() throws {
+        let m = try manifest(#"{ "id": "x", "name": "X", "views": { "panel": { "list": { "items": "{{lines}}", "row": { "hologram": {} } } } } }"#)
+        #expect(errors(m).contains { $0.contains("unknown component \"hologram\"") })
+    }
 }
