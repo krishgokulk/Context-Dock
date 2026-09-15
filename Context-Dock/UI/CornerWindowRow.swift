@@ -137,11 +137,14 @@ struct CornerWindowRow: View {
     }
 
     private func place(_ window: WindowSnapshot, at appKitPoint: NSPoint) {
-        guard let (point, screen) = AXWindowControl.axPointAndScreen(fromAppKit: appKitPoint),
-            let current = AXWindowControl.frame(windowID: window.id, bundleID: bundleID)
-        else { return }
-        let target = WindowPlacement.frame(drop: point, screen: screen, size: current.size)
-        AXWindowControl.place(windowID: window.id, bundleID: bundleID, frame: target)
+        // A snap zone under the pointer places it; anywhere else moves the window there.
+        if !SnapZoneOverlay.shared.drop(windowID: window.id, bundleID: bundleID) {
+            guard let (point, screen) = AXWindowControl.axPointAndScreen(fromAppKit: appKitPoint),
+                let current = AXWindowControl.frame(windowID: window.id, bundleID: bundleID)
+            else { return }
+            let target = WindowPlacement.frame(drop: point, screen: screen, size: current.size)
+            AXWindowControl.place(windowID: window.id, bundleID: bundleID, frame: target)
+        }
         AXWindowControl.raise(windowID: window.id, bundleID: bundleID)
         model.dismiss()
     }
@@ -161,6 +164,7 @@ struct WindowThumbnailDragSource: NSViewRepresentable {
     func makeNSView(context: Context) -> DragView {
         let view = DragView()
         view.window_ = window
+        view.bundleID = bundleID
         view.onClick = onClick
         view.onDropped = onDropped
         return view
@@ -168,12 +172,14 @@ struct WindowThumbnailDragSource: NSViewRepresentable {
 
     func updateNSView(_ view: DragView, context: Context) {
         view.window_ = window
+        view.bundleID = bundleID
         view.onClick = onClick
         view.onDropped = onDropped
     }
 
     final class DragView: NSView, NSDraggingSource {
         var window_: WindowSnapshot?
+        var bundleID = ""
         var onClick: () -> Void = {}
         var onDropped: (NSPoint) -> Void = { _ in }
         private var mouseDownPoint: NSPoint?
@@ -213,6 +219,17 @@ struct WindowThumbnailDragSource: NSViewRepresentable {
             .generic
         }
 
+        func draggingSession(_ session: NSDraggingSession, willBeginAt screenPoint: NSPoint) {
+            guard let window_ else { return }
+            let frame = AXWindowControl.frame(windowID: window_.id, bundleID: bundleID)
+                ?? CGRect(x: 0, y: 0, width: 900, height: 600)
+            SnapZoneOverlay.shared.begin(at: screenPoint, windowID: window_.id, windowFrame: frame)
+        }
+
+        func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+            SnapZoneOverlay.shared.update(to: screenPoint)
+        }
+
         func draggingSession(
             _ session: NSDraggingSession, endedAt screenPoint: NSPoint,
             operation: NSDragOperation
@@ -221,7 +238,10 @@ struct WindowThumbnailDragSource: NSViewRepresentable {
             // panel itself is corner-sized, so its frame is not the test; this view's is.
             if let panel = self.window {
                 let own = panel.convertToScreen(convert(bounds, to: nil))
-                if own.contains(screenPoint) { return }
+                if own.contains(screenPoint) {
+                    SnapZoneOverlay.shared.end()
+                    return
+                }
             }
             onDropped(screenPoint)
         }
