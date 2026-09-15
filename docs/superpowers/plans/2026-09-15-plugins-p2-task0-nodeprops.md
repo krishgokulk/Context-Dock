@@ -44,8 +44,20 @@ data contract for a list item's `detail`, not a view node, and promoting it woul
 **Files:**
 - Modify: `Context-Dock/Services/Plugins/PluginComponentCatalog.swift` (add `cell`; add the predicate)
 - Modify: `Context-Dock/Services/Plugins/PluginNode.swift` (the stored property, decode, encode, `flattened`)
+- Modify: `docs/architecture/PLUGINS.md` (the catalog's role — see below)
 - Test: `Context-DockTests/PluginNodePropsTests.swift` (new)
 - Test: `Context-DockTests/PluginSchemaTests.swift` (append two)
+
+**Documentation change, and it is not cosmetic.** `PLUGINS.md` currently calls the catalog "the
+single list of component names". After this task the catalog decides which props are view nodes,
+so **whatever the predicate cannot see, the schema cannot validate** — a template component
+missing from the catalog is a template nobody checks. Change that line to say so, in the Rules
+section beside "One renderer, many hosts":
+
+> **The catalog is load-bearing for validation, not just for naming.** `PluginComponentCatalog`
+> decides which props hold view nodes (`row`, `cell`, `detail`), and the schema only validates
+> what it can see — a component missing from the catalog is a template nobody checks. Adding a
+> component means adding it to the catalog first.
 
 **Interfaces produced** (Phase 2 tasks are written against these):
 
