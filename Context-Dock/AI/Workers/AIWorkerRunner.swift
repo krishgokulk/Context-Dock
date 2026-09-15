@@ -20,11 +20,25 @@ enum AIWorkerRunner {
         case .claudeCode:
             return await runClaudeCode(task, onProgress: onProgress)
         case .codex:
-            // Codex is discovered and offered only where it can be run; until its bounded
-            // invocation is written, saying so is better than launching it with a shape
-            // borrowed from another agent's flags.
-            return "Codex delegation is not wired yet — ask Claude Code, or run it yourself in "
-                + "\(task.authority.scopeDescription)."
+            return await runCodex(task, onProgress: onProgress)
+        }
+    }
+
+    /// Codex has no system-prompt flag, so the envelope rides at the top of the prompt; the
+    /// sandbox rides in the argv, which is the part that holds.
+    @MainActor
+    private static func runCodex(
+        _ task: AIWorkerTask,
+        onProgress: (@Sendable (String) -> Void)?
+    ) async -> String {
+        do {
+            return try await CodexCLIService.send(
+                prompt: systemPrompt(for: task) + "\n\n" + prompt(for: task),
+                workingDirectory: task.authority.allowedPaths.first,
+                timeout: task.timeout,
+                onProgress: onProgress)
+        } catch {
+            return "\(AIWorkerKind.codex.displayName) could not run: \(error.localizedDescription)"
         }
     }
 
