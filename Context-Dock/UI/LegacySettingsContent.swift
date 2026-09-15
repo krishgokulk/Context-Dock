@@ -248,6 +248,13 @@ struct GeneralSettingsView: View {
                                 + "keyword-first behaviour.")
                         Toggle("", isOn: $settings.agentModelFirstRouting).labelsHidden()
                     }
+                    SettingsDivider()
+                    SettingsRow {
+                        GeneralToggleLabel("Auto-shrink the search field",
+                            caption: "After 1 second with nothing typed, the corner's search "
+                                + "field folds into the dock strip. Typing brings it back.")
+                        Toggle("", isOn: $settings.autoShrinkInputField).labelsHidden()
+                    }
                 }
             }
 
