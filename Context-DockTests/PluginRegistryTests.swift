@@ -12,14 +12,19 @@ import Testing
 @MainActor
 struct PluginRegistryTests {
 
+    /// The dictionary key names the plugin *directory*, not its id — the directory is
+    /// deliberately not the manifest's id (a real pack layout doesn't guarantee that either;
+    /// see PluginPackTests.loadsPlugins, `sonos-now-playing` living in `now-playing`), so a
+    /// test that assumed directory name == id could not have caught a lookup that made the
+    /// same wrong assumption.
     private func root(with packs: [String: [String: String]]) throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("reg-\(UUID().uuidString)")
         for (packName, plugins) in packs {
             let folder = root.appendingPathComponent(packName)
             try FileManager.default.createDirectory(at: folder.appendingPathComponent("plugins"), withIntermediateDirectories: true)
             try #"{ "id": "\#(packName)", "version": "1.0.0" }"#.write(to: folder.appendingPathComponent("pack.json"), atomically: true, encoding: .utf8)
-            for (id, json) in plugins {
-                let dir = folder.appendingPathComponent("plugins/\(id)")
+            for (dirName, json) in plugins {
+                let dir = folder.appendingPathComponent("plugins/dir-\(dirName)")
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                 try json.write(to: dir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
             }
@@ -67,9 +72,13 @@ struct PluginRegistryTests {
 
     @Test("The folder of a plugin is the directory holding its manifest")
     func folderLookup() throws {
+        // The directory is named "dir-ok", not "ok" — proving this doesn't just re-derive
+        // <plugins>/<id>, it finds the real directory manifest.json was read from.
         let r = try root(with: ["one": ["ok": ok]])
         let registry = PluginRegistry(roots: [r], stateFile: r.appendingPathComponent("state.json"))
-        #expect(registry.folder(forPlugin: "ok")?.lastPathComponent == "ok")
+        let folder = try #require(registry.folder(forPlugin: "ok"))
+        #expect(folder.lastPathComponent == "dir-ok")
+        #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path))
     }
 
     @Test("A missing root is not an error")

@@ -83,11 +83,14 @@ final class PluginRegistry: ObservableObject {
         for pack in packs {
             for manifest in pack.plugins where !seen.contains(manifest.id) {
                 seen.insert(manifest.id)
-                // PluginPack's own doc comment fixes the layout as
-                // <pack>/plugins/<id>/manifest.json — the directory is named after the id
-                // by contract, so this needs no re-read/re-decode of every manifest.json in
-                // the pack to find which folder holds this one.
-                let folder = pack.folder.appendingPathComponent("plugins").appendingPathComponent(manifest.id)
+                // The plugin's directory is not guaranteed to be named after its id (see
+                // PluginPackTests: `sonos-now-playing` lives in a directory named
+                // `now-playing`), so this uses what PluginPack itself recorded while
+                // walking the pack rather than re-deriving or re-reading anything here.
+                // `pack.folders` and `pack.plugins` are populated together for every kept
+                // manifest, so the lookup always hits; the fallback is unreachable in
+                // practice and only avoids force-unwrapping a dictionary lookup.
+                let folder = pack.folders[manifest.id] ?? pack.folder
                 let errors = PluginSchema.hasErrors(pack.diagnostics[manifest.id] ?? [])
                 installed.append(InstalledPlugin(
                     manifest: manifest, packID: pack.info.id, folder: folder,

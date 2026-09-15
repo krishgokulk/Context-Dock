@@ -45,6 +45,10 @@ struct PluginPack: Equatable {
     let plugins: [PluginManifest]
     let diagnostics: [String: [PluginDiagnostic]]
     let loadErrors: [String]
+    /// Plugin id → the directory that held its manifest.json. The directory name is not
+    /// guaranteed to match the id (see `PluginPackTests.loadsPlugins`, `now-playing` holding
+    /// `sonos-now-playing`), so this is recorded while walking rather than assumed later.
+    let folders: [String: URL]
 
     static func load(from folder: URL) throws -> PluginPack {
         let packURL = folder.appendingPathComponent("pack.json")
@@ -61,6 +65,7 @@ struct PluginPack: Equatable {
         var plugins: [PluginManifest] = []
         var diagnostics: [String: [PluginDiagnostic]] = [:]
         var loadErrors: [String] = []
+        var folders: [String: URL] = [:]
         var seenIds = Set<String>()
 
         let pluginsDir = folder.appendingPathComponent("plugins")
@@ -89,13 +94,14 @@ struct PluginPack: Equatable {
                     seenIds.insert(manifest.id)
                     plugins.append(manifest)
                     diagnostics[manifest.id] = PluginSchema.validate(manifest)
+                    folders[manifest.id] = dir
                 }
             } catch {
                 loadErrors.append("\(dir.lastPathComponent)/manifest.json: \(error.localizedDescription)")
             }
         }
 
-        return PluginPack(info: info, folder: folder, plugins: plugins, diagnostics: diagnostics, loadErrors: loadErrors)
+        return PluginPack(info: info, folder: folder, plugins: plugins, diagnostics: diagnostics, loadErrors: loadErrors, folders: folders)
     }
 
     func isNewer(than other: PluginPack) -> Bool {

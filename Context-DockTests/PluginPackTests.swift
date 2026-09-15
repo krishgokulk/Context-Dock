@@ -41,6 +41,23 @@ struct PluginPackTests {
         #expect(pack.loadErrors.isEmpty)
     }
 
+    @Test("folders maps a plugin id to the directory that actually held its manifest")
+    func foldersMapsIdToRealDirectory() throws {
+        let folder = try makePack("sonos", plugins: [
+            "now-playing": PluginManifestTests.sonos,
+        ])
+        let pack = try PluginPack.load(from: folder)
+        #expect(pack.folders["sonos-now-playing"]?.lastPathComponent == "now-playing")
+
+        let dupFolder = try makePack("dup-folders", plugins: [
+            "alpha": #"{ "id": "same-id", "name": "Alpha", "views": { "panel": { "title": "A" } } }"#,
+            "beta": #"{ "id": "same-id", "name": "Beta", "views": { "panel": { "title": "B" } } }"#,
+        ])
+        let dupPack = try PluginPack.load(from: dupFolder)
+        #expect(dupPack.folders["same-id"]?.lastPathComponent == "alpha")
+        #expect(dupPack.folders.count == 1)
+    }
+
     @Test("A manifest that will not decode is reported, not fatal")
     func undecodableManifestIsReported() throws {
         let folder = try makePack("mixed", plugins: [
