@@ -157,7 +157,7 @@ struct CornerDockStrip: View {
         )
         .onHover { inside in
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
-            model.hoveredStripBundleID = inside ? slot.bundleID : nil
+            model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture { openApp(slot) }
         // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
@@ -190,6 +190,9 @@ struct CornerDockStrip: View {
         .onHover { inside in
             let id = pin.id.uuidString
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
+            // The same dwell the apps use, so a pinned file answers the pointer the way a
+            // running app does.
+            model.hoveredStripTarget = inside ? .pin(id: pin.id) : nil
         }
         .onTapGesture { open(pin, document: document) }
         .modifier(DockPinDrag(pinID: pin.id, dragging: $draggingPinID))

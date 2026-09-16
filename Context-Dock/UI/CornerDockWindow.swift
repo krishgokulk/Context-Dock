@@ -334,8 +334,11 @@ final class CornerDockController: NSObject {
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
                         ? AppChatListMetrics.size(rows: prompt.listRowCount)
-                        : (showsWindowRow ? windowRowSize : nil))),
+                        : (showsWindowRow
+                            ? windowRowSize
+                            : (showsPinPreview ? pinPreviewSize : nil)))),
             prompt: chatPresentation.isVisible ? promptSize : nil,
+            listAnchorOffset: hoverCardAnchorOffset,
             anchor: anchor, panelWidth: panel?.frame.width)
     }
 
@@ -373,6 +376,63 @@ final class CornerDockController: NSObject {
                 1,
                 AppWindowSnapshotService.shared
                     .windowSnapshots(for: prompt.windowRowBundleID ?? "").count))
+    }
+
+    /// How far the hover card has to move from where the stack would draw it — centred over
+    /// the field — to sit over the icon it is about.
+    ///
+    /// Taken as the difference between two rects `CornerDockLayout.slots` already worked
+    /// out, rather than repeating the arithmetic here. The cards are drawn by a centred
+    /// stack, not placed at the slot rect, so moving the rect alone moved only where the
+    /// shell listens for the mouse — drawn and hit-tested have to be the same number, and
+    /// this is how they stay that way. Zero for every other board, since nothing else asks
+    /// for an anchor offset.
+    var hoverCardDrawOffset: CGFloat {
+        guard showsWindowRow || showsPinPreview else { return 0 }
+        let slots = currentSlots()
+        guard let list = slots.list, let prompt = slots.prompt else { return 0 }
+        // Where the stack puts it without being asked: centred on the field when the shell
+        // is a centred row, flush with the anchored edge when it is a column.
+        let drawnMinX: CGFloat
+        switch anchor {
+        case .right: drawnMinX = prompt.maxX - list.width
+        case .left: drawnMinX = prompt.minX
+        case .center: drawnMinX = prompt.midX - list.width / 2
+        }
+        return list.minX - drawnMinX
+    }
+
+    /// Where the hover card wants to sit: over the icon it is about. Only the strip's own
+    /// two cards ask for this — the list, the snapshot and the extension panel belong to
+    /// the field and stay centred on it.
+    private var hoverCardAnchorOffset: CGFloat? {
+        guard showsWindowRow || showsPinPreview, let target = prompt.dockPreviewTarget
+        else { return nil }
+        return DockStripPlan.make(
+            running: prompt.stripIcons, pins: DockPinStore.shared.pins,
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible)
+        ).iconCenterOffset(for: target)
+    }
+
+    /// The other half of the strip's hover: a pinned file, folder or command, in the slot
+    /// the window row uses for apps. Both are "what is this icon?", so they share a slot
+    /// and can never be up at once.
+    var showsPinPreview: Bool {
+        chatPresentation.isVisible && chatPresentation.mode != .general
+            && prompt.phase == .dock && hoveredPin != nil
+    }
+
+    var hoveredPin: DockPin? {
+        guard let id = prompt.previewPinID else { return nil }
+        return DockPinStore.shared.pins.first { $0.id == id }
+    }
+
+    private var pinPreviewSize: CGSize {
+        guard let pin = hoveredPin else { return .zero }
+        let preview =
+            DockPinPreviewService.shared.preview(for: pin)
+            ?? .missing(name: pin.title, reason: "")
+        return DockPinPreviewMetrics.size(for: preview)
     }
 
     /// The app's commands, or what it can do — a card of its own above the field, and only
@@ -848,6 +908,12 @@ struct CornerDockSurface: View {
                 CornerWindowRow(bundleID: bundleID, model: prompt)
                     .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsPinPreview,
+                let pin = CornerDockController.shared.hoveredPin
+            {
+                CornerPinPreviewCard(pin: pin, model: prompt)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
     }
@@ -929,7 +995,14 @@ struct CornerDockSurface: View {
             // dock never has this problem because its bar is one fixed-width container
             // that content changes happen inside of, not a row that resizes around them.
             VStack(alignment: .center, spacing: CornerDockLayout.gap) {
+                // The strip's hover cards step sideways to stand over their icon, the way
+                // an icon's menu does; every other board keeps the field's centre, because
+                // it belongs to the field and not to one icon.
                 chatBoards
+                    .offset(x: CornerDockController.shared.hoverCardDrawOffset)
+                    .animation(
+                        .smooth(duration: 0.22),
+                        value: CornerDockController.shared.hoverCardDrawOffset)
                 chatSurface
             }
             .frame(width: AppChatPromptMetrics.width, alignment: .bottom)
@@ -956,6 +1029,10 @@ struct CornerDockSurface: View {
                 ClipboardDockPill(model: clipboardModel)
             }
             chatBoards
+                .offset(x: CornerDockController.shared.hoverCardDrawOffset)
+                .animation(
+                    .smooth(duration: 0.22),
+                    value: CornerDockController.shared.hoverCardDrawOffset)
             chatSurface
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: anchor.frameAlignment)

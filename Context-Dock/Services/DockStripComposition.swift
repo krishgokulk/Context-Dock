@@ -140,6 +140,38 @@ struct DockStripPlan {
             unresolvedDocumentIDs: environment.unresolved, tools: tools)
     }
 
+    /// How far from the strip's leading edge the centre of one icon sits, or nil when that
+    /// icon is not drawn — overflowed, unpinned, or an app that has quit.
+    ///
+    /// Pure, and it walks the row in exactly the order `CornerDockStrip` builds it: the
+    /// magnifier, the apps, the `+N` pill, the divider, the pins. A card that opens above
+    /// an icon has to agree with where that icon actually is, and the only way to be sure
+    /// is to count the same elements the HStack does.
+    func iconCenterOffset(for target: DockHoverTarget) -> CGFloat? {
+        typealias M = AppChatPromptMetrics
+        var cursor = M.dockInset
+        func advance(_ width: CGFloat) { cursor += width + M.dockIconGap }
+
+        advance(M.dockIconSize)  // the folded field
+        for slot in composition.apps {
+            if case .app(let bundleID) = target, slot.bundleID == bundleID {
+                return cursor + M.dockIconSize / 2
+            }
+            if case .pin(let id) = target, slot.pin?.id == id {
+                return cursor + M.dockIconSize / 2
+            }
+            advance(M.dockIconSize)
+        }
+        if layout.overflow > 0 { advance(M.dockIconSize) }
+        guard !composition.otherPins.isEmpty else { return nil }
+        advance(1)  // the hairline divider
+        for pin in composition.otherPins {
+            if case .pin(let id) = target, pin.id == id { return cursor + M.dockIconSize / 2 }
+            advance(M.dockIconSize)
+        }
+        return nil
+    }
+
     static func make(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
         unresolvedDocumentIDs: Set<String> = [], tools: Int

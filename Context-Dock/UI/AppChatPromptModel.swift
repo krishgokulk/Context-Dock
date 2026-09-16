@@ -79,16 +79,29 @@ final class AppChatPromptModel: ObservableObject {
     /// dragged out of the Dock while its app runs, it comes back next launch.
     @Published var hiddenRunningBundleIDs: Set<String> = []
 
-    /// The app whose icon the pointer is over in the strip, for the window row.
-    @Published var hoveredStripBundleID: String? {
+    /// What the pointer is over in the strip, for the card above it. An app answers with
+    /// its windows; a pinned file, folder or command answers with what it is.
+    @Published var hoveredStripTarget: DockHoverTarget? {
         didSet { scheduleWindowRowUpdate() }
     }
-    /// Which app the window row is showing, once the pointer has rested long enough. The
-    /// strip sets `hoveredStripBundleID` on every icon; this follows it after 250 ms and
-    /// lets go 150 ms after the pointer has left both the icon and the row.
-    @Published private(set) var windowRowBundleID: String?
+    /// What that card is showing, once the pointer has rested long enough. The strip sets
+    /// `hoveredStripTarget` on every icon; this follows it after 250 ms and lets go 150 ms
+    /// after the pointer has left both the icon and the card.
+    @Published private(set) var dockPreviewTarget: DockHoverTarget?
     private var windowRowTask: Task<Void, Never>?
     private var pointerInWindowRow = false
+
+    /// The app whose windows the row is showing, if that is what is up.
+    var windowRowBundleID: String? {
+        if case .app(let bundleID) = dockPreviewTarget { return bundleID }
+        return nil
+    }
+
+    /// The pin whose card is up, if that is what is up.
+    var previewPinID: UUID? {
+        if case .pin(let id) = dockPreviewTarget { return id }
+        return nil
+    }
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
@@ -724,13 +737,13 @@ final class AppChatPromptModel: ObservableObject {
 
     private func scheduleWindowRowUpdate() {
         windowRowTask?.cancel()
-        let target = hoveredStripBundleID
+        let target = hoveredStripTarget
         let delay: TimeInterval = target == nil ? 0.15 : 0.25
         windowRowTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
-            self.windowRowBundleID = target
+            self.dockPreviewTarget = target
         }
     }
 
@@ -767,8 +780,8 @@ final class AppChatPromptModel: ObservableObject {
     func dismiss() {
         cancel()
         windowRowTask?.cancel()
-        windowRowBundleID = nil
-        hoveredStripBundleID = nil
+        dockPreviewTarget = nil
+        hoveredStripTarget = nil
         query = ""
         suggestions = []
         capabilitySummary = ""

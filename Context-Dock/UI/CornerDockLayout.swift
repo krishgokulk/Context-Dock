@@ -110,6 +110,11 @@ enum CornerDockLayout {
     static func slots(
         shelf: CGSize? = nil, preview: CGSize? = nil, clipboard: CGSize? = nil,
         selection: CGSize? = nil, list: CGSize? = nil, prompt: CGSize? = nil,
+        /// Where the card in the list slot wants its centre, measured from the prompt's own
+        /// leading edge. The strip's hover cards use it so a preview opens above the icon it
+        /// belongs to instead of in the middle of the dock; everything else leaves it nil
+        /// and keeps the centred placement.
+        listAnchorOffset: CGFloat? = nil,
         anchor: CornerDockAnchor = .right, panelWidth: CGFloat? = nil
     ) -> (
         shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
@@ -137,10 +142,27 @@ enum CornerDockLayout {
             return rect
         }
 
+        /// A card asked to sit over a point, kept on the panel. Pointing at an icon near
+        /// the edge would otherwise put half the card off-screen, and a card that cannot be
+        /// read is worse than one that is not quite over its icon.
+        func anchored(_ size: CGSize, over point: CGFloat) -> CGFloat {
+            min(max(pad, point - size.width / 2), panel.width - pad - size.width)
+        }
+
         // The app's commands sit directly above the field they were typed into, the way
         // the clip preview sits directly above the list it was chosen from.
         let promptRect = place(prompt)
-        let listRect = place(list)
+        // The same rule at the edge anchors: over the icon when one asked for it, on the
+        // anchored edge otherwise.
+        let listRect: CGRect? = {
+            guard let list else { return nil }
+            guard let listAnchorOffset, let promptRect else { return place(list) }
+            let rect = CGRect(
+                x: anchored(list, over: promptRect.minX + listAnchorOffset), y: baseline,
+                width: list.width, height: list.height)
+            baseline = rect.maxY + gap
+            return rect
+        }()
         // The selection sits above the chat that will act on it, and below the clipboard.
         let selectionRect = place(selection)
 
@@ -172,14 +194,17 @@ enum CornerDockLayout {
             }
 
             // What answers the field sits above the field, centred on it.
-            func placeAbovePrompt(_ size: CGSize?, y: CGFloat) -> CGRect? {
+            func placeAbovePrompt(_ size: CGSize?, y: CGFloat, offset: CGFloat? = nil)
+                -> CGRect?
+            {
                 guard let size else { return nil }
-                return CGRect(
-                    x: rowPromptRect.midX - size.width / 2, y: y,
-                    width: size.width, height: size.height)
+                let x =
+                    offset.map { anchored(size, over: rowPromptRect.minX + $0) }
+                    ?? (rowPromptRect.midX - size.width / 2)
+                return CGRect(x: x, y: y, width: size.width, height: size.height)
             }
             var above = rowPromptRect.maxY + gap
-            let rowListRect = placeAbovePrompt(list, y: above)
+            let rowListRect = placeAbovePrompt(list, y: above, offset: listAnchorOffset)
             if let rowListRect { above = rowListRect.maxY + gap }
             let rowSelectionRect = placeAbovePrompt(selection, y: above)
 
