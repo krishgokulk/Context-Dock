@@ -13,15 +13,495 @@
 import SwiftUI
 import EventKit
 import Contacts
+import UniformTypeIdentifiers
 
 extension LauncherView {
+
+    /// Bundle IDs the user granted to this conversation with "Enable <app> for this chat".
+    /// A per-chat grant is explicit consent, so it makes an app actionable exactly like a
+    /// persistent App Adapters entry — it just expires with the conversation.
+    func chatGrantedBundleIds() -> Set<String> {
+        Set(chatFocusApps.map(\.bundleId))
+    }
+
+    /// The app this chat surface is scoped to, when it is a real app scope. Context Dock's
+    /// frontmost-app chat ("Chat with Safari") names the app in the surface, so the resolver
+    /// can target it without the user repeating the name in every sentence.
+    func scopedChatApp() -> (name: String, bundleId: String)? {
+        guard let scoped = l2.targetApp else { return nil }
+        let bundleId = scoped.bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = scoped.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !bundleId.isEmpty, !name.isEmpty,
+            !bundleId.hasPrefix("scope://"), !bundleId.hasPrefix("cli://")
+        else { return nil }
+        return (name, bundleId)
+    }
+
+    /// One step of the live route trace — the same treatment Selection Scope gets: shown
+    /// beside the typing indicator now, kept on the finished answer as the "N steps"
+    /// disclosure. Every line is work the app performed, never model reasoning.
+    func actionTraceStep(_ text: String) {
+        aiMode.loadingStatus = text
+        aiMode.routerTrace.append(text)
+    }
+
+    /// Honest answer for a command that named a target but matched no route.
+    ///
+    /// Returns nil for anything that is not clearly a command against a known app — ordinary
+    /// conversation must still reach the provider. When it does apply, the answer reports the
+    /// search that just ran (the live trace lines, which are real work) and the specific
+    /// thing that is missing, rather than a plausible-sounding paragraph about menu items the
+    /// app may not have.
+    func noRouteGuidance(query: String, scoped: (name: String, bundleId: String)?) -> String? {
+        guard GeneralAIActionResolver.shared.looksExecutable(query) else { return nil }
+        let target: (name: String, bundleId: String)? =
+            scoped ?? GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+        guard let target else { return nil }
+
+        var lines = ["I couldn’t find a way to do that in **\(target.name)**."]
+
+        let searched = aiMode.routerTrace.filter { !$0.hasPrefix("Reading ") }
+        if !searched.isEmpty {
+            lines.append("")
+            lines.append("What I checked:")
+            lines.append(contentsOf: searched.map { "• \($0)" })
+        }
+
+        var fixes: [String] = []
+        let isRunning = !NSRunningApplication
+            .runningApplications(withBundleIdentifier: target.bundleId)
+            .filter { !$0.isTerminated }
+            .isEmpty
+        let menuCacheWarm = !AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: target.bundleId, appName: target.name,
+            query: "", maxResults: 1
+        ).isEmpty
+
+        if !menuCacheWarm {
+            fixes.append(
+                isRunning
+                    ? "I haven’t read \(target.name)’s menus yet. Ask again and I’ll open its menu bar to learn the commands."
+                    : "\(target.name) isn’t running, so its menus haven’t been read. Launch it once and ask again.")
+        }
+        if AppAdapterManager.shared.adapter(for: target.bundleId) == nil,
+            !chatGrantedBundleIds().contains(target.bundleId)
+        {
+            fixes.append(
+                "Add \(target.name) in Settings → App Adapters to give it a permanent capability set.")
+        }
+        if menuCacheWarm {
+            fixes.append(
+                "\(target.name) may not expose this as a menu command or shortcut. If it has a CLI, add it in Settings → Terminal Tools and I can drive it from there.")
+        }
+
+        if !fixes.isEmpty {
+            lines.append("")
+            lines.append("What would make it work:")
+            lines.append(contentsOf: fixes.map { "• \($0)" })
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Runs the route the user picked, by id, so the executed action is exactly the one
+    /// offered rather than something re-resolved from the answer text.
+    /// - Parameter inDock: append the result to the Context Dock transcript instead of
+    ///   General Chat's. Both surfaces render the same message type, so a pick made in one
+    ///   must not post its receipt into the other.
+    func runPickedActionChoice(_ choice: ActionChoice, inDock: Bool = false) {
+        guard let candidate = pendingActionCandidates.first(where: { $0.id == choice.id })
+        else { return }
+        let alternatives = pendingActionCandidates.filter { $0.id != choice.id }
+        let query = pendingActionQuery
+        pendingActionCandidates = []
+        aiMode.pendingActionChoices = []
+        if inDock {
+            for index in l2.chatMessages.indices {
+                l2.chatMessages[index].actionChoices.removeAll { $0.id == choice.id }
+            }
+            runPickedDockNativeAction(candidate, query: query)
+            return
+        }
+        Task {
+            let result = await runGeneralAIAction(
+                candidate, alternatives: alternatives, query: query)
+            await MainActor.run {
+                let receipt = AIChatMessage(
+                    role: .assistant, content: result,
+                    trace: inDock ? l2.routerTrace : aiMode.routerTrace)
+                if inDock {
+                    l2.chatMessages.append(receipt)
+                } else {
+                    aiMode.messages.append(receipt)
+                }
+            }
+        }
+    }
+
+    /// A scoped chat action button is explicit Allow Once. Keep its progress and receipt in
+    /// Context Dock rather than borrowing General Chat state, while reusing the same executor.
+    func runPickedDockNativeAction(_ candidate: DoraXActionCandidate, query: String) {
+        let appName = candidate.appName ?? "app"
+        let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
+        l2.isLoading = true
+        l2.routerTrace = []
+        dockTraceStep(isComputerUse
+            ? "Approved Computer Use for \(appName)"
+            : "Approved \(candidate.routeLabel): \(candidate.title)")
+        l2.currentTask = Task {
+            if isComputerUse {
+                await MainActor.run { dockTraceStep("Launching or restoring \(appName)…") }
+                if let bundleID = candidate.bundleID,
+                    let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundleID)
+                {
+                    await MenuExecutionCoordinator.restoreWindowIfAllMinimized(running)
+                }
+                await MainActor.run {
+                    let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+                    dockTraceStep("Live-verifying \(path)…")
+                }
+            } else {
+                await MainActor.run { dockTraceStep("Running \(candidate.title)…") }
+            }
+            let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.userPickedButton))
+            await MainActor.run {
+                dockTraceStep(result.success ? "Ran \(candidate.title)" : "\(candidate.title) failed")
+                let route = candidate.menuPath?.joined(separator: " → ")
+                    ?? candidate.routeLabel
+                let outputFiles: [RecentFileAction] = {
+                    guard result.success,
+                        let rawPath = candidate.inputValues["savePath"], !rawPath.isEmpty
+                    else { return [] }
+                    let expanded = (rawPath as NSString).expandingTildeInPath
+                    guard FileManager.default.fileExists(atPath: expanded) else { return [] }
+                    return [RecentFileAction(url: URL(fileURLWithPath: expanded))]
+                }()
+                let capabilityID = candidate.capabilityID ?? ""
+                let noteTasks = capabilityID == "notes.extract_tasks"
+                    ? structuredNoteTasks(from: result.message) : []
+                let relatedNotes = capabilityID == "notes.link_related"
+                    ? structuredRelatedNotes(from: result.message) : []
+                let reminderResults = capabilityID.hasPrefix("reminders.")
+                    ? structuredReminderResults(from: result.message, capabilityID: capabilityID)
+                    : []
+                l2.chatMessages.append(
+                    AIChatMessage(
+                        role: .assistant,
+                        content: reminderResults.isEmpty ? result.message : "",
+                        isError: !result.success,
+                        recentFiles: outputFiles,
+                        noteResults: relatedNotes,
+                        noteTasks: noteTasks,
+                        reminderResults: reminderResults,
+                        mcpToolsRan: [isComputerUse
+                            ? "Computer Use · \(route)"
+                            : "\(candidate.source == .mcp ? "MCP" : candidate.routeLabel) · \(candidate.capabilityID ?? candidate.title)"],
+                        trace: l2.routerTrace))
+                l2.isLoading = false
+                l2.loadingStatus = nil
+                l2.currentTask = nil
+            }
+        }
+    }
+
+    /// Turns an action on a grounded reminder row into the same explicit approval flow used
+    /// by typed requests. The row never mutates optimistic UI or bypasses capability policy.
+    func offerReminderRowAction(_ reminder: ReminderResultAction, operation: String) {
+        let query = "\(operation) \(reminder.title)"
+        let candidates = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: "Reminders", bundleID: "com.apple.reminders", query: query)
+        guard let candidate = candidates.first else { return }
+        pendingActionCandidates = candidates
+        pendingActionQuery = query
+        let choice = ActionChoice(
+            id: candidate.id,
+            title: operation == "delete" ? "Delete" : "Mark Complete",
+            routeLabel: "Reminders · \(candidate.capabilityID ?? operation)",
+            appName: "Reminders")
+        l2.chatMessages.append(
+            AIChatMessage(
+                role: .assistant,
+                content: scopedActionPrompt(candidate, appName: "Reminders"),
+                actionChoices: [choice]))
+    }
+
+    /// Converts the stable local Reminders capability output into native rows without
+    /// another provider call. This keeps task titles grounded and saves tokens.
+    private func structuredReminderResults(
+        from output: String, capabilityID: String
+    ) -> [ReminderResultAction] {
+        func quotedTitle(_ text: String) -> String? {
+            guard let first = text.firstIndex(of: "'"),
+                let last = text.lastIndex(of: "'"), first < last
+            else { return nil }
+            return String(text[text.index(after: first)..<last])
+        }
+
+        switch capabilityID {
+        case "reminders.create":
+            return quotedTitle(output).map { [ReminderResultAction(title: $0, state: .created)] } ?? []
+        case "reminders.complete":
+            return quotedTitle(output).map { [ReminderResultAction(title: $0, state: .completed)] } ?? []
+        case "reminders.delete":
+            return quotedTitle(output).map { [ReminderResultAction(title: $0, state: .deleted)] } ?? []
+        case "reminders.list", "reminders.today", "reminders.overdue":
+            return output.components(separatedBy: .newlines).compactMap { rawLine in
+                var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard line.hasPrefix("•") else { return nil }
+                line.removeFirst()
+                line = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = line.components(separatedBy: " — ")
+                let title = parts.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !title.isEmpty else { return nil }
+                let detail = parts.dropFirst().joined(separator: " — ")
+                    .replacingOccurrences(of: "⚠️ overdue", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let overdue = capabilityID == "reminders.overdue" || rawLine.contains("overdue")
+                return ReminderResultAction(
+                    title: title,
+                    detail: detail.isEmpty ? nil : detail,
+                    state: overdue ? .overdue : .active)
+            }
+        default:
+            return []
+        }
+    }
+
+    /// Convert the stable local MCP receipt into task rows. This is deliberately
+    /// deterministic: presentation never spends another model request or invents data.
+    private func structuredNoteTasks(from output: String) -> [NoteTaskAction] {
+        output.components(separatedBy: .newlines).compactMap { rawLine in
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty,
+                !line.hasPrefix("Tasks from"),
+                !line.hasPrefix("(Read-only")
+            else { return nil }
+            line = line.replacingOccurrences(
+                of: #"^\s*(?:[-*•]|\d+[.)]|\[[ xX]\])\s*"#,
+                with: "", options: .regularExpression)
+            guard !line.isEmpty else { return nil }
+            return NoteTaskAction(text: line)
+        }
+    }
+
+    /// `notes.link_related` returns ID/title/folder blocks. Parse those blocks into
+    /// the same native note cards used by Notes search, including direct Open actions.
+    private func structuredRelatedNotes(from output: String) -> [NoteSearchAction] {
+        output.components(separatedBy: "\n---\n").compactMap { block in
+            var id = ""
+            var title = ""
+            var folder = ""
+            for rawLine in block.components(separatedBy: .newlines) {
+                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                if line.hasPrefix("ID: ") { id = String(line.dropFirst(4)) }
+                if line.hasPrefix("Title: ") { title = String(line.dropFirst(7)) }
+                if line.hasPrefix("Folder: ") { folder = String(line.dropFirst(8)) }
+            }
+            guard !id.isEmpty, !title.isEmpty else { return nil }
+            return NoteSearchAction(
+                id: id, title: title, folder: folder,
+                snippet: "Related to the selected note", modifiedDate: nil)
+        }
+    }
+
+    /// Resolve the scoped request against the complete App Adapter inventory. Menu and
+    /// keyboard routes are offered as a Computer Use button; data routes continue into the
+    /// MCP/API/provider pipeline. The trace remains attached either way.
+    func offerScopedNativeAppAction(
+        query: String, bundleId: String, appName: String, requestID: UUID
+    ) async -> Bool {
+        guard !bundleId.isEmpty else { return false }
+        // "Group those results and save them as Markdown" derives a new artifact from the
+        // previous chat receipt. Code's File > Save As menu only saves the active editor and
+        // cannot perform that transformation, so keep this turn in the agent/tool pipeline.
+        guard !DerivedArtifactIntent.shouldBypassNativeAppMenu(query) else { return false }
+        // A question is answered, never offered as an action. Without this the gate below
+        // is "some capability's keywords overlap the sentence, or it looks executable" —
+        // which turned "is this page related to our contextdock project in any ways you
+        // think?" into "I found an enabled Safari tool for this task. Run it? → Run Open
+        // Social". The guard existed on the General AI path and not on this one; a rule
+        // that lives in one caller is not a rule.
+        guard !GeneralAIActionResolver.shared.asksOnly(query) else { return false }
+        // Read-style verbs such as "summarize" are conversation-shaped globally, but in a
+        // Notes scope they name an enabled tool. Resolve the scoped catalog before applying
+        // the generic executable-intent gate so the provider cannot guess "I can't read it".
+        let scopedRegistered = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: appName, bundleID: bundleId, query: query)
+        guard !scopedRegistered.isEmpty
+            || GeneralAIActionResolver.shared.looksExecutable(query)
+        else { return false }
+        await MainActor.run {
+            l2.routerTrace = []
+            dockTraceStep("Scanning \(appName) App Adapter…")
+        }
+        // Always use the complete resolver. It already includes registered adapter tools,
+        // saved actions, cached menus, known shortcuts, MCP/API/CLI and accessibility routes.
+        // Short-circuiting when one registered tool matched hid better native commands and
+        // made user-added adapters behave differently from apps without adapters.
+        // The app the sentence names, if it is not this one. Resolution only — nothing runs
+        // without the consent prompt below. Without it a cross-app request could produce no
+        // capability candidates at all, because the other app's tools were filtered out
+        // while its cached MENUS still matched on a word: "add current page to bookmarks
+        // note" found Notes' `Edit → Add Link…` and never saw notes.append, which is the
+        // thing that actually does this.
+        let namedElsewhere = await MainActor.run {
+            GeneralAIActionResolver.shared.namedInstalledApp(in: query)
+        }
+        var resolutionScope: Set<String> = [bundleId]
+        if let namedElsewhere,
+            namedElsewhere.bundleId.caseInsensitiveCompare(bundleId) != .orderedSame
+        {
+            resolutionScope.insert(namedElsewhere.bundleId)
+        }
+        let resolution = await GeneralAIActionResolver.shared.resolve(
+            query: query,
+            chatAllowedBundleIds: resolutionScope,
+            scopedApp: (appName, bundleId),
+            onStep: { [self] step in
+                MainActor.assumeIsolated { dockTraceStep(step) }
+            })
+        // Shadow only: what the one index would have ranked for this sentence, beside what
+        // the live routers chose. Changes nothing; see CapabilityIndexShadow.
+        CapabilityIndexShadow.observe(
+            query: query,
+            liveChoice: {
+                guard case .candidates(let found) = resolution, let first = found.first
+                else { return "none" }
+                return first.capabilityID ?? first.id
+            }(),
+            scopedTo: appName)
+
+        // Preference by ROUTE, not by position in the resolver's list.
+        //
+        // `first(where:)` over a predicate that accepted menus and capabilities equally meant
+        // whichever the ranker happened to put first won — and word overlap puts a menu item
+        // called "Add Link…" above notes.append for a sentence containing "add". So a click
+        // on someone's screen, in an app they had not opened, outranked the tool written to
+        // do exactly this. The order below is the one ChatRouteResolver already documents:
+        // the app's own tools first, structured data next, inspectable commands after that,
+        // and driving the screen last, because it is the only one with a visible cost and
+        // the only one that fails when the app is in the wrong state — which is precisely how
+        // `Edit → Add Link…` failed: disabled unless a note is already open.
+        func preference(_ candidate: DoraXActionCandidate) -> Int {
+            switch candidate.route {
+            case .adapter: return candidate.capabilityID != nil ? 0 : 1
+            case .mcp: return 2
+            case .api: return 3
+            case .cli: return 4
+            case .shortcutRunner: return 5
+            case .automation: return 6
+            case .verifiedMenu: return 7
+            case .keyboardShortcut: return 8
+            case .axFallback, .appLaunch: return 9
+            }
+        }
+        guard case .candidates(let candidates) = resolution else {
+            await MainActor.run { dockTraceStep("No exact native action selected") }
+            return false
+        }
+        var runnable: [DoraXActionCandidate] = []
+        for option in candidates {
+            let isRunnable: Bool
+            switch option.route {
+            case .verifiedMenu, .keyboardShortcut, .mcp, .cli:
+                isRunnable = true
+            case .adapter:
+                isRunnable = option.capabilityID != nil
+            default:
+                isRunnable = false
+            }
+            if isRunnable { runnable.append(option) }
+        }
+        let best = runnable.min { left, right in
+            let leftRank = preference(left)
+            let rightRank = preference(right)
+            if leftRank != rightRank { return leftRank < rightRank }
+            return left.confidence > right.confidence
+        }
+        guard let candidate = best else {
+            await MainActor.run { dockTraceStep("No exact native menu action selected") }
+            return false
+        }
+        await MainActor.run {
+            let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
+            let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+            dockTraceStep("Ready: \(candidate.routeLabel) · \(path)")
+            pendingActionCandidates = candidates
+            pendingActionQuery = query
+            // The button names the app it will operate. "Use Safari" on a button that drives
+            // Notes is the same lie as the prompt above it, and it is the half the user
+            // actually clicks.
+            let targetName = candidate.appName?.isEmpty == false ? candidate.appName! : appName
+            let choice = ActionChoice(
+                id: candidate.id,
+                title: isComputerUse ? "Use \(targetName)" : "Run \(candidate.title)",
+                routeLabel: isComputerUse ? "Computer Use · \(path)" : "\(candidate.routeLabel) · \(candidate.capabilityID ?? path)",
+                appName: appName)
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: scopedActionPrompt(candidate, appName: appName),
+                    trace: l2.routerTrace,
+                    actionChoices: [choice]))
+            finishL2AIRequest(requestID)
+        }
+        return true
+    }
+
+    private func scopedActionPrompt(_ candidate: DoraXActionCandidate, appName: String) -> String {
+        let capabilityID = candidate.capabilityID ?? ""
+        let title = candidate.inputValues["title"] ?? candidate.inputValues["matchTitle"]
+        if capabilityID == "reminders.create", let title {
+            return "Create “\(title)” in Reminders?"
+        }
+        if capabilityID == "reminders.complete", let title {
+            return "Mark “\(title)” as complete?"
+        }
+        if capabilityID == "reminders.delete", let title {
+            return "Delete “\(title)” from Reminders?"
+        }
+        let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
+        // The app that will be driven, which is not always the app being chatted with.
+        // Asked in a Safari thread to save a page into Notes, this offered to run a NOTES
+        // menu item under the words "a native Safari command" — so the one detail that
+        // mattered, that another app was about to be operated, was the detail it hid.
+        let targetName = candidate.appName?.isEmpty == false ? candidate.appName! : appName
+        let crossApp = !targetName.isEmpty
+            && targetName.caseInsensitiveCompare(appName) != .orderedSame
+        let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
+        if crossApp {
+            return "This needs \(targetName), not \(appName) — it would run "
+                + "\(path) there. Allow \(targetName) for this chat and run it?"
+        }
+        return isComputerUse
+            ? "I found a native \(targetName) command for this task. Run it?"
+            : "I found an enabled \(targetName) tool for this task. Run it?"
+    }
 
     /// Executable-action interception for General AI Chat. Returns the final chat
     /// answer when the query was handled as a DoraX action, or nil to fall through
     /// to the normal provider pipeline.
     func generalAIExecutableActionAnswer(query: String) async -> String? {
-        await MainActor.run { aiMode.loadingStatus = "Checking App Adapter capabilities…" }
-        let resolution = await GeneralAIActionResolver.shared.resolve(query: query)
+        let scoped = await MainActor.run { () -> (name: String, bundleId: String)? in
+            // Start this turn's trace clean; a stale one would be attached to the answer.
+            aiMode.routerTrace = []
+            // General Chat's app picker is an explicit scope too. With exactly one app
+            // selected, short commands such as "Run New Tab" must resolve inside Safari
+            // without requiring the user to repeat "Safari" in every message.
+            let selectedScope = chatFocusApps.count == 1
+                ? (chatFocusApps[0].name, chatFocusApps[0].bundleId) : nil
+            let scoped = scopedChatApp() ?? selectedScope
+            actionTraceStep(
+                scoped.map { "Reading \($0.name) capabilities…" }
+                    ?? "Reading available capabilities…")
+            return scoped
+        }
+        let resolution = await GeneralAIActionResolver.shared.resolve(
+            query: query,
+            chatAllowedBundleIds: chatGrantedBundleIds(),
+            scopedApp: scoped,
+            onStep: { [self] text in
+                MainActor.assumeIsolated { actionTraceStep(text) }
+            })
 
         switch resolution {
         case .none:
@@ -31,9 +511,25 @@ extension LauncherView {
             if let scripted = await appleScriptModelFallbackAnswer(query: query) {
                 return scripted
             }
+            // A command aimed at a known app that found no route is a dead end, and sending
+            // it to a provider produces a confident paragraph about menus the app may not
+            // have. Say what was searched and what would make it work instead.
+            if let guidance = await MainActor.run(body: {
+                noRouteGuidance(query: query, scoped: scoped)
+            }) {
+                await MainActor.run {
+                    aiMode.loadingStatus = nil
+                    aiMode.actionProgress = nil
+                    aiMode.pendingToolChips = ["DoraX route lookup"]
+                }
+                return guidance
+            }
             await MainActor.run {
                 aiMode.loadingStatus = nil
                 aiMode.actionProgress = nil
+                // Nothing was routed, so the steps describe a search that found nothing.
+                // Attaching them to a plain conversational answer would be noise.
+                aiMode.routerTrace = []
             }
             return nil
 
@@ -63,6 +559,12 @@ extension LauncherView {
                 }
                 return nil
             }
+            await MainActor.run {
+                actionTraceStep("Best path: \(best.title) · \(best.routeLabel)")
+                if !best.debugReason.isEmpty {
+                    actionTraceStep("Chosen because \(best.debugReason)")
+                }
+            }
             // Confirmed executable → NOW build the planner strip (never for plain Q&A).
             let discovered = discoveredRouteLabels(from: candidates)
             await MainActor.run {
@@ -83,10 +585,18 @@ extension LauncherView {
                     aiMode.actionProgress = nil
                     aiMode.pendingToolChips = ["DoraX route lookup"]
                 }
-                let list = candidates.prefix(3)
-                    .map { "• \($0.title) — \($0.routeLabel)" }
-                    .joined(separator: "\n")
-                return "I found these possible actions — which one should I run?\n" + list
+                await MainActor.run {
+                    // Offered as buttons on the answer instead of printed into it: the old
+                    // bullet list asked a question the user could not answer by clicking.
+                    aiMode.pendingActionChoices = candidates.prefix(3).map {
+                        ActionChoice(
+                            id: $0.id, title: $0.title, routeLabel: $0.routeLabel,
+                            appName: $0.appName)
+                    }
+                    pendingActionCandidates = Array(candidates.prefix(3))
+                    pendingActionQuery = query
+                }
+                return "I found more than one way to do that — pick one:" 
             }
             return await runGeneralAIAction(
                 best, alternatives: Array(candidates.dropFirst()), query: query)
@@ -95,6 +605,16 @@ extension LauncherView {
             return await runCompoundAction(
                 appName: appName, bundleID: bundleID, steps: steps)
         }
+    }
+
+    /// Model-first affects ambiguous language, not an exact action installed in the sole
+    /// app the user explicitly selected. Returning true here keeps deterministic work local
+    /// while preserving model-first behaviour for ordinary and cross-app requests.
+    func hasExactSelectedAdapterAction(query: String) -> Bool {
+        guard chatFocusApps.count == 1 else { return false }
+        let app = chatFocusApps[0]
+        return AppAdapterManager.shared.scoredActions(for: app.bundleId, query: query)
+            .contains { $0.score >= AppAdapterManager.adapterActionStrongMatchScore }
     }
 
     /// Execute an ordered compound plan ("save and quit vscode"): activate the app, warm its
@@ -188,11 +708,9 @@ extension LauncherView {
         }
         guard let candidate else { return false }
 
-        if !GeneralAIActionApprovalStore.isAlwaysAllowed(candidate.permissionKey) {
-            let decision = await GeneralAIActionApprovalCenter.shared.request(candidate: candidate)
-            if decision == .cancel { return false }
-        }
-        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        // No card of its own: a compound step has no progress strip to sequence around
+        // the prompt, so it hands approval to the executor and lets the shared gate ask.
+        let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .ask)
         return result.success
     }
 
@@ -374,7 +892,7 @@ extension LauncherView {
             aiMode.actionProgress?.advance(to: "Executing")
             aiMode.loadingStatus = generalAIExecutionStatus(for: candidate)
         }
-        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.approvalCard))
 
         if result.success {
             // Stage 7 — verify the write actually landed before claiming success.
@@ -383,23 +901,68 @@ extension LauncherView {
                 aiMode.loadingStatus = "Verifying…"
             }
             let verification = await GeneralAIActionExecutor.shared.verify(candidate)
+            // How an outcome reads is decided once, here, next to the receipts it has to
+            // agree with. It used to be decided twice — the same three-way switch ran again
+            // below to pick the sentence — which is one edit away from a message that says
+            // verified over a receipt that says it wasn't.
+            let outcomeText: String
+            switch verification {
+            case .verified(let refined):
+                outcomeText = refined ?? result.message
+            case .notApplicable:
+                outcomeText = result.message
+                    + "\n\nExecution receipt: executor confirmed success; this route has no independent read-back verification."
+            case .contradicted(let evidence):
+                // The read-back disproved it. Saying "I couldn't verify" here would be the
+                // softer, wronger sentence: nothing is uncertain, the action did not land.
+                outcomeText = "That didn't take effect. \(evidence)"
+            case .unverified(let reason):
+                let openHint = candidate.appName.map { " You can open \($0) to check." } ?? ""
+                outcomeText = "I completed the request, but I couldn't verify the final result. "
+                    + "\(reason)\(openHint)"
+            }
             await MainActor.run {
                 aiMode.loadingStatus = nil
-                switch verification {
-                case .verified:
+                var receipts = [DoraXActionReceipt(AIProviderService.ExecutedCommand(
+                    command: "adapter_action(\(candidate.adapterActionID ?? candidate.capabilityID ?? candidate.id))",
+                    output: result.message,
+                    success: true,
+                    isVerification: false
+                ))]
+                // One value decides the chip, the receipt and whether the progress ring
+                // finishes or fails, so those three can no longer disagree about the turn.
+                let outcome = verification.status
+                switch outcome {
+                case .verified, .notApplicable:
                     aiMode.actionProgress?.finish()
-                    aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)", "Verified"]
-                case .skipped:
-                    aiMode.actionProgress?.finish()
-                    aiMode.pendingToolChips = [
-                        "\(candidate.title) · \(candidate.routeLabel)", "Executor confirmed",
-                    ]
-                case .unverified:
+                case .contradicted, .unverified:
                     aiMode.actionProgress?.failed = true
-                    aiMode.pendingToolChips = [
-                        "\(candidate.title) · \(candidate.routeLabel)", "Verification failed",
-                    ]
                 }
+                aiMode.pendingToolChips = [
+                    "\(candidate.title) · \(candidate.routeLabel)", outcome.chipLabel,
+                ]
+                // A route with no verifier adds no verification receipt — there was nothing
+                // to read back, and a receipt saying so would be evidence of an absence.
+                if let evidence = verification.evidence
+                    ?? (outcome == .verified ? "The requested outcome was observed." : nil)
+                {
+                    receipts.append(DoraXActionReceipt(AIProviderService.ExecutedCommand(
+                        command: "verify_adapter_outcome(\(candidate.title))",
+                        output: evidence,
+                        success: outcome.claimsSuccess,
+                        isVerification: true
+                    )))
+                }
+                // The typed record of the turn, built where the facts are. The wording is
+                // decided several branches below — one of them re-resolves and runs a second
+                // action — so the answer is attached by whichever surface ends up showing it.
+                aiMode.pendingWorkflowResult = GeneralChatWorkflowResult(
+                    answer: outcomeText,
+                    route: .classifying(candidate.route),
+                    executionRoute: candidate.route,
+                    taskRunID: TaskRunStore.activeRunID,
+                    receipts: receipts,
+                    verification: outcome)
                 aiMode.actionProgress = nil
             }
             switch verification {
@@ -412,14 +975,21 @@ extension LauncherView {
                 // launch → verified shortcut/menu instead of stopping after launch.
                 if candidate.route == .appLaunch, candidate.caveat != nil,
                     let bundleID = candidate.bundleID,
-                    AppAdapterManager.shared.adapter(for: bundleID) != nil,
+                    chatGrantedBundleIds().contains(bundleID)
+                        || AppAdapterManager.shared.adapter(for: bundleID) != nil,
                     let app = NSRunningApplication
                         .runningApplications(withBundleIdentifier: bundleID)
                         .first(where: { !$0.isTerminated })
                 {
                     await MainActor.run { aiMode.loadingStatus = "Reading \(appLabel) menus…" }
                     await MenuWarmCacheService.shared.warm(app: app, force: true)
-                    let refreshed = await GeneralAIActionResolver.shared.resolve(query: query)
+                    let refreshed = await GeneralAIActionResolver.shared.resolve(
+                        query: query,
+                        chatAllowedBundleIds: chatGrantedBundleIds(),
+                        scopedApp: scopedChatApp(),
+                        onStep: { [self] text in
+                            MainActor.assumeIsolated { actionTraceStep(text) }
+                        })
                     if case .candidates(let refreshedCandidates) = refreshed,
                         let menuCandidate = refreshedCandidates.first(where: {
                             $0.route != .appLaunch && $0.bundleID == bundleID
@@ -429,33 +999,56 @@ extension LauncherView {
                             menuCandidate,
                             alternatives: refreshedCandidates.filter { $0.id != menuCandidate.id },
                             query: query)
-                        return "Opened \(appLabel) and confirmed it is active.\n\n" + followUp
+                        // The follow-up ran a second action and left its own record; the
+                        // launch that preceded it is context, not a separate turn. Only the
+                        // wording needs widening to cover both.
+                        let combined = "Opened \(appLabel) and confirmed it is active.\n\n" + followUp
+                        await MainActor.run {
+                            aiMode.pendingWorkflowResult =
+                                aiMode.pendingWorkflowResult?.withAnswer(combined)
+                        }
+                        return combined
                     }
                     await MainActor.run { aiMode.loadingStatus = nil }
+                    // Ranked against what was actually asked. With an empty query the cache
+                    // returns its first five records in stored order, so "closest available"
+                    // was whatever happened to sit at the top of the app's menu bar — a list
+                    // that looked considered and was not.
                     let closest = AppMenuCapabilityCache.shared.menuItems(
                         bundleIdentifier: bundleID,
                         appName: appLabel,
-                        query: "",
+                        query: query,
                         maxResults: 5
                     ).map(\.pathString)
                     let suggestion = closest.isEmpty
                         ? "No cached or live menu commands are available yet. Open the relevant view in \(appLabel), then refresh its App Adapter menu cache."
                         : "Closest available menus:\n" + closest.map { "• \($0)" }.joined(separator: "\n")
-                    return "Opened \(appLabel) and confirmed it is active, but I couldn't find an exact menu or shortcut for this request. Nothing else was executed.\n\n\(suggestion)"
+                    // The launch is still what ran and is still verified. What changed is
+                    // that the request it was standing in for cannot be completed, and the
+                    // record says so rather than keeping the launch's own success sentence.
+                    let unmet =
+                        "Opened \(appLabel) and confirmed it is active, but I couldn't find an exact menu or shortcut for this request. Nothing else was executed.\n\n\(suggestion)"
+                    await MainActor.run {
+                        aiMode.pendingWorkflowResult =
+                            aiMode.pendingWorkflowResult?.withAnswer(unmet)
+                    }
+                    return unmet
                 }
-                return refined ?? result.message
-            case .skipped:
-                // Executor succeeded; clearly disclose that no read-back verifier exists.
+                return outcomeText
+            case .contradicted(let evidence):
+                learn(success: false)
+                mark(available: false, reason: evidence)
+                return outcomeText
+            case .notApplicable:
+                // Executor succeeded; the sentence already discloses that no read-back
+                // verifier exists for this route.
                 learn(success: true)
                 mark(available: true)
-                return result.message
-                    + "\n\nExecution receipt: executor confirmed success; this route has no independent read-back verification."
+                return outcomeText
             case .unverified(let reason):
                 learn(success: false)
                 mark(available: false, reason: reason)
-                let openHint = candidate.appName.map { " You can open \($0) to check." } ?? ""
-                return "I completed the request, but I couldn't verify the final result. "
-                    + "\(reason)\(openHint)"
+                return outcomeText
             }
         }
         learn(success: false)
@@ -466,7 +1059,14 @@ extension LauncherView {
             aiMode.pendingToolChips = ["\(candidate.title) · \(candidate.routeLabel)"]
         }
         var answer = "That didn't work: \(result.message)"
-        if let fallback = alternatives.first {
+        // A fallback for a request naming an app has to be in that app. Asked to open App
+        // Store's Updates, the failure offered "Gemini: Live App Menu Bar Updates" — a
+        // different app's menu that happens to share the word "updates", presented as the
+        // next thing to try. The ranked list is allowed to span apps; the consolation prize
+        // is not.
+        if let fallback = alternatives.first(where: {
+            candidate.bundleID == nil || $0.bundleID == candidate.bundleID
+        }) {
             answer += "\n\nI also found a fallback route — \(fallback.title) "
                 + "(\(fallback.routeLabel)). Say “try the fallback” and I'll run it."
         }
@@ -564,7 +1164,7 @@ extension LauncherView {
         }
 
         await MainActor.run { aiMode.loadingStatus = "Running AppleScript…" }
-        let result = await GeneralAIActionExecutor.shared.execute(candidate)
+        let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.approvalCard))
         await MainActor.run {
             aiMode.loadingStatus = nil
             aiMode.pendingToolChips = ["AppleScript · automation model"]
@@ -657,84 +1257,12 @@ extension LauncherView {
 
     /// Personal-data sources General Chat can read. Each gets its own first-run approval
     /// so "any unread messages?" or "events this week?" ask before touching private data.
-    enum ReadOnlyDataDomain: String, Equatable {
-        case messages, mail, calendar, reminders, contacts, notes, photos
-        var displayName: String {
-            switch self {
-            case .messages: return "Messages"
-            case .mail: return "Mail"
-            case .calendar: return "Calendar"
-            case .reminders: return "Reminders"
-            case .contacts: return "Contacts"
-            case .notes: return "Notes"
-            case .photos: return "Photos"
-            }
-        }
-        /// macOS-style one-line justification shown under the approval prompt.
-        var approvalSubtitle: String {
-            switch self {
-            case .messages: return "DoraX will read your unread messages to answer this request."
-            case .mail: return "DoraX will read your Mail to answer this request."
-            case .calendar: return "DoraX will read your upcoming events."
-            case .reminders: return "DoraX will read your reminders."
-            case .contacts: return "DoraX will read your contacts to answer this request."
-            case .notes: return "DoraX will read your notes to answer this request."
-            case .photos: return "DoraX will read photo metadata to answer your request."
-            }
-        }
-    }
-
-    /// Classify a message as a read-only request against one personal-data source, or nil.
-    /// Requires BOTH a data-source keyword AND a read/possessive signal so plain questions
-    /// ("what is email?") don't trip it. Never runs AX or the provider — pure string match.
+    /// Classify a message as a read-only request against one personal-data source.
+    /// Lives in `ReadOnlyDataRouter` so it can be exercised without standing up a view.
     func readOnlyDataDomain(for query: String) -> ReadOnlyDataDomain? {
-        let q = query.lowercased()
-        let readSignals = [
-            "my ", "any ", "unread", "recent", "upcoming", "do i have", "did i",
-            "show ", "show me", "find ", "lookup ", "look up ", "get ", "list ",
-            "check ", "what's on", "whats on", "how many", "this week", "today",
-            "tomorrow", "latest",
-        ]
-        guard readSignals.contains(where: q.contains) else { return nil }
-        if looksLikeContactInfoLookup(q) {
-            return .contacts
-        }
-        let map: [(ReadOnlyDataDomain, [String])] = [
-            (.messages, ["message", "imessage", "text from", "texts", "unread text"]),
-            (.contacts, ["contact", "phone number", "email address of"]),
-            (.mail, ["email", "mail", "inbox"]),
-            (.calendar, ["calendar", "event", "meeting", "schedule", "appointment"]),
-            (.reminders, ["reminder", "to-do", "todo", "task"]),
-            (.notes, ["note about", "notes about", "my note", "my notes"]),
-            (.photos, ["photo", "picture", "screenshot", "image of mine"]),
-        ]
-        for (domain, keywords) in map where keywords.contains(where: q.contains) {
-            return domain
-        }
-        return nil
+        ReadOnlyDataRouter.domain(for: query)
     }
 
-    private func looksLikeContactInfoLookup(_ q: String) -> Bool {
-        let wantsContactField = [
-            " contact", "contacts", "phone", "number", "mobile", "email", "mail id",
-            "email id", "address book",
-        ].contains { q.contains($0) }
-        guard wantsContactField else { return false }
-
-        // Mailbox queries should stay in Mail. A person-info query like
-        // "show salmankhan email" has no mailbox noun/action, so route to Contacts.
-        let mailboxSignals = [
-            "inbox", "unread", "latest email", "recent email", "emails from",
-            "mail from", "message from", "subject", "attachment", "newsletter",
-        ]
-        if mailboxSignals.contains(where: q.contains) { return false }
-
-        let personLookupSignals = [
-            "show ", "find ", "lookup ", "look up ", "get ", "what is ", "what's ",
-            "whats ", "who is ", "contact info", "email of", "phone of",
-        ]
-        return personLookupSignals.contains(where: q.contains)
-    }
 
     /// Read-only capability router. Classifies a personal-data read request, asks first-run
     /// approval, then READS the real data through the local capability (EventKit / Contacts)
@@ -744,8 +1272,46 @@ extension LauncherView {
     ///   - a denial string when the user cancels,
     ///   - nil to fall through (not a read request, or a domain with no direct read yet — it
     ///     is already approved, so the existing enrichment/tool-loop reads it).
+    /// The keyword routers' scoring, rendered as advice for the model rather than used to
+    /// answer on its behalf.
+    ///
+    /// The scoring itself is genuinely useful — it knows which of the user's installed apps,
+    /// adapters and capabilities relate to a query, which is real local knowledge no model
+    /// has. What made it harmful was its authority: on a keyword hit it produced the answer,
+    /// so the model never saw the request and could not notice that the match was wrong.
+    /// "recent commit" scoring as a Recent-files read is the canonical example.
+    ///
+    /// As a hint it keeps the value and loses the veto. The model reads "these look
+    /// relevant", checks them against what was actually asked, and calls a tool — or ignores
+    /// the list entirely when it does not fit, which is exactly the judgement the routers
+    /// could not make.
+    ///
+    /// Discovery only. Nothing here reads user data or executes anything; that happens if
+    /// and when the model calls run_capability, which still goes through the approval path.
+    func routerCandidateHints(query: String) async -> String {
+        let candidates = await GeneralAIActionResolver.shared.resolveReadCandidates(query: query)
+        guard !candidates.isEmpty else { return "" }
+        let lines = candidates.prefix(6).map { candidate -> String in
+            let app = candidate.appName.map { " in \($0)" } ?? ""
+            let capability = candidate.capabilityID.map { " (\($0))" } ?? ""
+            return "- \(candidate.title)\(app)\(capability)"
+        }
+        return """
+            ## Possibly relevant local routes
+            DoraX matched these against the request using local metadata. They are suggestions,
+            not instructions: use one only if it actually answers what was asked, and ignore
+            the list when it does not. If none fit, use find_capability or run_command instead
+            of saying you have no access.
+
+            \(lines.joined(separator: "\n"))
+            """
+    }
+
     func readOnlyCapabilityAnswer(query: String) async -> String? {
-        if let domain = readOnlyDataDomain(for: query) {
+        let domain = readOnlyDataDomain(for: query)
+        CapabilityIndexShadow.observe(
+            query: query, liveChoice: domain.map { "domain.\($0.rawValue)" } ?? "none")
+        if let domain {
             guard await requestReadApproval(domain: domain) else {
                 return "I won't read your \(domain.displayName) without permission. "
                     + "Ask again and choose Allow to let me."
@@ -755,6 +1321,7 @@ extension LauncherView {
             case .calendar: return await calendarReadAnswer(query: query)
             case .reminders: return await remindersReadAnswer(query: query)
             case .contacts: return await contactsReadAnswer(query: query)
+            case .notes: return await notesReadAnswer(query: query)
             default:
                 // Approved, but no direct local read wired yet — let the existing Apple-data
                 // enrichment / tool-loop fetch it (they read via MCP/automation).
@@ -852,7 +1419,18 @@ extension LauncherView {
     /// metadata only; this function only reads the selected grounded source.
     private func groundedCapabilityReadAnswer(query: String) async -> String? {
         let candidates = await GeneralAIActionResolver.shared.resolveReadCandidates(query: query)
-        guard !candidates.isEmpty else { return nil }
+        // Nothing here can read. Returning nil hands the question to the model with no
+        // data and no explanation, which is where invented answers about the user's own
+        // apps come from — "did I view any videos in Tutorine" against an adapter that
+        // has actions and no reader.
+        guard !candidates.isEmpty else {
+            // The scoped dock chat resolves an app's real routes — its adapter readers,
+            // MCP tools, CLI — and General Chat never called that resolver, so the same
+            // question answered well in one surface and not at all in the other. Same
+            // resolver, offered rather than run.
+            if let offer = await appReadRouteOffer(query: query) { return offer }
+            return capabilityGapAnswer(query: query)
+        }
 
         if shouldClarifyReadCandidates(candidates, query: query) {
             let options = candidates.prefix(4).compactMap { candidate -> String? in
@@ -903,6 +1481,60 @@ extension LauncherView {
             )
             return message
         }
+    }
+
+    /// The app's own read routes, offered as choices.
+    ///
+    /// ChatRouteResolver knows how to reach an app — adapter readers, MCP tools, the CLI
+    /// linked to it — and only the scoped dock chat ever asked it. General Chat resolved a
+    /// narrower set of its own and gave up when that came back empty, which is why the same
+    /// question could be answered in one surface and not the other.
+    ///
+    /// Offered, never run. The user picks, and the pick goes through the approval and
+    /// verification path every other action uses. Reads only: this is the read fallthrough,
+    /// and a question is not a licence to write.
+    private func appReadRouteOffer(query: String) async -> String? {
+        guard let named = GeneralAIActionResolver.shared.namedInstalledApp(in: query),
+            let adapter = AppAdapterManager.shared.adapter(for: named.bundleId),
+            adapter.isEnabled
+        else { return nil }
+
+        let routes = await ChatRouteResolver.routes(
+            for: query, bundleId: named.bundleId, appName: adapter.appName)
+        // `.cli` deliberately has no candidate conversion — it keeps its own terminal
+        // path — so it cannot be offered here.
+        let offerable = routes.filter { $0.isReadOnly && $0.asCandidate() != nil }
+        guard !offerable.isEmpty else { return nil }
+
+        let candidates = offerable.compactMap { $0.asCandidate() }
+        await MainActor.run {
+            pendingActionCandidates = candidates
+            pendingActionQuery = query
+            aiMode.pendingActionChoices = Array(offerable.prefix(3)).map(\.asActionChoice)
+        }
+        return offerable.count == 1
+            ? "I can read that from \(adapter.appName). Run it?"
+            : "\(adapter.appName) has \(offerable.count) ways to answer that. Which one?"
+    }
+
+    /// What DoraX has for the app the user named, and what it would need to answer them.
+    ///
+    /// Only for an app the user actually connected. A bare installed app has no inventory
+    /// worth reporting, and a question naming no app at all — "what is the weather" — is
+    /// not about capability and must not be answered with a capability report.
+    private func capabilityGapAnswer(query: String) -> String? {
+        guard let named = GeneralAIActionResolver.shared.namedInstalledApp(in: query),
+            let adapter = AppAdapterManager.shared.adapter(for: named.bundleId),
+            adapter.isEnabled
+        else { return nil }
+
+        let records = CapabilityCatalog.allRecords().filter {
+            $0.app.caseInsensitiveCompare(adapter.appName) == .orderedSame
+        }
+        let menus = AppMenuCapabilityCache.shared
+            .summary(bundleIdentifier: named.bundleId)?.recordCount ?? 0
+        return CapabilityGap.explain(
+            appName: adapter.appName, records: records, menuCommands: menus)
     }
 
     private func shouldClarifyReadCandidates(
@@ -1010,7 +1642,7 @@ extension LauncherView {
                 return .failure("The CLI read route has no command.")
             }
             await MainActor.run { aiMode.loadingStatus = "Running \(appLabel) CLI read…" }
-            let result = await GeneralAIActionExecutor.shared.execute(candidate)
+            let result = await GeneralAIActionExecutor.shared.execute(candidate, approval: .granted(.approvalCard))
             await MainActor.run { aiMode.loadingStatus = nil }
             guard result.success else { return .failure(result.message) }
             let trimmed = result.message.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1083,6 +1715,65 @@ extension LauncherView {
         }.joined(separator: "\n")
         return await summarizeGroundedData(
             userQuery: query, dataLabel: "reminders", dataBlock: lines)
+    }
+
+    /// Notes was the one domain with no reader.
+    ///
+    /// Messages, Calendar, Reminders and Contacts each answer their own questions; .notes
+    /// fell through to `default:` and returned nil, so "find my bookmarks note and
+    /// summarise that" resolved to the notes domain, asked for permission to read them,
+    /// and then produced nothing. No plan, no tool — the request dropped into prompt
+    /// enrichment and the model talked without ever looking.
+    ///
+    /// Siri, asked the same sentence, searched Notes, found three candidates and asked
+    /// which one to summarise. That is the shape here: search for what the sentence names,
+    /// answer when there is one, and ask when there are several — because choosing for the
+    /// user is how the wrong note gets summarised.
+    private func notesReadAnswer(query: String) async -> String? {
+        let subject = DataSubject.subject(in: query)
+        await MainActor.run {
+            aiMode.loadingStatus = subject.isEmpty
+                ? "Reading your Notes…" : "Searching Notes for “\(subject)”…"
+        }
+        let notes = await Task.detached(priority: .utility) {
+            subject.isEmpty
+                ? AppleAppsAPI.shared.getNotes(limit: 20)
+                : AppleAppsAPI.shared.searchNotes(query: subject)
+        }.value
+        await MainActor.run { aiMode.loadingStatus = nil }
+
+        func title(_ note: [String: Any]) -> String {
+            ((note["title"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        func body(_ note: [String: Any]) -> String {
+            ((note["body"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard !notes.isEmpty else {
+            return subject.isEmpty
+                ? "I couldn't find any notes."
+                : "I couldn't find a note matching “\(subject)”."
+        }
+
+        // Several matches is a question, not a coin toss. The user asked for one note;
+        // picking the wrong one and summarising it confidently is worse than asking.
+        if !subject.isEmpty, notes.count > 1 {
+            let named = notes.prefix(6).enumerated().map { index, note -> String in
+                let name = title(note).isEmpty ? "(untitled)" : title(note)
+                let preview = body(note).prefix(80)
+                return "\(index + 1). \(name)\(preview.isEmpty ? "" : " — \(preview)…")"
+            }.joined(separator: "\n")
+            return "I found \(notes.count) notes matching “\(subject)”. Which one do you "
+                + "want?\n\n\(named)"
+        }
+
+        let block = notes.prefix(20).map { note -> String in
+            let name = title(note).isEmpty ? "(untitled)" : title(note)
+            let text = body(note)
+            return text.isEmpty ? "## \(name)" : "## \(name)\n\(text.prefix(4_000))"
+        }.joined(separator: "\n\n")
+        return await summarizeGroundedData(
+            userQuery: query, dataLabel: "notes", dataBlock: block)
     }
 
     private func contactsReadAnswer(query: String) async -> String? {
@@ -1159,12 +1850,12 @@ extension LauncherView {
     /// Reads live context for the app explicitly selected in General Chat. App selection
     /// chooses the scope; the native approval card grants the first read. The provider
     /// never participates in permission handling and only receives verified context.
-    func selectedGeneralChatAppContext() async -> (block: String, cancelled: Bool) {
+    func selectedGeneralChatAppContext(query: String) async -> (block: String, cancelled: Bool) {
         guard !chatFocusApps.isEmpty else { return ("", false) }
         var blocks: [String] = []
         for app in chatFocusApps {
             let context = await selectedGeneralChatAppContext(
-                appName: app.name, bundleID: app.bundleId)
+                appName: app.name, bundleID: app.bundleId, query: query)
             if context.cancelled { return ("", true) }
             if !context.block.isEmpty { blocks.append(context.block) }
         }
@@ -1172,7 +1863,7 @@ extension LauncherView {
     }
 
     private func selectedGeneralChatAppContext(
-        appName: String, bundleID: String
+        appName: String, bundleID: String, query: String
     ) async -> (block: String, cancelled: Bool) {
 
         let permissionKey = "generalAI.read.focusedApp.\(bundleID)"
@@ -1221,10 +1912,36 @@ extension LauncherView {
             details.append("Current page title: \(page.title)\nCurrent URL: \(page.url)")
         }
 
+        // Finder's generic adapter reader only knows the front-window path. Ground
+        // folder-content questions with a bounded native inventory so the model can
+        // answer "does Downloads contain images?" from facts instead of claiming it
+        // cannot see the directory. This is read-only and never recursively scans.
+        if bundleID == "com.apple.finder",
+           let finderInventory = selectedFinderFolderInventory(query: query)
+        {
+            details.append(finderInventory)
+        }
+
+        // Every open tab, not just the frontmost page. Without this the block said only
+        // "current page", so "show all opened tabs" had no tab data and the model answered
+        // from whatever unrelated context was nearby.
+        if let tabsBlock = browserOpenTabsContextBlock(bundleID: bundleID) {
+            details.append(tabsBlock)
+        }
+
         let ax = AXContextReader.shared.current
         if ax.bundleId == bundleID {
             let summary = ax.contextSummary.trimmingCharacters(in: .whitespacesAndNewlines)
             if !summary.isEmpty { details.append("Accessibility context:\n\(summary)") }
+        }
+
+        // The AX snapshot above only exists when the SELECTED app is also the app the
+        // snapshot was taken from. In General Chat the launcher is usually frontmost, so
+        // that branch is skipped and "what am I looking at in Preview?" had no document
+        // to answer from — the frontmost chat looked smarter only because its app happened
+        // to be the one AX had. Read the chosen app's own windows directly instead.
+        if let liveWindows = liveAppWindowFacts(bundleID: bundleID) {
+            details.append(liveWindows)
         }
 
         if running != nil, AppAdapterManager.shared.adapter(for: bundleID) != nil {
@@ -1252,6 +1969,108 @@ extension LauncherView {
         return (block, false)
     }
 
+    /// What the chosen app currently has open, read from its own AX element rather than
+    /// from whichever app the last AX snapshot belongs to. Returns the focused window's
+    /// title and document path plus the other open window titles — the facts behind
+    /// "which file am I viewing?".
+    ///
+    /// Messaging timeout is set low: an app that is beachballing must slow a chat answer
+    /// by a second, not hang it.
+    nonisolated func liveAppWindowFacts(bundleID: String) -> String? {
+        AppScopedChatService.liveWindowFacts(bundleID: bundleID)
+    }
+
+    @MainActor
+    private func selectedFinderFolderInventory(query: String) -> String? {
+        guard let path = ContextDetector.shared.getCurrentFinderDirectory(), !path.isEmpty else {
+            return nil
+        }
+
+        let folderURL = URL(fileURLWithPath: path, isDirectory: true)
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey, .contentTypeKey, .fileSizeKey, .contentModificationDateKey,
+        ]
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: folderURL,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else {
+            return "Current Finder folder: \(path)\nFolder inventory: unreadable."
+        }
+
+        struct InventoryItem {
+            let url: URL
+            let isDirectory: Bool
+            let isImage: Bool
+        }
+
+        let items = children.map { url -> InventoryItem in
+            let values = try? url.resourceValues(forKeys: keys)
+            return InventoryItem(
+                url: url,
+                isDirectory: values?.isDirectory == true,
+                isImage: values?.contentType?.conforms(to: .image) == true
+            )
+        }
+        let imageCount = items.lazy.filter(\.isImage).count
+        let folderCount = items.lazy.filter(\.isDirectory).count
+        let fileCount = items.count - folderCount
+        let asksAboutImages = query.localizedCaseInsensitiveContains("image")
+            || query.localizedCaseInsensitiveContains("photo")
+            || query.localizedCaseInsensitiveContains("picture")
+            || query.localizedCaseInsensitiveContains("png")
+            || query.localizedCaseInsensitiveContains("jpg")
+            || query.localizedCaseInsensitiveContains("jpeg")
+            || query.localizedCaseInsensitiveContains("heic")
+
+        let ordered = items.sorted { lhs, rhs in
+            if asksAboutImages, lhs.isImage != rhs.isImage { return lhs.isImage }
+            if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
+            return lhs.url.lastPathComponent.localizedStandardCompare(rhs.url.lastPathComponent)
+                == .orderedAscending
+        }
+        let visible = ordered.prefix(120)
+        let lines = visible.map { item in
+            let kind = item.isDirectory ? "folder" : (item.isImage ? "image" : "file")
+            return "- [\(kind)] \(item.url.lastPathComponent) — \(item.url.path)"
+        }
+        let omitted = max(0, items.count - visible.count)
+        let suffix = omitted > 0 ? "\n- …\(omitted) more items not included" : ""
+
+        return """
+            Current Finder folder: \(path)
+            Direct children: \(items.count) total (\(folderCount) folders, \(fileCount) files, \(imageCount) images).
+            Folder inventory (exact names and paths; non-recursive):
+            \(lines.joined(separator: "\n"))\(suffix)
+            """
+    }
+
+    /// All open tabs of a browser bundle, formatted for the live-context block. Returns
+    /// nil for non-browsers or when the browser exposes no readable tab.
+    @MainActor
+    private func browserOpenTabsContextBlock(bundleID: String) -> String? {
+        let detector = ContextDetector.shared
+        let tabs: [BrowserTab]
+        switch bundleID {
+        case "com.apple.Safari":
+            tabs = detector.getAllSafariTabs()
+        case "com.google.Chrome", "com.brave.Browser", "org.chromium.Chromium",
+            "com.microsoft.edgemac":
+            tabs = detector.getAllChromeTabs()
+        case "company.thebrowser.Browser":
+            tabs = detector.getAllArcTabs()
+        default:
+            return nil
+        }
+        guard !tabs.isEmpty else { return nil }
+        let lines = tabs.prefix(40).map { tab -> String in
+            let title = tab.title.isEmpty ? tab.url : tab.title
+            return "- \(title) — \(tab.url)"
+        }
+        let more = tabs.count > 40 ? "\n…and \(tabs.count - 40) more open tabs." : ""
+        return "Open tabs (\(tabs.count)):\n" + lines.joined(separator: "\n") + more
+    }
+
     /// Live app-state context for General Chat questions about a named app
     /// ("what's going on with vs code?"). Pulls the SAME powers frontmost-app chat
     /// already uses — adapter context readers, runtime CLI snapshots (code --status,
@@ -1263,6 +2082,10 @@ extension LauncherView {
         guard let app = GeneralAIActionResolver.shared.namedInstalledApp(in: query) else {
             return ""
         }
+        // Reuse Global Context's semantic file-intent parser rather than maintaining
+        // a second list of chat phrases here. This recognises recent/latest/newest
+        // file requests while keeping unrelated app-status questions lean.
+        let asksForRecentDocuments = finderSemanticProfile(for: query).wantsRecent
         // Only status/state questions pay for live reads.
         let statusWords = [
             "what", "doing", "going on", "status", "open", "current", "working",
@@ -1271,7 +2094,13 @@ extension LauncherView {
         ]
         guard statusWords.contains(where: lowered.contains) else { return "" }
 
-        await MainActor.run { aiMode.loadingStatus = "Reading \(app.name) state…" }
+        await MainActor.run {
+            aiMode.loadingStatus = asksForRecentDocuments
+                ? "Reading \(app.name) and recent documents…"
+                : "Reading \(app.name) state…"
+            aiMode.routerTrace.append("Resolved target app: \(app.name)")
+        }
+        var searchedSources = ["running state"]
         var lines: [String] = [
             "## Live \(app.name) state (read by DoraX just now — factual)",
         ]
@@ -1310,17 +2139,35 @@ extension LauncherView {
         // Adapter context readers — the same live readers frontmost-app chat runs
         // (current file, git branch, workspace, …).
         if AppAdapterManager.shared.adapter(for: app.bundleId) != nil, running != nil {
+            searchedSources.append("adapter context readers")
+            // This app's own accessibility state, not the frontmost app's. Readers that
+            // derive a project or document from the window title return nothing when handed
+            // another app's snapshot — which is why enabling Code was followed by "the
+            // project name is not readable" while Code sat there with the project open.
+            let scopedAX = ContextResolver.axContext(for: app.bundleId, appName: app.name)
             let readerData = await AppAdapterManager.shared.runContextReaders(
-                for: app.bundleId, axContext: AXContextReader.shared.current)
+                for: app.bundleId, axContext: scopedAX)
             for (_, value) in readerData.sorted(by: { $0.key < $1.key })
             where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 lines.append(String(value.prefix(600)))
             }
         }
 
+        // What the app is working on — project, branch, changes. The scoped dock chat has
+        // always had this; General Chat listed the app's tools and never said what it was
+        // doing with them.
+        let workspace = await appWorkspaceContextPrompt(
+            bundleId: app.bundleId, appName: app.name)
+        searchedSources.append("workspace context")
+        if !workspace.isEmpty {
+            lines.append("")
+            lines.append(workspace)
+        }
+
         // Runtime CLI snapshots: VS Code `code --status`, Messages imsg, Tailscale CLI.
         let cliSnapshot = await runtimeAppCLIContextPrompt(
             bundleId: app.bundleId, appName: app.name, query: query)
+        searchedSources.append("linked CLI status")
         if !cliSnapshot.isEmpty {
             lines.append("")
             lines.append(cliSnapshot)
@@ -1329,6 +2176,7 @@ extension LauncherView {
         // Compact capability inventory so the model knows what DoraX can DO with
         // this app (and offers real next actions instead of "check their website").
         var inventory: [String] = []
+        searchedSources.append("registered adapter, MCP, and menu capabilities")
         let adapterActions = AppAdapterManager.shared.actions(for: app.bundleId)
         if !adapterActions.isEmpty {
             inventory.append(
@@ -1348,16 +2196,77 @@ extension LauncherView {
                 + inventory.joined(separator: "; ") + ".")
         }
 
+        // General Chat intentionally remains its own surface, but a question such as
+        // "Preview recent documents" needs the same factual, read-only Recent Items
+        // data Global Context already renders. RecentItemsService is TTL-cached, so
+        // this adds no filesystem/Spotlight work to normal chat or to each keystroke.
+        // Do not label these as Preview's private Open Recent menu: they are DoraX's
+        // cross-app recent-document index, which may contain files from other apps.
+        if asksForRecentDocuments {
+            searchedSources.append("app Open Recent and DoraX Recent Items")
+            // The app's OWN Open Recent entries first, from its cached menu snapshot. This
+            // needs no Full Disk Access and does not need the app running — a question about
+            // "recent TextEdit files" used to be answerable only from the cross-app list
+            // below, which had to be disclaimed as not being the app's, so the honest answer
+            // was also a useless one.
+            let ownRecents = AppMenuCapabilityCache.shared.resolvedRecentDocumentURLs(
+                bundleIdentifier: app.bundleId, limit: 15)
+            if !ownRecents.isEmpty {
+                let age = AppMenuCapabilityCache.shared.snapshotAge(
+                    bundleIdentifier: app.bundleId)
+                let readWhen = age.map { "read \(Int($0 / 60)) min ago" } ?? "from the menu cache"
+                lines.append("")
+                lines.append("## \(app.name) — Open Recent (\(readWhen), factual)")
+                lines.append(
+                    "These come from \(app.name)'s own Open Recent menu, cached by DoraX. "
+                    + "Each one can be opened by launching \(app.name) and clicking its "
+                    + "Open Recent entry — no need for the app to be running now.")
+                for url in ownRecents {
+                    lines.append("- \(url.lastPathComponent) — \(url.deletingLastPathComponent().path)")
+                }
+            }
+
+            let recentDocuments = RecentItemsService.shared.recentDocuments()
+            if recentDocuments.isEmpty {
+                lines.append("")
+                lines.append("## DoraX Recent Items (read just now)")
+                lines.append("- No readable recent documents are currently available.")
+            } else {
+                lines.append("")
+                lines.append("## DoraX Recent Items (read just now — factual)")
+                lines.append(
+                    "These are the cross-app recent files available to Global Context, "
+                    + "not a guessed list from \(app.name).")
+                for document in recentDocuments.prefix(12) {
+                    let folder = document.url.deletingLastPathComponent().path
+                    lines.append("- \(document.name) — \(folder)")
+                }
+                if recentDocuments.count > 12 {
+                    lines.append("- …and \(recentDocuments.count - 12) more recent files.")
+                }
+            }
+        }
+
         lines.append("")
         lines.append(
             "Answer the user's question about \(app.name) from the data above. "
             + "If something isn't in the data, say DoraX couldn't read that specific detail — "
             + "NEVER reply \"unable to access application status\" and never answer from "
             + "generic product knowledge when live state is shown here.")
+        let result = lines.joined(separator: "\n")
         await MainActor.run {
             aiMode.pendingToolChips.append("\(app.name) live state")
+            aiMode.routerTrace.append("Read live \(app.name) context")
+            aiMode.routerTrace.append("Searched: \(searchedSources.joined(separator: ", "))")
+            aiMode.pendingEvidenceReceipts.append(
+                DoraXActionReceipt(
+                    command: "read_app_context(\(app.name))",
+                    output: String(result.prefix(8_000)),
+                    success: true,
+                    isVerification: true
+                ))
         }
-        return lines.joined(separator: "\n")
+        return result
     }
 }
 

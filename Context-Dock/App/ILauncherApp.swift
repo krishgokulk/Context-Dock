@@ -19,6 +19,31 @@ class FocusableHostingView<Content: View>: NSHostingView<Content> {
     // click controls) immediately.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    /// The fixed host is far taller than the card, so most of it is empty glass-less
+    /// space. Without this, that emptiness would swallow every click aimed at whatever is
+    /// behind the launcher. Drag and key routing are unaffected — only hit testing.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let window = window as? KeyableWindow, window.usesFixedHost {
+            let card = window.dockCardRect
+            if card.height > 0 {
+                // AppKit hands this view coordinates with the origin at the bottom-left and
+                // y rising; SwiftUI measured the card with the origin at the top-left and y
+                // falling. Same window, two conventions — comparing them unconverted is how
+                // a click-through region ends up mirrored about the middle of the screen.
+                let flipped = CGPoint(x: point.x, y: bounds.height - point.y)
+                return card.insetBy(dx: -1, dy: -1).contains(flipped)
+                    ? super.hitTest(point) : nil
+            }
+            // No measurement yet — first frame, or a surface that does not report one.
+            // Falls back to the old top-pinned assumption rather than swallowing the screen.
+            let cardHeight = window.dockCardHeight
+            if cardHeight > 0, point.y < bounds.height - cardHeight {
+                return nil
+            }
+        }
+        return super.hitTest(point)
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         wantsLayer = true
@@ -61,6 +86,81 @@ class KeyableWindow: NSPanel {
     private var initialWindowOrigin: NSPoint?
     private var applyingDeferredFrame = false
     private var pendingDeferredFrame: (rect: NSRect, display: Bool, animate: Bool)?
+    /// True while the panel is mid surface-transition. Content-churn resizes are dropped
+    /// during it — a second setFrame lands as a visible hitch in the middle of the reveal.
+    private(set) var isAnimatingDockFrame = false
+
+    /// Stage 1 of removing the sheet-expansion race: the window stops being sized from
+    /// content and becomes a fixed transparent host with the card animating inside it.
+    /// Kept as a switch so the old measured-resize path is one flag away while this is
+    /// still being proven on screen.
+    var usesFixedHost = true
+    /// Height of the card currently drawn at the top of the host. Only used to decide
+    /// which part of the window is empty enough to click through.
+    var dockCardHeight: CGFloat = 0
+
+    /// Where the card actually is, in SwiftUI's window coordinates (origin top-left, y
+    /// down), as measured by the card itself.
+    ///
+    /// A height alone could not answer "is this point on the card". It assumed the card was
+    /// pinned to the top, so in bottom-anchored dock mode the empty space is ABOVE the card
+    /// and every click up there was swallowed; and it was written from two places — the
+    /// card's own measurement and the resize path's computed `effectiveHeight` — which
+    /// disagree whenever the resize stabiliser is deliberately holding the window steady
+    /// while the user types. A stale-tall height means the window keeps eating clicks in the
+    /// empty strip below a card that has already shrunk. A rect, reported by the thing that
+    /// is drawn, cannot disagree with what is on screen.
+    var dockCardRect: CGRect = .zero
+
+    /// The card's rectangle in screen coordinates, or nil before it has been measured.
+    ///
+    /// `dockCardRect` is SwiftUI's: origin top-left of the window's content, y falling.
+    /// Screens are the other way up, and the window's own origin has to be added back.
+    var dockCardScreenRect: CGRect? {
+        let card = dockCardRect
+        guard card.height > 0, let content = contentView else { return nil }
+        let bottomUpY = content.bounds.height - card.maxY
+        return CGRect(
+            x: frame.minX + card.minX,
+            y: frame.minY + bottomUpY,
+            width: card.width,
+            height: card.height)
+    }
+
+    /// Makes the window transparent to the mouse everywhere except the card.
+    ///
+    /// Hit-testing alone was not enough. A view returning nil stops *our* content from
+    /// reacting, but the window is still the frontmost thing under the pointer, so AppKit
+    /// hands it the click and the app behind never sees it — the user clicks their desktop
+    /// through what looks like empty air and nothing happens. Only `ignoresMouseEvents` lets
+    /// the click land where it was aimed.
+    ///
+    /// Driven from a pointer-position monitor rather than a tracking area, because a window
+    /// ignoring the mouse receives no events of its own to notice the pointer coming back.
+    func updateMouseTransparency(pointer: NSPoint, isDragging: Bool) {
+        // A drag that began on the card keeps the window interactive wherever it travels;
+        // dropping it mid-gesture would strand the launcher under the cursor.
+        guard !isDragging else {
+            if ignoresMouseEvents { ignoresMouseEvents = false }
+            return
+        }
+        guard let card = dockCardScreenRect else {
+            if ignoresMouseEvents { ignoresMouseEvents = false }
+            return
+        }
+        let shouldIgnore = !card.insetBy(dx: -1, dy: -1).contains(pointer)
+        if ignoresMouseEvents != shouldIgnore { ignoresMouseEvents = shouldIgnore }
+    }
+
+    /// True while a window drag started on the card is still in progress.
+    var isDraggingFromCard: Bool { initialMouseLocation != nil }
+
+    /// The tallest the dock may ever be on this screen. Fixed for the session: nothing
+    /// about content may change it, which is the entire point.
+    func fixedHostHeight(for screen: NSScreen?) -> CGFloat {
+        let visible = (screen ?? NSScreen.main)?.visibleFrame ?? .zero
+        return max(240, visible.height - 24)
+    }
 
     override var canBecomeKey: Bool {
         return true
@@ -76,7 +176,11 @@ class KeyableWindow: NSPanel {
     // text (or scrolling). Let those views handle the mouse; drag only from bare chrome.
     override func mouseDown(with event: NSEvent) {
         let hit = contentView?.hitTest(event.locationInWindow)
-        if hit?.mouseDownCanMoveWindow == false {
+        // A nil hit is the transparent remainder — the host is screen-tall and the card is
+        // not. `hit?.mouseDownCanMoveWindow == false` is false when `hit` is nil, so the
+        // empty glass fell into the "bare chrome, safe to drag from" branch and dragging
+        // anywhere under the capsule carried the whole launcher around.
+        if hit == nil || hit?.mouseDownCanMoveWindow == false {
             initialMouseLocation = nil
             initialWindowOrigin = nil
         } else {
@@ -173,8 +277,52 @@ class KeyableWindow: NSPanel {
         }
     }
 
+    /// Applies a launcher-owned resize immediately.  SwiftUI may ask its hosting view to resize
+    /// during a display pass; that request still takes the deferred path above.  The dock's own
+    /// size coordinator, however, has already prepared the matching SwiftUI surface and must not
+    /// wait for a second run-loop turn — doing so briefly leaves a tall transparent panel around a
+    /// short card.  Keeping this narrow escape hatch here preserves a single owner for anchoring.
+    func applyDockFrame(_ frameRect: NSRect, display: Bool = true, animated: Bool = false) {
+        pendingDeferredFrame = nil
+        guard animated else {
+            applyAnchoredFrame(frameRect, display: display, animate: false)
+            return
+        }
+        // Surface transitions (collapsed capsule ⇄ result sheet) are the ONE motion the user
+        // reads as "the launcher opening". The SwiftUI card is already laid out at its final
+        // height, so animating the panel alone reveals finished content — Spotlight's model.
+        // Core Animation drives it (never NSWindow's blocking animate:true, which freezes the
+        // run loop and stalls typing mid-expansion).
+        let target = anchorAdjusted(frameRect)
+        guard target != frame else { return }
+        isAnimatingDockFrame = true
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.dockExpansionDuration
+            // Fast start, long settle — matches the macOS system reveal curve. A plain
+            // easeInOut reads as sluggish at this size; a spring overshoot makes a window
+            // resize look wobbly because the glass edge is a hard line.
+            context.timingFunction = CAMediaTimingFunction(
+                controlPoints: 0.22, 1.0, 0.36, 1.0)
+            context.allowsImplicitAnimation = true
+            animator().setFrame(target, display: true)
+        } completionHandler: { [weak self] in
+            guard let self else { return }
+            self.isAnimatingDockFrame = false
+            // The transparent panel's drop shadow is computed from the glass shape; it
+            // keeps the pre-animation outline until invalidated at the final size.
+            self.invalidateShadow()
+        }
+    }
+
+    /// One frame duration at 120 Hz, doubled for safety — how long the caller waits for
+    /// SwiftUI to commit the new content before the panel starts revealing it.
+    static let dockContentCommitDelay: UInt64 = 16_000_000
+    static let dockExpansionDuration: TimeInterval = 0.30
+
     override func setFrame(_ frameRect: NSRect, display flag: Bool) {
-        if isInsideSwiftUIDisplayCycle {
+        // Steps of our own Core Animation resize must land immediately: deferring them to
+        // the next run-loop turn drops frames and turns the reveal into a stutter.
+        if isInsideSwiftUIDisplayCycle, !isAnimatingDockFrame {
             deferAnchoredFrame(frameRect, display: flag, animate: false)
             return
         }
@@ -254,6 +402,10 @@ struct ILauncherApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// Pointer monitors that keep the transparent part of the launcher click-through.
+    private var pointerTransparencyGlobalMonitor: Any?
+    private var pointerTransparencyLocalMonitor: Any?
+
     /// Global shared reference — safe to use from anywhere without NSApp.delegate cast.
     /// (The @NSApplicationDelegateAdaptor pattern can make NSApp.delegate as? AppDelegate fail.)
     static weak var shared: AppDelegate?
@@ -265,26 +417,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var localEventMonitor: Any?
     var outsideMouseMonitor: Any?
     var lastOutsideMouseDownAt: TimeInterval = 0
+    /// A single system wake fires both `didWakeFromSleep` and `screensDidWake`. Recovery
+    /// tears down and reinstalls every monitor, so running it twice in a row would drop
+    /// the events arriving in between.
+    private var lastWakeRecoveryAt: TimeInterval = 0
     var hotKeyRef: EventHotKeyRef?
     var eventHandler: EventHandlerRef?
     var contextDockHotKeyRef: EventHotKeyRef?
     var contextDockEventHandlerRef: EventHandlerRef?   // stored so re-register removes old handler
     var clipboardScopeHotKeyRef: EventHotKeyRef?
+    var chatWindowHotKeyRef: EventHotKeyRef?
+    var chatWindowEventHandlerRef: EventHandlerRef?
     var clipboardScopeEventHandlerRef: EventHandlerRef? // stored so re-register removes old handler
+    var appChatHotKeyRef: EventHotKeyRef?
+    var appChatEventHandlerRef: EventHandlerRef?
     var quickNoteHotKeyRef: EventHotKeyRef?
     var quickNoteEventHandlerRef: EventHandlerRef?
     var captureTextHotKeyRef: EventHotKeyRef?
     var captureAreaHotKeyRef: EventHotKeyRef?
     var captureScreenshotHotKeyRef: EventHotKeyRef?
-    var windowReviewHotKeyRef: EventHotKeyRef?
+    var selectionScopeHotKeyRef: EventHotKeyRef?
+    var globalContextHotKeyRef: EventHotKeyRef?
     var captureHotkeyEventHandlerRef: EventHandlerRef?
+    #if DEBUG
+    var inspectorHotKeyRef: EventHotKeyRef?
+    var inspectorEventHandlerRef: EventHandlerRef?
+    #endif
     var lastHotkeyFiredAt: TimeInterval = 0
     /// Hide-on-resign-key is suppressed until this date (set around Space switches).
     var suppressHideOnResignUntil: Date = .distantPast
+    /// Set while a screen-capture UI owns the screen, so the dock can be put back exactly
+    /// as the user left it once the capture ends. See `handleScreenCaptureUIActivation`.
+    var dockWasVisibleBeforeScreenCapture = false
+    var screenCaptureUIIsActive = false
     /// While in the future, a global-context app launch is morphing into that app's Context
     /// Dock — result-execution hides are skipped so the dock stays instead of hide+relaunch.
     var suppressResultHideUntil: Date = .distantPast
-    private var smartScopeActivationGeneration = 0
+    /// Bumped per scope activation. The launcher view reads it so the open handler and the
+    /// activation notification can't both enter the same scope twice (which repainted the shell).
+    private(set) var smartScopeActivationGeneration = 0
     var doubleOptionMonitor: Any?
     var doubleOptionLocalMonitor: Any?
     var lastOptionPressTime: TimeInterval = 0
@@ -351,6 +522,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ?? resolvedUserFacingApplication(NSWorkspace.shared.frontmostApplication)
     }
 
+    /// Chooses a corner App Chat target without ever falling back to Context-Dock itself.
+    /// The panel may already be key when a repeated hotkey arrives, so the remembered
+    /// external app outranks the raw frontmost process.
+    static func appChatTargetApplication(
+        menuBarOwner: NSRunningApplication?,
+        remembered: NSRunningApplication?,
+        rawFrontmost: NSRunningApplication?,
+        ownBundleID: String
+    ) -> NSRunningApplication? {
+        [menuBarOwner, remembered, rawFrontmost]
+            .compactMap { $0 }
+            .first {
+                !$0.isTerminated
+                    && !($0.bundleIdentifier ?? "").isEmpty
+                    && $0.bundleIdentifier != ownBundleID
+            }
+    }
+
     private func resolvedUserFacingApplication(_ app: NSRunningApplication?) -> NSRunningApplication? {
         guard let app, !app.isTerminated else { return nil }
         let ownBundleID = Bundle.main.bundleIdentifier ?? ""
@@ -404,11 +593,37 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // The agent-facing server, only if the user turned it on. Started here rather than
+        // lazily: an agent's first tool call must not be the thing that starts the server,
+        // or that call fails and the agent concludes the capability does not exist.
+        DoraXMCPServer.shared.startIfEnabled()
+        // Before any accessibility read happens: cap how long one may block. An app that
+        // is slow to answer (Terminal while launching or streaming output is the usual
+        // one) otherwise stalls every reader for seconds, and the ones on the main thread
+        // take the whole dock down with them.
+        AXMessagingTimeout.installProcessDefault()
+        // Which apps exist on this Mac, read once in the background. Nothing owned this
+        // before, so the catalog was built by whichever feature happened to touch an app
+        // first — and General Chat, asked about an app on an empty desktop, resolved
+        // against an empty list.
+        InstalledApplicationsCatalog.warmUp()
+        // Keeps the derived half of memory current: today's brief, and yesterday's finished
+        // off now that yesterday is over. Reads receipts already on disk and calls no
+        // model, so it is free enough to sit on a timer.
+        BrainMaintenance.shared.start()
         // Enforce single instance — if another copy is already running, tell it to show and quit
+        //
+        // Except under XCTest. The test bundle is loaded into a second copy of this app, and
+        // the developer's own copy is nearly always running while they work — so the runner
+        // launched, saw a duplicate, terminated itself, and every test failed with "exited
+        // before establishing connection". That is why this project believed it could not
+        // have automated tests: it could, the host was quitting before they started.
         let bundleID = Bundle.main.bundleIdentifier ?? ""
+        let underTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty {
+        if !others.isEmpty, !underTest {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)
@@ -445,6 +660,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Purge cached data (menus, adapters) for apps no longer installed.
         UninstalledAppCleanupService.cleanupInBackground()
 
+        // Instantiate the Safari bridge now — its Darwin observers only exist once
+        // the singleton is created, and the extension can fire before any UI does.
+        _ = SafariBrowserBridge.shared
+
         // Create the launcher window
         setupLauncherWindow()
 
@@ -453,7 +672,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerAppChatHotkey()
+        registerChatWindowHotkey()
         registerCaptureHotkeys()
+        #if DEBUG
+        registerInspectorHotkey()
+        #endif
+        // Which coding agents are installed, resolved once here rather than when somebody
+        // asks. The alternative is a filesystem probe on the path that answers while the user
+        // is still typing, which is how a launcher stops feeling like one.
+        Task.detached(priority: .utility) {
+            let workers = AIWorkerDiscovery.discoverInstalled()
+            await MainActor.run { AIWorkerRegistry.shared.replaceInstalled(workers) }
+        }
         registerOutsideMouseMonitor()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
@@ -465,6 +696,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupFrontmostAppTracking()
         MenuWarmCacheService.shared.startIdleWarming()
         DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "launch")
+        // Skills the user can edit as files, plus DoraX's own description of each surface.
+        // Seeded once, watched thereafter, so an edit lands without a relaunch.
+        SkillFolder.start()
 
         // Start event-driven AX observer pipeline
         AXObserverManager.shared.startMonitoring()
@@ -489,6 +723,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Help text is fetched lazily when the user taps "Add to L2".
             try? await Task.sleep(nanoseconds: 2_000_000_000)  // 2s
             await BinaryWatcherService.shared.scanNow(skipHelpScan: true)
+            // Unlink guessed CLI links the user allowed but never used. One wrong Allow
+            // used to tax every prompt for that app forever.
+            CLILinkTrustStore.shared.sweepExpiredLinks()
             #if DEBUG
             print("✅ [AppDelegate] Startup scan complete")
             #endif
@@ -538,6 +775,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
+        // Safari toolbar button — open Context Dock scoped to the frontmost browser
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleBrowserActivateDockRequest),
+            name: .browserActivateDockRequested,
+            object: nil
+        )
+
         // Observe Services notifications to show launcher
         NotificationCenter.default.addObserver(
             self,
@@ -561,11 +806,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
-        // Re-register hotkeys on wake — Carbon hotkeys are invalidated after sleep
+        // Re-register hotkeys on wake — Carbon hotkeys are invalidated after sleep.
+        //
+        // Both notifications, because neither one covers every wake on its own. The Mac can
+        // wake with the display left off (Power Nap, wake for network, clamshell), and that
+        // fires `didWake` with no `screensDidWake` — the hotkeys are dead and the user finds
+        // out by pressing them. Screen wake alone is the more common case and arrives first.
+        // The handler debounces the overlap.
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(handleSystemWakeFromSleep),
             name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleSystemWakeFromSleep),
+            name: NSWorkspace.didWakeNotification,
             object: nil
         )
 
@@ -595,12 +852,57 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func handleAppActivation(_ notification: Notification) {
         guard
             let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
-                as? NSRunningApplication,
-            let resolvedApp = resolvedUserFacingApplication(app)
+                as? NSRunningApplication
         else { return }
+
+        // A capture UI taking the screen — ours via /usr/sbin/screencapture, or the system
+        // Screenshot app on ⌘⇧4/⌘⇧5 — is not the user clicking away from the dock. Without
+        // this the dock resigns key, hides for real, and the scope the user was working in
+        // is gone by the time the capture ends.
+        if Self.isScreenCaptureUI(app) {
+            handleScreenCaptureUIActivation()
+            return
+        }
+        restoreDockAfterScreenCaptureIfNeeded()
+
+        guard let resolvedApp = resolvedUserFacingApplication(app) else { return }
         recordFrontmostApp(resolvedApp)
         reinforceFloatingDockWindow(reason: "app activation", activate: false)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
+    }
+
+    /// The system Screenshot agent, or the `screencapture` tool we spawn ourselves.
+    static func isScreenCaptureUI(_ app: NSRunningApplication) -> Bool {
+        if let bundleId = app.bundleIdentifier?.lowercased() {
+            if bundleId.hasPrefix("com.apple.screencapture") || bundleId == "com.apple.screenshot" {
+                return true
+            }
+        }
+        let executable = app.executableURL?.lastPathComponent.lowercased()
+        return executable == "screencapture" || executable == "screencaptureui"
+    }
+
+    private func handleScreenCaptureUIActivation() {
+        if !screenCaptureUIIsActive {
+            dockWasVisibleBeforeScreenCapture = launcherWindow?.isVisible == true
+        }
+        screenCaptureUIIsActive = true
+        // Generous: a capture lasts as long as the user takes to drag. Cleared below.
+        suppressHideOnResignUntil = Date().addingTimeInterval(300)
+    }
+
+    /// Called when any normal app becomes frontmost again — the capture is over.
+    func restoreDockAfterScreenCaptureIfNeeded() {
+        guard screenCaptureUIIsActive else { return }
+        screenCaptureUIIsActive = false
+        let shouldRestore = dockWasVisibleBeforeScreenCapture
+        dockWasVisibleBeforeScreenCapture = false
+        // One more resign follows as the captured app takes focus back; ride that out,
+        // then let normal hide-on-focus-loss resume.
+        suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
+        guard shouldRestore, let window = launcherWindow else { return }
+        window.alphaValue = 1
+        window.orderFrontRegardless()
     }
 
     @objc private func handleAppLaunch(_ notification: Notification) {
@@ -615,6 +917,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleAppTermination(_ notification: Notification) {
         reinforceFloatingDockWindow(reason: "app termination", activate: false)
+    }
+
+    @objc func handleBrowserActivateDockRequest(_ notification: Notification) {
+        // Safari is frontmost when the toolbar button is clicked, so the dock
+        // opens already scoped to the page the user was reading.
+        activateContextDock()
     }
 
     @objc func handleServicesOpenWithFiles(_ notification: Notification) {
@@ -644,13 +952,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func handleSystemWakeFromSleep() {
+        // Two notifications point here for one wake. Collapse them.
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastWakeRecoveryAt > 2 else { return }
+        lastWakeRecoveryAt = now
+
         // Re-register hotkeys after wake — Carbon hotkeys are invalidated during sleep.
         // Register methods clean up old handlers automatically, so just re-register all.
         registerGlobalHotkey()
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerAppChatHotkey()
+        registerChatWindowHotkey()
         registerCaptureHotkeys()
+
+        // The Carbon refs above are not how the launcher is actually opened — double-tap
+        // Option is, and that runs on NSEvent global monitors. A monitor that stops
+        // delivering after wake takes the primary way in with it, and the Carbon
+        // re-registration above would have masked the problem as "hotkeys work fine".
+        // Reinstalling is idempotent: each of these removes its old monitor first.
+        registerOutsideMouseMonitor()
+        unregisterModifierSideEffectMonitors()
+        registerDoubleOptionMonitor()
     }
 
     func setupApplicationMenu() {
@@ -664,6 +988,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         appMenu.addItem(NSMenuItem(title: "About ILauncher", action: nil, keyEquivalent: ""))
         appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(
+            NSMenuItem(
+                title: "General Chat", action: #selector(showGeneralChatWindow),
+                keyEquivalent: "n"))
         appMenu.addItem(
             NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
         appMenu.addItem(NSMenuItem.separator())
@@ -723,6 +1051,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         registerContextDockHotkey()
         registerClipboardScopeHotkey()
         registerQuickNoteHotkey()
+        registerAppChatHotkey()
+        registerChatWindowHotkey()
         registerCaptureHotkeys()
         unregisterModifierSideEffectMonitors()
         registerDoubleOptionMonitor()
@@ -745,6 +1075,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSMenuItem(
                 title: "Show Launcher (⌥⌥)",
                 action: #selector(showLauncherFromMenu), keyEquivalent: ""))
+        menu.addItem(
+            NSMenuItem(
+                title: "General Chat",
+                action: #selector(showGeneralChatWindow), keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
         menu.addItem(
             NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
@@ -793,6 +1127,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func showLauncherFromMenu() {
         showLauncher()
+    }
+
+    /// Menu items land here. Choosing "General Chat" from a menu means bring it up — never
+    /// "and put it away if it is already there", which is what a toggle would do to someone
+    /// who just picked it out of a list.
+    @objc func showGeneralChatWindow() {
+        GeneralChatWindowController.shared.show()
+    }
+
+    /// The hotkey lands here instead: press once to open, press again to dismiss.
+    @objc func toggleGeneralChatWindow() {
+        GeneralChatWindowController.shared.toggle()
     }
 
     @objc func showSettings() {
@@ -1159,6 +1505,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.orderFrontRegardless()
     }
 
+    /// Quitting an app transfers macOS focus before the process has fully exited.
+    /// Keep an already-visible Global Context sheet alive through that transition so
+    /// the user can quit several apps from the same result list.
+    func holdDockForGlobalQuitBatch(seconds: TimeInterval = 10) {
+        let deadline = Date().addingTimeInterval(seconds)
+        suppressResultHideUntil = deadline
+        suppressHideOnResignUntil = deadline
+        guard let window = launcherWindow, window.isVisible else { return }
+        window.alphaValue = 1
+        window.orderFrontRegardless()
+        window.makeKey()
+    }
+
     func reinforceFloatingDockWindow(reason: String, activate: Bool) {
         guard settings.alwaysFloatDock || settings.effectiveDockAtBottom else { return }
         guard let window = launcherWindow else { return }
@@ -1191,16 +1550,38 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleActiveSpaceChanged(_ notification: Notification) {
         guard let window = launcherWindow, window.isVisible else { return }
-        // Bottom dock AND a persistent floating dock (Pin / Always-Float) stay put across
-        // Spaces. A transient floating dock is manual — don't follow the user to a new Space.
-        guard dockJoinsAllSpaces else { return }
-        // Suppress the resign-key hide the Space switch triggers, so the dock doesn't
-        // blink out and reappear.
+        // A Space/desktop switch is NEVER a click-away gesture — it only looks like one
+        // because macOS resigns key focus. Suppress the resign-key hide in every mode so
+        // the dock never blinks out on a desktop switch. A dock that joins all Spaces stays
+        // put; a transient floating dock rides along via .moveToActiveSpace.
         suppressHideOnResignUntil = Date().addingTimeInterval(1.0)
-        applyPersistentDockBehavior()
+        if dockJoinsAllSpaces {
+            applyPersistentDockBehavior()
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             guard let self, let window = self.launcherWindow, window.isVisible else { return }
             self.reinforceFloatingDockWindow(reason: "active Space changed", activate: false)
+            self.adoptMenuBarOwnerAfterSpaceChange()
+        }
+    }
+
+    /// After a Space switch macOS usually hands the menu bar to a different app WITHOUT
+    /// posting `didActivateApplication` (our panel keeps key focus), so menu search would
+    /// keep showing the old desktop's app. Re-read the menu bar owner and push it down.
+    /// A locked frontmost-app chat ignores this on the view side and stays on its app.
+    private func adoptMenuBarOwnerAfterSpaceChange() {
+        guard let target = menuBarOwningUserFacingApplication(),
+            target.bundleIdentifier != Bundle.main.bundleIdentifier,
+            !target.isTerminated
+        else { return }
+        guard target.bundleIdentifier != previousFrontmostApp?.bundleIdentifier else { return }
+        recordFrontmostApp(target)
+        ContextDockEnvironment.shared.frontmostAppDidChange(
+            name: target.localizedName ?? "",
+            bundleID: target.bundleIdentifier ?? ""
+        )
+        Task { @MainActor in
+            MenuWarmCacheService.shared.frontmostAppDidChange(target)
         }
     }
 
@@ -1275,6 +1656,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if notification.object as? NSWindow === settingsWindow {
             settingsWindow = nil
+        }
+        restoreAccessoryPolicyIfNoWindowsRemain(closing: notification.object as? NSWindow)
+    }
+
+    /// Goes back to being a menu-bar app once the last ordinary window closes.
+    ///
+    /// Opening the chat window or Settings switches the app to `.regular` so it can own a
+    /// menu bar, and nothing switched it back. The app then kept the menu bar and the Dock
+    /// icon for the rest of the session, took focus from whatever the user was working in,
+    /// and interrupted copy and paste in that app — because a `.regular` app that
+    /// activates is, correctly, taking over.
+    func restoreAccessoryPolicyIfNoWindowsRemain(closing: NSWindow?) {
+        // Run after the close completes: the window being closed still reports itself
+        // visible while the notification is being delivered.
+        DispatchQueue.main.async {
+            let settingsOpen = self.settingsWindow?.isVisible == true
+                && self.settingsWindow !== closing
+            let chatOpen = GeneralChatWindowController.shared.isVisible
+            guard !settingsOpen, !chatOpen else { return }
+            NSApp.setActivationPolicy(.accessory)
         }
     }
 
@@ -1408,6 +1809,136 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotKeyID, GetApplicationEventTarget(), 0, &clipboardScopeHotKeyRef)
     }
 
+    /// Global hotkey → put the App Chat prompt in the corner, aimed at whatever the user
+    /// is looking at. The surface is built; the route the question takes is not yet.
+    func registerAppChatHotkey() {
+        if let ref = appChatEventHandlerRef {
+            RemoveEventHandler(ref)
+            appChatEventHandlerRef = nil
+        }
+        if let ref = appChatHotKeyRef {
+            UnregisterEventHotKey(ref)
+            appChatHotKeyRef = nil
+        }
+        guard settings.appChatHotkeyEnabled else { return }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6163), id: 9)  // 'ILac'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_6163),
+                receivedID.id == 9
+            else { return OSStatus(eventNotHandledErr) }
+            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
+                return OSStatus(eventNotHandledErr)
+            }
+            delegate.activateAppChatPrompt()
+            return noErr
+        }
+        var selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        appChatEventHandlerRef = handlerRef
+        RegisterEventHotKey(
+            settings.appChatHotkeyKeyCode, settings.appChatHotkeyModifiers,
+            hotKeyID, GetApplicationEventTarget(), 0, &appChatHotKeyRef)
+    }
+
+    #if DEBUG
+    /// Developer Inspector toggle. DEBUG only, fixed, and absent from hotkey settings — this is
+    /// developer infrastructure, not a product hotkey a user can rebind or stumble into.
+    ///
+    /// Registration fails closed: if `⌥⌘I` is already taken, Inspect Mode is simply unavailable
+    /// for this launch. Displacing whatever holds it would be a developer tool silently
+    /// breaking someone's real shortcut.
+    func registerInspectorHotkey() {
+        if let ref = inspectorEventHandlerRef {
+            RemoveEventHandler(ref)
+            inspectorEventHandlerRef = nil
+        }
+        if let ref = inspectorHotKeyRef {
+            UnregisterEventHotKey(ref)
+            inspectorHotKeyRef = nil
+        }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6469), id: 77)  // 'ILdi'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_6469),
+                receivedID.id == 77
+            else { return OSStatus(eventNotHandledErr) }
+            guard userData?.assumingMemoryBound(to: AppDelegate.self).pointee != nil else {
+                return OSStatus(eventNotHandledErr)
+            }
+            InspectorSessionController.shared.toggle()
+            return noErr
+        }
+        var selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        inspectorEventHandlerRef = handlerRef
+
+        // 34 is `I`; the modifiers are Option + Command.
+        let status = RegisterEventHotKey(
+            34, UInt32(optionKey | cmdKey), hotKeyID, GetApplicationEventTarget(), 0,
+            &inspectorHotKeyRef)
+        if status != noErr {
+            NSLog("[Inspector] ⌥⌘I unavailable (RegisterEventHotKey status \(status))")
+            inspectorHotKeyRef = nil
+        }
+    }
+
+    func unregisterInspectorHotkey() {
+        InspectorSessionController.shared.disable()
+        if let ref = inspectorEventHandlerRef {
+            RemoveEventHandler(ref)
+            inspectorEventHandlerRef = nil
+        }
+        if let ref = inspectorHotKeyRef {
+            UnregisterEventHotKey(ref)
+            inspectorHotKeyRef = nil
+        }
+    }
+    #endif
+
+    /// The prompt is about the app the user is looking at, so the app is captured here —
+    /// before opening the prompt makes Context-Dock frontmost.
+    func activateAppChatPrompt() {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        // Capture the user-facing app before the corner panel activates Context-Dock.
+        // If the panel is already key, this helper remembers the app behind it instead
+        // of accidentally turning the next cycle into "Chat with Context-Dock".
+        let target = Self.appChatTargetApplication(
+            menuBarOwner: menuBarOwningUserFacingApplication(),
+            remembered: previousFrontmostApp,
+            rawFrontmost: NSWorkspace.shared.frontmostApplication,
+            ownBundleID: Bundle.main.bundleIdentifier ?? "")
+        let chatTarget = CornerChatTarget(
+            name: target?.localizedName ?? "",
+            bundleID: target?.bundleIdentifier ?? "",
+            suggestions: AppChatSuggestionProvider.suggestions(for: target),
+            summary: AppChatSuggestionProvider.summary(for: target))
+        CornerDockController.shared.activate()
+        CornerChatPresentation.shared.cycle(target: chatTarget)
+    }
+
     /// Global hotkey → open (pin) a Quick Note sticky.
     func registerQuickNoteHotkey() {
         if let ref = quickNoteEventHandlerRef {
@@ -1449,6 +1980,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hotKeyID, GetApplicationEventTarget(), 0, &quickNoteHotKeyRef)
     }
 
+    /// Global hotkey → open the full-window General Chat surface.
+    func registerChatWindowHotkey() {
+        if let ref = chatWindowEventHandlerRef {
+            RemoveEventHandler(ref)
+            chatWindowEventHandlerRef = nil
+        }
+        if let ref = chatWindowHotKeyRef {
+            UnregisterEventHotKey(ref)
+            chatWindowHotKeyRef = nil
+        }
+        guard settings.chatWindowHotkeyEnabled else { return }
+        let hotKeyID = EventHotKeyID(signature: FourCharCode(bitPattern: 0x494C_6377), id: 5)  // 'ILcw'
+        var eventType = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard), eventKind: OSType(kEventHotKeyPressed))
+        let handler: EventHandlerUPP = { (_, event, userData) -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var receivedID = EventHotKeyID()
+            let status = GetEventParameter(
+                event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                nil, MemoryLayout<EventHotKeyID>.size, nil, &receivedID)
+            guard status == noErr,
+                receivedID.signature == FourCharCode(bitPattern: 0x494C_6377),
+                receivedID.id == 5
+            else { return OSStatus(eventNotHandledErr) }
+            guard let delegate = userData?.assumingMemoryBound(to: AppDelegate.self).pointee else {
+                return OSStatus(eventNotHandledErr)
+            }
+            delegate.toggleGeneralChatWindow()
+            return noErr
+        }
+        let selfPtr = UnsafeMutablePointer<AppDelegate>.allocate(capacity: 1)
+        selfPtr.initialize(to: self)
+        var handlerRef: EventHandlerRef?
+        InstallEventHandler(
+            GetApplicationEventTarget(), handler, 1, &eventType, selfPtr, &handlerRef)
+        chatWindowEventHandlerRef = handlerRef
+        RegisterEventHotKey(
+            settings.chatWindowHotkeyKeyCode, settings.chatWindowHotkeyModifiers,
+            hotKeyID, GetApplicationEventTarget(), 0, &chatWindowHotKeyRef)
+    }
+
     /// Open a floating Quick Note sticky — the most recent note, or a fresh one.
     func activateQuickNoteSticky() {
         DispatchQueue.main.async {
@@ -1464,13 +2036,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             captureHotkeyEventHandlerRef = nil
         }
         for ref in [captureTextHotKeyRef, captureAreaHotKeyRef, captureScreenshotHotKeyRef,
-                    windowReviewHotKeyRef] {
+                    selectionScopeHotKeyRef] {
             if let ref { UnregisterEventHotKey(ref) }
         }
         captureTextHotKeyRef = nil
         captureAreaHotKeyRef = nil
         captureScreenshotHotKeyRef = nil
-        windowReviewHotKeyRef = nil
+        selectionScopeHotKeyRef = nil
     }
 
     func registerCaptureHotkeys() {
@@ -1479,7 +2051,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.captureTextHotkeyKeyCode,
             settings.captureAreaHotkeyKeyCode,
             settings.captureScreenshotHotkeyKeyCode,
-            settings.windowReviewHotkeyKeyCode,
+            settings.selectionScopeHotkeyKeyCode,
         ].contains { $0 != 0 }
         guard configured else { return }
 
@@ -1499,7 +2071,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             case 41: ScreenCaptureService.shared.capture(.text)
             case 42: ScreenCaptureService.shared.capture(.area)
             case 43: ScreenCaptureService.shared.capture(.screenshot)
-            case 44: AppDelegate.shared?.activateWindowReviewScope()
+            case 45: AppDelegate.shared?.activateSelectionScope()
+            case 46: AppDelegate.shared?.activateGlobalContextScope()
             default: return OSStatus(eventNotHandledErr)
             }
             return noErr
@@ -1528,11 +2101,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 settings.captureScreenshotHotkeyModifiers,
                 id, GetApplicationEventTarget(), 0, &captureScreenshotHotKeyRef)
         }
-        if settings.windowReviewHotkeyKeyCode != 0 {
-            let id = EventHotKeyID(signature: signature, id: 44)
+        if settings.selectionScopeHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 45)
             RegisterEventHotKey(
-                settings.windowReviewHotkeyKeyCode, settings.windowReviewHotkeyModifiers,
-                id, GetApplicationEventTarget(), 0, &windowReviewHotKeyRef)
+                settings.selectionScopeHotkeyKeyCode, settings.selectionScopeHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &selectionScopeHotKeyRef)
+        }
+        if settings.globalContextHotkeyKeyCode != 0 {
+            let id = EventHotKeyID(signature: signature, id: 46)
+            RegisterEventHotKey(
+                settings.globalContextHotkeyKeyCode, settings.globalContextHotkeyModifiers,
+                id, GetApplicationEventTarget(), 0, &globalContextHotKeyRef)
         }
     }
 
@@ -1553,49 +2132,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSEvent.removeMonitor(m)
             singleOptionLocalCancelMonitor = nil
         }
-        guard settings.useDoubleOptionLaunch else { return }
+        guard settings.useDoubleOptionLaunch || settings.useDoubleCommandGlobalContext else { return }
+
+        var optionTap = DoubleModifierTap()
+        var commandTap = DoubleModifierTap()
 
         let cancelOptionTap: () -> Void = { [weak self] in
             guard let self else { return }
             self.optionTapContaminated = true
             self.lastOptionPressTime = 0
+            optionTap.cancel()
+            commandTap.cancel()
         }
 
         let handle: (NSEvent) -> Void = { [weak self] event in
             guard let self else { return }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let optionNow = flags.contains(.option)
-            let extraModifiers = flags.intersection([.command, .control, .shift])
-
-            if !extraModifiers.isEmpty {
-                self.optionTapContaminated = true
-                self.lastOptionPressTime = 0
-                return
+            if commandTap.update(
+                isDown: flags.contains(.command),
+                hasOtherModifiers: !flags.intersection([.option, .control, .shift, .function]).isEmpty,
+                time: event.timestamp), self.settings.useDoubleCommandGlobalContext {
+                DispatchQueue.main.async { self.activateGlobalContextScope() }
             }
-
-            if optionNow && !self.optionKeyDown {
-                self.optionKeyDown = true
-                self.optionTapContaminated = false
-                return
-            }
-
-            if !optionNow && self.optionKeyDown {
-                self.optionKeyDown = false
-                guard !self.optionTapContaminated else {
-                    self.optionTapContaminated = false
-                    return
-                }
-
-                let now = Date().timeIntervalSinceReferenceDate
-                let gap = now - self.lastOptionPressTime
-                if gap > 0.04 && gap < 0.40 {
-                    self.lastOptionPressTime = 0
-                    DispatchQueue.main.async { self.toggleLauncher() }
-                } else {
-                    self.lastOptionPressTime = now
-                }
-            } else if !optionNow {
-                self.lastOptionPressTime = 0
+            if optionTap.update(
+                isDown: flags.contains(.option),
+                hasOtherModifiers: !flags.intersection([.command, .control, .shift, .function]).isEmpty,
+                time: event.timestamp), self.settings.useDoubleOptionLaunch {
+                DispatchQueue.main.async { self.toggleLauncher() }
             }
         }
 
@@ -1839,6 +2402,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func activateContextDock() {
+        // Captured before the async hop, which is what lost the caller last time: the stack
+        // inside the dispatched closure shows only libdispatch.
+        if DoraXTurnLog.isEnabled {
+            DoraXTurnLog.record(
+                "activateContextDock — \(Thread.callStackSymbols.dropFirst().prefix(6).joined(separator: " | "))")
+        }
         guard settings.enableLayer2 else { return }  // Layer 2 disabled — hotkey does nothing
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
@@ -1865,28 +2434,100 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func activateDropShelf() {
+        DropShelfController.shared.activate()
+    }
+
     func activateClipboardScope() {
         guard settings.enableLayer2 else { return }
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        if toggleOffSmartScopeIfActive("clipboard") { return }
-        presentSmartScope(.activateClipboardScope, key: "clipboard")
+        ClipboardPanelController.shared.toggle()
     }
 
-    func activateWindowReviewScope() {
+    /// Global hotkey → open the dock directly in Selection Scope for whatever the frontmost
+    /// app has selected. Deliberately separate from the launcher hotkey: a plain launcher open
+    /// must stay a launcher (typing an app name), never get hijacked by a live selection.
+    /// Global Context in the corner: every running app's commands in one ranked list.
+    ///
+    /// A scope of the corner chat rather than a surface of its own — the same field asks,
+    /// and the chip says which scope is answering. Pressing it again puts the corner away,
+    /// like the other scope hotkeys.
+    func activateGlobalContextScope() {
         guard settings.enableLayer2 else { return }
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        if toggleOffSmartScopeIfActive("windows") { return }
-        presentSmartScope(.activateWindowReviewScope, key: "windows")
+
+        let presentation = CornerDockController.shared.chatPresentation
+        if presentation.isVisible, presentation.mode == .globalContext {
+            presentation.dismiss()
+            return
+        }
+        presentation.showGlobalContext()
+        CornerDockController.shared.armKeyboard()
+    }
+
+    /// `sourceBundleID`: when the caller already knows exactly which app the selection
+    /// belongs to — a button inside that app's own corner chat, say — name it explicitly
+    /// rather than asking "whatever is frontmost right now". Reading frontmostApplication
+    /// at that point returns *this app*, since a click on our own button requires our own
+    /// window to be key: the guard below would then skip the refresh and quietly fall back
+    /// to whatever AXContextReader last happened to hold, which is correct only by luck.
+    /// The global hotkey path keeps asking "whatever is frontmost" because there it is
+    /// genuinely true — the hotkey fires while some other app still holds the key window.
+    func activateSelectionScope(sourceBundleID: String? = nil) {
+        guard settings.enableLayer2 else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        if toggleOffSmartScopeIfActive("selection") { return }
+        // Read the selection BEFORE the panel appears, while the source app is still frontmost.
+        // The launcher then paints Selection Scope on its first frame instead of showing Context
+        // Dock and swapping once an async AX read lands.
+        if let bundleID = sourceBundleID, !bundleID.isEmpty,
+            let named = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == bundleID && !$0.isTerminated
+            })
+        {
+            AXContextReader.shared.refreshSelectionOnly(from: named)
+        } else if let source = NSWorkspace.shared.frontmostApplication,
+            source.bundleIdentifier != Bundle.main.bundleIdentifier
+        {
+            AXContextReader.shared.refreshSelectionOnly(from: source)
+        }
+        // The selection is a corner surface, stacked with the clipboard, the shelf and the
+        // chat that will act on it. It used to open the launcher window drawn as a compact
+        // pill, which looked like a corner card without being one — it could not stack,
+        // and it pulled the whole launcher up behind it.
+        //
+        // Nothing selected leaves the corner alone rather than raising an empty card.
+        CornerDockController.shared.selection.toggle(from: AXContextReader.shared.current)
     }
 
     /// True while a compact scope (Clipboard / Notifications) is showing, so the
     /// launcher does not auto-hide when another app takes focus.
     var smartScopeActive = false
     private var activeSmartScopeKey: String?
+    /// Non-nil only while a hotkey-driven scope open is in flight. The window-open handler reads
+    /// it to tell "open because a scope was requested" from a plain launcher open, which must
+    /// never resume the scope the user was last in.
+    var pendingSmartScopeKey: String?
+
+    /// UI exited a smart scope surface — forget the key so the same hotkey re-enters the scope
+    /// instead of reading as a second press and closing the dock.
+    func clearSmartScope(key: String) {
+        guard activeSmartScopeKey == key else { return }
+        activeSmartScopeKey = nil
+        smartScopeActive = false
+    }
+
+    /// Drop any remembered scope — used when a plain launcher open resets the surface.
+    func clearSmartScopeState() {
+        activeSmartScopeKey = nil
+        smartScopeActive = false
+    }
 
     private func toggleOffSmartScopeIfActive(_ key: String) -> Bool {
         guard activeSmartScopeKey == key, launcherWindow?.isVisible == true else { return false }
@@ -1901,6 +2542,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func presentSmartScope(_ notificationName: Notification.Name, key: String) {
         smartScopeActive = true
         activeSmartScopeKey = key
+        pendingSmartScopeKey = key
         smartScopeActivationGeneration &+= 1
         let generation = smartScopeActivationGeneration
         DispatchQueue.main.async {
@@ -1922,8 +2564,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.showLauncher()
             }
             DispatchQueue.main.async {
-                guard generation == self.smartScopeActivationGeneration else { return }
+                guard generation == self.smartScopeActivationGeneration else {
+                    self.pendingSmartScopeKey = nil
+                    return
+                }
                 NotificationCenter.default.post(name: notificationName, object: nil)
+                self.pendingSmartScopeKey = nil
             }
         }
     }
@@ -2065,29 +2711,69 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     // Hidden → always open at L2.
                     self.isDockContextMode = true
                     self.showLauncher()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                    }
                 }
             } else {
                 self.setupLauncherWindow()
                 self.isDockContextMode = true
                 self.showLauncher()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-                    NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                }
             }
         }
     }
 
+    /// Watches where the pointer is so the launcher can stand aside.
+    ///
+    /// The host window is screen-tall and mostly empty; without this it sits over the whole
+    /// desktop as an invisible sheet of glass, taking every click aimed at what is behind it.
+    /// Two monitors because neither is enough alone: the global one sees the pointer while
+    /// another app is active, the local one sees it while the launcher itself is key.
+    private func startPointerTransparencyMonitor() {
+        stopPointerTransparencyMonitor()
+        let events: NSEvent.EventTypeMask = [
+            .mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown,
+        ]
+        pointerTransparencyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
+            [weak self] _ in
+            self?.applyPointerTransparency()
+        }
+        pointerTransparencyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: events) {
+            [weak self] event in
+            self?.applyPointerTransparency()
+            return event
+        }
+        applyPointerTransparency()
+    }
+
+    private func stopPointerTransparencyMonitor() {
+        if let monitor = pointerTransparencyGlobalMonitor {
+            NSEvent.removeMonitor(monitor)
+            pointerTransparencyGlobalMonitor = nil
+        }
+        if let monitor = pointerTransparencyLocalMonitor {
+            NSEvent.removeMonitor(monitor)
+            pointerTransparencyLocalMonitor = nil
+        }
+        // Left interactive on the way out: a hidden window ignoring the mouse would stay
+        // that way if it were ever shown by a path that does not restart the monitor.
+        (launcherWindow as? KeyableWindow)?.ignoresMouseEvents = false
+    }
+
+    private func applyPointerTransparency() {
+        guard let window = launcherWindow as? KeyableWindow, window.isVisible else { return }
+        window.updateMouseTransparency(
+            pointer: NSEvent.mouseLocation, isDragging: window.isDraggingFromCard)
+    }
+
     func showLauncher() {
+        // Who asked. The corner chat runs its turn on the dock's pipeline without wanting the
+        // dock on screen, and it kept arriving anyway — with every static caller ruled out,
+        // the honest instrument is the stack at the moment it happens. Only while the turn log
+        // is switched on, so this costs nothing in normal use.
+        if DoraXTurnLog.isEnabled {
+            let stack = Thread.callStackSymbols.dropFirst().prefix(8).joined(separator: " | ")
+            DoraXTurnLog.record("showLauncher called — \(stack)")
+        }
         guard let window = launcherWindow else { return }
+        startPointerTransparencyMonitor()
 
         #if DEBUG
         print("🚀 [AppDelegate] ===== SHOW LAUNCHER CALLED =====")
@@ -2102,13 +2788,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             print(
                 "📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")"
             )
-            // Capture the SELECTION synchronously, right now, while that app is still frontmost
-            // and BEFORE our panel steals focus. Many apps (TextEdit, plenty of native text
-            // views) report a nil AXFocusedUIElement once they're inactive, so reading after we
-            // activate silently returns nothing — that's why Selection Scope worked in some apps
-            // and not others. This is the cheap AX read only (focused element + selected text);
-            // the heavy detector (AppleScript/PDF/OCR) stays deferred below so open never blocks.
-            AXContextReader.shared.refreshSelectionOnly(from: currentApp)
             // Immediately update LauncherView's frontmostAppName so the dock reflects the real app
             DispatchQueue.main.async {
                 ContextDockEnvironment.shared.frontmostAppDidChange(
@@ -2212,6 +2891,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.acceptsMouseMovedEvents = true
         self.launcherWindow?.makeKey()
 
+        // The global hotkey must show a usable shell before any accessibility work.  This read
+        // is still performed on the next main-loop turn (the app's AX element is usually valid
+        // during the activation hand-off), while the lifecycle's existing async pass remains the
+        // authoritative refresh for selections that arrive later.  Keeping it out of the hotkey
+        // handler removes the only synchronous cross-process call on the launch critical path.
+        if let currentApp = previousFrontmostApp {
+            DispatchQueue.main.async {
+                AXContextReader.shared.refreshSelectionOnly(
+                    from: currentApp, includeFinderFiles: false)
+            }
+        }
+
         // Reset content state now that the window is key and the app is active.
         // The window is still alpha=0 at this point, so stale content is not visible.
         // Posting here (after makeKey) ensures NSApp.keyWindow is correct when
@@ -2236,12 +2927,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func hideLauncher(force: Bool = false) {
-        WebQuickLookPanel.shared.close()
+        // A pinned preview is a window the user asked to keep; only the one following
+        // the dock's selection goes away with the dock.
+        PreviewController.shared.closeUnpinned()
         guard let window = launcherWindow else { return }
+        // Stopped only when the window is really going away — the persistent-scope paths
+        // below return early and keep it on screen, where it still has to stand aside.
+        defer {
+            if !window.isVisible { stopPointerTransparencyMonitor() }
+        }
         // Compact scopes are intentionally persistent while the user works in another app.
         // Only an explicit forced dismissal (Escape/hotkey) or clearSearchContext(), which
         // first clears smartScopeActive, may close them.
         if !force && smartScopeActive {
+            window.alphaValue = 1
+            applyPersistentDockBehavior()
+            window.orderFrontRegardless()
+            return
+        }
+        // An active scope / frontmost-app chat owns the dock. windowDidResignKey already
+        // guards this, but every other soft-hide path (action executed, app activated,
+        // context switch) reached hideLauncher() directly and tore the conversation down.
+        if !force && scopeChatSpaceHold {
             window.alphaValue = 1
             applyPersistentDockBehavior()
             window.orderFrontRegardless()
@@ -2257,12 +2964,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             settings.launcherPinned = false
             smartScopeActive = false
             activeSmartScopeKey = nil
+            // Escape / hotkey ends the session outright — release the scope-chat hold so a
+            // later reopen starts unheld instead of floating on every Space forever.
+            scopeChatSpaceHold = false
         }
         if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
+            // A floating dock stays on screen when focus moves — that is what floating means.
+            // It must not take focus while doing so: this branch runs from hide-on-focus-loss,
+            // and `.focusSearchField` ends in NSApp.activate(ignoringOtherApps: true), so
+            // pressing Return in the corner chat pulled the dock over the app the user was
+            // working in. A hide request that activates the app is not a hide.
             window.alphaValue = 1
             applyPersistentDockBehavior()
             window.orderFrontRegardless()
-            NotificationCenter.default.post(name: .focusSearchField, object: nil)
             return
         }
         NSAnimationContext.runAnimationGroup(
@@ -2360,6 +3074,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else {
             return
         }
+
+        // A capture UI is a transient overlay, not the user moving to another app —
+        // pushing it through as the new frontmost would swap the dock's scope out from
+        // under whatever they were doing.
+        if Self.isScreenCaptureUI(app) { return }
 
         // Only track user-facing non-DoraX apps. Resolve helper processes (ChatGPT helper, etc.)
         // back to their owning .app before pushing context into LauncherView.

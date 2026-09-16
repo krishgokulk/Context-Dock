@@ -21,10 +21,17 @@ class LayeredExtensionManager: ObservableObject {
     private let libraryBasePath: URL
     private let userExtensionsPath: URL
 
+    /// One migration pass per process, so the reload it triggers cannot spawn another.
+    private var didStartDocumentsMigration = false
+
     init() {
-        // Setup extension library paths
-        let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        self.libraryBasePath = documentsPath.appendingPathComponent("ILauncher/Extensions")
+        // Extensions are app-owned data, so they live beside the rest of it in Application
+        // Support. They used to live in ~/Documents/ILauncher/Extensions, which is a
+        // TCC-protected location: after any code-signature change macOS holds the first read
+        // there until the user answers a Documents-access prompt, and an accessory app that
+        // has not finished launching cannot show one. Application Support needs no prompt.
+        let supportPath = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        self.libraryBasePath = supportPath.appendingPathComponent("Context-Dock/Extensions")
         self.userExtensionsPath = libraryBasePath.appendingPathComponent("User-Created")
 
         // Create directories if needed
@@ -66,13 +73,31 @@ class LayeredExtensionManager: ObservableObject {
     func loadExtensions() async {
         let libPath = libraryBasePath  // capture let-constant; safe across threads
 
-        // Run all disk I/O on a background thread
-        let metadataURLs = await Task.detached(priority: .userInitiated) { [libPath] in
-            LayeredExtensionManager.discoverExtensionMetadataURLs(at: libPath)
-        }.value
-        let discovered = metadataURLs.compactMap {
-            LayeredExtensionManager.loadExtensionFromMetadata($0)
+        // Run all disk I/O on a background thread — including the per-extension reads.
+        // Decoding used to run here on the MainActor: a single read that blocks (a file in a
+        // TCC-protected location, an evicted iCloud file, a stalled mount) froze the main
+        // thread before the menu bar item and hotkeys were installed, so the app looked
+        // launched but had no icon and answered nothing, not even Quit.
+        // Migration reads ~/Documents, which can sit blocked for as long as the TCC prompt is
+        // unanswered, so it is fire-and-forget: never awaited, and never in front of
+        // discovery. A pending prompt costs the not-yet-copied extensions until the next
+        // launch, not the whole library.
+        if !didStartDocumentsMigration {
+            didStartDocumentsMigration = true
+            Task.detached(priority: .utility) { [libPath] in
+                let copied = LayeredExtensionManager.migrateFromDocumentsIfNeeded(to: libPath)
+                // Only reload when the copy actually brought something new in. The flag above
+                // keeps this second pass from spawning a third migration.
+                if copied > 0 {
+                    await LayeredExtensionManager.shared.loadExtensions()
+                }
+            }
         }
+
+        let discovered = await Task.detached(priority: .userInitiated) { [libPath] in
+            LayeredExtensionManager.discoverExtensionMetadataURLs(at: libPath)
+                .compactMap { LayeredExtensionManager.loadExtensionFromMetadata($0) }
+        }.value
         let scanned = await Task.detached(priority: .userInitiated) {
             let s = LayeredExtensionManager.loadScanned()
             return s
@@ -110,6 +135,64 @@ class LayeredExtensionManager: ObservableObject {
         #endif
     }
 
+    // MARK: - Migration off ~/Documents
+
+    /// Copies extensions from the old `~/Documents/ILauncher/Extensions` tree into `newBase`.
+    ///
+    /// Copies rather than moves, and never overwrites a file already at the destination, so a
+    /// migration interrupted halfway leaves both trees intact. The old tree is left in place
+    /// on purpose — a `.migrated-from-documents` marker in the new base is what stops this
+    /// from running again, so the user can delete the old folder whenever they like.
+    /// - Returns: how many files were copied, so the caller can skip a pointless reload.
+    @discardableResult
+    private nonisolated static func migrateFromDocumentsIfNeeded(to newBase: URL) -> Int {
+        let fm = FileManager.default
+        let marker = newBase.appendingPathComponent(".migrated-from-documents")
+        guard !fm.fileExists(atPath: marker.path) else { return 0 }
+
+        guard let documents = fm.urls(for: .documentDirectory, in: .userDomainMask).first else { return 0 }
+        let oldBase = documents.appendingPathComponent("ILauncher/Extensions")
+        guard fm.fileExists(atPath: oldBase.path) else {
+            // Nothing to migrate — a fresh install. Mark it so we never stat Documents again.
+            try? Data().write(to: marker)
+            return 0
+        }
+
+        guard let enumerator = fm.enumerator(at: oldBase, includingPropertiesForKeys: [.isDirectoryKey]) else { return 0 }
+        var copied = 0
+        var failed = 0
+        let prefix = oldBase.path + "/"
+        for case let source as URL in enumerator {
+            guard source.path.hasPrefix(prefix) else { continue }
+            let destination = newBase.appendingPathComponent(String(source.path.dropFirst(prefix.count)))
+
+            let isDirectory = (try? source.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
+            if isDirectory {
+                try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+                continue
+            }
+            guard !fm.fileExists(atPath: destination.path) else { continue }
+            try? fm.createDirectory(
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            do {
+                try fm.copyItem(at: source, to: destination)
+                copied += 1
+            } catch {
+                failed += 1
+            }
+        }
+
+        // Only claim the migration is done if every file made it. Otherwise leave the marker
+        // off so the next launch retries the ones that failed.
+        if failed == 0 {
+            try? Data().write(to: marker)
+        }
+        #if DEBUG
+        print("📦 Extension migration: copied \(copied), failed \(failed) from \(oldBase.path)")
+        #endif
+        return copied
+    }
+
     // MARK: - Extension Discovery (nonisolated static — safe to call from Task.detached)
 
     private nonisolated static func discoverExtensionMetadataURLs(at libraryBasePath: URL) -> [URL] {
@@ -132,7 +215,7 @@ class LayeredExtensionManager: ObservableObject {
         return discovered
     }
 
-    private static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
+    private nonisolated static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
         do {
             let data = try Data(contentsOf: metadataURL)
             var ext = try JSONDecoder().decode(ILExtension.self, from: data)

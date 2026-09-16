@@ -14,7 +14,6 @@ final class AIRequestClassifier {
             return AIIntentResolution(
                 kind: .conversation,
                 targetApps: [],
-                requiredCapabilityKinds: [],
                 confidence: 1,
                 requiresPlanning: false
             )
@@ -25,44 +24,43 @@ final class AIRequestClassifier {
             .map { [$0.name] } ?? []
         let isWorkflow = looksLikeMultiStepWorkflow(normalized)
         let isDeterministic = GeneralAIActionResolver.shared.looksExecutable(normalized)
+        let matchesSystemCapability = GlobalCommandCapabilities.hasSemanticMatch(normalized)
         let isScoped = hasExplicitContext || !targetApps.isEmpty || looksLikeScopedTask(normalized)
 
         if isWorkflow {
-            var kinds: Set<AICapabilityKind> = [.workflow]
-            if hasExplicitContext { kinds.insert(.fileContent) }
-            if containsSharingIntent(normalized) { kinds.insert(.sharing) }
-            if !targetApps.isEmpty { kinds.insert(.appAction) }
             return AIIntentResolution(
                 kind: .multiStepWorkflow,
                 targetApps: targetApps,
-                requiredCapabilityKinds: kinds,
                 confidence: 0.86,
                 requiresPlanning: true
             )
         }
 
         if isDeterministic {
-            var kinds: Set<AICapabilityKind> = [.appAction]
-            if containsSharingIntent(normalized) { kinds.insert(.sharing) }
             return AIIntentResolution(
                 kind: .deterministicAction,
                 targetApps: targetApps,
-                requiredCapabilityKinds: kinds,
                 confidence: 0.9,
                 requiresPlanning: false
             )
         }
 
+        // A compact system phrase can be neither a grammatical command nor a question:
+        // "dark mode", "volume", a user-authored "focus setup". It is still capability-
+        // shaped and must enter discovery instead of falling through to provider chat.
+        if matchesSystemCapability {
+            return AIIntentResolution(
+                kind: .scopedTask,
+                targetApps: [],
+                confidence: 0.88,
+                requiresPlanning: false
+            )
+        }
+
         if isScoped {
-            var kinds: Set<AICapabilityKind> = []
-            if hasExplicitContext { kinds.insert(.fileContent) }
-            if !targetApps.isEmpty || looksLikeAppDataRequest(normalized) {
-                kinds.insert(.appData)
-            }
             return AIIntentResolution(
                 kind: .scopedTask,
                 targetApps: targetApps,
-                requiredCapabilityKinds: kinds,
                 confidence: 0.78,
                 requiresPlanning: false
             )
@@ -71,7 +69,6 @@ final class AIRequestClassifier {
         return AIIntentResolution(
             kind: .conversation,
             targetApps: [],
-            requiredCapabilityKinds: [],
             confidence: 0.92,
             requiresPlanning: false
         )
@@ -86,7 +83,14 @@ final class AIRequestClassifier {
         let matchedVerbCount = workflowVerbs.reduce(into: 0) { count, verb in
             if query.contains(verb) { count += 1 }
         }
-        let sequenceSignals = [" and then ", " then ", " after that ", " once ", " followed by "]
+        // A plain "and" between two actions is the commonest way people say "two steps" —
+        // "find the newest export and open it" has no "then" and nothing to share, and was
+        // classified as a single action, so it was answered with one route that did half
+        // the job. A false positive here costs one planner call that returns an empty plan;
+        // a false negative silently drops work the user asked for.
+        let sequenceSignals = [
+            " and then ", " then ", " after that ", " once ", " followed by ", " and ", ", ",
+        ]
         if sequenceSignals.contains(where: query.contains), matchedVerbCount >= 2 {
             return true
         }

@@ -701,10 +701,12 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     case googleGemini = "googleGemini"
     case openAI = "openAI"
     case anthropic = "anthropic"
+    case claudeCode = "claudeCode"
     case claudeBridge = "claudeBridge"
     case chatGPTBridge = "chatGPTBridge"
     case ollama = "ollama"
     case openAICompatible = "openAICompatible"
+    case kimi = "kimi"
     case shortcuts = "shortcuts"
 
     var id: String { rawValue }
@@ -715,11 +717,35 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "Google Gemini"
         case .openAI: return "ChatGPT (OpenAI)"
         case .anthropic: return "Claude (Anthropic)"
+        case .claudeCode: return "Claude Subscription"
         case .claudeBridge: return "Claude Pro (via Bridge)"
         case .chatGPTBridge: return "ChatGPT Plus (via Bridge)"
         case .ollama: return "Ollama (Local)"
         case .openAICompatible: return "OpenAI-Compatible"
+        case .kimi: return "Kimi (Moonshot AI)"
         case .shortcuts: return "Apple Shortcuts"
+        }
+    }
+
+    /// True when the provider accepts a tool schema and answers with a structured tool call,
+    /// i.e. everything AIProviderService.sendWithTools knows how to drive.
+    ///
+    /// The two exceptions are real: Apple Intelligence has no function-calling API, and
+    /// Shortcuts is not a chat model at all. Those are the only cases that need the older
+    /// "ask the model to reply with JSON and parse it back out of the prose" protocol —
+    /// which is worth avoiding everywhere else, because the model can leak that JSON into
+    /// its visible answer and there is no way to tell a tool call from a sentence about one.
+    var supportsNativeTools: Bool {
+        switch self {
+        case .onDevice, .shortcuts:
+            return false
+        case .openAI, .anthropic, .googleGemini, .ollama, .openAICompatible, .kimi,
+             .claudeBridge, .chatGPTBridge:
+            return true
+        // The CLI is an agent with its own tools, and DoraX deliberately runs it with none.
+        // It answers; the app acts. Tool calls take the plain path.
+        case .claudeCode:
+            return false
         }
     }
 
@@ -729,10 +755,12 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "Gemini"
         case .openAI: return "ChatGPT"
         case .anthropic: return "Claude"
+        case .claudeCode: return "Claude"
         case .claudeBridge: return "Claude Pro"
         case .chatGPTBridge: return "ChatGPT Plus"
         case .ollama: return "Ollama"
         case .openAICompatible: return "Compatible"
+        case .kimi: return "Kimi"
         case .shortcuts: return "Shortcuts"
         }
     }
@@ -745,15 +773,19 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "Google's Gemini AI models. Requires API key."
         case .openAI: return "OpenAI's GPT models. Requires API key."
         case .anthropic: return "Anthropic's Claude models. Requires API key."
+        case .claudeCode:
+            return
+                "Sign in once with the Claude app on this Mac. Uses your Pro or Max subscription directly — no proxy, no API key, no extra billing."
         case .claudeBridge:
             return
-                "Use your existing Claude Pro subscription via a local bridge (e.g. VibeProxy). No extra billing."
+                "Route a subscription through a local OpenAI-compatible bridge you run yourself. Advanced."
         case .chatGPTBridge:
             return
-                "Use your existing ChatGPT Plus subscription via a local bridge (e.g. VibeProxy). No extra billing."
+                "Route a ChatGPT subscription through a local OpenAI-compatible bridge you run yourself. Advanced."
         case .ollama: return "Run local AI models with Ollama. Free and private."
         case .openAICompatible:
             return "Use LM Studio, OpenRouter, or another OpenAI-compatible endpoint."
+        case .kimi: return "Moonshot AI's Kimi model through its official API."
         case .shortcuts: return "Use any Apple Shortcut as your AI. Fully customizable."
         }
     }
@@ -764,10 +796,12 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .googleGemini: return "sparkles"
         case .openAI: return "bubble.left.and.bubble.right"
         case .anthropic: return "brain.head.profile"
+        case .claudeCode: return "sparkle"
         case .claudeBridge: return "arrow.triangle.2.circlepath.circle.fill"
         case .chatGPTBridge: return "arrow.triangle.2.circlepath.circle"
         case .ollama: return "server.rack"
         case .openAICompatible: return "network"
+        case .kimi: return "moon.stars.fill"
         case .shortcuts: return "bolt.fill"
         }
     }
@@ -775,9 +809,9 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     var requiresAPIKey: Bool {
         switch self {
         case .onDevice, .ollama, .openAICompatible, .shortcuts,
-            .claudeBridge, .chatGPTBridge:
+            .claudeBridge, .chatGPTBridge, .claudeCode:
             return false
-        case .googleGemini, .openAI, .anthropic: return true
+        case .googleGemini, .openAI, .anthropic, .kimi: return true
         }
     }
 
@@ -794,9 +828,9 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
 
     var supportTier: AIProviderSupportTier {
         switch self {
-        case .openAI, .anthropic, .googleGemini:
+        case .openAI, .anthropic, .googleGemini, .kimi:
             return .official
-        case .claudeBridge, .chatGPTBridge:
+        case .claudeCode, .claudeBridge, .chatGPTBridge:
             return .bridge
         case .onDevice, .ollama, .shortcuts:
             return .local
@@ -822,7 +856,45 @@ struct OllamaModel: Codable, Identifiable, Equatable {
 class AppSettings: ObservableObject {
     static let shared = AppSettings()
 
+    /// User-authored steering text prepended to the system prompt of *every* AI surface
+    /// — General Chat, Context Dock chat and extension AI panels. One field so the user
+    /// sets tone, language and standing rules in a single place instead of per surface.
+    @AppStorage("globalContextPrompt") var globalContextPrompt: String = ""
+
+    /// Quick Note's assistant pane. Persisted so hiding it stays hidden — a note
+    /// window is often wanted as just a note.
+    @AppStorage("quickNoteAISidecarVisible") var quickNoteAISidecarVisible: Bool = true
+
+    /// When true, General Chat lets the model decide what to do with a request instead of
+    /// letting keyword routers answer it first.
+    ///
+    /// The routers were written when the model had no tools and could only narrate. They
+    /// score a query against known words and, on a hit, produce the answer themselves — so
+    /// the model never sees requests they claim. That is why "what is recent commit i did?"
+    /// offered to read the Open Recent menu of three different apps: the word "recent"
+    /// scored, and the word "commit" was read by nothing.
+    ///
+    /// With tools reachable (AgentToolRegistry, find_capability, run_capability), the same
+    /// scoring is more useful as a hint in the prompt than as a verdict. The routers still
+    /// run; their candidates are offered to the model as "these look relevant" rather than
+    /// returned as the answer.
+    ///
+    /// Set to false to restore the old behaviour if a regression shows up. Deterministic
+    /// commands — memory writes, preference commands — are unaffected either way: those are
+    /// instructions, not questions, and there is nothing for a model to decide.
+    @AppStorage("agentModelFirstRouting") var agentModelFirstRouting: Bool = true
+
+    /// Fetch an app's own product page once per app version, to ground answers about
+    /// what the app is. Off by default: it is the only part of app knowledge that
+    /// leaves this machine, and it only ever fetches an address the user configured.
+    @AppStorage("appWebsiteKnowledgeEnabled") var appWebsiteKnowledgeEnabled: Bool = false
     @AppStorage("showMenuBarIcon") var showMenuBarIcon: Bool = true
+    /// The corner's Global field folds into the dock strip after a second untouched.
+    @AppStorage("autoShrinkInputField") var autoShrinkInputField: Bool = true
+    /// Where the corner shell sits along the bottom of the screen: left, centre or right.
+    /// Centred, with the input bar under it, it reads as a dock — which is what it has
+    /// become, rather than a corner annex to one.
+    @AppStorage("cornerDockAnchor") var cornerDockAnchorRaw: String = CornerDockAnchor.right.rawValue
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =
         true
@@ -841,22 +913,48 @@ class AppSettings: ObservableObject {
     @AppStorage("enableL1FileSearch") var enableL1FileSearch: Bool = true
     @AppStorage("useCustomSearchDirectories") var useCustomSearchDirectories: Bool = false
     @AppStorage("useDoubleOptionLaunch") var useDoubleOptionLaunch: Bool = true
+    @AppStorage("useDoubleCommandGlobalContext") var useDoubleCommandGlobalContext: Bool = true
     @AppStorage("hotkeyKeyCode") private var _hotkeyKeyCode: Int = 49  // Space bar
     @AppStorage("hotkeyModifiers") private var _hotkeyModifiers: Int = Int(optionKey)
     @AppStorage("contextDockHotkeyKeyCode") private var _contextDockHotkeyKeyCode: Int = 0
     @AppStorage("contextDockHotkeyModifiers") private var _contextDockHotkeyModifiers: Int = 0
+    @AppStorage("appChatHotkeyKeyCode") private var _appChatHotkeyKeyCode: Int = 0
+    @AppStorage("appChatHotkeyModifiers") private var _appChatHotkeyModifiers: Int = 0
     @AppStorage("clipboardScopeHotkeyKeyCode") private var _clipboardScopeHotkeyKeyCode: Int = 0
     @AppStorage("clipboardScopeHotkeyModifiers") private var _clipboardScopeHotkeyModifiers: Int = 0
     @AppStorage("quickNoteHotkeyKeyCode") private var _quickNoteHotkeyKeyCode: Int = 0
     @AppStorage("quickNoteHotkeyModifiers") private var _quickNoteHotkeyModifiers: Int = 0
+    @AppStorage("chatWindowHotkeyKeyCode") private var _chatWindowHotkeyKeyCode: Int = 0
+    @AppStorage("chatWindowHotkeyModifiers") private var _chatWindowHotkeyModifiers: Int = 0
     @AppStorage("captureTextHotkeyKeyCode") private var _captureTextHotkeyKeyCode: Int = 0
     @AppStorage("captureTextHotkeyModifiers") private var _captureTextHotkeyModifiers: Int = 0
     @AppStorage("captureAreaHotkeyKeyCode") private var _captureAreaHotkeyKeyCode: Int = 0
     @AppStorage("captureAreaHotkeyModifiers") private var _captureAreaHotkeyModifiers: Int = 0
     @AppStorage("captureScreenshotHotkeyKeyCode") private var _captureScreenshotHotkeyKeyCode: Int = 0
     @AppStorage("captureScreenshotHotkeyModifiers") private var _captureScreenshotHotkeyModifiers: Int = 0
-    @AppStorage("windowReviewHotkeyKeyCode") private var _windowReviewHotkeyKeyCode: Int = 0
-    @AppStorage("windowReviewHotkeyModifiers") private var _windowReviewHotkeyModifiers: Int = 0
+    @AppStorage("globalContextHotkeyKeyCode") private var _globalContextHotkeyKeyCode: Int = 0
+    @AppStorage("globalContextHotkeyModifiers") private var _globalContextHotkeyModifiers: Int = 0
+    @AppStorage("selectionScopeHotkeyKeyCode") private var _selectionScopeHotkeyKeyCode: Int = 0
+    @AppStorage("selectionScopeHotkeyModifiers") private var _selectionScopeHotkeyModifiers: Int = 0
+
+    /// Folder where Capture Area / Screenshot images are saved. Empty = ~/Pictures (default).
+    @AppStorage("captureSaveFolderPath") private var _captureSaveFolderPath: String = ""
+    var captureSaveFolderPath: String {
+        get { _captureSaveFolderPath }
+        set { objectWillChange.send(); _captureSaveFolderPath = newValue }
+    }
+    /// Resolved save directory — the chosen folder if valid, else ~/Pictures.
+    var captureSaveDirectory: URL {
+        if !_captureSaveFolderPath.isEmpty {
+            let url = URL(fileURLWithPath: _captureSaveFolderPath, isDirectory: true)
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                return url
+            }
+        }
+        return FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+    }
     @AppStorage("pinnedAppsData") private var pinnedAppsData: Data = Data()
     @AppStorage("searchDirectoriesData") private var searchDirectoriesData: Data = Data()
     @AppStorage("extensionScriptsData") private var extensionScriptsData: Data = Data()
@@ -968,6 +1066,7 @@ class AppSettings: ObservableObject {
     @AppStorage("googleGeminiAPIKey") private var legacyGoogleGeminiAPIKey: String = ""
     @AppStorage("anthropicAPIKey") private var legacyAnthropicAPIKey: String = ""
     @AppStorage("openAICompatibleAPIKey") private var legacyOpenAICompatibleAPIKey: String = ""
+    @AppStorage("kimiAPIKey") private var legacyKimiAPIKey: String = ""
     // True while loading keys FROM the Keychain at launch, so the didSet writers
     // below don't persist a transiently-empty read back over a real stored key —
     // that wiped users' API keys after a crash/relaunch.
@@ -999,7 +1098,17 @@ class AppSettings: ObservableObject {
             )
         }
     }
+    @Published var kimiAPIKey: String = "" {
+        didSet {
+            guard !isLoadingAPIKeys else { return }
+            KeychainStore.shared.set(kimiAPIKey, for: AIProvider.kimi.rawValue)
+        }
+    }
     @AppStorage("selectedOpenAIModel") var selectedOpenAIModel: String = "gpt-4o-mini"
+    /// Gemini's chat model. It used to be baked into the request URL in two places, so the
+    /// one provider in the list with no way to change model was the one whose model was
+    /// hardest to find.
+    @AppStorage("selectedGeminiModel") var selectedGeminiModel: String = "gemini-2.0-flash"
     @AppStorage("selectedAnthropicModel") var selectedAnthropicModel: String =
         AnthropicModelCatalog.defaultModelID
     @AppStorage("ollamaEndpoint") var ollamaEndpoint: String = "http://localhost:11434"
@@ -1007,6 +1116,7 @@ class AppSettings: ObservableObject {
     @AppStorage("openAICompatibleEndpoint") var openAICompatibleEndpoint: String =
         "http://localhost:1234/v1"
     @AppStorage("openAICompatibleModelID") var openAICompatibleModelID: String = ""
+    @AppStorage("selectedKimiModel") var selectedKimiModel: String = "kimi-k2.5"
     // Dedicated AppleScript-automation model (e.g. Osaurus AppleScript-8B/16B on
     // 127.0.0.1:1337/v1). Optional + independent of the main chat provider: used ONLY
     // to turn NL automation intents into AppleScript in the action/execution layer.
@@ -1015,13 +1125,40 @@ class AppSettings: ObservableObject {
         "http://127.0.0.1:1337/v1"
     @AppStorage("appleScriptModelID") var appleScriptModelID: String = ""
     // Subscription bridge endpoints (VibeProxy default: localhost:8317)
+    /// Model alias handed to the Claude CLI: "opus", "sonnet", "haiku", or empty for the
+    /// plan's default. An alias rather than an id, so a retired model cannot strand it.
+    @AppStorage("claudeCodeModel") var claudeCodeModel: String = ""
+
+    /// How much of the Claude CLI's own agent DoraX turns on. Stored as a string so a value
+    /// written by a newer build cannot crash an older one — an unknown level reads as the
+    /// safest, not as a crash.
+    @AppStorage("claudeCodeToolAccess") var claudeCodeToolAccessRaw: String =
+        ClaudeCodeCLIService.ToolAccess.full.rawValue
+
+    var claudeCodeToolAccess: ClaudeCodeCLIService.ToolAccess {
+        get { ClaudeCodeCLIService.ToolAccess(rawValue: claudeCodeToolAccessRaw) ?? .answerOnly }
+        set { claudeCodeToolAccessRaw = newValue.rawValue }
+    }
     @AppStorage("claudeBridgeEndpoint") var claudeBridgeEndpoint: String =
         "http://localhost:8317/v1"
+    // claude-3-5-sonnet-20241022 was retired in Oct 2025 and 404s on the real API; bridges
+    // that pass the model string through were failing on first use with a stale default.
+    //
+    // The model also has to be one the bridge can actually serve. VibeProxy applies a
+    // `clear_thinking_20251015` context strategy to everything it forwards, and that
+    // strategy is rejected outright unless thinking is enabled — so every Claude model that
+    // does not think adaptively by default comes back
+    // "`clear_thinking_20251015` strategy requires `thinking` to be enabled or adaptive"
+    // on the very first message, with the bridge running and reachable the whole time.
     @AppStorage("claudeBridgeModelID") var claudeBridgeModelID: String =
-        "claude-3-5-sonnet-20241022"
+        AppSettings.defaultClaudeBridgeModelID
     @AppStorage("chatGPTBridgeEndpoint") var chatGPTBridgeEndpoint: String =
         "http://localhost:8317/v1"
-    @AppStorage("chatGPTBridgeModelID") var chatGPTBridgeModelID: String = "gpt-4o"
+    // The bridge serves the models the ChatGPT *subscription* exposes, which are not the
+    // API's catalogue: gpt-4o is not among them and comes back "unknown provider for model
+    // gpt-4o". Anything defaulted to an API model name fails before it sends a word.
+    @AppStorage("chatGPTBridgeModelID") var chatGPTBridgeModelID: String =
+        AppSettings.defaultChatGPTBridgeModelID
     @AppStorage("ollamaModelsData") private var ollamaModelsData: Data = Data()
     @AppStorage("aiChatHistoryData") private var aiChatHistoryData: Data = Data()
 
@@ -1315,6 +1452,9 @@ class AppSettings: ObservableObject {
 
         // Only CLI tools need help scanning and subcommand detection.
         guard ext.kind == .cli else { return }
+        // Adding a tool to an app does not silently grant its AI agent access.
+        // The first message in that app's chat presents the one-time choice.
+        AppCLIAgentConsentStore.shared.markPending(for: ext)
         Task {
             await TerminalPackageManager.shared.refreshHelpTextByCommand(ext.toolName)
 
@@ -1515,7 +1655,11 @@ class AppSettings: ObservableObject {
     /// Used when building AI prompts — prevents hallucinations about missing tools.
     /// CLI + script extensions only (excludes .prompt — those are fetched separately).
     func installedToolExtensions(for appKey: String) -> [AppToolExtension] {
-        toolExtensions(for: appKey).filter { $0.kind != .prompt && AppSettings.isToolInstalled($0) }
+        toolExtensions(for: appKey).filter {
+            $0.kind != .prompt
+                && AppSettings.isToolInstalled($0)
+                && AppCLIAgentConsentStore.shared.isAllowed($0)
+        }
     }
 
     /// Returns all AI Prompt extensions for an app — they're always active (no install check needed).
@@ -1658,6 +1802,24 @@ class AppSettings: ObservableObject {
     }
     var clipboardScopeHotkeyEnabled: Bool { _clipboardScopeHotkeyKeyCode != 0 }
 
+    /// Ask the frontmost app something without leaving it. The prompt surface is built;
+    /// what it does with the question is not wired up yet.
+    var appChatHotkeyKeyCode: UInt32 {
+        get { UInt32(_appChatHotkeyKeyCode) }
+        set {
+            objectWillChange.send()
+            _appChatHotkeyKeyCode = Int(newValue)
+        }
+    }
+    var appChatHotkeyModifiers: UInt32 {
+        get { UInt32(_appChatHotkeyModifiers) }
+        set {
+            objectWillChange.send()
+            _appChatHotkeyModifiers = Int(newValue)
+        }
+    }
+    var appChatHotkeyEnabled: Bool { _appChatHotkeyKeyCode != 0 }
+
     var quickNoteHotkeyKeyCode: UInt32 {
         get { UInt32(_quickNoteHotkeyKeyCode) }
         set {
@@ -1675,6 +1837,27 @@ class AppSettings: ObservableObject {
     var quickNoteHotkeyEnabled: Bool { _quickNoteHotkeyKeyCode != 0 }
     var quickNoteHotkeyDisplayString: String {
         hotkeyDisplayString(keyCode: quickNoteHotkeyKeyCode, modifiers: quickNoteHotkeyModifiers)
+    }
+
+    /// Opens the full-window General Chat surface — the same assistant the result
+    /// sheet answers in, given a whole window instead of a sheet.
+    var chatWindowHotkeyKeyCode: UInt32 {
+        get { UInt32(_chatWindowHotkeyKeyCode) }
+        set {
+            objectWillChange.send()
+            _chatWindowHotkeyKeyCode = Int(newValue)
+        }
+    }
+    var chatWindowHotkeyModifiers: UInt32 {
+        get { UInt32(_chatWindowHotkeyModifiers) }
+        set {
+            objectWillChange.send()
+            _chatWindowHotkeyModifiers = Int(newValue)
+        }
+    }
+    var chatWindowHotkeyEnabled: Bool { _chatWindowHotkeyKeyCode != 0 }
+    var chatWindowHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: chatWindowHotkeyKeyCode, modifiers: chatWindowHotkeyModifiers)
     }
 
     var captureTextHotkeyKeyCode: UInt32 {
@@ -1701,17 +1884,65 @@ class AppSettings: ObservableObject {
         get { UInt32(_captureScreenshotHotkeyModifiers) }
         set { objectWillChange.send(); _captureScreenshotHotkeyModifiers = Int(newValue) }
     }
-    var windowReviewHotkeyKeyCode: UInt32 {
-        get { UInt32(_windowReviewHotkeyKeyCode) }
-        set { objectWillChange.send(); _windowReviewHotkeyKeyCode = Int(newValue) }
+    /// Dedicated Selection Scope shortcut. When set, the normal launcher open no longer
+    /// auto-enters Selection Scope (that hijacked plain app launches); the selection is
+    /// only frozen into a scope when this shortcut fires.
+    var globalContextHotkeyKeyCode: UInt32 {
+        get { UInt32(_globalContextHotkeyKeyCode) }
+        set { objectWillChange.send(); _globalContextHotkeyKeyCode = Int(newValue) }
     }
-    var windowReviewHotkeyModifiers: UInt32 {
-        get { UInt32(_windowReviewHotkeyModifiers) }
-        set { objectWillChange.send(); _windowReviewHotkeyModifiers = Int(newValue) }
+    var globalContextHotkeyModifiers: UInt32 {
+        get { UInt32(_globalContextHotkeyModifiers) }
+        set { objectWillChange.send(); _globalContextHotkeyModifiers = Int(newValue) }
+    }
+    var globalContextHotkeyEnabled: Bool { _globalContextHotkeyKeyCode != 0 }
+
+    var selectionScopeHotkeyKeyCode: UInt32 {
+        get { UInt32(_selectionScopeHotkeyKeyCode) }
+        set { objectWillChange.send(); _selectionScopeHotkeyKeyCode = Int(newValue) }
+    }
+    var selectionScopeHotkeyModifiers: UInt32 {
+        get { UInt32(_selectionScopeHotkeyModifiers) }
+        set { objectWillChange.send(); _selectionScopeHotkeyModifiers = Int(newValue) }
+    }
+    var selectionScopeHotkeyEnabled: Bool { _selectionScopeHotkeyKeyCode != 0 }
+
+    /// Adaptive thinking is on by default here, which is what lets it pass through a bridge
+    /// that requires it.
+    static let defaultClaudeBridgeModelID = "claude-opus-5"
+
+    static let defaultChatGPTBridgeModelID = "gpt-5.4"
+
+    /// API model names the subscription bridge does not serve.
+    private static let bridgeModelsNotOnSubscription: Set<String> = [
+        "gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "gpt-4.1",
+    ]
+
+    /// Bridge models that cannot answer through VibeProxy, whatever the endpoint says.
+    /// Held as data rather than fixed in the default alone: changing the default does
+    /// nothing for anyone who already has one of these saved, which is everyone who used
+    /// the bridge before today.
+    private static let bridgeModelsRequiringThinking: Set<String> = [
+        "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+        "claude-opus-4-5-20251101", "claude-opus-4-1-20250805", "claude-opus-4-20250514",
+        "claude-sonnet-4-6", "claude-sonnet-4-5-20250929", "claude-3-7-sonnet-20250219",
+        "claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022",
+    ]
+
+    private func migrateClaudeBridgeModelIfUnusable() {
+        guard Self.bridgeModelsRequiringThinking.contains(claudeBridgeModelID) else { return }
+        claudeBridgeModelID = Self.defaultClaudeBridgeModelID
+    }
+
+    private func migrateChatGPTBridgeModelIfUnusable() {
+        guard Self.bridgeModelsNotOnSubscription.contains(chatGPTBridgeModelID) else { return }
+        chatGPTBridgeModelID = Self.defaultChatGPTBridgeModelID
     }
 
     init() {
         migrateAIKeysToKeychain()
+        migrateClaudeBridgeModelIfUnusable()
+        migrateChatGPTBridgeModelIfUnusable()
         loadPinnedApps()
         loadSearchDirectories()
         loadOllamaModels()
@@ -2078,6 +2309,7 @@ class AppSettings: ObservableObject {
         case .googleGemini: return googleGeminiAPIKey
         case .anthropic: return anthropicAPIKey
         case .openAICompatible: return openAICompatibleAPIKey
+        case .kimi: return kimiAPIKey
         default: return ""
         }
     }
@@ -2088,6 +2320,7 @@ class AppSettings: ObservableObject {
         case .googleGemini: googleGeminiAPIKey = key
         case .anthropic: anthropicAPIKey = key
         case .openAICompatible: openAICompatibleAPIKey = key
+        case .kimi: kimiAPIKey = key
         default: break
         }
     }
@@ -2106,6 +2339,11 @@ class AppSettings: ObservableObject {
             return !ollamaEndpoint.isEmpty && !selectedOllamaModel.isEmpty
         case .openAICompatible:
             return !openAICompatibleEndpoint.isEmpty && !openAICompatibleModelID.isEmpty
+        case .kimi:
+            return !kimiAPIKey.isEmpty && !selectedKimiModel.isEmpty
+        case .claudeCode:
+            // Nothing to configure: it is ready exactly when the CLI is on the machine.
+            return ClaudeCodeCLIService.isInstalled
         case .claudeBridge:
             return !claudeBridgeEndpoint.isEmpty && !claudeBridgeModelID.isEmpty
         case .chatGPTBridge:
@@ -2134,11 +2372,13 @@ class AppSettings: ObservableObject {
             provider: .openAICompatible,
             legacyValue: legacyOpenAICompatibleAPIKey
         )
+        kimiAPIKey = migrateAIKey(provider: .kimi, legacyValue: legacyKimiAPIKey)
 
         legacyOpenAIAPIKey = ""
         legacyGoogleGeminiAPIKey = ""
         legacyAnthropicAPIKey = ""
         legacyOpenAICompatibleAPIKey = ""
+        legacyKimiAPIKey = ""
     }
 
     private func migrateAIKey(provider: AIProvider, legacyValue: String) -> String {
@@ -2398,6 +2638,9 @@ class AppSettings: ObservableObject {
         hotkeyDisplayString(
             keyCode: contextDockHotkeyKeyCode, modifiers: contextDockHotkeyModifiers)
     }
+    var appChatHotkeyDisplayString: String {
+        hotkeyDisplayString(keyCode: appChatHotkeyKeyCode, modifiers: appChatHotkeyModifiers)
+    }
     var clipboardScopeHotkeyDisplayString: String {
         hotkeyDisplayString(
             keyCode: clipboardScopeHotkeyKeyCode, modifiers: clipboardScopeHotkeyModifiers)
@@ -2413,9 +2656,14 @@ class AppSettings: ObservableObject {
             keyCode: captureScreenshotHotkeyKeyCode,
             modifiers: captureScreenshotHotkeyModifiers)
     }
-    var windowReviewHotkeyDisplayString: String {
+    var globalContextHotkeyDisplayString: String {
         hotkeyDisplayString(
-            keyCode: windowReviewHotkeyKeyCode, modifiers: windowReviewHotkeyModifiers)
+            keyCode: globalContextHotkeyKeyCode, modifiers: globalContextHotkeyModifiers)
+    }
+
+    var selectionScopeHotkeyDisplayString: String {
+        hotkeyDisplayString(
+            keyCode: selectionScopeHotkeyKeyCode, modifiers: selectionScopeHotkeyModifiers)
     }
 
     // Computed property to get hotkey display string
@@ -2485,6 +2733,53 @@ class AppSettings: ObservableObject {
         case 53: return "⎋"
         case 51: return "⌫"
         case 48: return "⇥"
+        // Punctuation and the rest of the ANSI/ISO layout. Without these a bound key
+        // rendered as a bare "?" in Settings and the user could not tell what they had
+        // pressed (Capture Text on ⌃` showed as "^?").
+        case 10: return "§"
+        case 24: return "="
+        case 27: return "-"
+        case 30: return "]"
+        case 33: return "["
+        case 39: return "'"
+        case 41: return ";"
+        case 42: return "\\"
+        case 43: return ","
+        case 44: return "/"
+        case 47: return "."
+        case 50: return "`"
+        case 65: return "."
+        case 67: return "*"
+        case 69: return "+"
+        case 75: return "/"
+        case 78: return "−"
+        case 81: return "="
+        case 82...92: return "Numpad"
+        case 96: return "F5"
+        case 97: return "F6"
+        case 98: return "F7"
+        case 99: return "F3"
+        case 100: return "F8"
+        case 101: return "F9"
+        case 103: return "F11"
+        case 105: return "F13"
+        case 107: return "F14"
+        case 109: return "F10"
+        case 111: return "F12"
+        case 113: return "F15"
+        case 114: return "Help"
+        case 115: return "Home"
+        case 116: return "⇞"
+        case 117: return "⌦"
+        case 118: return "F4"
+        case 119: return "End"
+        case 120: return "F2"
+        case 121: return "⇟"
+        case 122: return "F1"
+        case 123: return "←"
+        case 124: return "→"
+        case 125: return "↓"
+        case 126: return "↑"
         default: return "?"
         }
     }

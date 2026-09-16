@@ -185,7 +185,9 @@ final class AppToast: ObservableObject {
     private func sizePanel(for message: String) {
         // Approx width: icon(44) + text + padding
         let actionW: CGFloat = toast?.actionTitle == nil ? 0 : 78
-        let estimatedTextW = min(CGFloat(message.count) * 7.5 + 80 + actionW, 430)
+        // 520 leaves room for a preview line plus an action button; below that a snipped
+        // text preview was clipped by the pill it is meant to fit inside.
+        let estimatedTextW = min(CGFloat(message.count) * 7.5 + 80 + actionW, 520)
         let w = max(180, estimatedTextW)
         panel?.setContentSize(NSSize(width: w, height: 52))
     }

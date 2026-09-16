@@ -19,6 +19,26 @@ import Foundation
 @MainActor
 enum AppleNotesMCPCapabilities {
 
+    // MARK: - Who asks, and when
+    //
+    // notes.read, notes.extract_tasks and notes.summarize are declared `.low`, so
+    // AICapabilityRegistry.execute waves them through — and then each executor asks for
+    // approval itself unless the persistent-full-read setting is on.
+    //
+    // That reads like two approval mechanisms and is not: it is the same
+    // AICapabilityApprovalCenter, called from a place that can see a setting the registry gate
+    // cannot. The gate takes a fixed riskLevel; this permission is conditional on something the
+    // user chose. Declaring `.medium` would ask every time and silently discard that choice.
+    //
+    // What was actually wrong is that the rule lived three times, in three executors, as an
+    // inline `if`. Deleting one by accident would remove an approval and nothing would fail.
+    // It is one function now, and the policy is asserted in NotesReadApprovalTests.
+
+    /// Whether reading a note's full body needs asking this time.
+    nonisolated static func needsPerCallReadApproval(persistentFullReadEnabled: Bool) -> Bool {
+        !persistentFullReadEnabled
+    }
+
     static func register(in registry: CapabilityRegistry) {
         registerSearch(registry)
         registerRead(registry)
@@ -98,8 +118,9 @@ enum AppleNotesMCPCapabilities {
                 guard AppSettings.shared.noteMCPEnabled else {
                     throw AppleNotesError.notEnabled
                 }
-                // Per-call approval unless persistent full-read is enabled
-                if !AppSettings.shared.noteMCPAllowPersistentFullRead {
+                if needsPerCallReadApproval(
+                    persistentFullReadEnabled: AppSettings.shared.noteMCPAllowPersistentFullRead)
+                {
                     let plan = AIActionPlan(
                         capability: "notes.read",
                         input: request.input,
@@ -247,8 +268,9 @@ enum AppleNotesMCPCapabilities {
                 guard AppSettings.shared.noteMCPEnabled else {
                     throw AppleNotesError.notEnabled
                 }
-                // Full body read requires approval
-                if !AppSettings.shared.noteMCPAllowPersistentFullRead {
+                if needsPerCallReadApproval(
+                    persistentFullReadEnabled: AppSettings.shared.noteMCPAllowPersistentFullRead)
+                {
                     let plan = AIActionPlan(
                         capability: "notes.extract_tasks",
                         input: request.input,
@@ -395,8 +417,9 @@ enum AppleNotesMCPCapabilities {
                         throw AICapabilityError.approvalRequired("Cloud AI send with note content")
                     }
                 }
-                // Read note (with per-call approval if persistent read not enabled)
-                if !settings.noteMCPAllowPersistentFullRead {
+                if needsPerCallReadApproval(
+                    persistentFullReadEnabled: settings.noteMCPAllowPersistentFullRead)
+                {
                     let plan = AIActionPlan(
                         capability: "notes.summarize",
                         input: request.input,

@@ -8,6 +8,7 @@
 
 import AppKit
 import ApplicationServices
+import OSLog
 
 // MARK: - AXMenuItem
 
@@ -47,9 +48,15 @@ final class AXMenuReader {
 
     /// Max items read per menu level — bounds the AX-IPC cost of huge dynamic menus.
     static let maxChildrenPerMenu = 120
-    /// Menus whose recursive contents are skipped (dynamic URL lists surfaced natively
-    /// by BrowserURLLibraryService). Matched case-insensitively by title.
+    /// Browser menus whose recursive contents are skipped (dynamic URL lists surfaced
+    /// natively by BrowserURLLibraryService). Matched case-insensitively by title.
     static let skipRecursionMenuTitles: Set<String> = ["history", "bookmarks"]
+
+    static func shouldSkipRecursion(menuTitle: String, bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return false }
+        return AXContextReader.browserBundleIds.contains(bundleIdentifier)
+            && skipRecursionMenuTitles.contains(menuTitle.lowercased())
+    }
     private init() {}
 
     // MARK: - Structural cache
@@ -121,6 +128,7 @@ final class AXMenuReader {
         guard let bar = menuBarElement(for: pid),
             let topItems = childElements(of: bar)
         else { return [] }
+        let bundleIdentifier = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
 
         var tree: [AXMenuItem] = []
         for (idx, item) in topItems.enumerated() {
@@ -129,16 +137,38 @@ final class AXMenuReader {
             // Skip the Apple menu (index 0) — opening it surfaces About/System Settings.
             let isApple = idx == 0
 
+            let container = submenuContainer(for: item) ?? item
             var children = readChildren(
-                of: submenuContainer(for: item) ?? item,
-                path: [title], depth: 1, maxDepth: maxDepth)
-            if children.isEmpty && !isApple {
+                of: container,
+                path: [title], depth: 1, maxDepth: maxDepth,
+                bundleIdentifier: bundleIdentifier)
+            // TextEdit, Preview, and many document apps expose File's static children
+            // immediately but populate its nested Open Recent branch only after File is
+            // opened. Treat that as a narrow lazy-menu case; do not press every menu or
+            // recurse through arbitrary dynamic branches during background warming.
+            let needsRecentExpansion = containsUnexpandedRecentBranch(children)
+            var didOpenTopLevelMenu = false
+            if (children.isEmpty || needsRecentExpansion) && !isApple {
                 // Open (populates lazy children), read, then cancel to close.
                 AXUIElementPerformAction(item, kAXPressAction as CFString)
                 usleep(25_000)
                 children = readChildren(
-                    of: submenuContainer(for: item) ?? item,
-                    path: [title], depth: 1, maxDepth: maxDepth)
+                    of: container,
+                    path: [title], depth: 1, maxDepth: maxDepth,
+                    bundleIdentifier: bundleIdentifier)
+                if needsRecentExpansion,
+                   let recentBranch = firstUnexpandedRecentBranch(in: children)
+                {
+                    AXUIElementPerformAction(recentBranch.element, kAXPressAction as CFString)
+                    usleep(25_000)
+                    children = readChildren(
+                        of: container,
+                        path: [title], depth: 1, maxDepth: maxDepth,
+                        bundleIdentifier: bundleIdentifier)
+                }
+                didOpenTopLevelMenu = true
+            }
+            if didOpenTopLevelMenu {
                 var menuRef: CFTypeRef?
                 if AXUIElementCopyAttributeValue(item, "AXMenu" as CFString, &menuRef) == .success,
                     let menu = menuRef
@@ -163,6 +193,31 @@ final class AXMenuReader {
             menuCache[pid] = CacheEntry(items: items, date: Date())
         }
         return items
+    }
+
+    /// Dynamic "Open Recent" branches are useful file facts, unlike most lazy menus.
+    /// Keep this title set deliberately small: it bounds the scan to one additional press
+    /// per app warm and avoids expanding large browser history/bookmark menus.
+    private func containsUnexpandedRecentBranch(_ items: [AXMenuItem]) -> Bool {
+        firstUnexpandedRecentBranch(in: items) != nil
+    }
+
+    private func firstUnexpandedRecentBranch(in items: [AXMenuItem]) -> AXMenuItem? {
+        let recentTitles: Set<String> = [
+            "open recent", "recent items", "recent documents", "recent files", "recent projects",
+        ]
+        for item in items {
+            let normalized = item.title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if recentTitles.contains(normalized), item.children.isEmpty {
+                return item
+            }
+            if let nested = firstUnexpandedRecentBranch(in: item.children) {
+                return nested
+            }
+        }
+        return nil
     }
 
     /// Force-evict a pid from the cache (call on app relaunch / app switch).
@@ -197,7 +252,9 @@ final class AXMenuReader {
     /// maxDepth limits recursion to keep reads fast (4 covers File › Export › PDF…).
     func menuTree(for pid: pid_t, maxDepth: Int = 5) -> [AXMenuItem] {
         guard let bar = menuBarElement(for: pid) else { return [] }
-        return readChildren(of: bar, path: [], depth: 0, maxDepth: maxDepth)
+        return readChildren(
+            of: bar, path: [], depth: 0, maxDepth: maxDepth,
+            bundleIdentifier: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
     }
 
     /// One leaf item from a live top-menu read: title, any URL the item exposes (via
@@ -305,7 +362,7 @@ final class AXMenuReader {
     /// Press a menu item element directly (navigates without opening the menu on screen).
     @discardableResult
     func pressMenuElement(_ element: AXUIElement) -> Bool {
-        AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
     }
 
     /// Flatten the tree to all leaf menu items (no submenus), skipping separators.
@@ -379,7 +436,88 @@ final class AXMenuReader {
         return traverse(element: bar, path: path)
     }
 
+    /// Whether a menu path exists, without pressing anything.
+    ///
+    /// `unknown` is the important case: AX cannot see inside a submenu that has never
+    /// been opened, so a path whose parent is present but whose contents are unreadable
+    /// is genuinely undecidable. Reporting those as "exists" made every Safari-family
+    /// app look like it had our extension installed — every app has an Edit menu — so
+    /// each action opened that menu on screen only to find nothing there.
+    enum MenuItemPresence {
+        case present
+        case absent
+        case unknown
+    }
+
+    func menuItemPresence(path: [String], in pid: pid_t) -> MenuItemPresence {
+        guard let bar = menuBarElement(for: pid) else { return .absent }
+        return presence(element: bar, path: path)
+    }
+
+    /// Lenient form: anything not provably absent counts as existing.
+    func menuItemExists(path: [String], in pid: pid_t) -> Bool {
+        menuItemPresence(path: path, in: pid) != .absent
+    }
+
+    private func presence(element: AXUIElement, path: [String]) -> MenuItemPresence {
+        guard !path.isEmpty else { return .absent }
+        let target = path[0].lowercased()
+        let rest   = Array(path.dropFirst())
+
+        let container = submenuContainer(for: element) ?? element
+        guard let children = childElements(of: container), !children.isEmpty else { return .absent }
+
+        var sawUnknown = false
+        for child in children {
+            let role  = strAttr(child, kAXRoleAttribute as CFString) ?? ""
+            let title = strAttr(child, kAXTitleAttribute as CFString) ?? ""
+
+            if role == "AXMenu" {
+                switch presence(element: child, path: path) {
+                case .present: return .present
+                case .unknown: sawUnknown = true
+                case .absent: break
+                }
+                continue
+            }
+            guard title.lowercased() == target else { continue }
+            if rest.isEmpty { return .present }
+
+            if let menuContainer = submenuContainer(for: child),
+               let kids = childElements(of: menuContainer), !kids.isEmpty {
+                switch presence(element: menuContainer, path: rest) {
+                case .present: return .present
+                case .unknown: sawUnknown = true
+                // Submenu is populated and the item simply is not in it.
+                case .absent: break
+                }
+                continue
+            }
+            // Never opened, so its contents are unreadable — undecidable, not present.
+            sawUnknown = true
+        }
+        return sawUnknown ? .unknown : .absent
+    }
+
     @discardableResult
+    /// Close any menu this app has left open.
+    ///
+    /// A failed menu click leaves the menu bar open on screen — Safari sat with
+    /// Edit ▸ Extension Actions hanging open, highlighting whatever happened to be first,
+    /// because the item being looked for was not there and nothing dismissed what the
+    /// search had opened. Whatever opened a menu is responsible for closing it.
+    func dismissOpenMenus(in pid: pid_t) {
+        guard let menuBar = menuBarElement(for: pid) else { return }
+        for item in childElements(of: menuBar) ?? [] {
+            var menuRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(item, "AXMenu" as CFString, &menuRef) == .success,
+                let menu = menuRef
+            else { continue }
+            AXUIElementPerformAction(
+                unsafeBitCast(menu, to: AXUIElement.self), kAXCancelAction as CFString)
+        }
+    }
+
     func clickMenuItemReliably(path: [String], in pid: pid_t) -> Bool {
         if clickMenuItem(path: path, in: pid) { return true }
         return clickMenuItemViaSystemEvents(path: path, in: pid)
@@ -387,8 +525,10 @@ final class AXMenuReader {
 
     // MARK: - Private — tree reading
 
-    private func readChildren(of parent: AXUIElement, path: [String],
-                              depth: Int, maxDepth: Int) -> [AXMenuItem] {
+    private func readChildren(
+        of parent: AXUIElement, path: [String], depth: Int, maxDepth: Int,
+        bundleIdentifier: String?
+    ) -> [AXMenuItem] {
         guard depth < maxDepth else { return [] }
         guard let children = childElements(of: parent) else { return [] }
 
@@ -404,7 +544,9 @@ final class AXMenuReader {
 
             // AXMenu containers are transparent wrappers — recurse without adding a level
             if role == "AXMenu" {
-                result += readChildren(of: child, path: path, depth: depth, maxDepth: maxDepth)
+                result += readChildren(
+                    of: child, path: path, depth: depth, maxDepth: maxDepth,
+                    bundleIdentifier: bundleIdentifier)
                 continue
             }
 
@@ -414,17 +556,20 @@ final class AXMenuReader {
 
             let isEnabled  = boolAttr(child, kAXEnabledAttribute as CFString) ?? true
             let childPath  = path + [title]
-            // Do NOT walk the huge dynamic browser menus — History and Bookmarks hold
+            // Do NOT walk huge dynamic browser menus — History and Bookmarks hold
             // thousands of URL rows read over slow AX IPC, and DoraX already surfaces
             // browser history/bookmarks natively (BrowserURLLibraryService). The menu
-            // item itself still appears; only its recursive contents are skipped.
+            // item itself still appears; only its recursive contents are skipped. Other
+            // apps may use History for their primary commands, so recurse normally there.
             let subItems: [AXMenuItem] =
-                Self.skipRecursionMenuTitles.contains(title.lowercased())
+                Self.shouldSkipRecursion(
+                    menuTitle: title, bundleIdentifier: bundleIdentifier)
                 ? []
                 : readChildren(of: submenuContainer(for: child) ?? child,
                                path: childPath,
                                depth: depth + 1,
-                               maxDepth: maxDepth)
+                               maxDepth: maxDepth,
+                               bundleIdentifier: bundleIdentifier)
 
             // Read keyboard shortcut and checked state from AX attributes
             let shortcutChar      = strAttr(child, "AXMenuItemCmdChar" as CFString)

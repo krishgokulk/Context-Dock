@@ -37,6 +37,8 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case capability
     case mcp
     case terminal
+    case adapterAction
+    case menuAction
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -106,7 +108,11 @@ enum CapabilityAuthorizationError: LocalizedError {
         case .crossAppDenied(let expected, let received):
             return "This chat is scoped to \(expected); \(received) is outside that scope."
         case .selectionTargetDenied(let received):
-            return "Selection Chat cannot read from or execute against \(received)."
+            // Names the boundary and where the request does belong. The old wording was
+            // accurate and useless: a user told their request hit "constraints on the
+            // execution path" learns nothing and has nowhere to go.
+            return "Selection Scope only acts on what you selected, and \(received) reaches "
+                + "beyond it. Ask in General Chat to run this."
         }
     }
 }
@@ -157,9 +163,8 @@ enum CapabilityAuthorizationGate {
         let registeredBundle = CapabilityRegistry.shared.capability(id: plan.capability)?.appBundleID
         let suppliedBundle = plan.input["bundleId"] ?? plan.input["bundleID"]
         try validateTarget(bundleID: suppliedBundle ?? registeredBundle, scope: scope)
-        if case .selection = scope,
-           plan.capability != "system.share" {
-            throw CapabilityAuthorizationError.selectionTargetDenied(plan.capability)
+        if case .selection = scope, plan.capability != "system.share" {
+            try validateSelectionSafety(plan.capability)
         }
     }
 
@@ -171,9 +176,25 @@ enum CapabilityAuthorizationGate {
             return
         }
         if case .selection = scope {
-            throw CapabilityAuthorizationError.selectionTargetDenied(invocation.capabilityID)
+            // Was a blanket deny, which read to the user as "did not run due to constraints
+            // on the execution path" — true, opaque, and wrong for the capabilities whose
+            // whole authority is the selection they opened this on. "Copy as markdown" acts
+            // on the selected text and nothing else; refusing it protected nobody.
+            try validateSelectionSafety(invocation.capabilityID)
+            return
         }
         try validateTarget(bundleID: bundleID, scope: scope)
+    }
+
+    /// Selection Scope may run a capability only when every part of it stays inside the
+    /// selection: what it reads, what it changes, and what it aims at.
+    static func validateSelectionSafety(_ capabilityID: String) throws {
+        guard let capability = CapabilityRegistry.shared.capability(id: capabilityID) else {
+            throw CapabilityAuthorizationError.selectionTargetDenied(capabilityID)
+        }
+        guard capability.selectionSafety.isSelectionSafe else {
+            throw CapabilityAuthorizationError.selectionTargetDenied(capabilityID)
+        }
     }
 }
 
@@ -184,6 +205,51 @@ enum AITypedInvocationResolver {
     static func invocation(from text: String) -> AITypedInvocation? {
         if let terminal = terminalInvocation(from: text) { return terminal }
         for root in jsonObjects(in: text) {
+            // Run an installed app-adapter action (menu command, deep link, shortcut,
+            // script) by id. The executor looks up the action and gates approval from its
+            // own requiresApproval/isDestructive flags.
+            if let call = root["adapter_call"] as? [String: Any],
+                let actionId = (call["actionId"] as? String) ?? (call["action"] as? String),
+                !actionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                var args: [String: String] = ["actionId": actionId]
+                if let b = (call["bundleId"] as? String) ?? (call["app"] as? String), !b.isEmpty {
+                    args["bundleId"] = b
+                }
+                if let q = call["query"] as? String { args["query"] = q }
+                return AITypedInvocation(
+                    kind: .adapterAction, capabilityID: "adapter.run",
+                    arguments: args, requiresApproval: false)
+            }
+
+            // Click a verified app menu item by its menu path — the universal control
+            // surface. Accepts {"menu_call":{"path":["Window","Minimize"]}} or a
+            // {"menu_call":{"menu":"Window > Minimize"}} string. The executor resolves the
+            // path against the app's cached menu and gates approval for destructive items.
+            if let call = root["menu_call"] as? [String: Any] {
+                var path: [String] = []
+                if let arr = call["path"] as? [String] {
+                    path = arr
+                } else if let str = (call["menu"] as? String) ?? (call["path"] as? String) {
+                    path = str
+                        .components(separatedBy: CharacterSet(charactersIn: ">›/|"))
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                }
+                let cleaned = path
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                if !cleaned.isEmpty {
+                    var args: [String: String] = ["path": cleaned.joined(separator: "\u{1F}")]
+                    if let b = (call["bundleId"] as? String) ?? (call["app"] as? String),
+                        !b.isEmpty {
+                        args["bundleId"] = b
+                    }
+                    return AITypedInvocation(
+                        kind: .menuAction, capabilityID: "app.menu.click",
+                        arguments: args, requiresApproval: false)
+                }
+            }
+
             if let call = root["mcp_call"] as? [String: Any],
                let tool = call["tool"] as? String {
                 var arguments: [String: String] = [
@@ -218,6 +284,30 @@ enum AITypedInvocationResolver {
                     capabilityID: "app.chatHistory.read",
                     arguments: ["bundleId": app],
                     requiresApproval: false)
+            }
+
+            // `{"globalcmd.empty-trash": {}}` — the capability id used directly as the key.
+            //
+            // Not a form anything documents, and exactly the form a model reaches for once
+            // it has been handed a capability id by find_capability and shown JSON call
+            // conventions for MCP and chat history. It reads as the obvious generalisation.
+            // Unmatched, it fell through to the surface and was printed at the user as raw
+            // JSON while nothing ran.
+            //
+            // Accepting it costs nothing: the id is validated downstream like any other, so
+            // a wrong one produces an honest "no such capability" instead of silence. One
+            // key, a dotted id, a dictionary value — anything else is left alone.
+            if root.count == 1,
+                let (key, value) = root.first,
+                key.contains("."),
+                !key.contains(" "),
+                let values = value as? [String: Any]
+            {
+                return AITypedInvocation(
+                    kind: .capability,
+                    capabilityID: key,
+                    arguments: values.mapValues { String(describing: $0) },
+                    requiresApproval: true)
             }
         }
         return nil

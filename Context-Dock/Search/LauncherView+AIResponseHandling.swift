@@ -214,7 +214,7 @@ extension LauncherView {
 
                         📦 **\(extensionName)**
                         📝 \(description)
-                        📂 Saved to: Documents/ILauncher/Extensions
+                        📂 Saved to: Application Support/Context-Dock/Extensions
 
                         The extension has been added and is now available in your Extensions library!
                         """
@@ -250,7 +250,12 @@ extension LauncherView {
         return """
 
             ══ AUTOMATION ASSISTANT MODE ══
-            When the user's request is an ACTION you can automate with AppleScript or bash:
+            LAST RESORT ONLY. If an adapter action, a verified menu command (menu_call), or a
+            linked tool (MCP/Shortcut/CLI/API) can do what the user asked, use THAT — do not
+            propose a script. Only when NONE of those fit — including cross-app actions this
+            app has no route for (e.g. "add selected text to Reminders" from a code editor) —
+            do NOT just narrate options. Instead, write the automation and propose it as a
+            saveable extension:
             1. Answer in one plain-English sentence.
             2. Immediately follow with a working script wrapped in these exact markers:
 
@@ -271,9 +276,97 @@ extension LauncherView {
             - Prefer AppleScript for macOS app automation (\(appName), Finder, System Events, Notes).
             - Prefer bash for file ops, network calls, or multi-step shell workflows.
             - Use $CD_URL for the current page URL; $CD_TEXT for selected text; $CD_FILE for selected file path.
+            - Design recurring actions for reuse. Use $CD_QUERY for the new request and read live
+              state at run time (for example `git log -1`) instead of hardcoding today's content.
+              A fixed destination such as a person/email may stay fixed when that is the workflow's
+              purpose; changing content, files, branch, selection, and URL must stay dynamic.
+            - For reusable email actions, extract an email address from $CD_QUERY when one is
+              present and use the address from the original request only as the fallback. This
+              lets one saved action draft to different people without generating another script.
             - For tasks needing user input, use `osascript -e 'display dialog...'` or `choose from list`.
             - The script must be 100% complete and run as-is — no stubs, no comments asking to fill in.
             - If you cannot write a fully working script, omit the proposal block entirely.
+            """
+    }
+
+    /// Deterministic file-operation routing for selected files. Injected so the model stops
+    /// asking "which tool?" and just uses the built-in macOS tool that always exists — sips for
+    /// image conversion/resize, markitdown/qlmanage for documents, ditto for archives — running
+    /// once per selected file. Only falls back to a linked CLI when no built-in can do it.
+    func selectionFileOperationGuidance() -> String {
+        let files = aiMode.selectionFiles
+        guard !files.isEmpty else { return "" }
+        let exts = Set(files.map { $0.pathExtension.lowercased() })
+        let imageExts: Set<String> = [
+            "png", "jpg", "jpeg", "gif", "tiff", "tif", "bmp", "heic", "heif", "webp",
+            "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "raw",
+        ]
+        let hasImages = !exts.isDisjoint(with: imageExts)
+        var lines: [String] = [
+            "",
+            "══ FILE ACTIONS (selected files: \(files.count)) ══",
+            "Use the built-in macOS tool — do NOT ask the user which tool, and do NOT reach for",
+            "ImageMagick/other installs when a built-in can do it. Run once PER selected file and",
+            "write the output next to the source. Report each file done.",
+        ]
+        if hasImages {
+            lines.append(
+                "- Image format convert/resize → `sips`. Convert to JPEG: "
+                + "`sips -s format jpeg \"<file>\" --out \"<file-without-ext>.jpg\"` "
+                + "(png→`format png`, heic→`format heic`). sips reads RAW (dng/cr2/nef/arw) too, "
+                + "so RAW→JPEG is just sips — never ImageMagick. Resize: `sips -Z <maxpx> \"<file>\"`.")
+        }
+        lines.append(
+            "- Documents (pdf/docx/pptx/xlsx) → `markitdown \"<file>\"`; text/preview → `qlmanage -p`.")
+        lines.append("- Archive/zip → `ditto -c -k --keepParent \"<file>\" \"<file>.zip\".")
+        lines.append(
+            "For multiple files, convert EACH one (loop or repeat the command); never emit one "
+            + "command that only handles the first file.")
+        return lines.joined(separator: "\n")
+    }
+
+    /// Selection-Scope variant of the automation appendix. Prefers an existing Selection Scope
+    /// extension, and only when none fit does it write the automation and propose it as a
+    /// saveable extension keyed on the selected content ({file}/{selectedText}), so it reappears
+    /// for that file type / selection next time.
+    func selectionScopeExtensionProposalAppendix(query: String) -> String {
+        let q = query.lowercased()
+        let isQuestion =
+            q.hasSuffix("?") || q.hasPrefix("what") || q.hasPrefix("how")
+            || q.hasPrefix("why") || q.hasPrefix("explain") || q.hasPrefix("tell")
+            || q.hasPrefix("describe") || q.hasPrefix("who") || q.hasPrefix("when")
+        guard !isQuestion else { return "" }
+        return """
+
+            ══ SELECTION-SCOPE AUTOMATION ══
+            LAST RESORT ONLY. First use an existing Selection Scope extension or a built-in macOS
+            tool (sips for image conversion/resize, markitdown for documents, Vision OCR, ditto/zip
+            for archives). Only when NONE fit — and the request is an ACTION on the selection — do
+            NOT just narrate steps. Write the automation and propose it as a saveable extension:
+            1. Answer in one plain-English sentence.
+            2. Immediately follow with a working script wrapped in these exact markers:
+
+            <<EXTENSION_PROPOSAL>>
+            {
+              "type": "extension_proposal",
+              "name": "<short verb-noun name, e.g. Convert DNG to JPEG>",
+              "description": "<one-line description>",
+              "scriptType": "bash",
+              "script": "<complete, runnable script — NO placeholders, NO TODOs>",
+              "layer": "selection",
+              "triggers": [{"type": "fileType", "value": "<selected file extension, e.g. dng>"}],
+              "icon": "<SF Symbol name>"
+            }
+            <<END_PROPOSAL>>
+
+            RULES:
+            - Operate on the selected content: use {file} for the selected file/folder path,
+              {selectedText} for selected text, {url} for a link. Never hardcode a path.
+            - Prefer a built-in tool (sips, markitdown, ditto, qlmanage) over installing anything.
+            - If it needs a CLI that may be missing, START the script by checking it:
+              `command -v <tool> >/dev/null 2>&1 || { echo "<tool> not installed — run: brew install <formula>"; exit 1; }`.
+            - The script must be 100% complete and run as-is. If you can't write a working script,
+              omit the proposal block entirely and say what IS possible.
             """
     }
 
@@ -284,25 +377,108 @@ extension LauncherView {
             let json = proposal.asJSON()
         else { return msg }
         let cleaned = ExtensionProposalData.cleanResponse(msg.content)
+        // Carry the fields the caller already filled in. Rebuilding with only the proposal
+        // silently dropped the route trace and the tool chips, so a proposed extension lost
+        // the record of the search that led to it — the case where that record matters most.
         return AIChatMessage(
             id: msg.id, role: msg.role, content: cleaned,
-            structuredData: json, hasInstallButton: true
+            structuredData: json, hasInstallButton: true,
+            attachments: msg.attachments, appLaunches: msg.appLaunches,
+            mcpToolsRan: msg.mcpToolsRan, trace: msg.trace, runOutput: msg.runOutput
         )
     }
 
     /// Execute a proposal's script immediately without saving.
+    /// Substitutes the `{file}` / `{selectedText}` / `{url}` placeholders the app documents
+    /// everywhere (Automation settings, trigger rules, the extension-proposal prompt) into a
+    /// script before it runs. Without this a proposal script runs with the literal text
+    /// `{file}` in it: `ffmpeg -i "{file}"` fails, `set -e` exits, and nothing is produced —
+    /// which reads as "it said converted but there's no file".
+    ///
+    /// Values are shell-escaped because they land inside double quotes in the script.
+    func expandSelectionPlaceholders(in script: String) -> String {
+        let ctx = effectiveShareAXContext()
+        let selectionFiles = effectiveSelectedFileURLsForConversation().map(\.path)
+        let files = selectionFiles.isEmpty ? ctx.selectedFilePaths : selectionFiles
+        let text =
+            (effectiveSelectionForScope.flatMap { selection -> String? in
+                if case .text(let value) = selection { return value }
+                return nil
+            }) ?? ctx.selectedText ?? ""
+
+        func escaped(_ value: String) -> String {
+            value
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+
+        return script
+            .replacingOccurrences(of: "{file}", with: escaped(files.first ?? ""))
+            .replacingOccurrences(
+                of: "{files}", with: escaped(files.joined(separator: "\" \"")))
+            .replacingOccurrences(of: "{selectedText}", with: escaped(text))
+            .replacingOccurrences(of: "{text}", with: escaped(text))
+            .replacingOccurrences(of: "{url}", with: escaped(ctx.currentURL ?? ""))
+            .replacingOccurrences(
+                of: "{clipboard}",
+                with: escaped(NSPasteboard.general.string(forType: .string) ?? ""))
+            .replacingOccurrences(of: "{appName}", with: escaped(ctx.appName))
+    }
+
+    /// Single truthful report for anything script-shaped that runs on a selection: the chat says
+    /// what the exit code says, with the real output attached. Silence used to read as success.
+    /// Live, truthful run status shown in place of the thinking dots ("Running ffmpeg…").
+    /// Passing nil ends it. Targets whichever chat surface is on screen.
+    func setScriptRunStatus(_ status: String?) {
+        if aiMode.isActive {
+            aiMode.loadingStatus = status
+            aiMode.isLoading = status != nil
+        } else {
+            l2.loadingStatus = status
+            l2.isLoading = status != nil
+        }
+    }
+
+    func reportExtensionRun(name: String, succeeded: Bool, detail: String, exitCode: Int32) {
+        setScriptRunStatus(nil)
+        let trimmed = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Keep the log out of the bubble — it goes behind the collapsed "Output" disclosure.
+        let tail = trimmed.count > 4000 ? "…" + String(trimmed.suffix(4000)) : trimmed
+        let content =
+            succeeded
+            ? "✅ \(name) ran."
+            : "⚠️ \(name) failed (exit \(exitCode))."
+                + (tail.isEmpty ? " No output — check the script." : "")
+        let message = AIChatMessage(
+            role: .assistant, content: content, isError: !succeeded, runOutput: tail)
+        if aiMode.isActive {
+            aiMode.messages.append(message)
+            persistGeneralAIConversation()
+        } else {
+            l2.chatMessages.append(message)
+            persistActiveL2DockSession()
+        }
+        requestWindowSizeUpdate(reason: .chatChanged)
+    }
+
     func runOnceFromProposal(_ json: String) {
         guard let data = json.data(using: .utf8),
             let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
         else { return }
-        let ctx = AXContextReader.shared.current
+        // Selection Scope freezes its payload, and the dock is frontmost by the time this runs —
+        // so the live AX read is the wrong source for the file being acted on.
+        let ctx = effectiveShareAXContext()
+        let selectionFiles = effectiveSelectedFileURLsForConversation().map(\.path)
+        let contextFiles = selectionFiles.isEmpty ? ctx.selectedFilePaths : selectionFiles
         let envVars: [String: String] = [
             "CD_URL": ctx.currentURL ?? SafariBrowserBridge.shared.currentContext()?.url ?? "",
             "CD_TEXT": ctx.selectedText ?? "",
-            "CD_FILE": ctx.selectedFilePaths.first ?? "",
+            "CD_FILE": contextFiles.first ?? "",
+            "CD_FILES": contextFiles.joined(separator: "\n"),
             "CD_APP": ctx.appName,
             "CD_TITLE": ctx.windowTitle ?? "",
         ]
+        let script = expandSelectionPlaceholders(in: proposal.script)
         AppToast.show(
             "Running \(proposal.name)…", icon: "bolt.fill", tint: .blue.opacity(0.9), duration: 2.0,
             centered: true)
@@ -312,14 +488,11 @@ extension LauncherView {
             // discards the error (executeAndReturnError(nil)), which is why "Add reminder"
             // reported success but nothing appeared — a permission denial or bad script
             // was swallowed. Capture the error and tell the user what actually happened.
-            let outcome = runProposalAppleScript(proposal.script)
+            let outcome = runProposalAppleScript(script)
             if outcome.ok {
-                AppToast.show(
-                    "\(proposal.name) ran", icon: "checkmark.circle.fill",
-                    tint: .green, duration: 2.0, centered: true)
                 let detail = outcome.message.isEmpty ? "" : " \(outcome.message)"
                 l2.chatMessages.append(
-                    AIChatMessage(role: .tool, content: "✅ \(proposal.name) ran.\(detail)"))
+                    AIChatMessage(role: .assistant, content: "✅ \(proposal.name) ran.\(detail)"))
             } else {
                 AppToast.show(
                     "\(proposal.name) failed", icon: "exclamationmark.triangle.fill",
@@ -330,10 +503,12 @@ extension LauncherView {
                         content: "⚠️ \(proposal.name) didn't run:\n\n\(outcome.message)",
                         isError: true))
             }
+            persistActiveL2DockSession()
+            requestWindowSizeUpdate(reason: .chatChanged)
         default:
             let tmp = FileManager.default.temporaryDirectory
                 .appendingPathComponent("proposal_\(UUID().uuidString).sh")
-            try? proposal.script.write(to: tmp, atomically: true, encoding: .utf8)
+            try? script.write(to: tmp, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: tmp.path)
             // Run in the VISIBLE dock terminal — the user watches the clone/build/
@@ -342,6 +517,15 @@ extension LauncherView {
             let consoleKey = prepareScopedWorkspaceTerminal()
             let term = panelTerminal(for: consoleKey)
             showLivePanel(.terminal)
+            // The terminal is a live PTY with no output API, so the run leaves its own trail:
+            // stdout+stderr tee'd to a log, the exit code written to a marker file. Swift polls
+            // the marker and reports the real outcome — otherwise a failing script just scrolls
+            // past and the chat implies it worked.
+            let runID = UUID().uuidString
+            let logURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("proposal_\(runID).log")
+            let statusURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("proposal_\(runID).status")
             let exports = envVars.map { key, value in
                 let safe = value
                     .replacingOccurrences(of: "\\", with: "\\\\")
@@ -350,8 +534,55 @@ extension LauncherView {
                     .replacingOccurrences(of: "\r", with: " ")
                 return "export \(key)=\"\(safe)\""
             }.joined(separator: "; ")
-            term.sendCommand("\(exports); bash \"\(tmp.path)\"")
+            term.sendCommand(
+                "\(exports); bash \"\(tmp.path)\" > >(tee \"\(logURL.path)\") 2>&1; "
+                + "echo $? > \"\(statusURL.path)\"")
+            setScriptRunStatus("Running \(proposal.name)…")
+            awaitProposalRunOutcome(
+                name: proposal.name, logURL: logURL, statusURL: statusURL)
         }
+    }
+
+    /// Polls for the exit-code marker the terminal run writes, then reports the outcome once.
+    /// Gives up quietly after 10 minutes so a long-running or abandoned job never reports a
+    /// result it doesn't have.
+    private func awaitProposalRunOutcome(name: String, logURL: URL, statusURL: URL) {
+        let deadline = Date().addingTimeInterval(600)
+        func poll() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                let fm = FileManager.default
+                guard let raw = try? String(contentsOf: statusURL, encoding: .utf8) else {
+                    // Still running: mirror the script's own last line of output as the status,
+                    // so the user sees the real work ("[download] 62% of 4MiB") rather than dots.
+                    self.setScriptRunStatus(
+                        Self.liveRunStatus(name: name, logURL: logURL))
+                    if Date() < deadline { poll() }
+                    return
+                }
+                let exitCode =
+                    Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1
+                let log =
+                    (try? String(contentsOf: logURL, encoding: .utf8))?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                self.reportExtensionRun(
+                    name: name, succeeded: exitCode == 0, detail: log, exitCode: exitCode)
+                try? fm.removeItem(at: statusURL)
+                try? fm.removeItem(at: logURL)
+            }
+        }
+        poll()
+    }
+
+    /// Last meaningful line of a running script's log, shortened for the status strip.
+    private static func liveRunStatus(name: String, logURL: URL) -> String {
+        let fallback = "Running \(name)…"
+        guard let log = try? String(contentsOf: logURL, encoding: .utf8) else { return fallback }
+        let lines = log.split(whereSeparator: \.isNewline)
+        guard var last = lines.last.map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !last.isEmpty
+        else { return fallback }
+        if last.count > 70 { last = String(last.prefix(70)) + "…" }
+        return "\(name): \(last)"
     }
 
     /// Run a proposal's AppleScript synchronously and return whether it succeeded plus a
@@ -379,11 +610,25 @@ extension LauncherView {
         return (true, result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
     }
 
-    /// Save a proposal as a persistent Context Trigger rule.
+    /// Save a proposal to the product layer that owns it. Selection proposals belong to
+    /// Selection Scope; frontmost-app chat proposals become actions on that app's adapter so
+    /// the resolver can match and reuse them before spending another AI request.
     func installFromProposal(_ json: String) {
         guard let data = json.data(using: .utf8),
             let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
         else { return }
+        // A selection-layer proposal has to land in the extension store the Selection Scope
+        // sheet and Settings both read (`layer == .l2_context`, `category == "shortcutSheet"`).
+        // Saving it as a trigger rule — as every proposal used to — meant the user pressed
+        // "Save as Extension" and it appeared in neither place.
+        if proposal.layer.lowercased() == "selection" {
+            installSelectionScopeExtension(proposal)
+            return
+        }
+        if proposal.layer.lowercased() == "contextdock" {
+            installContextDockAdapterAction(proposal)
+            return
+        }
         let lang: AppScriptLanguage = {
             switch proposal.scriptType.lowercased() {
             case "applescript": return .applescript
@@ -425,12 +670,132 @@ extension LauncherView {
             conditions: finalConditions, conditionLogic: .any, pills: [pill], priority: 10
         )
         AppSettings.shared.addAXRule(rule)
-        l2.chatMessages.append(
-            AIChatMessage(
-                role: .assistant,
-                content:
-                    "**\(proposal.name)** saved as a Context Trigger. Type \"\(proposal.name.lowercased())\" anytime to run it instantly."
-            ))
+        let confirmation = AIChatMessage(
+            role: .assistant,
+            content:
+                "**\(proposal.name)** saved as an extension. It runs automatically when its "
+                + "selection/context matches, or type \"\(proposal.name.lowercased())\" to run it.")
+        // Route the confirmation to whichever chat raised the proposal.
+        if aiMode.isActive {
+            aiMode.messages.append(confirmation)
+        } else {
+            l2.chatMessages.append(confirmation)
+        }
+    }
+
+    private func installContextDockAdapterAction(_ proposal: ExtensionProposalData) {
+        let bundleId = [
+            l2.chatDraftBundleId,
+            l2.targetApp?.bundleId ?? "",
+            frontmost.bundleID,
+        ].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? ""
+        let appName = [
+            l2.chatDraftAppName,
+            l2.targetApp?.name ?? "",
+            frontmost.name,
+        ].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? "This App"
+        guard !bundleId.isEmpty else {
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "I couldn't save this action because the scoped app is no longer available.",
+                    isError: true))
+            return
+        }
+
+        let actionType: AdapterActionType = {
+            switch proposal.scriptType.lowercased() {
+            case "applescript": return .applescript
+            case "jxa": return .jxa
+            default: return .shell
+            }
+        }()
+        let triggerWords = proposal.triggers.map(\.value)
+            + proposal.name.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+        let stableId = "ai." + proposal.name.lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
+        let action = AdapterAction(
+            id: stableId,
+            name: proposal.name,
+            icon: proposal.icon ?? "sparkles",
+            description: proposal.description,
+            triggers: Array(Set(triggerWords.map { $0.lowercased() })).sorted(),
+            category: "AI Workflows",
+            type: actionType,
+            script: proposal.script,
+            requiresApproval: true
+        )
+
+        Task { @MainActor in
+            if AppAdapterManager.shared.adapter(for: bundleId) == nil {
+                await AppAdapterManager.shared.createAdapter(
+                    appName: appName, bundleId: bundleId, icon: "app.fill")
+            }
+            await AppAdapterManager.shared.appendAction(action, to: bundleId)
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "**\(proposal.name)** saved to **\(appName)**. Next time, Context Dock will match this app action before asking AI to create another workflow."))
+            persistActiveL2DockSession()
+            requestWindowSizeUpdate(reason: .chatChanged)
+        }
+    }
+
+    /// Installs a proposed Selection Scope action as a real extension: it then shows up as a
+    /// row in the selection sheet, is listed and editable in Settings, and survives relaunch.
+    private func installSelectionScopeExtension(_ proposal: ExtensionProposalData) {
+        let scriptType: ILExtension.ScriptType = {
+            switch proposal.scriptType.lowercased() {
+            case "applescript": return .applescript
+            case "jxa", "javascript": return .javascript
+            case "python": return .python
+            case "swift": return .swift
+            default: return .bash
+            }
+        }()
+        var triggers = proposal.triggers.compactMap { trigger -> ExtensionTrigger? in
+            switch trigger.type {
+            case "selection": return .selection
+            case "fileType": return .fileType([trigger.value])
+            case "appContext": return .appContext(trigger.value)
+            case "urlPattern": return .urlPattern(trigger.value)
+            case "keyword": return .keyword([trigger.value])
+            case "always": return .always
+            default: return nil
+            }
+        }
+        // A proposal belongs to Selection Scope only when it has a selected payload boundary.
+        // Preserve its typed restrictions, then add the common selection requirement.
+        if !triggers.contains(where: { if case .selection = $0 { return true }; return false }) {
+            triggers.insert(.selection, at: 0)
+        }
+        let ext = ILExtension(
+            name: proposal.name,
+            description: proposal.description,
+            icon: proposal.icon ?? "sparkles",
+            layer: .l2_context,
+            category: "shortcutSheet",
+            triggers: triggers,
+            enabled: true,
+            scriptContent: proposal.script,
+            scriptType: scriptType,
+            author: "DoraX AI"
+        )
+        LayeredExtensionManager.shared.addExtension(ext)
+        let confirmation = AIChatMessage(
+            role: .assistant,
+            content:
+                "**\(proposal.name)** saved as a Selection Scope extension. It appears as a row "
+                + "whenever a matching selection is active, and in Settings → Extensions."
+        )
+        if aiMode.isActive {
+            aiMode.messages.append(confirmation)
+        } else {
+            l2.chatMessages.append(confirmation)
+        }
     }
 
     func extractExtensionName(from code: String) -> String {
@@ -543,57 +908,10 @@ extension LauncherView {
         return output.stringValue
     }
 
-    func executeShellCommandSafely(_ command: String) async -> String {
-        // Check if this is an ilauncher-api command - handle it directly
-        if command.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("ilauncher-api ") {
-            #if DEBUG
-            print("🔧 [Shell] Detected ilauncher-api command, routing to APICommandHandler")
-            #endif
-
-            // Extract args from command
-            let cleanCommand = command.trimmingCharacters(in: .whitespacesAndNewlines)
-            let components = cleanCommand.components(separatedBy: .whitespaces)
-                .filter { !$0.isEmpty }
-
-            // Remove "ilauncher-api" prefix
-            let args = Array(components.dropFirst())
-
-            #if DEBUG
-            print("🔧 [Shell] API args: \(args)")
-            #endif
-
-            // Route to API handler
-            let result = APICommandHandler.shared.handleCommand(args)
-            #if DEBUG
-            print("✅ [Shell] API result: \(result)")
-            #endif
-
-            return result
-        }
-
-        // Otherwise execute as normal shell command
-        let task = Process()
-        let pipe = Pipe()
-
-        task.standardOutput = pipe
-        task.standardError = pipe
-        task.launchPath = "/bin/bash"
-        task.arguments = ["-c", command]
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let output = String(data: data, encoding: .utf8), !output.isEmpty {
-                return output.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else {
-                return "✅ Command executed successfully"
-            }
-        } catch {
-            return "❌ Error: \(error.localizedDescription)"
-        }
-    }
+    // NOTE: executeShellCommandSafely was removed (P0 security fix). It ran an arbitrary
+    // string through `bash -c` with ZERO classification — a loaded gun whose name implied
+    // safety. It had no callers (dead code). Any AI-reachable command execution must go
+    // through TerminalAIBridge.processAICommand, which classifies and gates on approval.
 
     func parseAIAction(_ response: String) -> AIAction? {
         // Legacy - keeping for compatibility

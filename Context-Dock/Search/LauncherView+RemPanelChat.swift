@@ -29,6 +29,22 @@ extension LauncherView {
 
         remPanelAITask?.cancel()
         appendPanelMessage(AIChatMessage(role: .user, content: query))
+
+        // A newly linked CLI is deliberately not exposed to the model until the
+        // user makes a first-use choice. Do this before any generic AI fallback so
+        // the very first question cannot miss the tool that was just added.
+        let consentAppKey = searchState.activeSmartQueryKey
+            ?? settings.autoDetectedAppKey
+            ?? searchState.contextApp?.key
+            ?? "reminders"
+        if let tool = AppCLIAgentConsentStore.shared.nextPrompt(for: consentAppKey) {
+            appendPanelMessage(AIChatMessage(
+                role: .assistant,
+                content: "CLI access request: \(tool.toolName)",
+                structuredData: "app-cli-consent:\(tool.id.uuidString)"))
+            searchState.query = ""
+            return
+        }
         remPanelIsProcessing = true
         // Add a separator between query sessions so history is readable
         let ck = prepareScopedWorkspaceTerminal()
@@ -187,12 +203,42 @@ extension LauncherView {
                 $0.name == toolCmd || $0.command == toolCmd
             })
             let isTUI = TerminalAIBridge.shared.isTUICommand(toolCmd)
+            // "Has help text" is not the same as "has a usable reference": entries scanned
+            // before the parser stripped ANSI codes stored colour escapes and zero
+            // subcommands. Treat those as unscanned so they get re-scanned and the model
+            // bootstraps from a live --help this turn instead of trusting the junk.
+            let hasScannedHelp = pkg.map { !TerminalPackageManager.shared.needsHelpScan($0) } ?? false
+            // Reference not scanned yet — kick a background scan for next time, and make the
+            // model bootstrap ITSELF this turn by running `--help` first instead of guessing
+            // (an unscanned tool previously produced hallucinated generic scripts).
+            if !hasScannedHelp {
+                TerminalPackageManager.shared.ensureHelpScanned(command: toolCmd)
+            }
+            let unscannedBootstrap: String =
+                hasScannedHelp
+                ? ""
+                : """
+
+                ⚠️ NO COMMAND REFERENCE YET for '\(toolCmd)'. Do NOT guess its commands from
+                general knowledge. Your FIRST action MUST be run_command("\(toolCmd) --help 2>&1")
+                (or "\(toolCmd) help"). Read that output, then use ONLY the commands it lists.
+                If it looks like an interactive TUI, spawn_worker it instead. Never substitute an
+                unrelated generic script for what the user asked '\(toolCmd)' to do.
+                """
             // Inject the FULL scanned help tree — this is what prevents hallucination.
             // The AI must only use commands that appear here.
             let helpSnippet: String = {
-                guard let ht = pkg?.helpText, !ht.isEmpty else { return "" }
+                guard let ht = pkg?.helpText, !ht.isEmpty else { return unscannedBootstrap }
+                // Budgeted by relevance, not by position. A flat prefix(4000) kept the
+                // banner and top-level usage while the subcommand the user actually asked
+                // about fell off the end — and cut mid-flag, which reads as a real flag.
+                let fitted = AIContextBudget.fitHelpText(
+                    ht,
+                    query: query,
+                    budget: AIContextBudget.characterBudget(for: provider)
+                )
                 return
-                    "\n\n══ TOOL REFERENCE (exact output of \(toolCmd) --help) ══\n\(String(ht.prefix(4000)))\n══ END TOOL REFERENCE ══"
+                    "\n\n══ TOOL REFERENCE (from \(toolCmd) --help) ══\n\(fitted)\n══ END TOOL REFERENCE ══"
             }()
             let subcommandList: String = {
                 guard let subs = pkg?.subcommands, !subs.isEmpty else { return "" }
@@ -529,7 +575,11 @@ extension LauncherView {
                     return doc
                 }
             }
-            let packageDocs = contextualCliPackages.map(appPanelCLIDocumentation(for:))
+            // Pass the query through so each tool's help is fitted to what was asked
+            // rather than to whatever sits in its first 1 000 characters.
+            let packageDocs = contextualCliPackages.map {
+                appPanelCLIDocumentation(for: $0, query: query)
+            }
             let toolDocs = (extensionDocs + packageDocs).joined(separator: "\n\n---\n\n")
 
             // Intent → invocation hints per tool
@@ -601,6 +651,13 @@ extension LauncherView {
                 \(intentLines)
 
                 RULES:
+                - TOOL ROUTING: These user-configured tools are the authoritative route for
+                  \(appLabel). For live facts (version, status, account data, or settings),
+                  run the relevant documented CLI command first. Do NOT replace it with
+                  generic app-menu instructions or claim a native app adapter can retrieve
+                  data unless a verified native command has actually returned that data.
+                - If the relevant CLI command is not documented yet, run "<tool> --help"
+                  first, then use only the syntax it reports.
                 - For SCRIPT tools: always pass the user's FULL original query as a single argument in quotes.
                 - For CLI tools: use ONLY the exact flags and subcommands documented in AVAILABLE TOOLS above.
                   Never guess flags. If you're unsure of exact syntax, run "<tool> help <subcommand>" first.
@@ -635,6 +692,9 @@ extension LauncherView {
             {
                 pageText = conv.markdown
             }
+            if !pageText.isEmpty {
+                pageText = MarkItDownService.compact(pageText, for: query, limit: 5_000)
+            }
             // These read via Safari's JavaScript bridge — skip for other browsers.
             let pageLinks = isBrowserScope ? [] : fetchSafariPageLinks()
             let pageImages = isBrowserScope ? [] : fetchSafariPageImages()
@@ -654,7 +714,7 @@ extension LauncherView {
             let pageTextSection =
                 pageText.isEmpty
                 ? "\nPAGE TEXT: (unavailable — Safari page content could not be read)"
-                : "\nPAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))"
+                : "\nPAGE TEXT EXCERPT:\n\(pageText)"
             let selectedTextSection =
                 selectedText.isEmpty
                 ? ""
@@ -756,11 +816,41 @@ extension LauncherView {
                 \(toolRules)
                 """
         } else {
-            // Generic fallback — no user extensions, no built-in CLI known
+            // Generic fallback — no user extensions, no built-in CLI known. This scope drives
+            // a GUI app, so the automation must act on the ALREADY-RUNNING app IN PLACE. The old
+            // prompt gave no GUI rules, so the model wrote AppleScript that `activate`d the app —
+            // launching / front-switching it (e.g. "toggle sidebar" yanked ChatGPT forward).
+            let bundleHint: String = {
+                if let b = l2.targetApp?.bundleId, !b.isEmpty { return b }
+                if let b = globalInlineAppScope?.bundleId,
+                    !b.isEmpty, !b.hasPrefix("cli://"), !b.hasPrefix("syscmd://") { return b }
+                if let path = ctx?.appPath, !path.isEmpty,
+                    let b = Bundle(url: URL(fileURLWithPath: path))?.bundleIdentifier { return b }
+                return ""
+            }()
+            let targetClause = bundleHint.isEmpty
+                ? "the process named \"\(appLabel)\""
+                : "the process whose bundle identifier is \"\(bundleHint)\" (named \"\(appLabel)\")"
             systemPrompt = """
                 You are an AI assistant for \(appLabel) inside ILauncher.
                 Only help with tasks related to \(appLabel).
                 Run shell commands via run_command (runs silently in the background — no terminal shown).
+
+                ══ GUI AUTOMATION — ACT ON THE RUNNING APP IN PLACE ══
+                \(appLabel) is already running. Drive it WITHOUT stealing focus or launching a new copy.
+                - NEVER use `activate`, `open -a`, `reopen`, or `launch`. NEVER bring the app to the front.
+                - NEVER `tell application "\(appLabel)" to <ui action>` — that activates it. Instead drive
+                  it through System Events, targeting \(targetClause):
+                    run_command("osascript -e 'tell application \\"System Events\\" to tell (first process whose \(bundleHint.isEmpty ? "name is \\\"\(appLabel)\\\"" : "bundle identifier is \\\"\(bundleHint)\\\"")) to <UI action>'")
+                - Prefer the app's OWN menu bar for commands (menu items survive across versions):
+                    …to click menu item "Toggle Sidebar" of menu "View" of menu bar 1
+                  If unsure of the exact menu path, first LIST it, then click:
+                    …to get name of every menu item of menu "View" of menu bar 1
+                - Only use keystrokes (keystroke / key code) when there is no menu item, and send them to
+                  that same process WITHOUT activating it.
+                - If the app is genuinely not running, tell the user to open it — do NOT launch it yourself.
+                - Read osascript output; if it errors (e.g. menu not found), inspect the menu tree and retry.
+
                 TIP: Assign CLI tools in Settings → App Shortcuts → \(appLabel) → AI Extensions to unlock more actions.
                 \(toolRules)
                 """
@@ -800,7 +890,18 @@ extension LauncherView {
                 return
             }
 
-            let placeholder = AIChatMessage(role: .assistant, content: "")
+            // Never leave a blank assistant bubble while Apple Intelligence is choosing
+            // tools or waiting for a command approval. The structured marker lets the
+            // shared terminal approval observer update this exact status in place.
+            let cliCommand = scopedIdentity.bundleId.hasPrefix("cli://")
+                ? String(scopedIdentity.bundleId.dropFirst("cli://".count))
+                : nil
+            let placeholder = AIChatMessage(
+                role: .assistant,
+                content: cliCommand.map { "Checking \($0) --help and available subcommands…" }
+                    ?? "Preparing the best action for this scope…",
+                structuredData: "on-device-status"
+            )
             remPanelChatMessages.append(placeholder)
             let messageID = placeholder.id
 
@@ -821,8 +922,10 @@ extension LauncherView {
                                             self.remPanelChatMessages[index] = AIChatMessage(
                                                 id: messageID,
                                                 role: .assistant,
-                                                content: self.remPanelChatMessages[index].content
-                                                    + token
+                                                content: self.remPanelChatMessages[index].structuredData
+                                                    == "on-device-status"
+                                                    ? token
+                                                    : self.remPanelChatMessages[index].content + token
                                             )
                                         }
                                     }
@@ -831,11 +934,12 @@ extension LauncherView {
                                     DispatchQueue.main.async {
                                         if let index = self.remPanelChatMessages.firstIndex(where: {
                                             $0.id == messageID
-                                        }), self.remPanelChatMessages[index].content.isEmpty {
+                                        }) {
                                             self.remPanelChatMessages[index] = AIChatMessage(
                                                 id: messageID,
                                                 role: .assistant,
-                                                content: response
+                                                content: response,
+                                                isError: false
                                             )
                                         }
                                         self.remPanelIsProcessing = false
@@ -905,7 +1009,7 @@ extension LauncherView {
                     provider: provider,
                     apiKey: apiKey,
                     conversationHistory: history,
-                    commandExecutor: { cmd, purpose in
+                    commandExecutor: { cmd, purpose, modelRequiresApproval in
                         // Fix relative paths: if AI used "find . ..." or "ls" without absolute path
                         // and we're in a folder context, rewrite to use the folder's absolute path
                         let fixedCmd: String = {
@@ -943,7 +1047,8 @@ extension LauncherView {
                             _ = self.panelTerminal(for: ck)
                         }
                         let result = await TerminalCommandExecutor.shared.run(
-                            fixedCmd, purpose: purpose)
+                            fixedCmd, purpose: purpose,
+                            modelRequiresApproval: modelRequiresApproval)
                         // Also send approved command to the panel's embedded PTY for live display
                         await MainActor.run {
                             let ck = self.activeConsoleKey
@@ -1175,7 +1280,7 @@ extension LauncherView {
                 }
                 return
             }
-            let (success, output) = await TerminalCommandExecutor.shared.run(
+            let (success, output, _) = await TerminalCommandExecutor.shared.run(
                 remCmd, purpose: "rem")
             await MainActor.run {
                 let reply =

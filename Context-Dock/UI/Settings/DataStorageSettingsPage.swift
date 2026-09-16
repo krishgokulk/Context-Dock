@@ -5,6 +5,10 @@ struct DataStorageSettingsPage: View {
     @State private var menuCacheSize: String = "…"
     @State private var appDataSize: String = "…"
     @State private var aiHistorySize: String = "…"
+    @State private var memoryFiles: [MarkdownMemoryFileSummary] = []
+    @StateObject private var retrievalEvaluation = RetrievalEvaluationStore.shared
+    @State private var retrievalQuery = ""
+    @State private var expectedRetrievalText = ""
 
     var body: some View {
         ScrollView {
@@ -71,6 +75,92 @@ struct DataStorageSettingsPage: View {
                     }
                 }
 
+                BrainProfileCard(onSaved: { memoryFiles = MarkdownMemoryStore.shared.fileSummaries() })
+
+                CardSection(title: "Markdown Memory", systemImage: "brain.head.profile.fill") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Local, readable, and user-controlled")
+                                    .font(.system(size: 13, weight: .medium))
+                                Text("General memory and app-scoped memory are stored as plain Markdown files.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button {
+                                NSWorkspace.shared.open(MarkdownMemoryStore.shared.folderURL)
+                            } label: {
+                                Label("Open Folder", systemImage: "folder")
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+
+                        Divider()
+
+                        if memoryFiles.isEmpty {
+                            Text("Memory files are created when the feature is first used.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 6)
+                        } else {
+                            VStack(spacing: 0) {
+                                ForEach(Array(memoryFiles.enumerated()), id: \.element.id) { index, file in
+                                    MemoryFileRow(file: file) {
+                                        NSWorkspace.shared.open(file.url)
+                                    }
+                                    if index < memoryFiles.count - 1 { Divider() }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 12)
+                }
+
+                CardSection(title: "Retrieval Evaluation", systemImage: "scope") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Measure the existing local retrieval before considering GraphRAG. Enter a query and a piece of text that should appear in the results.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        TextField("Query, for example: Context-Dock", text: $retrievalQuery)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Expected app, menu, file, or URL text", text: $expectedRetrievalText)
+                            .textFieldStyle(.roundedBorder)
+
+                        HStack {
+                            Button("Run Evaluation") {
+                                _ = retrievalEvaluation.run(
+                                    query: retrievalQuery,
+                                    expectedText: expectedRetrievalText)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(
+                                retrievalQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    || expectedRetrievalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                            if !retrievalEvaluation.results.isEmpty {
+                                Text("Hit@5 \(retrievalEvaluation.hitRateAt5, format: .percent.precision(.fractionLength(0)))  ·  MRR \(retrievalEvaluation.meanReciprocalRank, format: .number.precision(.fractionLength(2)))")
+                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Clear Results", role: .destructive) {
+                                    retrievalEvaluation.clear()
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
+
+                        if let result = retrievalEvaluation.results.first {
+                            Divider()
+                            RetrievalEvaluationResultRow(result: result)
+                        }
+                    }
+                    .padding(.vertical, 12)
+                }
+
                 CardSection(title: "Search Directories", systemImage: "folder.fill") {
                     SearchDirectoriesListView()
                         .padding(.vertical, 12)
@@ -80,6 +170,7 @@ struct DataStorageSettingsPage: View {
         }
         .task {
             await loadCacheSizes()
+            memoryFiles = MarkdownMemoryStore.shared.fileSummaries()
         }
     }
 
@@ -161,6 +252,69 @@ struct DataStorageSettingsPage: View {
         }
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+}
+
+private struct RetrievalEvaluationResultRow: View {
+    let result: RetrievalEvaluationResult
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: result.hitAt5 ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(result.hitAt5 ? .green : .red)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(result.hitAt5 ? "Pass · hit at rank \(result.rank ?? 0)" : "Miss · expected text not in top 5")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("\(result.resultCount) rows · \(result.latencyMilliseconds, format: .number.precision(.fractionLength(1))) ms")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                if let row = result.matchedRow {
+                    Text(row)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
+            }
+            Spacer()
+        }
+    }
+}
+
+private struct MemoryFileRow: View {
+    let file: MarkdownMemoryFileSummary
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: file.relativePath.hasPrefix("cache/") ? "clock.arrow.circlepath" : "doc.text")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(file.relativePath.hasPrefix("apps/") ? .blue : .purple)
+                .frame(width: 30, height: 30)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(file.relativePath)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                Text(fileSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Open", action: onOpen)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.vertical, 9)
+    }
+
+    private var fileSubtitle: String {
+        if let freshness = file.freshness { return freshness }
+        if file.relativePath == "MEMORY.md" {
+            return "Index · \(file.factCount) mapped location\(file.factCount == 1 ? "" : "s")"
+        }
+        if let words = file.wordCount {
+            return "\(words) word\(words == 1 ? "" : "s")"
+        }
+        return "\(file.factCount) saved fact\(file.factCount == 1 ? "" : "s")"
     }
 }
 

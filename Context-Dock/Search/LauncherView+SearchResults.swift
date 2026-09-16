@@ -551,10 +551,174 @@ extension LauncherView {
                 .foregroundStyle(.secondary.opacity(0.82))
                 .textCase(.uppercase)
             Spacer()
+            scopePinControl
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .padding(.bottom, 4)
+    }
+
+    /// Two values with a symbol between them. A conversion is a transformation, and
+    /// a title+subtitle line can't show that — the input and the result read as one
+    /// becoming the other only when they sit either side of a centre mark.
+    @ViewBuilder
+    func compareRowBody(pill: DockPill, left: String, accent: SwiftUI.Color) -> some View {
+        // A card, not a row. Two equal halves split by a rule with the operator
+        // sitting on it, so input and result carry the same weight and the eye reads
+        // across rather than down — the shape every calculator uses for a conversion.
+        HStack(spacing: 0) {
+            comparePane(value: left, caption: pill.name, alignment: .leading,
+                        isResult: false, drillQuery: pill.compareLeftQuery,
+                        commandID: pill.compareCommandID)
+            comparePane(value: pill.compareRight ?? "", caption: pill.badge,
+                        alignment: .trailing, isResult: true,
+                        drillQuery: pill.compareRightQuery,
+                        commandID: pill.compareCommandID)
+        }
+        .frame(height: 104)
+        .overlay {
+            Rectangle()
+                .fill(Color.primary.opacity(0.10))
+                .frame(width: 1)
+        }
+        .overlay {
+            // With a centre action the symbol is a control — a swap — so it gets accent
+            // treatment and a tap. Tap gesture, not a Button: this whole card is
+            // already the label of the row's Button.
+            Image(systemName: pill.compareCenterAction != nil
+                  ? "arrow.left.arrow.right"
+                  : (pill.compareIcon ?? "arrow.right"))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(pill.compareCenterAction != nil
+                                 ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                .frame(width: 30, height: 30)
+                .background(.regularMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(
+                    pill.compareCenterAction != nil
+                        ? Color.accentColor.opacity(0.35) : Color.primary.opacity(0.12),
+                    lineWidth: 1))
+                .contentShape(Circle())
+                .onTapGesture {
+                    guard let action = pill.compareCenterAction,
+                          let id = pill.compareCommandID,
+                          let command = SystemCommandsRegistry.shared.commands
+                              .first(where: { $0.id == id })
+                    else { return }
+                    let synthetic = CustomListRow(
+                        id: action, title: action, subtitle: nil, badge: nil, icon: nil)
+                    CustomListProviderService.shared.runAction(
+                        command, row: synthetic, query: searchState.query
+                    ) {
+                        CustomListProviderService.shared.invalidate(command)
+                        scheduleDockPillRebuild(
+                            query: searchState.query, delayNanoseconds: 0,
+                            refreshContext: false)
+                    }
+                }
+        }
+        .background(Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+        )
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func comparePane(value: String, caption: String?,
+                             alignment: HorizontalAlignment, isResult: Bool,
+                             drillQuery: String? = nil,
+                             commandID: UUID? = nil) -> some View {
+        VStack(alignment: .center, spacing: 8) {
+            Text(value)
+                .font(.system(size: 21, weight: isResult ? .bold : .semibold, design: .rounded))
+                .foregroundStyle(isResult ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            if let caption, !caption.isEmpty {
+                // A caption with a drill query is a control, not a label: it opens a
+                // dropdown rather than typing the extension's private token into the
+                // input, which is what the first version did.
+                if let drillQuery, let commandID {
+                    CompareCaptionPill(
+                        caption: caption, drillQuery: drillQuery, commandID: commandID,
+                        onPicked: {
+                            scheduleDockPillRebuild(
+                                query: searchState.query, delayNanoseconds: 0,
+                                refreshContext: false)
+                        })
+                } else {
+                    Text(caption)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.08), in: Capsule())
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 18)
+    }
+
+    /// The CLI tool this dock is scoped to, if any. `cli://<command>` is the scope id.
+    var activeCLIScopePackage: TerminalPackage? {
+        guard let scoped = currentGlobalScopedBundleID ?? l2.targetApp?.bundleId,
+            scoped.hasPrefix("cli://")
+        else { return nil }
+        let command = String(scoped.dropFirst("cli://".count))
+        guard !command.isEmpty else { return nil }
+        return terminalPackageManager.packages.first {
+            $0.command.caseInsensitiveCompare(command) == .orderedSame
+        }
+    }
+
+    /// Pin lives on the scope header, not in the row list: it acts on the whole
+    /// extension, and as a row it both displaced real results and made an empty
+    /// panel look like it had content.
+    @ViewBuilder
+    private var scopePinControl: some View {
+        // A pinned CLI tool becomes its own small app: transcript, composer and approvals in
+        // a floating window, so `tailscale` keeps working while the dock moves on. Checked
+        // first because a cli:// scope is never a custom-list scope.
+        if let package = activeCLIScopePackage {
+            let scope = GeneralChatScope.cli(command: package.command)
+            let pinned = GeneralChatWindowModel.shared.sessions.contains { $0.scope == scope }
+            Button {
+                GeneralChatWindowModel.shared.openSession(
+                    scope, title: package.command, seed: l2.chatMessages)
+                GeneralChatWindowController.shared.show()
+                hideLauncherAfterResultExecution()
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pinned ? AnyShapeStyle(Color.yellow)
+                                            : AnyShapeStyle(.secondary))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open \(package.command) as a thread in the chat window")
+        } else if let command = activeCustomListScopeCommand {
+            let pinned = ScopedListPanelManager.shared.isPinned(command.id)
+            Button {
+                ScopedListPanelManager.shared.toggle(command)
+            } label: {
+                Image(systemName: pinned ? "pin.fill" : "pin")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(pinned ? AnyShapeStyle(Color.yellow)
+                                            : AnyShapeStyle(.secondary))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(pinned
+                  ? "Unpin — closes the floating panel"
+                  : "Pin as a floating panel, like Quick Note")
+        }
     }
 
     @ViewBuilder
@@ -704,6 +868,9 @@ extension LauncherView {
             // Teach intent: user picked a menu action for this query
             if !q.isEmpty { AppUsageLearner.shared.recordQueryIntent(query: q, wasMenu: true) }
         } label: {
+            if let left = pill.compareLeft ?? pill.compareRight, pill.compareRight != nil {
+                compareRowBody(pill: pill, left: left, accent: accent)
+            } else {
             HStack(spacing: 10) {
                 // Icon
                 ZStack {
@@ -816,6 +983,7 @@ extension LauncherView {
                 )
             }
             .contentShape(Rectangle())
+            }
         }
         .buttonStyle(.plain)
         // Live control sits above the button so the slider/toggle receives
@@ -1254,7 +1422,10 @@ extension LauncherView {
             let hasExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
                 || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
-            if q.isEmpty, !hasExtensionScope {
+            // A browsed folder is a scope of its own, and its field starts empty on
+            // purpose. Hiding the row on an empty query took the folder's contents down
+            // with it the moment the user stepped inside.
+            if q.isEmpty, !hasExtensionScope, !isBrowsingFinderFolder {
                 return false
             }
             if shouldUsePureGlobalAppSearch {
@@ -1275,6 +1446,7 @@ extension LauncherView {
         if hasSelectionScopeSurface {
             return true
         }
+        if isBrowsingFinderFolder { return true }
         guard !q.isEmpty else { return false }
         // Finder desktop search must keep its shared sheet alive while its cache and
         // Spotlight passes exchange snapshots. The rendered list supplies either files,
@@ -1894,8 +2066,7 @@ extension LauncherView {
 
         // Context: is there a selected file or text right now?
         let hasFileSelection: Bool =
-            folderPreviewSelectedFile != nil
-            || (searchState.selectedIndex.map {
+            (searchState.selectedIndex.map {
                 $0 < searchState.results.count && searchState.results[$0].filePath != nil
             } ?? false)
             || !axContext.selectedFilePaths.isEmpty
@@ -1988,11 +2159,9 @@ extension LauncherView {
 
     func executeAppShortcut(_ sc: AppShortcut) {
         // ── Gather context ───────────────────────────────────────────────
-        // Selected file(s): folder preview selection first, then highlighted search result
+        // Selected file: the highlighted search result.
         var selectedFilePaths: [String] = []
-        if let previewFile = folderPreviewSelectedFile, !previewFile.isEmpty {
-            selectedFilePaths = [previewFile]
-        } else if let idx = searchState.selectedIndex, idx < searchState.results.count,
+        if let idx = searchState.selectedIndex, idx < searchState.results.count,
             let path = searchState.results[idx].filePath, !path.isEmpty
         {
             selectedFilePaths = [path]
@@ -2159,9 +2328,6 @@ extension LauncherView {
 
         let queryText = launchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedFile: String = {
-            if let previewFile = folderPreviewSelectedFile, !previewFile.isEmpty {
-                return previewFile
-            }
             if let idx = searchState.selectedIndex, idx < searchState.results.count,
                 let path = searchState.results[idx].filePath, !path.isEmpty
             {
@@ -2215,11 +2381,6 @@ extension LauncherView {
 
     /// Shortcuts relevant to the currently highlighted search result's file type
     var fileTypeShortcutsForSelection: [AppShortcut] {
-        // File selected inside folder preview takes priority
-        if let selectedFile = folderPreviewSelectedFile, !selectedFile.isEmpty {
-            let ext = URL(fileURLWithPath: selectedFile).pathExtension.lowercased()
-            return fileTypeShortcuts(for: ext)
-        }
         guard let idx = searchState.selectedIndex,
             idx < searchState.results.count
         else { return [] }
@@ -2228,12 +2389,6 @@ extension LauncherView {
         let ext =
             (result.filePath.map { URL(fileURLWithPath: $0).pathExtension.lowercased() }) ?? ""
         return fileTypeShortcuts(for: ext)
-    }
-
-    /// Name of the currently selected file in the folder preview (for display)
-    var selectedFolderFileName: String? {
-        guard let path = folderPreviewSelectedFile, !path.isEmpty else { return nil }
-        return URL(fileURLWithPath: path).lastPathComponent
     }
 
     func fileTypeShortcuts(for ext: String) -> [AppShortcut] {
@@ -2264,25 +2419,6 @@ extension LauncherView {
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    // File name chip (folder preview only)
-                    if let fileName = selectedFolderFileName {
-                        let ext = URL(fileURLWithPath: folderPreviewSelectedFile ?? "")
-                            .pathExtension.lowercased()
-                        HStack(spacing: 5) {
-                            Image(systemName: fileIcon(for: ext))
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                            Text(fileName)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .frame(maxWidth: 120)
-                        }
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(.secondary.opacity(0.12), in: Capsule())
-                    }
-
                     // Context-based action pills — auto-scored by file type, app, selection
                     ForEach(l2.contextExtensions, id: \.ilExtension.id) { result in
                         L2ExtensionChipButton(

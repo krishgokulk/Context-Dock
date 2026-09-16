@@ -160,6 +160,7 @@ final class BrowserURLLibraryService: @unchecked Sendable {
             refreshedAt = Date()
             isRefreshing = false
             completion()
+            GlobalContextResultSource.shared.refresh()
         }
     }
 

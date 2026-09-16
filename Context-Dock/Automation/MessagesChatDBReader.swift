@@ -36,6 +36,48 @@ enum MessagesChatDBReader {
         return Date(timeIntervalSince1970: seconds + appleEpochOffset)
     }
 
+    private static func data(fromHex hex: String) -> Data? {
+        guard hex.count.isMultiple(of: 2) else { return nil }
+        var data = Data(capacity: hex.count / 2)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            data.append(byte)
+            index = next
+        }
+        return data
+    }
+
+    /// Modern Messages rows frequently leave `message.text` empty and keep the visible
+    /// string inside the legacy typedstream stored in `attributedBody`. The archive's text
+    /// remains a contiguous UTF-8 run, so extract human-looking runs without attempting to
+    /// instantiate an untrusted archived object.
+    static func visibleText(textHex: String, attributedHex: String) -> String {
+        if let data = data(fromHex: textHex),
+            let text = String(data: data, encoding: .utf8), !text.isEmpty
+        {
+            return text
+        }
+        guard let data = data(fromHex: attributedHex), !data.isEmpty else { return "" }
+        let decoded = String(decoding: data, as: UTF8.self)
+        let ignored = [
+            "streamtyped", "NSMutableAttributedString", "NSAttributedString", "NSString",
+            "NSDictionary", "NSObject", "NSFont", "NSColor", "__kIM", "NSNumber",
+        ]
+        return decoded
+            .components(separatedBy: CharacterSet.controlCharacters
+                .union(.illegalCharacters))
+            .flatMap { $0.components(separatedBy: "\u{FFFD}") }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { candidate in
+                candidate.count >= 2
+                    && !ignored.contains(where: { candidate.contains($0) })
+                    && candidate.rangeOfCharacter(from: .letters.union(.decimalDigits)) != nil
+            }
+            .max(by: { $0.count < $1.count }) ?? ""
+    }
+
     /// Run a SQL query against a read-only, immutable open of chat.db via the
     /// system sqlite3 CLI. Rows are `|`-separated. Returns nil when unreadable.
     private static func query(_ sql: String) -> [[String]]? {
@@ -73,7 +115,8 @@ enum MessagesChatDBReader {
             ? ""
             : "WHERE h.id LIKE '%\(filter.replacingOccurrences(of: "'", with: "''"))%' "
         let sql = """
-            SELECT m.is_from_me, COALESCE(m.text,''), m.date, COALESCE(h.id,'')
+            SELECT m.is_from_me, HEX(COALESCE(CAST(m.text AS BLOB),X'')), m.date,
+                   COALESCE(h.id,''), HEX(COALESCE(m.attributedBody,X''))
             FROM message m
             LEFT JOIN handle h ON m.handle_id = h.ROWID
             \(whereClause)
@@ -82,14 +125,51 @@ enum MessagesChatDBReader {
             """
         guard let rows = query(sql) else { return nil }
         return rows.compactMap { cols -> MessageRow? in
-            guard cols.count >= 4, let raw = Double(cols[2]) else { return nil }
+            guard cols.count >= 5, let raw = Double(cols[2]) else { return nil }
             return MessageRow(
                 fromMe: cols[0] == "1",
-                text: cols[1],
+                text: visibleText(textHex: cols[1], attributedHex: cols[4]),
                 date: date(fromRaw: raw),
                 handle: cols[3]
             )
         }
+    }
+
+    /// Search message bodies and handles without launching or controlling Messages.
+    static func search(_ phrase: String, limit: Int = 30) -> [MessageRow]? {
+        let term = phrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        let capped = max(1, min(limit, 100))
+        let sql = """
+            SELECT m.is_from_me, HEX(COALESCE(CAST(m.text AS BLOB),X'')), m.date,
+                   COALESCE(h.id,''), HEX(COALESCE(m.attributedBody,X''))
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
+            ORDER BY m.date DESC
+            LIMIT 10000;
+            """
+        guard let rows = query(sql) else { return nil }
+        return rows.compactMap { cols -> MessageRow? in
+            guard cols.count >= 5, let raw = Double(cols[2]) else { return nil }
+            let body = visibleText(textHex: cols[1], attributedHex: cols[4])
+            guard body.localizedCaseInsensitiveContains(term)
+                    || cols[3].localizedCaseInsensitiveContains(term)
+            else { return nil }
+            return MessageRow(fromMe: cols[0] == "1", text: body,
+                              date: date(fromRaw: raw), handle: cols[3])
+        }.prefix(capped).map { $0 }
+    }
+
+    static func formatted(_ rows: [MessageRow]) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return rows.map { row in
+            let who = row.handle.isEmpty ? "(group)" : row.handle
+            let direction = row.fromMe ? "you → \(who)" : "\(who) → you"
+            return "\(formatter.string(from: row.date)) · \(direction): "
+                + row.text.prefix(240)
+        }.joined(separator: "\n")
     }
 
     /// Messages you SENT since the start of today: total + distinct recipients.

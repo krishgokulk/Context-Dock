@@ -5,6 +5,9 @@ extension LauncherView {
         DockHeightResolver.resolve(currentDockHeightMetrics)
     }
 
+    /// Compact smart scopes reserve 450 for their list.
+    private var compactSmartScopePanelHeight: CGFloat { 450 }
+
     var currentDockHeightPreset: DockHeightPreset {
         DockHeightResolver.resolvePreset(currentDockHeightPresetMetrics)
     }
@@ -33,6 +36,12 @@ extension LauncherView {
             && shouldUsePureGlobalAppSearch
             && globalInlineAppScope == nil
             && globalContextViewModel.typingSnapshot.phase != .expanded
+        let cliTerminalReservedHeight: CGFloat = {
+            guard isInCLIToolScope else { return 0 }
+            let terminal = cliScopeTerminal
+            // Header + vertical padding when collapsed; bounded body when expanded.
+            return terminal.isExpanded ? terminal.height + 54 : 42
+        }()
 
         return DockHeightMetrics(
             surfaceMode: currentDockSurfaceMode,
@@ -47,6 +56,7 @@ extension LauncherView {
                 && !isCompactSmartScope
                 && shouldShowContextDockAppPanel,
             compactSmartScope: isCompactSmartScope,
+            compactScopePanelHeight: compactSmartScopePanelHeight,
             mediaHasDuration: mediaObserver.duration > 0,
             contextDockChatMessageCount: l2.chatMessages.count,
             listViewDockHeight: listViewDockHeight,
@@ -54,7 +64,9 @@ extension LauncherView {
             resultCount: pureGlobalCompactTyping ? 0 : searchState.results.count,
             loadingApps: pureGlobalCompactTyping ? false : searchState.isLoadingApps,
             l1ResultsReservedHeight: pureGlobalCompactTyping ? 0 : l1ResultsReservedHeight,
-            measuredChatContentHeight: measuredChatContentHeight
+            measuredChatContentHeight: measuredChatContentHeight,
+            dockScopeStartHeight: dockScopeStartHeightForCurrentState,
+            cliTerminalReservedHeight: cliTerminalReservedHeight
         )
     }
 
@@ -77,6 +89,22 @@ extension LauncherView {
             searchBarExpanded: isSearchBarExpanded,
             aiMessageCount: aiMode.messages.count
         )
+    }
+
+    /// Room for the scoped-thread start strip: one summary line, then one row per group,
+    /// three at most. Measured the same way the rest of the dock reserves space — from what
+    /// will be drawn, not from a guess that drifts when the content changes.
+    var dockScopeStartHeightForCurrentState: CGFloat {
+        guard shouldShowDockScopeStart else { return 0 }
+        let scope = currentContextDockChatScope
+        let groups = ScopeInventory.app(bundleId: scope.bundleId, appName: scope.appName)
+            .groups.count
+        let summaryLine: CGFloat = 16
+        let rowHeight: CGFloat = 22
+        let verticalPadding: CGFloat = 16
+        let separator: CGFloat = 6
+        return summaryLine + separator
+            + CGFloat(min(groups, 3)) * rowHeight + verticalPadding
     }
 
     var finderSearchPanelHeightForCurrentState: CGFloat {

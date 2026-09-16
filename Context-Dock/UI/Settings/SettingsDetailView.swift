@@ -2,16 +2,24 @@ import SwiftUI
 
 struct SettingsDetailView: View {
     let page: SettingsPage
+    let integrationDestination: IntegrationDestination?
 
     var body: some View {
         VStack(spacing: 0) {
-            if page != .extensionImport {
+            // Integrations renders its own header so the scope switch and integration list
+            // sit flush beneath it; a shared header here would stack two. Pages it
+            // superseded render it too, for the same reason.
+            if page != .extensionImport, !rendersOwnHeader {
                 SettingsPageHeader(page: page)
                 Divider()
             }
             pageContent
         }
         .background(Color(NSColor.windowBackgroundColor))
+    }
+
+    private var rendersOwnHeader: Bool {
+        page == .integrations || SettingsRouteResolver.destination(for: page) != nil
     }
 
     @ViewBuilder
@@ -21,13 +29,18 @@ struct SettingsDetailView: View {
             GeneralSettingsPage()
         case .aiProviders:
             AIProvidersSettingsPage()
+        case .integrations:
+            IntegrationsSettingsPage(destination: integrationDestination)
         case .extensionsGlobalWithSelection,
              .extensionsGlobalWithoutSelection,
              .extensionsCLIToolScope,
              .frontmostAppAdapters,
              .workflows,
              .shortcutSheetWorkflows:
-            ExtensionsSettingsPage(page: page)
+            // Superseded by the workspace. SettingsView resolves these before selection, so
+            // this is only reached if a page is set directly; it lands in the same scope
+            // rather than reviving a page with no sidebar row.
+            IntegrationsSettingsPage(destination: SettingsRouteResolver.destination(for: page))
         case .extensionImport:
             AutomationImportPanel(onClose: {})
         case .mediaActions:

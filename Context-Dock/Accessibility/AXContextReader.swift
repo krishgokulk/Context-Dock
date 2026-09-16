@@ -55,7 +55,12 @@ struct AXContext {
         var parts: [String] = []
         parts.append("Frontmost App: \(appName) (\(bundleId))")
         if let t = windowTitle,  !t.isEmpty { parts.append("Window Title: \(t)") }
-        if let u = currentURL,   !u.isEmpty { parts.append("Current URL: \(u)") }
+        // Only publish something that is actually an address. A bundle id ("com.apple.Safari")
+        // reaching this line reads as a URL to the model, which then reasons about a page that
+        // does not exist — better to omit the field than to state a placeholder as fact.
+        if let u = currentURL, AXContext.looksLikeWebAddress(u) {
+            parts.append("Current URL: \(u)")
+        }
         if let s = selectedText, !s.isEmpty {
             let preview = s.count > 400 ? String(s.prefix(400)) + "…" : s
             parts.append("Selected Text: \(preview)")
@@ -63,6 +68,17 @@ struct AXContext {
         if let r = focusedElementRole, !r.isEmpty { parts.append("Focused Element: \(r)") }
         if !menuItems.isEmpty { parts.append("Menu Items: \(menuItems.count)") }
         return parts.joined(separator: "\n")
+    }
+
+    /// True only for something a browser could actually be showing. Rejects bundle ids, which
+    /// several call sites used as a "we don't know the URL yet" stand-in.
+    static func looksLikeWebAddress(_ raw: String) -> Bool {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !value.contains(" ") else { return false }
+        if value.contains("://") { return true }
+        if value.lowercased().hasPrefix("www.") { return true }
+        // "com.apple.Safari" has dots but no path and a reverse-DNS shape — not an address.
+        return false
     }
 }
 
@@ -131,6 +147,9 @@ final class AXContextReader {
 
         var ctx = AXContext(appName: name, bundleId: bundleId, pid: pid)
         let axApp = AXUIElementCreateApplication(pid)
+        // This runs on the open path, on the main thread — never wait longer than a
+        // couple of frames for a title. A missed read is handled; a stall is not.
+        AXMessagingTimeout.apply(AXMessagingTimeout.interactive, to: axApp)
         ctx.windowTitle = readWindowTitle(axApp)
         ctx.focusedElementRole = readFocusedRole(axApp)
 
@@ -144,9 +163,14 @@ final class AXContextReader {
     /// Reads ONLY the current selection (selected text + Finder file selection) and merges it
     /// into `current`. Used after the lightweight open-path refresh so Context Dock can show a
     /// selection chip/button without paying for a full menu/URL read on first paint.
-    func refreshSelectionOnly(from app: NSRunningApplication) {
+    /// - Parameter includeFinderFiles: when false, skips the Finder AppleScript read (which
+    ///   runs on the main thread and can block for 100s of ms). Pass false on the hotkey→open
+    ///   path so the window paints instantly; Finder selection is stable across focus changes,
+    ///   so the async open pass re-reads it a beat later without losing anything.
+    func refreshSelectionOnly(from app: NSRunningApplication, includeFinderFiles: Bool = true) {
         let pid = app.processIdentifier
         let axApp = AXUIElementCreateApplication(pid)
+        AXMessagingTimeout.apply(AXMessagingTimeout.interactive, to: axApp)
         var ctx = current
         // An app that is no longer frontmost often reports a nil AXFocusedUIElement, so an empty
         // read here means "couldn't read it", NOT "the user deselected". Never let that erase a
@@ -159,7 +183,7 @@ final class AXContextReader {
         } else {
             ctx.selectedText = nil
         }
-        if app.bundleIdentifier == "com.apple.finder" {
+        if includeFinderFiles, app.bundleIdentifier == "com.apple.finder" {
             let paths = ContextDetector.shared.getFinderSelectedFiles().map { $0.path }
             if !paths.isEmpty || app.isActive {
                 ctx.selectedFilePaths = paths
@@ -198,7 +222,22 @@ final class AXContextReader {
         guard current.pid == pid else { return }
         let axApp = AXUIElementCreateApplication(pid)
         var updated = current
-        updated.selectedText       = readSelectedText(axApp)
+        // A focus/selection notification for an app that has just stopped being active —
+        // exactly what our own corner taking key focus right after causes — often reads
+        // back an empty selection even though the user never deselected anything.
+        // `refreshSelectionOnly` already knows not to trust that read in that case; this
+        // path read it unconditionally and blindly erased the selection a fresh open had
+        // just correctly captured a moment earlier — the selection pill would appear on
+        // the hotkey and vanish, debounced, before the user finished reading it.
+        let freshSelection = readSelectedText(axApp)
+        let isActive = NSRunningApplication(processIdentifier: pid)?.isActive ?? true
+        if let freshSelection, !freshSelection.isEmpty {
+            updated.selectedText = freshSelection
+        } else if !isActive, updated.selectedText?.isEmpty == false {
+            // keep the previously captured selection
+        } else {
+            updated.selectedText = nil
+        }
         updated.focusedElementRole = readFocusedRole(axApp)
         updated.windowTitle        = readWindowTitle(axApp)
         if updated.bundleId == "com.apple.Preview" {
@@ -206,6 +245,30 @@ final class AXContextReader {
         }
         updated.timestamp          = Date()
         updateIfChanged(updated)
+
+        if updated.bundleId == "com.apple.finder" {
+            refreshFinderSelection(for: pid, bundleId: updated.bundleId)
+        }
+    }
+
+    /// `AXSelectedRowsChanged` is exactly this path's own event — Finder posts it the
+    /// moment the selection changes, whether that means a different file, a different
+    /// count of them, or none at all — but this path never re-read the selection itself
+    /// for it, only text and window title, so the icon held whatever it opened with until
+    /// something unrelated forced a full refresh.
+    ///
+    /// Async and cache-first, deliberately: the read is an AppleScript round-trip, this
+    /// event can fire on every row the user's mouse passes over while dragging a
+    /// selection, and the dock's own idle loop already knows never to sit on one of these.
+    private func refreshFinderSelection(for pid: pid_t, bundleId: String) {
+        ContextDetector.shared.finderSelectedFilesAsync { [weak self] urls in
+            guard let self, self.current.pid == pid, self.current.bundleId == bundleId
+            else { return }
+            var refreshed = self.current
+            refreshed.selectedFilePaths = urls.map(\.path)
+            refreshed.timestamp = Date()
+            self.updateIfChanged(refreshed)
+        }
     }
 
     private func updateSelectedText(_ text: String, pid: pid_t) {
@@ -349,7 +412,7 @@ final class AXContextReader {
     }
 
     /// Selected text of one element: plain attribute first, then the
-    /// range-parameterized read (covers fields that only expose the range).
+    /// range-parameterized read (covers fields that only expose the range), then text markers.
     private func selectedText(of el: AXUIElement) -> String? {
         if let t = strAttr(el, kAXSelectedTextAttribute as CFString), !t.isEmpty { return t }
         var rangeRef: CFTypeRef?
@@ -362,7 +425,26 @@ final class AXContextReader {
                 return s
             }
         }
-        return nil
+        return selectedTextViaTextMarkers(el)
+    }
+
+    /// WebKit's own selection API. Safari's AXWebArea implements NEITHER AXSelectedText
+    /// (returns -25212, attribute unsupported) NOR AXSelectedTextRange — it exposes the
+    /// selection only as an opaque text-marker range. So every page selection in Safari read
+    /// back as "nothing selected", and Selection Scope opened on the plain app instead of the
+    /// highlighted text. Chrome/Electron WebKit-derived views expose the same pair.
+    private func selectedTextViaTextMarkers(_ el: AXUIElement) -> String? {
+        var markerRange: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(
+            el, "AXSelectedTextMarkerRange" as CFString, &markerRange) == .success,
+            let markerRange
+        else { return nil }
+        var strRef: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            el, "AXStringForTextMarkerRange" as CFString, markerRange, &strRef) == .success,
+            let text = strRef as? String, !text.isEmpty
+        else { return nil }
+        return text
     }
 
     private func readWebAreaSelectedText(_ axApp: AXUIElement) -> String? {

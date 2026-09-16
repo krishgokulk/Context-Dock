@@ -8,3 +8,7 @@ args = ["-y", "xcodebuildmcp@latest", "mcp"]
 
 [mcp_servers.XcodeBuildMCP.env]
 PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+[mcp_servers.graft]
+command = "graft"
+args = ["mcp"]

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CryptoKit
 import OSLog
 import SwiftUI
 import Vision
@@ -50,6 +51,21 @@ extension LauncherView {
                 height: renderedDockHeight ?? calculatedHeight,
                 alignment: settings.effectiveDockAtBottom ? .bottom : .top
             )
+            // The host is far taller than the card, and everything below the card has to
+            // stay click-through. Report what the card *actually* measures rather than
+            // what something computed for it: a height that is only published when a
+            // resize happens leaves the window swallowing clicks in every state where no
+            // resize ran.
+            .onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .global)
+            } action: { frame in
+                // The rect, not just the height: the card is pinned to the bottom in dock
+                // mode, so a height alone described the wrong strip of the window and ate
+                // every click above it.
+                let window = AppDelegate.shared?.launcherWindow as? KeyableWindow
+                window?.dockCardRect = frame
+                window?.dockCardHeight = frame.height
+            }
             .background(
                 backgroundView
                     .animation(
@@ -67,6 +83,7 @@ extension LauncherView {
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
             .onAppear {
+                connectCornerGlobalResults()
                 if renderedDockHeight == nil {
                     renderedDockHeight = calculatedHeight
                 }
@@ -398,6 +415,10 @@ extension LauncherView {
                 loadPersistedClipboardHistory()
                 lastCheckedPasteboardCount = NSPasteboard.general.changeCount
                 startClipboardExpiryTimer()
+                startClipboardMonitorTimer()
+                // The Drop Shelf's edge strip does not exist until this runs, so nothing
+                // it does can affect the system before the app is up.
+                DropShelfController.shared.activate()
 
                 // Start observing app switches if enabled (frontmost app already detected in ILauncherApp)
                 if settings.enableFrontmostDetection {
@@ -430,6 +451,10 @@ extension LauncherView {
                 collapseTimer?.cancel()
                 clipboardExpiryTimer?.invalidate()
                 clipboardExpiryTimer = nil
+                clipboardMonitorTimer?.invalidate()
+                clipboardMonitorTimer = nil
+                // Never lose the tail of a debounced history write on teardown.
+                flushClipboardHistoryToDisk()
                 queryChangeTask?.cancel()
                 queryChangeTask = nil
                 globalAppMatchTask?.cancel()
@@ -671,18 +696,7 @@ extension LauncherView {
         contentLifecycleHandlersView
             // AppKit-level Escape fallback — fires only when SwiftUI doesn't capture it
             .onReceive(NotificationCenter.default.publisher(for: .escapePressed)) { _ in
-                if showFolderPreview {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showFolderPreview = false
-                        folderPreviewPath = nil
-                        folderPreviewSelectedFile = nil
-                        searchState.isInSmartMode = false
-                        searchState.lastSmartQuery = ""
-                        searchState.results = []
-                        searchState.selectedIndex = nil
-                    }
-                    return
-                }
+                if exitClipboardScopeClosingLauncher() { return }
                 if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
                     || searchState.contextApp != nil
                 {
@@ -716,8 +730,9 @@ extension LauncherView {
                 else {
                     return
                 }
-                // Compact scopes (Clipboard / Notifications) step out first — backspace
-                // on their empty field returns to the surface underneath.
+                // Compact scopes step out first. Clipboard leaves the dock completely;
+                // Notifications returns to the surface underneath.
+                if exitClipboardScopeClosingLauncher() { return }
                 if searchState.activeSmartQueryKey != nil {
                     clearSearchContext()
                     isSearchFieldFocused = true
@@ -838,8 +853,9 @@ extension LauncherView {
 
                 // A selection belongs to the app it was made in. When the frontmost app
                 // actually changes, drop the previous app's cached selection so its
-                // selection button/scope doesn't linger in every other app.
-                if appChanged {
+                // selection button/scope doesn't linger in every other app. A locked chat
+                // keeps its selection — that text/file IS the conversation's payload.
+                if appChanged, !isContextDockChatLocked {
                     liveDockSelectionPreviewText = nil
                     axContext.selectedText = nil
                     axContext.selectedFilePaths = []
@@ -878,6 +894,28 @@ extension LauncherView {
                     isSearchBarExpanded = true
                     refreshCompactScopeResults(resetSelection: false)
                     requestWindowSizeUpdate(reason: .panelChanged)
+                    return
+                }
+
+                // A frontmost-app chat is a locked conversation: it belongs to the app it was
+                // started for. Switching apps, clicking away or changing Spaces must not wipe
+                // its messages, retarget its scope or rebuild the other app's menus underneath
+                // it — only an explicit exit (Escape / backspace / the `−` chip) ends it.
+                // Menu search (chat not locked) keeps following the frontmost app below.
+                if isContextDockChatLocked {
+                    syncScopeChatSpaceHold()
+                    syncL2DockSession(force: l2.activeDockSessionKey == nil)
+                    // Do NOT reclaim focus here. The user switching apps is the user going
+                    // to work in that app — ensureSearchInputFocusReady() calls
+                    // NSApp.activate(ignoringOtherApps:) and retries, which yanked focus
+                    // straight back out of the app they just clicked. Only re-seat the caret
+                    // when the dock still owns key focus (a Space switch can drop the field
+                    // editor while the window stays key).
+                    if AppDelegate.shared?.launcherWindow?.isKeyWindow == true {
+                        DispatchQueue.main.async {
+                            self.isSearchFieldFocused = true
+                        }
+                    }
                     return
                 }
 
@@ -1068,11 +1106,37 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .commandKeyToggleContextScope)) { _ in
                 handleCommandKeyContextScopeToggle()
             }
-            .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
-                activateClipboardScope()
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptSubmitted)) {
+                note in
+                handleAppChatPromptSubmission(note)
             }
-            .onReceive(NotificationCenter.default.publisher(for: .activateWindowReviewScope)) { _ in
-                activateWindowReviewScope()
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptScopeChanged)) {
+                note in
+                handleAppChatPromptScopeChange(note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptNewChat)) { _ in
+                handleAppChatPromptNewChat()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptCancel)) { _ in
+                handleAppChatPromptCancel()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appChatPromptPickAction)) {
+                note in
+                handleAppChatPromptPickAction(note)
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: .clipboardEntriesRemovalRequested)
+            ) { note in
+                handleClipboardEntriesRemovalRequest(note)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
+                ClipboardPanelController.shared.show()
+            }
+            .onReceive(ClipboardIngestBus.shared.captures) { payload in
+                handleClipboardCapture(payload)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .activateSelectionScope)) { _ in
+                activateSelectionScopeFromHotkey()
             }
             .onChange(of: currentContext.description) { _, _ in
                 // Trigger smooth expansion when context is detected
@@ -1118,6 +1182,7 @@ extension LauncherView {
 
     func handleLauncherWindowOpened() {
         beginMouseDrivenInteractionGrace()
+        resetStaleSmartScopeStateForFreshOpen()
         // Resume an ACTIVE frontmost-app chat instead of disarming it: wiping the
         // draft scope here re-keyed the session to the new frontmost app (Finder),
         // which swapped a mid-flight MinkNote/Code conversation for an empty one.
@@ -1133,12 +1198,25 @@ extension LauncherView {
             l2.chatDraftBundleId = ""
         }
         suppressOpenResize = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) { [self] in
+        // Prepare the first real layout on the next pass, before the fade-in has completed.
+        // Holding resizing for 300ms made the SwiftUI result card expand inside the compact
+        // 70pt panel first, exposing the temporary half-sheet the user sees at launch.
+        DispatchQueue.main.async { [self] in
             suppressOpenResize = false
-            requestWindowSizeUpdate(reason: .modeChanged)
+            requestWindowSizeUpdate(
+                reason: .modeChanged, animated: false, debounceNanoseconds: 0)
         }
 
-        let openingForDockContext = AppDelegate.shared?.isDockContextMode ?? true
+        // Opening straight into Selection Scope: enter it now, on this frame. Waiting for the
+        // posted activation meant the shell painted Context Dock (frontmost chip + its menu rows)
+        // first and visibly swapped a moment later.
+        let openingIntoSelectionScope = AppDelegate.shared?.pendingSmartScopeKey == "selection"
+        if openingIntoSelectionScope {
+            activateSelectionScopeFromHotkey()
+        }
+
+        let openingForDockContext =
+            !openingIntoSelectionScope && (AppDelegate.shared?.isDockContextMode ?? true)
         globalContextActivation = nil
         // The hotkey open posts .activateContextDock twice (immediately, then +0.05s), and each
         // nils the activation. Selection Scope is established asynchronously once the AX read
@@ -1149,7 +1227,6 @@ extension LauncherView {
         // Reset transient UI state unconditionally on every open
         aiMode.isActive = false
         showMediaLayer = false
-        showFolderPreview = false
         searchState.isInSmartMode = false
 
         if !openingForDockContext {
@@ -1204,7 +1281,9 @@ extension LauncherView {
                 let newCtx = await AXContextReader.shared.current
                 await MainActor.run {
                     self.axContext = newCtx
-                    if !self.contextDockIsFrontmostApplication {
+                    // Selection Scope owns the surface — re-seating frontmost context here
+                    // rebuilt the frontmost app's rows underneath it mid-open.
+                    if !self.contextDockIsFrontmostApplication, !self.hasSelectionScopeSurface {
                         self.setFrontmostAppContextOnly(reason: "window opened lightweight")
                     }
                     // The lightweight pass can land after the user began typing; re-assert the
@@ -1234,6 +1313,9 @@ extension LauncherView {
         // ("comp" → Compress).
         // Grace-gated: the window is opened at launch and zeroed the moment the user exits the
         // scope, so the second (post-lightweight) re-assert can't drag them back in.
+        // A dedicated Selection Scope shortcut means the user opts in explicitly — the plain
+        // launcher open then stays a launcher instead of a live selection hijacking the sheet.
+        guard !settings.selectionScopeHotkeyEnabled else { return }
         guard Date() < launchSelectionScopeGraceUntil,
             !globalContextActivationHasFrozenPayload,
             l2.targetApp == nil,
@@ -1245,7 +1327,7 @@ extension LauncherView {
             !aiMode.isActive,
             let snapshot = currentSelectionActivationSnapshot(refresh: false)
         else { return }
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.84)) {
+        withAnimation(.dockStandard) {
             // Freeze the selection only — do NOT touch globalContextActivation. The selection
             // came from the frontmost app, so the scope opens on the surface the user launched
             // into (Context Dock), instead of jumping them to Global Context.
@@ -1256,6 +1338,106 @@ extension LauncherView {
             showContextInDock = true
             isSearchBarExpanded = true
         }
+        requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    /// A plain launcher open (⌥⌥ / launch hotkey) is never a scope resume. Clipboard and
+    /// Selection scopes live in SwiftUI @State that survives hiding the window, so without this
+    /// the next open silently reopened whatever scope the user last left. Scope hotkeys set
+    /// `pendingSmartScopeKey` before showing the window and re-post their activation after this
+    /// handler, so they are unaffected.
+    func resetStaleSmartScopeStateForFreshOpen() {
+        guard AppDelegate.shared?.pendingSmartScopeKey == nil else { return }
+        let hadScope =
+            selectionScopePayload != nil
+            || searchState.activeSmartQueryKey != nil
+        guard hadScope else { return }
+        if selectionScopePayload != nil { exitSelectionScopeAIChat() }
+        selectionScopePayload = nil
+        selectionScopeSheetCollapsed = false
+        searchState.activeSmartQueryKey = nil
+        searchState.contextApp = nil
+        AppDelegate.shared?.smartScopeActive = false
+        AppDelegate.shared?.clearSmartScopeState()
+    }
+
+    /// Hotkey-driven Selection Scope (Settings → Hotkeys → Selection Scope). Explicit intent, so
+    /// unlike the launch-time path it re-enters a previously dismissed selection and is not gated
+    /// on the open grace window. The AX read can lag the keypress, so it applies what is already
+    /// cached first, then re-applies once a fresh selection-only read lands.
+    func activateSelectionScopeFromHotkey() {
+        // The hotkey enters the scope twice — once from the window-open handler (first frame, so
+        // Context Dock never paints) and once from the posted activation. Both carry the same
+        // activation generation; the second only refreshes the frozen payload with whatever the
+        // slower AX read found, instead of resetting the surface under the user.
+        let generation = AppDelegate.shared?.smartScopeActivationGeneration ?? 0
+        if lastAppliedSelectionActivation == generation, hasSelectionScopeSurface {
+            if let snapshot = currentSelectionActivationSnapshot(refresh: false) {
+                applySelectionScopePayload(snapshot)
+            }
+            return
+        }
+        lastAppliedSelectionActivation = generation
+        AppDelegate.shared?.smartScopeActive = true
+        // Open as the compact input bar, not the full actions sheet — same shell as the idle
+        // launcher. The sheet unfolds on the first keystroke or ↓.
+        selectionScopeSheetCollapsed = true
+        searchState.query = ""
+        searchState.results = []
+        searchState.selectedIndex = nil
+        withAnimation(.dockStandard) {
+            searchState.activeSmartQueryKey = nil
+            searchState.contextApp = nil
+            searchState.isInSmartMode = false
+            l2.targetApp = nil
+            l2.chatArmed = false
+            l2.showChatPopover = false
+            showContextInDock = true
+            showMediaLayer = false
+            aiMode.isActive = false
+            globalContextActivation = nil
+            globalInlineAppScope = nil
+            additionalGlobalInlineAppScopes = []
+            isSearchBarExpanded = true
+        }
+        // The user asked for this selection by name — a previous dismissal must not filter it out.
+        dismissedFinderSelectionSignature = nil
+        suppressedAutomaticFinderSelectionSignature = nil
+
+        if let snapshot = currentSelectionActivationSnapshot(refresh: true) {
+            applySelectionScopePayload(snapshot)
+        }
+        if let app = AppDelegate.shared?.previousFrontmostApp {
+            Task.detached(priority: .userInitiated) {
+                await AXContextReader.shared.refreshSelectionOnly(from: app)
+                let selectionCtx = await AXContextReader.shared.current
+                await MainActor.run {
+                    self.axContext = selectionCtx
+                    if let snapshot = self.currentSelectionActivationSnapshot(refresh: false) {
+                        self.applySelectionScopePayload(snapshot)
+                    }
+                }
+            }
+        }
+        activateSearchField()
+    }
+
+    /// Unfolds a hotkey-opened Selection Scope from the compact bar into its actions sheet.
+    func expandSelectionScopeSheet() {
+        guard selectionScopeSheetCollapsed else { return }
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
+            selectionScopeSheetCollapsed = false
+        }
+        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
+    }
+
+    private func applySelectionScopePayload(_ snapshot: GlobalContextActivation) {
+        withAnimation(.dockStandard) {
+            selectionScopePayload = snapshot
+            showContextInDock = true
+            isSearchBarExpanded = true
+        }
+        scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
         requestWindowSizeUpdate(reason: .modeChanged)
     }
 
@@ -1317,7 +1499,7 @@ extension LauncherView {
 
     func persistActiveL2DockSession() {
         if let key = l2.activeDockSessionKey {
-            AppPanelChatStore.shared.save(l2.chatMessages, for: key)
+            AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
         }
     }
     // MARK: - Context Dock Filter (type to find actions)
@@ -1649,8 +1831,18 @@ extension LauncherView {
     /// exits pure global app search mid-typing (blank sheet on ↓, dead expansion).
     /// Called from the AX selection observer AND the 0.75s live poll (some apps
     /// don't emit AXSelectedTextChanged for web-area mouse selections).
-    func refreshLiveSelectionIntoDockContext() {
+    /// `minInterval` throttles the poll caller only; event-driven callers pass 0 and stay
+    /// instant. Each call spawns an AX selection read, and for Finder that read reaches
+    /// `getFinderSelectedFiles()` — an Apple event that executes on the MAIN thread. Firing it
+    /// every 0.75 s tick made typing in Context Dock stutter for a Selection Scope feature the
+    /// user had not even opened.
+    func refreshLiveSelectionIntoDockContext(minInterval: TimeInterval = 0) {
         guard showContextInDock else { return }
+        if minInterval > 0 {
+            let now = Date()
+            guard now.timeIntervalSince(lastLiveSelectionPoll) > minInterval else { return }
+            lastLiveSelectionPoll = now
+        }
         // Even while OUR dock has key focus, the source app can still change selection by mouse
         // click/drag behind the panel. Keep polling the remembered source app; empty AX reads are
         // ignored below so transient background-read failures do not flicker the icon.
@@ -1774,10 +1966,11 @@ extension LauncherView {
         autoReturnFromGlobalContextIfNeeded()
         // A file selected in Finder WHILE the dock is open must surface the trailing
         // selection button live — the lightweight AX poll below never reads selection.
-        refreshFinderSelectionContextFromFinder()
+        // Backup cadence only: the AX event path above handles the responsive case.
+        refreshFinderSelectionContextFromFinder(minInterval: 2.0)
         // Same for live TEXT selections (browser pages, editors): poll as backup for
         // apps whose web areas don't emit AXSelectedTextChanged.
-        refreshLiveSelectionIntoDockContext()
+        refreshLiveSelectionIntoDockContext(minInterval: 2.0)
 
         let bundleId = app.bundleIdentifier ?? ""
         let pid = app.processIdentifier
@@ -1809,10 +2002,14 @@ extension LauncherView {
         }
     }
 
-    func refreshFinderSelectionContextFromFinder() {
+    /// `minInterval` separates the two callers. The AX selection event (AXSelectedRowsChanged,
+    /// which Finder does emit) is the real path and stays responsive; the 0.75 s idle poll is
+    /// only a backup for apps that miss the event, and reading Finder there every tick meant a
+    /// main-thread Apple event 80 times a minute while the user was merely typing in the dock.
+    func refreshFinderSelectionContextFromFinder(minInterval: TimeInterval = 0.25) {
         guard showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
         let now = Date()
-        guard now.timeIntervalSince(lastFinderSelectionRefresh) > 0.25 else { return }
+        guard now.timeIntervalSince(lastFinderSelectionRefresh) > minInterval else { return }
         lastFinderSelectionRefresh = now
         guard
             frontmost.bundleID == "com.apple.finder"
@@ -1858,6 +2055,140 @@ extension LauncherView {
         currentContext = .filesSelected(urls)
     }
 
+    /// The corner prompt is an entry point, not a chat: it hands the question to the
+    /// app-scoped chat that already exists, down the same path the "Chat with <App>" pill
+    /// uses, so there is one conversation rather than two.
+    func handleAppChatPromptSubmission(_ note: Notification) {
+        guard let info = note.userInfo,
+            let bundleId = info["bundleId"] as? String,
+            let appName = info["appName"] as? String
+        else { return }
+        let query = (info["query"] as? String ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // The corner posts what the user attached. This handler used to read only the
+        // question, so a screenshot attached in the corner was neither shown on the message
+        // nor sent with the turn — the answer was about the words alone, and nothing said
+        // so. They go where the dock's own composer puts them, which is also what renders
+        // them as chips on the message.
+        let attached = (info["attachments"] as? [String] ?? [])
+            .map(URL.init(fileURLWithPath:))
+        // Selection Scope sends the text it was opened on. Without it the turn falls back
+        // to `liveSelectionForChat()`, which reads whatever is selected *now* — and by the
+        // time a question is submitted the frontmost app is Context Dock, whose own window
+        // has no selection at all.
+        if let selected = (info["selectedText"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !selected.isEmpty
+        {
+            contextDockChatCapturedText = selected
+        }
+        for url in attached where !aiMode.attachments.contains(url) {
+            aiMode.attachments.append(url)
+        }
+
+        // Asking in the corner used to open the Context Dock over whatever the user was
+        // working in, and then wait 120 ms for it to finish appearing before the question
+        // landed. The pipeline never needed that: the launcher view is built once at
+        // startup and only ordered out when hidden, so it and its handlers are alive to run
+        // the turn whether or not anyone can see them. The corner is a second presentation
+        // of this conversation, not a shortcut to the dock.
+        retargetCornerAppChat(appName: appName, bundleId: bundleId)
+
+        guard !query.isEmpty else {
+            requestWindowSizeUpdate(reason: .panelChanged, animated: true)
+            return
+        }
+        dismissMediaLayer()
+        handleL2QuerySkippingMenuRouter(query)
+    }
+
+    /// The corner picked one of the answer's offered routes.
+    ///
+    /// The turn ran on the dock's pipeline, so the choice runs there too — the corner is a
+    /// second presentation of this conversation, not a second engine for it.
+    func handleAppChatPromptPickAction(_ note: Notification) {
+        guard let choiceID = note.userInfo?["choiceID"] as? String, !choiceID.isEmpty else {
+            return
+        }
+        let title = note.userInfo?["title"] as? String ?? choiceID
+        runOfferedChoiceFromCorner(id: choiceID, title: title)
+    }
+
+    /// The corner asked to stop the running turn. The task is the dock's, so the stop is too.
+    func handleAppChatPromptCancel() {
+        guard l2.isLoading || l2.currentTask != nil else { return }
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        AppChatConversation.shared.liveSteps = []
+    }
+
+    /// The corner asked to drop clips. It reads the same history this writes, and the image
+    /// blobs live beside that file, so removal happens here where both are owned.
+    func handleClipboardEntriesRemovalRequest(_ note: Notification) {
+        guard let raw = note.userInfo?["ids"] as? [String] else { return }
+        let ids = Set(raw.compactMap(UUID.init(uuidString:)))
+        guard !ids.isEmpty else { return }
+
+        let doomed = clipboardHistory.filter { ids.contains($0.id) }
+        guard !doomed.isEmpty else { return }
+        clipboardHistory.removeAll { ids.contains($0.id) }
+        ClipboardImageStore.delete(fileNames: doomed.compactMap(\.imageFileName))
+        for id in ids {
+            selectedClipboardEntryIDs.remove(id)
+            expandedClipboardEntryIDs.remove(id)
+        }
+        clipboardSelectionOrder.removeAll { ids.contains($0) }
+        savePersistedClipboardHistory()
+        syncVisibleClipboardStateAfterPrune()
+        refreshCompactScopeResults(resetSelection: false)
+    }
+
+    /// The corner asked to start over. It shows the dock's conversation rather than one of
+    /// its own, so the dock is what empties it.
+    func handleAppChatPromptNewChat() {
+        l2.currentTask?.cancel()
+        l2.currentTask = nil
+        l2.isLoading = false
+        l2.activeRequestID = nil
+        l2.handledApprovalIds = []
+        l2.chatMessages = []
+        AppChatConversation.shared.liveSteps = []
+        if let key = l2.activeDockSessionKey {
+            AppPanelChatStore.shared.beginSession(for: key)
+        }
+    }
+
+    func handleAppChatPromptScopeChange(_ note: Notification) {
+        guard let info = note.userInfo,
+            let bundleId = info["bundleId"] as? String,
+            let appName = info["appName"] as? String
+        else { return }
+        retargetCornerAppChat(appName: appName, bundleId: bundleId)
+    }
+
+    /// The corner and dock are two presentations of this one session. Remove explicit
+    /// stale scopes, then let the existing frontmost-app session resolver persist/load
+    /// the correct app (including Finder's folder-aware key).
+    private func retargetCornerAppChat(appName: String, bundleId: String) {
+        showContextInDock = true
+        globalContextActivation = nil
+        globalInlineAppScope = nil
+        additionalGlobalInlineAppScopes = []
+        l2.targetApp = nil
+        l2.chatDraftAppName = appName
+        l2.chatDraftBundleId = bundleId
+        l2.chatArmed = true
+        l2.chatDismissed = false
+        syncL2DockSession()
+        // Opening the dock is what used to start context tracking for the target app, so a
+        // corner-only session had no live Finder selection to hand its turn: `showContextInDock`
+        // was false, and `handleSelectionChange` returns on that guard. Retargeting turns it
+        // on above, so read the selection now rather than waiting for the next AX event —
+        // otherwise the first question about a folder is asked with nothing selected.
+        refreshLiveSelectionIntoDockContext()
+    }
+
     func checkClipboardForGlobalContext() {
         let pb = NSPasteboard.general
         let currentCount = pb.changeCount
@@ -1874,9 +2205,50 @@ extension LauncherView {
             suppressClipboardImportUntilChangeCount = nil
         }
 
+        // Password managers and other privacy-aware apps flag their clips; an
+        // always-on history must never record those.
+        guard !isConcealedPasteboard(pb) else { return }
+
         pruneExpiredClipboardEntries()
 
         _ = importCurrentPasteboardToClipboardHistory()
+    }
+
+    /// Honours the community `org.nspasteboard.*` markers (1Password, Bitwarden,
+    /// KeePassXC, …) plus Apple's own concealed type.
+    func isConcealedPasteboard(_ pb: NSPasteboard) -> Bool {
+        let markers: Set<String> = [
+            "org.nspasteboard.ConcealedType",
+            "org.nspasteboard.TransientType",
+            "org.nspasteboard.AutoGeneratedType",
+            "com.agilebits.onepassword",
+            "de.petermaurer.TransientPasteboardType",
+        ]
+        let types = (pb.types ?? []).map(\.rawValue)
+        return types.contains { markers.contains($0) }
+    }
+
+    /// Clip produced by the app itself (Capture Text / Capture Area / Screenshot).
+    /// Arrives with the real source app and the changeCount of its own pasteboard
+    /// write, so the poll below never re-imports it as an anonymous clip.
+    func handleClipboardCapture(_ payload: ClipboardCapturePayload) {
+        lastCheckedPasteboardCount = payload.pasteboardChangeCount
+        let source = (name: payload.sourceAppName, bundleId: payload.sourceBundleId)
+        switch payload.content {
+        case .text(let text):
+            addClipboardEntry(
+                text: text, filePaths: [], source: source,
+                isScreenCapture: payload.isScreenCapture)
+        case .image(let data, let savedFilePath):
+            addClipboardEntry(
+                text: "",
+                // The saved screenshot path rides along so Quick Look and drag-out use
+                // the real file instead of a temp copy; the clip still renders as an image.
+                filePaths: savedFilePath.map { [$0] } ?? [],
+                imageData: data,
+                source: source,
+                isScreenCapture: payload.isScreenCapture)
+        }
     }
 
     @discardableResult
@@ -1898,7 +2270,13 @@ extension LauncherView {
         if let image = NSImage(pasteboard: pb),
             let tiffData = image.tiffRepresentation
         {
-            addClipboardEntry(text: "Image copied to clipboard", filePaths: [], imageData: tiffData)
+            // Empty text — the entry IS the image (preview shows "Image", OCR fills ocrText).
+            // A placeholder string here used to get pasted instead of the actual image.
+            // Re-encode to PNG immediately: pasteboard TIFF is several times larger, and
+            // this is the form that goes to disk, to Vision and back onto the pasteboard.
+            addClipboardEntry(
+                text: "", filePaths: [],
+                imageData: ClipboardImageStore.pngData(from: tiffData) ?? tiffData)
             return true
         }
 
@@ -1912,39 +2290,52 @@ extension LauncherView {
         return true
     }
 
-    func addClipboardEntry(text: String, filePaths: [String], imageData: Data? = nil) {
-        let sourceApp = clipboardSourceApp()
+    func addClipboardEntry(
+        text: String,
+        filePaths: [String],
+        imageData: Data? = nil,
+        source: (name: String, bundleId: String)? = nil,
+        isScreenCapture: Bool = false
+    ) {
+        let sourceApp = source ?? clipboardSourceApp()
+        let hash = clipboardContentHash(text: text, filePaths: filePaths, imageData: imageData)
         let entry = ClipboardEntry(
             text: text,
             timestamp: Date(),
             filePaths: filePaths,
             imageData: imageData,
             sourceAppName: sourceApp.name,
-            sourceBundleId: sourceApp.bundleId
+            sourceBundleId: sourceApp.bundleId,
+            isScreenCapture: isScreenCapture,
+            contentHash: hash
         )
 
-        let duplicateKey =
-            imageData != nil
-            ? "image:\(imageData?.count ?? 0)"
-            : (filePaths.isEmpty ? text : filePaths.joined(separator: "\n"))
-        clipboardHistory.removeAll { old in
-            let oldKey =
-                old.imageData != nil
-                ? "image:\(old.imageData?.count ?? 0)"
-                : (old.filePaths.isEmpty ? old.text : old.filePaths.joined(separator: "\n"))
-            return oldKey == duplicateKey
-        }
+        let removed = clipboardHistory.filter { $0.contentHash == hash }
+        clipboardHistory.removeAll { $0.contentHash == hash }
+        ClipboardImageStore.delete(fileNames: removed.compactMap(\.imageFileName))
         clipboardHistory.insert(entry, at: 0)
-        trimClipboardHistoryToLimits()
-        savePersistedClipboardHistory()
-        if imageData != nil {
+        if let imageData {
+            persistClipboardImageBlob(entryID: entry.id, data: imageData)
             scheduleClipboardOCR(for: entry.id, imageData: imageData)
         }
+        trimClipboardHistoryToLimits()
+        savePersistedClipboardHistory()
+
+        globalClipboardText = text
+
+        // The ambient clipboard pill is a system-wide surface, so it is told about every
+        // copy — including the ones that land while the dock is hidden, which is most of
+        // them. It orders itself in without activating us.
+        ClipboardPanelController.shared.didCopy(entry)
+
+        // Everything below is dock chrome. The monitor runs even while the launcher is
+        // hidden, so a background copy must cost a store + a disk write — no animations,
+        // no pill rebuilds, no window resize for a window nobody is looking at.
+        guard AppDelegate.shared?.launcherWindow?.isVisible == true else { return }
+
         if searchState.activeSmartQueryKey == "clipboard" {
             refreshCompactScopeResults(resetSelection: false)
         }
-
-        globalClipboardText = text
         if activeSelection == nil && frozenSelectionText == nil && liveDockSelectionPreviewText == nil {
             withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
                 showGlobalClipboardPill = true
@@ -1958,6 +2349,42 @@ extension LauncherView {
             ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             : lastPillQuery
         scheduleDockPillRebuild(query: rebuildQuery, delayNanoseconds: 0, refreshContext: false)
+    }
+
+    /// Identity of a clip's *content*, independent of when or where it was copied.
+    func clipboardContentHash(text: String, filePaths: [String], imageData: Data?) -> String {
+        if let imageData {
+            return "image:" + SHA256.hash(data: imageData).prefix(8)
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        if !filePaths.isEmpty { return "files:" + filePaths.joined(separator: "\n") }
+        return "text:" + text
+    }
+
+    /// Writes the clip's bytes to the sidecar store off the main thread, then records the
+    /// file name so a later launch (or a memory-trimmed entry) can find them again.
+    func persistClipboardImageBlob(entryID: UUID, data: Data) {
+        let fileName = "\(entryID.uuidString).png"
+        Task.detached(priority: .utility) {
+            guard ClipboardImageStore.write(data, fileName: fileName) else { return }
+            await MainActor.run {
+                guard let index = clipboardHistory.firstIndex(where: { $0.id == entryID }) else {
+                    // Entry was trimmed while we were writing — don't leave the blob behind.
+                    ClipboardImageStore.delete(fileNames: [fileName])
+                    return
+                }
+                clipboardHistory[index].imageFileName = fileName
+                savePersistedClipboardHistory()
+            }
+        }
+    }
+
+    /// Full image bytes for a clip: in memory for recent clips, off the sidecar store for
+    /// everything the history reloaded from disk.
+    func clipboardImageData(for entry: ClipboardEntry) -> Data? {
+        if let data = entry.imageData { return data }
+        guard let fileName = entry.imageFileName else { return nil }
+        return ClipboardImageStore.read(fileName: fileName)
     }
 
     func scheduleClipboardIndicatorAutoHide() {
@@ -2005,15 +2432,44 @@ extension LauncherView {
             syncVisibleClipboardStateAfterPrune()
             return
         }
-        clipboardHistory = entries.sorted { $0.timestamp > $1.timestamp }
+        var loaded = entries.sorted { $0.timestamp > $1.timestamp }
+        // Backfill for histories written before content hashes / sidecar blobs existed.
+        for index in loaded.indices {
+            if loaded[index].contentHash.isEmpty {
+                loaded[index].contentHash = clipboardContentHash(
+                    text: loaded[index].text,
+                    filePaths: loaded[index].filePaths,
+                    imageData: loaded[index].imageData)
+            }
+        }
+        clipboardHistory = loaded
+        // Legacy entries still carry inline image bytes — move them to the sidecar store
+        // once, then the JSON stays small forever.
+        for entry in loaded where entry.imageFileName == nil && entry.imageData != nil {
+            persistClipboardImageBlob(entryID: entry.id, data: entry.imageData!)
+        }
         trimClipboardHistoryToLimits(save: false)
         syncVisibleClipboardStateAfterPrune()
         savePersistedClipboardHistory()
     }
 
+    /// Debounced: a burst of copies (or a run of OCR completions) coalesces into one
+    /// encode + one atomic write instead of one per change.
     func savePersistedClipboardHistory() {
+        clipboardSaveTask?.cancel()
+        clipboardSaveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            flushClipboardHistoryToDisk()
+        }
+    }
+
+    func flushClipboardHistoryToDisk() {
+        clipboardSaveTask?.cancel()
+        clipboardSaveTask = nil
         let entries = clipboardHistory
         let url = clipboardHistoryStoreURL
+        let liveBlobs = Set(entries.compactMap(\.imageFileName))
         Task.detached(priority: .utility) {
             do {
                 try FileManager.default.createDirectory(
@@ -2023,32 +2479,38 @@ extension LauncherView {
                 let data = try JSONEncoder().encode(entries)
                 try data.write(to: url, options: .atomic)
             } catch {}
+            ClipboardImageStore.pruneOrphans(keeping: liveBlobs)
         }
     }
 
     func scheduleClipboardOCR(for entryID: UUID, imageData: Data?) {
-        guard let imageData,
-            let nsImage = NSImage(data: imageData),
-            let cgImage = nsImage.cgImage(forProposedRect: nil, context: nil, hints: nil)
-        else { return }
+        guard let imageData else { return }
 
         Task.detached(priority: .utility) {
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.usesLanguageCorrection = true
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([request])
-                let text = (request.results ?? [])
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .joined(separator: "\n")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return }
-                await MainActor.run {
-                    updateClipboardOCR(entryID: entryID, text: text)
+            // One image at a time: a burst of screenshots used to start a Vision request
+            // per clip and peg every core while the user was still typing.
+            await ClipboardOCRQueue.shared.run {
+                guard let nsImage = NSImage(data: imageData),
+                    let cgImage = nsImage.cgImage(
+                        forProposedRect: nil, context: nil, hints: nil)
+                else { return }
+                let request = VNRecognizeTextRequest()
+                request.recognitionLevel = .accurate
+                request.usesLanguageCorrection = true
+                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+                do {
+                    try handler.perform([request])
+                    let text = (request.results ?? [])
+                        .compactMap { $0.topCandidates(1).first?.string }
+                        .joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !text.isEmpty else { return }
+                    await MainActor.run {
+                        updateClipboardOCR(entryID: entryID, text: text)
+                    }
+                } catch {
+                    // OCR is best-effort; clipboard row still works without recognized text.
                 }
-            } catch {
-                // OCR is best-effort; clipboard row still works without recognized text.
             }
         }
     }
@@ -2068,17 +2530,38 @@ extension LauncherView {
         pruneExpiredClipboardEntries(updateVisibleState: false, save: false)
         let limit = settings.clipboardHistoryLimit
         if clipboardHistory.count > limit {
+            let dropped = clipboardHistory.suffix(from: limit)
+            ClipboardImageStore.delete(fileNames: dropped.compactMap(\.imageFileName))
             clipboardHistory = Array(clipboardHistory.prefix(limit))
         }
+        releaseColdClipboardImageMemory()
         syncVisibleClipboardStateAfterPrune()
         if save && before != clipboardHistory.map(\.id) {
             savePersistedClipboardHistory()
         }
     }
 
+    /// Only the newest few image clips keep their bytes resident; older ones fall back to
+    /// the sidecar blob (rows already render from the thumbnail cache). Without this a
+    /// 50-clip screenshot history sat permanently in RAM.
+    func releaseColdClipboardImageMemory(keepingNewest keep: Int = 4) {
+        var seenImages = 0
+        for index in clipboardHistory.indices where clipboardHistory[index].imageData != nil {
+            seenImages += 1
+            guard seenImages > keep, clipboardHistory[index].imageFileName != nil else { continue }
+            clipboardHistory[index].imageData = nil
+        }
+    }
+
     func pruneExpiredClipboardEntries(updateVisibleState: Bool = true, save: Bool = true) {
         let cutoff = Date().addingTimeInterval(-clipboardRetentionInterval())
         let before = clipboardHistory.count
+        let expired = clipboardHistory.filter { $0.timestamp < cutoff }
+        guard !expired.isEmpty else {
+            if updateVisibleState { syncVisibleClipboardStateAfterPrune() }
+            return
+        }
+        ClipboardImageStore.delete(fileNames: expired.compactMap(\.imageFileName))
         clipboardHistory.removeAll { $0.timestamp < cutoff }
         if updateVisibleState {
             syncVisibleClipboardStateAfterPrune()
@@ -2105,6 +2588,19 @@ extension LauncherView {
             [self] _ in
             self.pruneExpiredClipboardEntries()
         }
+    }
+
+    /// The clipboard history is only trustworthy if it records every copy — not just the
+    /// one that happened to be on the pasteboard when the dock was last opened. Reading
+    /// `changeCount` is a couple of microseconds, so this polls whether or not any
+    /// Context-Dock surface is on screen; the expensive work is gated behind it.
+    func startClipboardMonitorTimer() {
+        clipboardMonitorTimer?.invalidate()
+        clipboardMonitorTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) {
+            [self] _ in
+            self.checkClipboardForGlobalContext()
+        }
+        clipboardMonitorTimer?.tolerance = 0.1
     }
 
     /// Auto-returns to Context Dock when the selection that triggered global context is gone.

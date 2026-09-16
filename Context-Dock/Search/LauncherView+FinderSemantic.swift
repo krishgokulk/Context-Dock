@@ -290,6 +290,14 @@ extension LauncherView {
                 selectedFilePaths: selectedFiles,
                 retrievedMatches: retrievedMatches
             )
+            let memoryBlock = MarkdownMemoryStore.shared.contextBlock(
+                query: query,
+                appBundleID: "com.apple.finder"
+            )
+            let memoryToolChips = MarkdownMemoryStore.shared.relevantSourceChips(
+                query: query,
+                appBundleID: "com.apple.finder"
+            )
 
             let retrievedContentBlock: String = {
                 let candidateURLs =
@@ -329,6 +337,7 @@ extension LauncherView {
                 \(fileContentBlock)
                 \(retrievedContentBlock)
                 \(resolvedTargetContext.contentBlock)
+                \(memoryBlock)
 
                 RULES:
                 1. Respond with EITHER:
@@ -393,7 +402,11 @@ extension LauncherView {
                     self.l2.isLoading = false
                     self.l2.currentTask = nil
                     DispatchQueue.main.async {
-                        self.executeFinderAIResponse(response, folderPath: fallbackFolderPath)
+                        self.executeFinderAIResponse(
+                            response,
+                            folderPath: fallbackFolderPath,
+                            memoryToolChips: memoryToolChips
+                        )
                     }
                 }
             } catch {
@@ -923,14 +936,21 @@ extension LauncherView {
         return candidate
     }
 
-    func executeFinderAIResponse(_ response: String, folderPath: String) {
+    func executeFinderAIResponse(
+        _ response: String,
+        folderPath: String,
+        memoryToolChips: [String] = []
+    ) {
         let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if trimmed.hasPrefix("ACTION:APPLESCRIPT:") {
             let script = String(trimmed.dropFirst("ACTION:APPLESCRIPT:".count))
                 .replacingOccurrences(of: "\\n", with: "\n")
             l2.chatMessages.append(
-                AIChatMessage(role: .assistant, content: "```applescript\n\(script)\n```"))
+                AIChatMessage(
+                    role: .assistant,
+                    content: "```applescript\n\(script)\n```",
+                    mcpToolsRan: memoryToolChips))
             Task.detached(priority: .userInitiated) {
                 var err: NSDictionary?
                 NSAppleScript(source: script)?.executeAndReturnError(&err)
@@ -957,7 +977,11 @@ extension LauncherView {
 
         } else if trimmed.hasPrefix("ACTION:SHELL:") {
             let cmd = String(trimmed.dropFirst("ACTION:SHELL:".count))
-            l2.chatMessages.append(AIChatMessage(role: .assistant, content: "```bash\n\(cmd)\n```"))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: "```bash\n\(cmd)\n```",
+                    mcpToolsRan: memoryToolChips))
             Task.detached(priority: .userInitiated) {
                 let process = Process()
                 process.launchPath = "/bin/bash"
@@ -1018,11 +1042,19 @@ extension LauncherView {
 
         } else if trimmed.hasPrefix("ANSWER:") {
             let answer = String(trimmed.dropFirst("ANSWER:".count))
-            l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: answer,
+                    mcpToolsRan: memoryToolChips))
 
         } else {
             // Model didn't follow the format — show the raw response
-            l2.chatMessages.append(AIChatMessage(role: .assistant, content: trimmed))
+            l2.chatMessages.append(
+                AIChatMessage(
+                    role: .assistant,
+                    content: trimmed,
+                    mcpToolsRan: memoryToolChips))
         }
     }
 

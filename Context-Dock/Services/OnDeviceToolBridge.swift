@@ -22,6 +22,34 @@ import Contacts
 
 // MARK: - AdapterActionTool
 
+/// Captures the command results produced inside one Foundation Models tool session.
+/// Apple Intelligence is allowed to finish a tool turn without generating prose; in
+/// that case we still return the real CLI result instead of a vague "Done" response.
+fileprivate final class OnDeviceToolRunRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [(command: String, output: String, success: Bool)] = []
+
+    func record(command: String, output: String, success: Bool) {
+        lock.lock()
+        entries.append((command, output, success))
+        lock.unlock()
+    }
+
+    func fallbackResponse() -> String? {
+        lock.lock()
+        let snapshot = entries
+        lock.unlock()
+        guard !snapshot.isEmpty else { return nil }
+
+        return snapshot.map { entry in
+            let result = entry.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let heading = entry.success ? "Command completed: \(entry.command)" : "Command failed: \(entry.command)"
+            guard !result.isEmpty else { return heading }
+            return "\(heading)\n\(String(result.prefix(4_000)))"
+        }.joined(separator: "\n\n")
+    }
+}
+
 /// Wraps one AdapterAction as a FoundationModels Tool.
 /// The model can call it by the action's id, and receives the execution output.
 @available(macOS 26.0, *)
@@ -74,7 +102,17 @@ struct ShellCommandTool: Tool {
     let name = "run_shell_command"
     let description = "Run a shell command on the user's Mac with the normal approval flow and return the output. Use for file operations, searching, git commands, and CLI tools."
 
-    init(axContext: AXContext) {}
+    private let recorder: OnDeviceToolRunRecorder?
+    private let allowedExecutable: String?
+
+    fileprivate init(
+        axContext: AXContext,
+        recorder: OnDeviceToolRunRecorder? = nil,
+        allowedExecutable: String? = nil
+    ) {
+        self.recorder = recorder
+        self.allowedExecutable = allowedExecutable
+    }
 
     @Generable
     struct Arguments {
@@ -85,16 +123,36 @@ struct ShellCommandTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let command = arguments.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "❌ No shell command provided." }
+        if let allowedExecutable,
+            !Self.isCommand(command, forExecutable: allowedExecutable)
+        {
+            return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
+        }
 
-        let (success, output) = await TerminalCommandExecutor.shared.run(
+        let (success, output, _) = await TerminalCommandExecutor.shared.run(
             command,
             purpose: "On-device AI shell command"
         )
         let trimmedOutput = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        await MainActor.run {
+            recorder?.record(command: command, output: trimmedOutput, success: success)
+        }
         if success {
             return trimmedOutput.isEmpty ? "✅ Command completed." : trimmedOutput
         }
         return trimmedOutput.isEmpty ? "❌ Command failed." : "❌ \(trimmedOutput)"
+    }
+
+    private static func isCommand(_ command: String, forExecutable executable: String) -> Bool {
+        // A CLI scope deliberately has no shell escape hatch. Inspect the first command
+        // segment so `mole …` is valid while `mo …`, `date`, pipes, and chained commands
+        // are rejected before they can execute.
+        guard !command.contains(";") && !command.contains("|") && !command.contains("&&")
+            && !command.contains("||")
+        else { return false }
+        guard let first = command.split(whereSeparator: \.isWhitespace).first else { return false }
+        let basename = (String(first) as NSString).lastPathComponent
+        return basename.caseInsensitiveCompare(executable) == .orderedSame
     }
 }
 
@@ -102,6 +160,12 @@ struct ShellCommandTool: Tool {
 struct SpawnWorkerTool: Tool {
     let name = "spawn_worker"
     let description = "Launch a long-running or interactive terminal command in the current live terminal and return a worker ID immediately."
+
+    private let allowedExecutable: String?
+
+    init(allowedExecutable: String? = nil) {
+        self.allowedExecutable = allowedExecutable
+    }
 
     @Generable
     struct Arguments {
@@ -120,6 +184,11 @@ struct SpawnWorkerTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let command = arguments.command.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return "❌ No worker command provided." }
+        if let allowedExecutable,
+            !Self.isCommand(command, forExecutable: allowedExecutable)
+        {
+            return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
+        }
 
         let purpose = arguments.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
         let workerID = await TerminalCommandExecutor.shared.spawnWorker(
@@ -127,6 +196,15 @@ struct SpawnWorkerTool: Tool {
             purpose: purpose.isEmpty ? "On-device AI worker" : purpose
         )
         return "✅ Worker started: \(workerID)"
+    }
+
+    private static func isCommand(_ command: String, forExecutable executable: String) -> Bool {
+        guard !command.contains(";") && !command.contains("|") && !command.contains("&&")
+            && !command.contains("||")
+        else { return false }
+        guard let first = command.split(whereSeparator: \.isWhitespace).first else { return false }
+        let basename = (String(first) as NSString).lastPathComponent
+        return basename.caseInsensitiveCompare(executable) == .orderedSame
     }
 }
 
@@ -692,7 +770,7 @@ struct ResolveMetadataTool: Tool {
 @available(macOS 26.0, *)
 struct SearchMessagesTool: Tool {
     let name = "search_messages"
-    let description = "Open Messages and search for a contact, keyword, or phrase using the search UI."
+    let description = "Search local Messages read-only without opening or controlling the Messages app."
 
     @Generable
     struct Arguments {
@@ -703,7 +781,13 @@ struct SearchMessagesTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await MessagesAutomation.openSearch(query: arguments.query)
+        guard let rows = MessagesChatDBReader.search(arguments.query) else {
+            return "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened."
+        }
+        guard !rows.isEmpty else {
+            return "No Messages matched \(arguments.query)."
+        }
+        return MessagesChatDBReader.formatted(rows)
     }
 }
 
@@ -785,12 +869,14 @@ struct CLIAdapterTool: Tool {
     let name: String
     let description: String
     private let cliCommand: String
+    private let recorder: OnDeviceToolRunRecorder?
 
-    init(action: AdapterAction) {
+    fileprivate init(action: AdapterAction, recorder: OnDeviceToolRunRecorder? = nil) {
         let raw = (action.cliToolCommand ?? action.name)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedCmd = raw.isEmpty ? action.name : raw
         self.cliCommand = resolvedCmd
+        self.recorder = recorder
         let safeName = resolvedCmd
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
@@ -817,11 +903,14 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
-        let (success, output) = await TerminalCommandExecutor.shared.run(
+        let (success, output, _) = await TerminalCommandExecutor.shared.run(
             fullCommand,
             purpose: "\(cliCommand) CLI"
         )
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        await MainActor.run {
+            recorder?.record(command: fullCommand, output: trimmed, success: success)
+        }
         return success ? (trimmed.isEmpty ? "✅ \(cliCommand) completed with no output." : trimmed)
                        : "❌ \(cliCommand) failed: \(trimmed)"
     }
@@ -982,14 +1071,15 @@ final class OnDeviceToolSession {
 
     private func tools(
         for bundleId: String,
-        axContext: AXContext
+        axContext: AXContext,
+        recorder: OnDeviceToolRunRecorder? = nil
     ) -> [any Tool] {
         // For cli:// adapter scopes, only expose shell tool — no app menu / AX tools needed.
         if let cliCmd = cliAdapterCommand(for: bundleId) {
-            _ = cliCmd  // used in system prompt, not needed here
             return [
-                ShellCommandTool(axContext: axContext),
-                SpawnWorkerTool(),
+                ShellCommandTool(
+                    axContext: axContext, recorder: recorder, allowedExecutable: cliCmd),
+                SpawnWorkerTool(allowedExecutable: cliCmd),
             ]
         }
 
@@ -1022,7 +1112,7 @@ final class OnDeviceToolSession {
                 appName: resolvedAppName
             ),
             ResolveMetadataTool(),
-            ShellCommandTool(axContext: axContext),
+            ShellCommandTool(axContext: axContext, recorder: recorder),
             SpawnWorkerTool(),
             SendKeysTool(),
             // Vision tools
@@ -1055,7 +1145,7 @@ final class OnDeviceToolSession {
             // CLI tool actions get a parameterized tool so the model can pass subcommands/flags.
             // All other action types use the self-contained AdapterActionTool.
             if action.type == .cliTool {
-                return CLIAdapterTool(action: action) as any Tool
+                return CLIAdapterTool(action: action, recorder: recorder) as any Tool
             }
             return AdapterActionTool(action: action, bundleId: bundleId, axContext: axContext) as any Tool
         }
@@ -1072,7 +1162,12 @@ final class OnDeviceToolSession {
             You are a CLI assistant for '\(command)'. \
             Only answer questions about '\(command)' and generate '\(command)' commands. \
             Always use run_shell_command to run '\(command)' commands and return the real output — \
-            never guess or fabricate results. Always ask for approval before running destructive commands.
+            never guess or fabricate results. Never substitute an alias or a different executable. \
+            If no help reference is included below, first run '\(command) --help'; this is the only safe \
+            discovery command. Do not claim a subcommand or option exists until help output confirms it. \
+            If the included help does not support a request, say so plainly; do not invent a command. \
+            Do not merely print a command in prose when it can be run: call run_shell_command so \
+            Context Dock can request approval and show the real result.
             """
         if let helpSnippet = pkg?.helpTextForPrompt {
             prompt += "\n\n## \(command) --help\n\(helpSnippet)"
@@ -1110,7 +1205,11 @@ final class OnDeviceToolSession {
         }
 
         // Regular tool-based response: adapter actions + shell + discovery
-        let session = LanguageModelSession(tools: tools(for: bundleId, axContext: axContext), instructions: fullPrompt)
+        let recorder = OnDeviceToolRunRecorder()
+        let session = LanguageModelSession(
+            tools: tools(for: bundleId, axContext: axContext, recorder: recorder),
+            instructions: fullPrompt
+        )
         let response = try await session.respond(to: message)
         let content = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -1120,7 +1219,7 @@ final class OnDeviceToolSession {
                 to: "Summarize what you just did and the result in one to two sentences."
             )
             let summaryText = summary?.content.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return summaryText.isEmpty ? "Done." : summaryText
+            return summaryText.isEmpty ? (recorder.fallbackResponse() ?? "Done.") : summaryText
         }
         return content
     }
@@ -1161,8 +1260,9 @@ final class OnDeviceToolSession {
                 // This is an app-scoped tool session, so always attach that app's tools.
                 // Natural requests such as "draft a reply" or "what did they say?" do not
                 // necessarily contain command verbs, but still require live app/MCP data.
+                let recorder = OnDeviceToolRunRecorder()
                 let session = LanguageModelSession(
-                    tools: self.tools(for: bundleId, axContext: axContext),
+                    tools: self.tools(for: bundleId, axContext: axContext, recorder: recorder),
                     instructions: fullPrompt
                 )
 
@@ -1194,13 +1294,11 @@ final class OnDeviceToolSession {
                     if !delta.isEmpty { onPartial(delta) }
                 }
 
-                // Foundation Models can finish a tool turn with zero generated text. A
-                // second `respond` on that same tool session can remain suspended after an
-                // approval-backed terminal call, leaving the UI's placeholder bubble empty.
-                // Complete deterministically; the tool result/approval card already carries
-                // the execution details and a later user turn can ask for more analysis.
+                // Foundation Models can finish a tool turn with zero generated text.
+                // Preserve the command transcript so scoped CLI users receive the actual
+                // result instead of a blank bubble or a generic success message.
                 if finalContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    onComplete("Done — the requested app tool completed successfully.")
+                    onComplete(recorder.fallbackResponse() ?? "Done — the requested app tool completed successfully.")
                 } else {
                     onComplete(finalContent)
                 }

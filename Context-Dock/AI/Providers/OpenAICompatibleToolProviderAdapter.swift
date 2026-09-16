@@ -1,6 +1,8 @@
 import Foundation
 
 struct OpenAICompatibleToolProviderAdapter: OpenAIToolTransport {
+    var ledgerProvider: AIProvider { .openAICompatible }
+
     func send(
         endpoint: String,
         apiKey: String?,

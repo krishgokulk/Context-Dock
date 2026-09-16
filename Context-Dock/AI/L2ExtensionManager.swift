@@ -121,15 +121,17 @@ struct L2Extension: Codable, Identifiable {
         folderPath?.appendingPathComponent(script)
     }
 
-    // Computed: interpreter command for scriptType
-    var interpreter: String {
+    // Computed: interpreter argv prefix for scriptType. The script path is appended
+    // as a separate argument by the caller — never concatenated into a command string,
+    // so a script filename containing quotes or $( ) cannot break out into a shell.
+    var interpreterArgv: [String] {
         switch scriptType {
-        case .bash:        return "/bin/bash"
-        case .python:      return "/usr/bin/env python3"
-        case .ruby:        return "/usr/bin/env ruby"
-        case .node:        return "/usr/bin/env node"
-        case .appleScript: return "/usr/bin/osascript"
-        case .jxa:         return "/usr/bin/osascript"
+        case .bash:        return ["/bin/bash"]
+        case .python:      return ["/usr/bin/env", "python3"]
+        case .ruby:        return ["/usr/bin/env", "ruby"]
+        case .node:        return ["/usr/bin/env", "node"]
+        case .appleScript: return ["/usr/bin/osascript"]
+        case .jxa:         return ["/usr/bin/osascript", "-l", "JavaScript"]
         }
     }
 }
@@ -219,14 +221,34 @@ class L2ExtensionManager: ObservableObject {
         if let title = axCtx.windowTitle  { env["WINDOW_TITLE"]     = title }
         if let sel   = axCtx.selectedText { env["AX_SELECTED_TEXT"] = sel }
 
+        // An argument called "path" used to become $PATH. file_stats(path: ~/Downloads)
+        // replaced the shell's search path with a directory, and every command the script
+        // called afterwards was not found — the failure surfaced as "cut: command not
+        // found", which reads like a broken script rather than a clobbered environment.
+        //
+        // Worse than broken: DYLD_INSERT_LIBRARIES or LD_PRELOAD arriving the same way
+        // would be a model-supplied argument choosing what code the interpreter loads.
+        // Reserved names are passed as ARG_<NAME> and never overwrite the real variable.
+        let reservedEnvNames: Set<String> = [
+            "PATH", "HOME", "SHELL", "PWD", "OLDPWD", "IFS", "ENV", "BASH_ENV", "TMPDIR",
+            "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+            "LD_PRELOAD", "LD_LIBRARY_PATH", "PYTHONPATH", "NODE_OPTIONS", "PERL5LIB",
+            "RUBYOPT", "GEM_HOME",
+        ]
         for (key, value) in arguments {
-            env[key.uppercased()] = "\(value)"
+            let name = key.uppercased()
+            if reservedEnvNames.contains(name) {
+                env["ARG_" + name] = "\(value)"
+            } else {
+                env[name] = "\(value)"
+            }
         }
 
         // Fill in defaults for parameters not provided
         for (paramName, paramDef) in ext.parameters {
             if arguments[paramName] == nil, let def = paramDef.defaultValue {
-                env[paramName.uppercased()] = def
+                let name = paramName.uppercased()
+                env[reservedEnvNames.contains(name) ? "ARG_" + name : name] = def
             }
         }
 
@@ -238,17 +260,10 @@ class L2ExtensionManager: ObservableObject {
         process.environment    = env
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
-        // Run script via its interpreter
-        if ext.scriptType == .appleScript {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = [scriptURL.path]
-        } else if ext.scriptType == .jxa {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = ["-l", "JavaScript", scriptURL.path]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/bin/bash")
-            process.arguments = ["-c", "\(ext.interpreter) \"\(scriptURL.path)\""]
-        }
+        // Run script via its interpreter, always as argv — never through a shell.
+        let argv = ext.interpreterArgv
+        process.executableURL = URL(fileURLWithPath: argv[0])
+        process.arguments = Array(argv.dropFirst()) + [scriptURL.path]
 
         do {
             try process.run()

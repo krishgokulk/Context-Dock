@@ -506,7 +506,7 @@ class L2WorkflowEngine: ObservableObject {
 
         case .runCommand(let command):
             let resolvedCommand = context.resolveTemplate(command)
-            let (success, output) = await terminalBridge.processAICommand(resolvedCommand, purpose: "Workflow step")
+            let (success, output, _) = await terminalBridge.processAICommand(resolvedCommand, purpose: "Workflow step")
             context.setVariable("commandOutput", value: output)
             return (success, output, success ? nil : output)
 
@@ -522,7 +522,7 @@ class L2WorkflowEngine: ObservableObject {
                 if ["jpg", "jpeg", "png"].contains(ext) {
                     let output = (file as NSString).deletingPathExtension + "_compressed." + ext
                     let command = "sips -s format jpeg -s formatOptions \(quality) '\(file)' --out '\(output)'"
-                    let (success, _) = await terminalBridge.processAICommand(command, purpose: "Compress image")
+                    let (success, _, _) = await terminalBridge.processAICommand(command, purpose: "Compress image")
                     if success { processedCount += 1 }
                 }
             }

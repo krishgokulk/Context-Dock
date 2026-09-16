@@ -74,7 +74,9 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
     let capabilityID: String?
     let requiredInputs: [String]
     let riskLevel: AICapabilityRiskLevel
-    let confidence: Double
+    /// Mutable so a caller can lower it — a query that reached the resolver without an
+    /// explicit verb is offered for confirmation rather than executed outright.
+    var confidence: Double
     let permissionKey: String
     let debugReason: String
 
@@ -176,6 +178,13 @@ final class GeneralAIActionResolver {
     }
     private var pendingClarification: PendingClarification?
 
+    /// Live trace sink for the current `resolve` call. Every line describes work this
+    /// resolver actually performed — a count it read, a route it matched, a candidate it
+    /// dropped — never model reasoning. Set for the duration of one resolve, then cleared.
+    private var stepReporter: ((String) -> Void)?
+
+    private func step(_ text: String) { stepReporter?(text) }
+
     private init() {
         let routers: [any AppCapabilityRouting] = [
             SafariCapabilityRouter()
@@ -185,7 +194,30 @@ final class GeneralAIActionResolver {
 
     // MARK: Public entry
 
-    func resolve(query: String) async -> GeneralAIActionResolution {
+    /// - Parameter chatAllowedBundleIds: apps the user granted to *this chat* via the
+    ///   "Enable <app> for this chat" tap. App Adapters is the persistent, Settings-level
+    ///   grant; this is the per-conversation one, and it expires with the conversation.
+    ///   Both are explicit user consent, so either one makes an app actionable — without
+    ///   this, the Enable tap granted reading but not acting, and the resolver told the user
+    ///   to go add an App Adapter for an app they had just enabled.
+    /// - Parameter scopedApp: the app this chat surface is already scoped to (Context Dock's
+    ///   frontmost-app chat). The surface names the app, so the sentence does not have to:
+    ///   "new private window" typed into Safari's chat means Safari. Without this the
+    ///   resolver could only find a target by reading the text, so it fell through to
+    ///   browser disambiguation and asked which browser — while sitting inside Safari's own
+    ///   chat. An app named in the text still wins, since that is the more explicit signal.
+    /// - Parameter onStep: live trace sink; see `stepReporter`.
+    func resolve(
+        query: String,
+        chatAllowedBundleIds: Set<String> = [],
+        scopedApp: (name: String, bundleId: String)? = nil,
+        onStep: ((String) -> Void)? = nil
+    ) async -> GeneralAIActionResolution {
+        stepReporter = onStep
+        defer { stepReporter = nil }
+        // Opening a scoped chat is itself the grant for that app.
+        var chatAllowedBundleIds = chatAllowedBundleIds
+        if let scopedApp { chatAllowedBundleIds.insert(scopedApp.bundleId) }
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let pending = pendingClarification {
             if Date() > pending.expiresAt {
@@ -195,17 +227,57 @@ final class GeneralAIActionResolver {
                     || trimmed.lowercased().contains($0.lowercased())
             }) {
                 pendingClarification = nil
-                return await resolve(query: pending.originalQuery + " using " + option)
+                return await resolve(
+                    query: pending.originalQuery + " using " + option,
+                    chatAllowedBundleIds: chatAllowedBundleIds,
+                    scopedApp: scopedApp, onStep: onStep)
             } else if !trimmed.isEmpty {
                 // A non-option response starts a new request rather than trapping the user
                 // in stale clarification state.
                 pendingClarification = nil
             }
         }
-        guard isLikelyExecutable(trimmed) else { return .none }
         let lowered = trimmed.lowercased()
 
-        // Domain intents first — they are more specific than generic app actions.
+        // Intent used to be decided by the verb list alone, which runs before any lookup —
+        // so "duckduckgo ai" was filed as conversation while the local index held
+        // "Open Duck.ai" one call away. The verb list stays as the fast path; when it says
+        // no, ask the index instead of giving up. Retrieve, then decide.
+        let verbShaped = isLikelyExecutable(trimmed)
+        let nounShapedTarget = verbShaped
+            ? nil : nounShapedAppTarget(lowered, scopedApp: scopedApp)
+        guard verbShaped || nounShapedTarget != nil else {
+            // Last chance before giving up. A Global Command is named by keyword, not by
+            // verb — "trash bin", "dark mode", whatever the user called their own — so it
+            // reaches this line with nothing the tests above recognise, and the resolver
+            // returned .none while two matching installed commands sat in the registry.
+            return resolveGlobalCommandIntent(trimmed) ?? .none
+        }
+
+        // Domain intents (media transport, reminders, screenshots…) read as commands only
+        // with a verb — "play", "remind me", "capture". A noun phrase never means those, so
+        // they stay behind the fast path and skip straight to the app the index matched.
+        guard verbShaped else {
+            guard let target = nounShapedTarget else { return .none }
+            // No verb means no proof the user wants this run, only proof of what they meant.
+            // Offer it: the chat path lists candidates below 0.7 instead of executing.
+            return offeringOnly(
+                await appScopedResolution(
+                    target: target, trimmed: trimmed,
+                    chatAllowedBundleIds: chatAllowedBundleIds))
+        }
+
+        // An explicitly named app is stronger evidence than a generic domain word.  In
+        // particular, “open deleted message in Messages” is a Messages menu lookup, not
+        // a request to compose/share a message.  Resolve the app before the broad intent
+        // detectors so app menus and adapters get the first chance to answer it.
+        if let target = resolveTargetApp(in: lowered) {
+            return await appScopedResolution(
+                target: target, trimmed: trimmed,
+                chatAllowedBundleIds: chatAllowedBundleIds)
+        }
+
+        // Domain intents are more specific than an *unnamed* generic app action.
         if let media = await resolveMediaTransportIntent(lowered, original: trimmed) {
             return media
         }
@@ -228,36 +300,12 @@ final class GeneralAIActionResolver {
             return screenshot
         }
 
-        // Generic app-scoped action: "open safari new private window", "quit music", …
-        if let target = resolveTargetApp(in: lowered) {
-            guard AppAdapterManager.shared.adapter(for: target.bundleId) != nil else {
-                return .explain(
-                    "\(target.name) isn’t added to App Adapters, so General AI can’t access or act on that app. "
-                    + "Add it in Settings → App Adapters → Choose App, then ask again.")
-            }
-            // Compound "save and quit" style requests → an ordered plan, each step resolved
-            // independently. Checked before single-action routing so we don't hunt for one
-            // combined "save and quit" menu that doesn't exist.
-            if let steps = compoundSteps(in: target.remainingPhrase) {
-                return .compound(
-                    appName: target.name, bundleID: target.bundleId, steps: steps)
-            }
-            // Per-app router first — it knows the best route for that app's tasks.
-            if let router = appRouters[target.bundleId],
-               let routed = await router.route(
-                   actionPhrase: target.remainingPhrase, original: trimmed) {
-                return routed
-            }
-            let base = resolveAppScopedAction(
-                appName: target.name,
-                bundleID: target.bundleId,
-                actionPhrase: target.remainingPhrase,
-                original: trimmed
-            )
-            // Fold in MCP tools the app exposes so they compete in the same ranked list.
-            return await augmentWithMCPCandidates(
-                base, appName: target.name, bundleID: target.bundleId,
-                actionPhrase: target.remainingPhrase, intentKey: Self.normalizedIntentKey(trimmed))
+        // Scoped chat with no app named in the text: the surface is the target. Checked
+        // before browser disambiguation so Safari's own chat never asks which browser.
+        if let scopedTarget = scopedTargetApp(scopedApp, lowered: lowered) {
+            return await appScopedResolution(
+                target: scopedTarget, trimmed: trimmed,
+                chatAllowedBundleIds: chatAllowedBundleIds)
         }
 
         // Browser action with no browser named ("new private window") — ask which one
@@ -275,7 +323,236 @@ final class GeneralAIActionResolver {
             return api
         }
 
+        // Last resort: search every app's cached menus by content, the way Global Context
+        // does. Everything above needs the app to be named in the sentence, so "open deleted
+        // message in mesages app" died on a typo while Global Context found
+        // Messages ▸ View ▸ Recently Deleted from "deleted message" alone — no app name at
+        // all. Same index, so the two surfaces stop disagreeing.
+        if let crossApp = crossAppCachedMenuResolution(query: trimmed) {
+            return crossApp
+        }
+
         return .none
+    }
+
+    // MARK: - Cross-app menu fallback
+
+    /// Phrases to try against the menu index, most literal first.
+    ///
+    /// The index matches a menu title, so it answers "deleted message" but not "open deleted
+    /// message in mesages app" — a whole sentence carries verbs and filler no menu item
+    /// contains. Stripping those leaves the words that actually name the command, which is
+    /// what the user would have typed into Global Context.
+    private func menuSearchPhrases(from query: String) -> [String] {
+        let lowered = query.lowercased()
+        var phrases = [lowered]
+
+        let noise: Set<String> = [
+            "open", "launch", "start", "run", "show", "go", "to", "in", "on", "the", "a", "an",
+            "app", "application", "please", "me", "my", "for", "using", "with", "via", "and",
+        ]
+        let kept = lowered
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+            .filter { !noise.contains($0) }
+        if kept.count >= 1, kept.count < lowered.split(separator: " ").count {
+            phrases.append(kept.joined(separator: " "))
+        }
+        // Dropping the last token too, since a trailing app name ("… mesages") is not part of
+        // any menu title and may be misspelled anyway.
+        if kept.count >= 2 {
+            phrases.append(kept.dropLast().joined(separator: " "))
+        }
+        var seen = Set<String>()
+        return phrases.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// Menu commands matching the phrase across every app with a cached snapshot, ranked by
+    /// the shared global index rather than a matcher of this file's own.
+    ///
+    /// Offered, never auto-run: confidence stays under the chat path's 0.7 threshold, because
+    /// this is a content guess about an app the user did not name, and acting on it can launch
+    /// that app. Global Context has the same information but requires a keypress on a visible
+    /// row; the chat equivalent of that keypress is picking from the list.
+    private func crossAppCachedMenuResolution(query: String) -> GeneralAIActionResolution? {
+        var candidates: [DoraXActionCandidate] = []
+        var seenPaths = Set<String>()
+        for phrase in menuSearchPhrases(from: query) {
+            let docs = GlobalSearchService.shared.query(
+                phrase, limit: 12, includeCachedMenus: true, includeRunningCachedMenus: true)
+            for doc in docs {
+                guard case .cachedMenu(let bundleId, let appName, let path, let char, let mods) =
+                    doc.action, !path.isEmpty
+                else { continue }
+
+                // The literal sentence may return non-menu index rows first.  Keep trying
+                // the normalized phrase, and never show one menu command twice if both
+                // phrases matched it.
+                guard seenPaths.insert("\(bundleId)|\(path.joined(separator: "→"))").inserted else {
+                    continue
+                }
+                let title = path.last ?? doc.title
+                if let char, !char.isEmpty {
+                    candidates.append(
+                        keyboardShortcutCandidate(
+                            title: title, path: path, char: char, modifiers: mods,
+                            appName: appName, bundleID: bundleId, confidence: 0.66,
+                            reason: "cached \(appName) menu \(path.joined(separator: " → ")) matched the phrase"))
+                } else {
+                    candidates.append(
+                        verifiedMenuCandidate(
+                            title: title, path: path, shortcutChar: char, shortcutModifiers: mods,
+                            appName: appName, bundleID: bundleId, confidence: 0.64))
+                }
+                if candidates.count >= 4 { break }
+            }
+            if candidates.count >= 4 { break }
+        }
+        guard !candidates.isEmpty else { return nil }
+        step("Cross-app menu search: \(candidates.count) match(es) in cached menus")
+        return .candidates(candidates)
+    }
+
+    // MARK: - Scoped-surface target
+
+    /// The scoped chat's app as a resolution target, with the whole phrase as the action.
+    /// Returns nil when there is no scope, or when the phrase already names some app — a
+    /// name in the text is the more explicit signal and must win over the surface.
+    private func scopedTargetApp(
+        _ scopedApp: (name: String, bundleId: String)?, lowered: String
+    ) -> TargetApp? {
+        guard let scopedApp, !scopedApp.bundleId.isEmpty,
+            !scopedApp.bundleId.hasPrefix("scope://"), !scopedApp.bundleId.hasPrefix("cli://")
+        else { return nil }
+        guard resolveTargetApp(in: lowered) == nil else { return nil }
+        // Strips the filler words ("open ", " in ", " the ") the same way a named-app match
+        // does, so the action phrase reaching the matchers looks identical either way.
+        let phrase = removePhrase(scopedApp.name.lowercased(), from: lowered)
+        guard !phrase.isEmpty else { return nil }
+        step("Scope: \(scopedApp.name) — resolving “\(phrase)” against it")
+        return TargetApp(
+            name: scopedApp.name, bundleId: scopedApp.bundleId, remainingPhrase: phrase)
+    }
+
+    // MARK: - App-scoped resolution
+
+    /// Everything that happens once a query is known to be about one installed app.
+    /// Shared by the verb path and the retrieval-first noun path.
+    private func appScopedResolution(
+        target: TargetApp, trimmed: String, chatAllowedBundleIds: Set<String>
+    ) async -> GeneralAIActionResolution {
+        // Turned away at the door, an app with a perfectly good cached menu bar was told to
+        // go and add an adapter — for a command DoraX could name exactly and verify live
+        // before clicking. Authority now has three levels, and only the lowest stops here.
+        let level = AppAccessPolicy.level(
+            for: target.bundleId, chatGranted: chatAllowedBundleIds)
+        guard level > .awareness else {
+            return .explain(
+                AppAccessPolicy.explanation(
+                    for: target.name, level: level, wantedRead: false))
+        }
+        // Compound "save and quit" style requests → an ordered plan, each step resolved
+        // independently. Checked before single-action routing so we don't hunt for one
+        // combined "save and quit" menu that doesn't exist.
+        if let steps = compoundSteps(in: target.remainingPhrase) {
+            return .compound(
+                appName: target.name, bundleID: target.bundleId, steps: steps)
+        }
+        // Per-app router first — it knows the best route for that app's tasks.
+        if let router = appRouters[target.bundleId],
+           let routed = await router.route(
+               actionPhrase: target.remainingPhrase, original: trimmed) {
+            return routed
+        }
+        let base = resolveAppScopedAction(
+            appName: target.name,
+            bundleID: target.bundleId,
+            actionPhrase: target.remainingPhrase,
+            original: trimmed,
+            accessLevel: level
+        )
+        // Fold in MCP tools the app exposes so they compete in the same ranked list.
+        return await augmentWithMCPCandidates(
+            base, appName: target.name, bundleID: target.bundleId,
+            actionPhrase: target.remainingPhrase, intentKey: Self.normalizedIntentKey(trimmed))
+    }
+
+    // MARK: - Retrieval-first intent (no verb)
+
+    /// Which installed app a verb-less phrase is about, when the phrase is shaped like a
+    /// target rather than a topic. Returns nil unless every condition holds, because this is
+    /// the path that lets a sentence with no command in it reach the action machinery:
+    ///
+    /// - not a question ("what is safari" stays conversation)
+    /// - not a browser-library read ("history" is answered from the URL library, not clicked)
+    /// - names an installed app, and says something *after* the app name. A bare app name is
+    ///   Global Context's job — General Chat is not a second launcher.
+    /// - that remainder is short. "duckduckgo ai" is a target; "safari keeps crashing when I
+    ///   open three windows" is a complaint, and belongs in conversation.
+    private func nounShapedAppTarget(
+        _ lowered: String, scopedApp: (name: String, bundleId: String)? = nil
+    ) -> TargetApp? {
+        guard !isQuestionShaped(lowered) else { return nil }
+        guard !LauncherView.isBrowserLibraryReadPhrase(lowered) else { return nil }
+        // In a scoped chat the app is the surface, so "private window" needs no app name.
+        guard let target = resolveTargetApp(in: lowered)
+            ?? scopedTargetApp(scopedApp, lowered: lowered)
+        else { return nil }
+        let remainder = target.remainingPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !remainder.isEmpty else { return nil }
+        let words = remainder.split(whereSeparator: { $0.isWhitespace })
+        guard words.count <= 3 else { return nil }
+        return target
+    }
+
+    /// The user's own installed Global Commands, as offered candidates.
+    ///
+    /// Never auto-run. A phrase with no verb proves what the user meant, not that they want
+    /// it carried out, and this list contains Empty Trash — so the answer is buttons, not an
+    /// execution. Picking one still passes through the approval card, because a Global
+    /// Command that runs a script is classified high risk.
+    ///
+    /// Read-shaped phrasing is excluded outright: "what's in my trash bin" is a question,
+    /// and the keyword scorer cannot tell the difference on its own because its own noise
+    /// list strips "what" before scoring.
+    @MainActor
+    private func resolveGlobalCommandIntent(_ trimmed: String) -> GeneralAIActionResolution? {
+        guard !isLikelyReadOnly(trimmed) else { return nil }
+        let matches = GlobalCommandCapabilities.matchingCommands(for: trimmed)
+        guard !matches.isEmpty else { return nil }
+
+        let candidates = matches.prefix(4).enumerated().map { index, match in
+            DoraXActionCandidate(
+                id: "globalcmd.candidate.\(match.command.id.uuidString)",
+                title: match.command.name,
+                appName: nil,
+                bundleID: nil,
+                source: .system,
+                route: .adapter,
+                capabilityID: match.id,
+                requiredInputs: [],
+                riskLevel: GlobalCommandCapabilities.riskLevel(for: match.command),
+                confidence: index == 0 ? 0.68 : 0.62,
+                permissionKey: "generalAI.execute.\(match.id)",
+                debugReason:
+                    "installed Global Command matching “\(trimmed)” (score \(match.score))")
+        }
+        return offeringOnly(.candidates(Array(candidates)))
+    }
+
+    /// Caps confidence below the chat path's auto-run threshold (0.7), so candidates are
+    /// listed for the user to pick instead of being executed. Used for verb-less queries,
+    /// where the index proves what the user *meant* but nothing proves they want it run.
+    private func offeringOnly(
+        _ resolution: GeneralAIActionResolution
+    ) -> GeneralAIActionResolution {
+        guard case .candidates(let candidates) = resolution else { return resolution }
+        return .candidates(
+            candidates.map { candidate in
+                var offered = candidate
+                offered.confidence = min(candidate.confidence, 0.65)
+                return offered
+            })
     }
 
     // MARK: - Browser disambiguation
@@ -332,6 +609,19 @@ final class GeneralAIActionResolver {
 
     // MARK: - Executable-intent gate
 
+    private static let questionStarts = [
+        "how ", "what", "why ", "who ", "when ", "where ", "which ", "explain",
+        "tell me", "can you explain", "describe", "compare", "summarize", "translate",
+        "write ", "is ", "are ", "does ", "do ", "did ", "should ",
+    ]
+
+    /// Conversation, not a target — checked by both the verb gate and the noun-phrase path.
+    private func isQuestionShaped(_ lowered: String) -> Bool {
+        let text = lowered.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasSuffix("?") { return true }
+        return Self.questionStarts.contains(where: text.hasPrefix)
+    }
+
     /// Cheap local check: does this look like a command rather than a question?
     /// Runs only on submit (never while typing) and uses no AX or provider calls.
     private func isLikelyExecutable(_ query: String) -> Bool {
@@ -369,12 +659,12 @@ final class GeneralAIActionResolver {
             && lowered.contains("page") {
             return true
         }
-        let questionStarts = [
-            "how ", "what", "why ", "who ", "when ", "where ", "which ", "explain",
-            "tell me", "can you explain", "describe", "compare", "summarize", "translate",
-            "write ", "is ", "are ", "does ", "do ", "did ", "should ",
-        ]
-        if questionStarts.contains(where: lowered.hasPrefix) { return false }
+        // Reading local browser data ("show all opened tabs", "list my history") is a READ
+        // answered from the local URL library. Its leading verb ("show ") matched the verb
+        // list below and routed the query to an executable capability — which opened a NEW
+        // tab instead of listing the open ones.
+        if LauncherView.isBrowserLibraryReadPhrase(lowered) { return false }
+        if Self.questionStarts.contains(where: lowered.hasPrefix) { return false }
 
         let verbs = [
             "open ", "launch ", "start ", "create ", "new ", "add ", "make ",
@@ -442,6 +732,89 @@ final class GeneralAIActionResolver {
     /// no provider, no app launch.
     func looksReadOnly(_ query: String) -> Bool { isLikelyReadOnly(query) }
 
+    /// True when the request asks for information and never asks for a change.
+    ///
+    /// Stricter than `looksReadOnly` on purpose, because this one is used to *refuse*.
+    /// "show me my reminders then delete the completed ones" is read-shaped by its opening
+    /// and is plainly also an instruction to delete; blocking the delete there would be the
+    /// guard misreading the user rather than protecting them. So a mutating verb anywhere
+    /// in the sentence disqualifies it.
+    ///
+    /// The verbs are actions, never nouns. "trash" and "bin" are absent deliberately: they
+    /// are what the user is asking *about* in the sentence this exists to catch.
+    /// The user is asking, not instructing — so answer, and offer nothing to run.
+    ///
+    /// This used to be `isLikelyReadOnly && !requestsChange`, and isLikelyReadOnly needs a
+    /// read *keyword*: "what", "show", "list". "is this page related to our contextdock
+    /// project in any ways you think?" contains none of them, so it read as executable and
+    /// was answered with an offer to Run Open Social. It is a question by shape, which
+    /// isQuestionShaped already knew and nothing had ever asked it.
+    ///
+    /// Order matters. A named change wins over a question mark, and an opening instruction
+    /// verb wins over both, so "can you open safari?" stays an instruction.
+    func asksOnly(_ query: String) -> Bool {
+        let lowered = withoutPoliteWrapper(
+            query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines))
+        guard !lowered.isEmpty else { return false }
+        if requestsChange(lowered) { return false }
+        if Self.executeStarts.contains(where: lowered.hasPrefix) { return false }
+        return isLikelyReadOnly(lowered) || isQuestionShaped(lowered)
+    }
+
+    /// True when the sentence asks for something to change, anywhere in it.
+    ///
+    /// One list, used by everything that needs to tell a question from an instruction.
+    /// There were two matchers over the Global Commands list with different thresholds once,
+    /// and the gap between them is where "trash bin" fell; a second vocabulary for this
+    /// would be the same mistake with different words.
+    ///
+    /// Matched as whole words, not substrings. "show me my saved notes" is a read, and a
+    /// contains-check on "save" turns it into a write.
+    func requestsChange(_ query: String) -> Bool {
+        let verbs: Set<String> = [
+            "delete", "remove", "erase", "empty", "clear", "wipe", "uninstall",
+            "create", "add", "make", "send", "share", "move", "rename", "install",
+            "quit", "close", "kill", "stop", "restart", "shutdown", "reboot",
+            "enable", "disable", "toggle", "switch", "turn", "set", "reset",
+            "save", "export", "download", "run", "execute", "schedule", "remind",
+            // Added with the capabilities that need them. notes.append, notes.update and
+            // reminders.complete were all registered after this list was written, so the way a
+            // person asks for them — "append this", "update that", "mark it done" — read as a
+            // question, and the request was answered from a reader instead of run. Kept to
+            // verbs that name a registered capability's action: "write" is deliberately absent,
+            // because "what did I write recently?" is a question about the same records.
+            "append", "update", "edit", "complete", "mark", "insert",
+            // Finder's own vocabulary. finder.organize and finder.copyFiles were registered
+            // without them, so "organize these" and "copy these to the Client folder" read as
+            // questions — described rather than done, and with no approval sheet in front of
+            // a capability declared .medium and .high respectively.
+            //
+            // "trash" is deliberately absent. It is a place as often as it is a verb, and
+            // "what's in my trash bin" is a question — WriteIntentGuardTests says so in three
+            // separate tests. finder.trash is still reachable through delete, remove and
+            // empty, and "move to trash" through move.
+            "organize", "organise", "copy", "tidy",
+            // messages.compose and mail.createDraft. Neither can send — both open a window
+            // for the person to confirm — but asking for one is still a request to act, and
+            // a request that reads as a question opens nothing at all.
+            "compose", "draft",
+            // capture.area and capture.text. "screenshot" is a whole word here, so "show me my
+            // screenshots" stays the read it is — the word-split match sees "screenshots".
+            "screenshot", "capture",
+            // reminders.update. "move" already covers "move these to tomorrow", but nobody
+            // says that when they mean a date — they say reschedule.
+            "reschedule",
+        ]
+        let words = query.lowercased()
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init)
+        if words.contains(where: verbs.contains) { return true }
+        // Two-word forms whose first half is harmless on its own.
+        return zip(words, words.dropFirst()).contains { first, second in
+            first == "shut" && second == "down"
+        }
+    }
+
     /// Discover local read capabilities for General Chat. This is the read half of the
     /// same capability model used for execution: app adapter readers, cached menu
     /// knowledge, MCP/API/CLI metadata already discovered elsewhere. It never scans live
@@ -453,36 +826,92 @@ final class GeneralAIActionResolver {
         let intentKey = Self.normalizedIntentKey(trimmed)
 
         var candidates: [DoraXActionCandidate] = []
+
+        // Reading is the half of authority that a menu cache does not buy. Knowing an app's
+        // menu bar means DoraX can press what the user could press; it says nothing about
+        // being allowed to read what the app holds, and the two were being granted together
+        // because one function gathered both.
+        func reads(for app: (name: String, bundleId: String)) async -> [DoraXActionCandidate] {
+            guard AppAccessPolicy.level(for: app.bundleId) == .adapter else { return [] }
+            var out = adapterReadCandidates(app: app, query: trimmed)
+            out += menuCacheReadCandidates(app: app, query: trimmed)
+            out += await mcpReadCandidates(app: app, query: trimmed)
+            out += cliReadCandidates(app: app, query: trimmed)
+            return out
+        }
+
         if let target = resolveTargetApp(in: lowered) {
-            let app = (name: target.name, bundleId: target.bundleId)
-            candidates.append(contentsOf: adapterReadCandidates(app: app, query: trimmed))
-            candidates.append(contentsOf: menuCacheReadCandidates(app: app, query: trimmed))
-            candidates.append(contentsOf: await mcpReadCandidates(app: app, query: trimmed))
-            candidates.append(contentsOf: cliReadCandidates(app: app, query: trimmed))
+            candidates.append(
+                contentsOf: await reads(for: (name: target.name, bundleId: target.bundleId)))
         } else {
             for app in readDiscoveryApps(for: trimmed).prefix(10) {
-                candidates.append(contentsOf: adapterReadCandidates(app: app, query: trimmed))
-                candidates.append(contentsOf: menuCacheReadCandidates(app: app, query: trimmed))
-                candidates.append(contentsOf: await mcpReadCandidates(app: app, query: trimmed))
-                candidates.append(contentsOf: cliReadCandidates(app: app, query: trimmed))
+                candidates.append(contentsOf: await reads(for: app))
             }
         }
 
         let available = candidates.filter {
             $0.operation == .read && CapabilityAvailabilityStore.shared.isAvailable(key: $0.availabilityKey)
         }
-        return rankedWithPreferences(available, intentKey: intentKey)
+        let ranked = rankedWithPreferences(available, intentKey: intentKey)
+        // Final relevance gate. Keyword routing can only ever match on the words it knows;
+        // when the query's subject is a word no candidate accounts for, the honest answer
+        // is that this router does not handle the question — so return nothing and let the
+        // model answer instead of reading a plausible-looking wrong source.
+        guard Self.candidatesExplain(ranked, query: lowered) else { return [] }
+        return ranked
+    }
+
+    /// True when every subject word in the query is accounted for by at least one candidate
+    /// (its title, app name, semantic, or capability id) — or is a generic read noun that
+    /// the semantics cover by construction.
+    private static func candidatesExplain(
+        _ candidates: [DoraXActionCandidate],
+        query: String
+    ) -> Bool {
+        guard !candidates.isEmpty else { return false }
+        let content = contentWords(of: query)
+        guard !content.isEmpty else { return true }
+        let vocabulary = candidates.reduce(into: Set<String>()) { set, candidate in
+            let text = [
+                candidate.title,
+                candidate.appName ?? "",
+                candidate.capabilityID ?? "",
+                candidate.semanticType?.displayName ?? "",
+            ].joined(separator: " ").lowercased()
+            set.formUnion(
+                text.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 1 }
+            )
+        }
+        return content.allSatisfy { word in
+            vocabulary.contains(word) || genericReadNouns.contains(word)
+        }
+    }
+
+    /// Verbs that open a sentence with an instruction. Shared, because "open safari?" is
+    /// an instruction with a question mark on it and both the read check and the intent
+    /// check have to agree about that.
+    private static let executeStarts = [
+        "clear ", "delete ", "remove ", "erase ", "open ", "launch ", "start ",
+        "stop ", "pause ", "play ", "quit ", "close ", "create ", "add ", "send ",
+        "share ", "save ", "export ", "download ", "turn ", "enable ", "disable ",
+    ]
+
+    /// "can you open safari?" is "open safari?" with manners on it. Judged with the
+    /// wrapper still attached, every polite instruction reads as a question.
+    private func withoutPoliteWrapper(_ lowered: String) -> String {
+        for prefix in ["please ", "can you please ", "could you please ",
+                       "would you please ", "can you ", "could you ", "would you "]
+        where lowered.hasPrefix(prefix) {
+            return String(lowered.dropFirst(prefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return lowered
     }
 
     private func isLikelyReadOnly(_ query: String) -> Bool {
         let lowered = query.lowercased()
         guard !lowered.isEmpty, lowered.count < 240 else { return false }
-        let executeStarts = [
-            "clear ", "delete ", "remove ", "erase ", "open ", "launch ", "start ",
-            "stop ", "pause ", "play ", "quit ", "close ", "create ", "add ", "send ",
-            "share ", "save ", "export ", "download ", "turn ", "enable ", "disable ",
-        ]
-        if executeStarts.contains(where: lowered.hasPrefix) { return false }
+        if Self.executeStarts.contains(where: lowered.hasPrefix) { return false }
         let readSignals = [
             "what", "when", "where", "who", "which", "show", "list", "tell me",
             "latest", "last", "recent", "history", "watched", "played", "viewed",
@@ -535,34 +964,143 @@ final class GeneralAIActionResolver {
         "settings": "com.apple.systempreferences",
     ]
 
+    /// The installed app a bare name refers to, for callers that already know they are
+    /// holding an app name rather than a sentence.
+    func installedAppMatch(named name: String) -> (name: String, bundleId: String)? {
+        guard let target = resolveTargetApp(in: name.lowercased()) else { return nil }
+        return (target.name, target.bundleId)
+    }
+
+
+    // MARK: - App names that are also English
+
+    /// Nouns a person owns *inside* their machine. When one of these follows a possessive,
+    /// the sentence is about the user's own data, not about an app that happens to be
+    /// named like the phrase.
+    private static let possessedDataNouns: Set<String> = [
+        "note", "notes", "bookmark", "bookmarks", "file", "files", "folder", "folders",
+        "reminder", "reminders", "email", "emails", "mail", "tab", "tabs", "photo",
+        "photos", "document", "documents", "doc", "docs", "message", "messages",
+        "download", "downloads", "password", "passwords", "screenshot", "screenshots",
+        "calendar", "event", "events", "project", "projects", "task", "tasks",
+    ]
+
+    /// Whether an app-name match is really a possessive English phrase.
+    ///
+    /// "find my bookmarks note and summarise that" named no app. It used a possessive —
+    /// find / my / bookmarks note — but "Find My" is installed, `wordPhraseOffset` finds it
+    /// at position 0, and ranking is leftmost-first, so it beat the word "note" further
+    /// along the sentence and the user was asked to enable Find My.
+    ///
+    /// Not a special case for one app: the test is structural. A matched phrase ending in a
+    /// possessive pronoun, followed by something the user owns on this machine, is English.
+    /// Followed by anything else — a device, a person, nothing at all — it is the app, so
+    /// "find my iphone" and "open Find My" keep working.
+    static func isPossessiveEnglish(_ lowered: String, phrase: String, start: Int) -> Bool {
+        let pronouns: Set<String> = ["my", "our", "your"]
+        guard let last = phrase.split(separator: " ").last.map(String.init),
+            pronouns.contains(last)
+        else { return false }
+
+        let afterIndex = lowered.index(
+            lowered.startIndex, offsetBy: min(start + phrase.count, lowered.count))
+        let remainder = lowered[afterIndex...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let next = remainder.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).first
+        else { return false }
+        return possessedDataNouns.contains(String(next))
+    }
+
+
+    /// Ordering for competing app-name matches: what the user granted, then position.
+    ///
+    /// "find my bookmarks note" resolved to the Find My application because every app on
+    /// the disk competes by name and the ranking was leftmost-first. Find My was never a
+    /// capability — it is a file in /Applications, and it won on position alone.
+    ///
+    /// AppAccessLevel already draws the line and is already Comparable: `awareness` is
+    /// "installed, maybe running, nothing more"; `menuOnly` is a real handle; `adapter` is
+    /// something the user added. Authority first means an app the user actually connected
+    /// beats a name that merely appears earlier. Everything after that is the old rule,
+    /// unchanged — leftmost, then longest, then stable by name — so launching an app by
+    /// name still works when nothing better is named.
+    static func matchOutranks(
+        lhsLevel: AppAccessLevel, lhsStart: Int, lhsLength: Int, lhsName: String,
+        rhsLevel: AppAccessLevel, rhsStart: Int, rhsLength: Int, rhsName: String
+    ) -> Bool {
+        if lhsLevel != rhsLevel { return lhsLevel > rhsLevel }
+        if lhsStart != rhsStart { return lhsStart < rhsStart }
+        if lhsLength != rhsLength { return lhsLength > rhsLength }
+        return lhsName < rhsName
+    }
+
     private func resolveTargetApp(in lowered: String) -> TargetApp? {
-        // Longest alias match first so "text edit" beats "text".
-        let sortedAliases = appAliases.keys.sorted { $0.count > $1.count }
-        for alias in sortedAliases {
-            guard containsWordPhrase(lowered, phrase: alias) else { continue }
-            let bundleId = appAliases[alias]!
-            guard let name = installedAppName(bundleId: bundleId) else { continue }
-            return TargetApp(
-                name: name,
-                bundleId: bundleId,
-                remainingPhrase: removePhrase(alias, from: lowered)
-            )
+        // Every name that appears in the sentence competes, whether it came from the alias
+        // table or from the installed-apps catalog.
+        //
+        // The alias table used to win unconditionally, because it was checked first and
+        // returned on the first hit. It holds "terminal" → com.apple.Terminal, so "quick
+        // ghostty terminal" resolved to Apple's Terminal and never reached the catalog — the
+        // only place Ghostty exists. A 30-row hardcoded table outranked every installed app.
+        //
+        // Ranking is by position in the sentence, then by matched length. People name the
+        // target before qualifying it ("ghostty quick terminal", "safari new private window"),
+        // so the leftmost name is the subject and later words describe what to do with it.
+        // Length only breaks ties at the same position, which is what keeps "vs code" from
+        // being read as "code".
+        struct Match {
+            let start: Int
+            let matchedLength: Int
+            let name: String
+            let bundleId: String
+            let matchedPhrase: String
         }
-        // Installed-apps catalog (already warmed at startup; in-memory read).
-        let installed = InstalledApplicationsCatalog.cachedInstalledApps()
-        var best: (entry: InstalledApplicationEntry, nameLength: Int)?
-        for entry in installed {
+        var matches: [Match] = []
+
+        for (alias, bundleId) in appAliases {
+            guard let offset = wordPhraseOffset(lowered, phrase: alias) else { continue }
+            // Aliases still matter: they carry colloquial names the catalog cannot match,
+            // like "vs code" for "Visual Studio Code".
+            guard let name = installedAppName(bundleId: bundleId) else { continue }
+            matches.append(
+                Match(
+                    start: offset, matchedLength: alias.count, name: name,
+                    bundleId: bundleId, matchedPhrase: alias))
+        }
+
+        // Installed-apps catalog. Discovery rather than a cached read, because this is the
+        // list that decides whether an app the user named exists at all — and a cold cache
+        // answers that question with "nothing is installed". After the first call it is the
+        // same in-memory read it always was.
+        for entry in InstalledApplicationsCatalog.discoverInstalledApps() {
             let name = entry.name.lowercased()
-            guard name.count > 2, containsWordPhrase(lowered, phrase: name) else { continue }
-            if best == nil || name.count > best!.nameLength {
-                best = (entry, name.count)
+            guard name.count > 2, let offset = wordPhraseOffset(lowered, phrase: name) else {
+                continue
             }
+            matches.append(
+                Match(
+                    start: offset, matchedLength: name.count, name: entry.name,
+                    bundleId: entry.bundleId, matchedPhrase: name))
+        }
+
+        // Drop the ones that are only English. Done after collection rather than inside
+        // each loop so alias and catalog matches are judged by the same rule.
+        matches.removeAll {
+            Self.isPossessiveEnglish(lowered, phrase: $0.matchedPhrase, start: $0.start)
+        }
+
+        let best = matches.min { lhs, rhs in
+            Self.matchOutranks(
+                lhsLevel: AppAccessPolicy.level(for: lhs.bundleId),
+                lhsStart: lhs.start, lhsLength: lhs.matchedLength, lhsName: lhs.name,
+                rhsLevel: AppAccessPolicy.level(for: rhs.bundleId),
+                rhsStart: rhs.start, rhsLength: rhs.matchedLength, rhsName: rhs.name)
         }
         guard let best else { return nil }
         return TargetApp(
-            name: best.entry.name,
-            bundleId: best.entry.bundleId,
-            remainingPhrase: removePhrase(best.entry.name.lowercased(), from: lowered)
+            name: best.name,
+            bundleId: best.bundleId,
+            remainingPhrase: removePhrase(best.matchedPhrase, from: lowered)
         )
     }
 
@@ -582,6 +1120,26 @@ final class GeneralAIActionResolver {
         return boundary(before) && boundary(after)
     }
 
+    /// Character offset of `phrase` in `text` when it appears on word boundaries, else nil.
+    /// The offset is what lets competing app names be ranked by where they appear.
+    private func wordPhraseOffset(_ text: String, phrase: String) -> Int? {
+        guard !phrase.isEmpty, let range = text.range(of: phrase) else { return nil }
+        let before = range.lowerBound == text.startIndex
+            ? nil : text[text.index(before: range.lowerBound)]
+        let after = range.upperBound == text.endIndex ? nil : text[range.upperBound]
+        // An app name inside a filesystem/URL-style token is data, not an app target.
+        // `/tmp/context-dock-verification.txt` used to resolve as the Context-Dock app and
+        // interrupt a shell task with an unrelated "Enable Context-Dock" permission card.
+        let pathJoiners: Set<Character> = ["/", "\\", "-", "_", "."]
+        guard before.map({ !pathJoiners.contains($0) }) ?? true,
+              after.map({ !pathJoiners.contains($0) }) ?? true else {
+            return nil
+        }
+        let boundary = { (c: Character?) in c == nil || !(c!.isLetter || c!.isNumber) }
+        guard boundary(before), boundary(after) else { return nil }
+        return text.distance(from: text.startIndex, to: range.lowerBound)
+    }
+
     private func removePhrase(_ phrase: String, from text: String) -> String {
         var result = text.replacingOccurrences(of: phrase, with: " ")
         for filler in ["open ", "launch ", " in ", " on ", " the ", " app ", " a ", " an "] {
@@ -599,8 +1157,13 @@ final class GeneralAIActionResolver {
         appName: String,
         bundleID: String,
         actionPhrase: String,
-        original: String
+        original: String,
+        accessLevel: AppAccessLevel? = nil
     ) -> GeneralAIActionResolution {
+        // Passed in where the caller already asked, because only the caller knows what the
+        // user granted this chat; recomputed otherwise so no route reaches the ranker
+        // unchecked.
+        let level = accessLevel ?? AppAccessPolicy.level(for: bundleID)
         var candidates: [DoraXActionCandidate] = []
 
         // Bare "open <app>" → plain launch, high confidence.
@@ -617,18 +1180,45 @@ final class GeneralAIActionResolver {
         // 1. App adapter actions (native registered capability). Exclude `.aiPrompt` actions
         // ("Ask AI about Safari") — those are knowledge/Q&A, not executable, and must never
         // outrank a real executable route for an executable intent.
-        let adapterActions = AppAdapterManager.shared.actions(for: bundleID, query: actionPhrase)
-            .filter { $0.type != .aiPrompt }
-        if let action = adapterActions.first {
+        let adapterActions = AppAdapterManager.shared.scoredActions(for: bundleID, query: actionPhrase)
+            .filter { $0.action.type != .aiPrompt }
+        step(
+            adapterActions.isEmpty
+                ? "App adapter: no action matched"
+                : "App adapter: \(adapterActions.count) action(s) matched, best “\(adapterActions[0].action.name)”")
+        if let top = adapterActions.first {
+            // Confidence tracks how well the action matched, not the fact that it is an
+            // adapter. A flat 0.88 here outranked the cached menu's 0.82 even when the
+            // adapter match was a single shared word: "new private window in safari" ran
+            // "New Tab" because both contain "new", while the menu cache held the exact
+            // "New Private Window". The menu matcher requires *every* query token, so an
+            // exact menu hit deserves to win over a partial adapter hit.
+            let strong = top.score >= AppAdapterManager.adapterActionStrongMatchScore
             candidates.append(adapterCandidate(
-                action: action, appName: appName, bundleID: bundleID, confidence: 0.88))
+                action: top.action, appName: appName, bundleID: bundleID,
+                confidence: strong ? 0.88 : 0.62))
         }
+
+        // Built-in/imported tools shown under App Adapters → Tools. Previously Settings
+        // exposed these while scoped chat never searched them.
+        let registered = AppAdapterCapabilityCatalog.registeredCandidates(
+            appName: appName, bundleID: bundleID, query: actionPhrase)
+        step(registered.isEmpty
+            ? "Registered tools: no capability matched"
+            : "Registered tools: \(registered.count) matched, selected \(registered[0].capabilityID ?? registered[0].title)")
+        candidates.append(contentsOf: registered)
 
         // 2. Cached menu commands — product fallback when no app adapter/MCP/API route fits.
         // Execution still launches the app and live-verifies the menu item before clicking.
         let menuMatches = AppMenuCapabilityCache.shared.menuItems(
             bundleIdentifier: bundleID, appName: appName, query: actionPhrase, maxResults: 6)
-        if let match = bestMenuMatch(menuMatches, actionPhrase: actionPhrase) {
+        let menuBest = bestMenuMatch(menuMatches, actionPhrase: actionPhrase)
+        step(
+            menuMatches.isEmpty
+                ? "\(appName) menu cache: cold or no match"
+                : "\(appName) menus: \(menuMatches.count) candidate(s), "
+                    + (menuBest.map { "exact match \($0.pathString)" } ?? "none matched every word"))
+        if let match = menuBest {
             if let char = match.shortcutChar, !char.isEmpty {
                 candidates.append(keyboardShortcutCandidate(
                     title: match.title, path: match.path, char: char,
@@ -640,18 +1230,38 @@ final class GeneralAIActionResolver {
                 title: match.title, path: match.path,
                 shortcutChar: match.shortcutChar, shortcutModifiers: match.shortcutModifiers,
                 appName: appName, bundleID: bundleID, confidence: 0.76))
+        } else if !menuMatches.isEmpty {
+            // Ranked but not exact. "open disk utility about window" matched nothing under
+            // the every-token rule — "window" appears in no Disk Utility menu — so the whole
+            // request fell through to launching the app and admitting defeat, while the very
+            // item wanted, "About Disk Utility", sat in the cache the resolver had just read.
+            //
+            // The every-token rule stays: it is what stops "new private window" settling for
+            // "New Window", and a near match must never be *run* as if it were the thing
+            // asked for. But near matches are worth *offering*. Below the ask-first
+            // threshold, so they arrive as a pick list — the user confirms the one they
+            // meant, which is what someone who knew this app would have said back.
+            for near in menuMatches.prefix(3) {
+                candidates.append(verifiedMenuCandidate(
+                    title: near.title, path: near.path,
+                    shortcutChar: near.shortcutChar, shortcutModifiers: near.shortcutModifiers,
+                    appName: appName, bundleID: bundleID, confidence: 0.5))
+            }
+            step("\(appName) menus: offering \(min(menuMatches.count, 3)) near match(es) to pick from")
         }
 
         // 3. Seeded shortcuts for common intents when the menu cache is cold.
         if candidates.allSatisfy({ $0.route == .adapter }) {
             if let seeded = seededShortcutCandidate(
                 bundleID: bundleID, appName: appName, actionPhrase: actionPhrase) {
+                step("Built-in shortcut for \(appName): \(seeded.title)")
                 candidates.append(seeded)
             }
         }
 
         // 4. User's macOS Shortcuts whose name matches the whole request.
         if let shortcut = matchingMacShortcut(for: original) {
+            step("Your macOS Shortcuts: matched “\(shortcut.name)”")
             candidates.append(DoraXActionCandidate(
                 id: "shortcutRunner.\(shortcut.name)",
                 title: "Run Shortcut “\(shortcut.name)”",
@@ -682,15 +1292,37 @@ final class GeneralAIActionResolver {
             // Executable request against a real app, but no verified route — launch the app
             // and say honestly what could not be automated. Never fake success.
             var launch = launchCandidate(appName: appName, bundleID: bundleID, confidence: 0.72)
+            // Two different failures wore one sentence. Telling someone to open the app so
+            // DoraX can warm its menu cache is useless advice when the cache already holds
+            // sixty-nine of that app's commands — it sends them to do a thing that is done,
+            // and hides that the real answer is the app has no such command.
+            let cached = AppMenuCapabilityCache.shared.summary(bundleIdentifier: bundleID) != nil
             launch.caveat =
                 "I couldn't find a verified route for “\(actionPhrase)” in \(appName) — "
-                + "no adapter action, cached menu command, or shortcut matches it. "
-                + "Open \(appName) once so DoraX can warm its menu cache, then try again."
+                + (cached
+                    ? "nothing in its menus, adapters or shortcuts matches that. It may not "
+                        + "be something \(appName) can do."
+                    : "and I haven't read its menus yet. Open \(appName) once so DoraX can "
+                        + "warm its menu cache, then try again.")
+            return .candidates([launch])
+        }
+
+        // Authority is checked per route, and this list is where the routes are. The door
+        // check above only asks whether the app may be touched at all; discovery filtered
+        // per route and this path did not, so an app with nothing but a cached menu bar
+        // could still be handed an adapter or CLI route out of the registered catalog —
+        // two paths, one of them guarded, which is the shape of bug this codebase keeps
+        // producing.
+        let permitted = candidates.filter { AppAccessPolicy.allows($0.route, at: level) }
+        guard !permitted.isEmpty else {
+            var launch = launchCandidate(appName: appName, bundleID: bundleID, confidence: 0.6)
+            launch.caveat = AppAccessPolicy.explanation(
+                for: appName, level: level, wantedRead: true)
             return .candidates([launch])
         }
 
         let intentKey = Self.normalizedIntentKey(original)
-        return .candidates(rankedWithPreferences(candidates, intentKey: intentKey))
+        return .candidates(rankedWithPreferences(permitted, intentKey: intentKey))
     }
 
     /// Split a compound action phrase ("save and quit", "save all then quit") into ordered
@@ -789,7 +1421,7 @@ final class GeneralAIActionResolver {
     private func rankedWithPreferences(
         _ candidates: [DoraXActionCandidate], intentKey: String
     ) -> [DoraXActionCandidate] {
-        let candidates = productRouteFiltered(candidates)
+        let candidates = droppingWeakAdapterMatches(productRouteFiltered(candidates))
         let avoided = candidates.filter {
             RoutePreferenceStore.shared.strength(
                 intentKey: intentKey, bundleID: $0.bundleID ?? "", route: $0.route.rawValue)
@@ -800,12 +1432,44 @@ final class GeneralAIActionResolver {
             !CapabilityAvailabilityStore.shared.isAvailable(key: $0.availabilityKey)
         }
         var list = candidates
+        if !unavailable.isEmpty {
+            step("\(unavailable.count) route(s) cooling down after a recent failure")
+        }
+        if !avoided.isEmpty {
+            step("\(avoided.count) route(s) skipped — you set “avoid” for them")
+        }
         let dropIDs = Set((avoided + unavailable).map(\.id))
         if !dropIDs.isEmpty, dropIDs.count < candidates.count {
             list.removeAll { dropIDs.contains($0.id) }
         }
+        step("Ranking \(list.count) route(s)…")
         list.sort { rankScore($0, intentKey: intentKey) < rankScore($1, intentKey: intentKey) }
         return list
+    }
+
+    /// Ranking is by route tier, and the adapter route is tier 0 — so an adapter candidate
+    /// leads regardless of how well it matched. That is right when the adapter action *is*
+    /// what was asked for, and wrong when the match rests on one shared word: "new private
+    /// window in safari" put Safari's "New Tab" adapter action ahead of the cached menu's
+    /// exact "New Private Window", and ran it.
+    ///
+    /// Tier order itself is sound — an adapter capability really is more reliable than a
+    /// menu click — so rather than penalise the tier, drop a weakly-matched adapter
+    /// candidate whenever some other route matched the request properly. When nothing else
+    /// matched, the weak candidate stays: it is still the best guess available, and its low
+    /// confidence means the chat path offers it instead of running it.
+    private func droppingWeakAdapterMatches(
+        _ candidates: [DoraXActionCandidate]
+    ) -> [DoraXActionCandidate] {
+        let strongAlternativeExists = candidates.contains {
+            $0.route != .adapter && $0.route != .appLaunch && $0.confidence >= 0.7
+        }
+        guard strongAlternativeExists else { return candidates }
+        let pruned = candidates.filter { !($0.route == .adapter && $0.confidence < 0.7) }
+        if pruned.count < candidates.count {
+            step("Dropped \(candidates.count - pruned.count) partial adapter match — an exact route matched")
+        }
+        return pruned.isEmpty ? candidates : pruned
     }
 
     /// Product rule: terminal/CLI is fallback-only for app workflows. If DoraX has a real
@@ -880,7 +1544,7 @@ final class GeneralAIActionResolver {
         bundleIds.formUnion(runningBundleIds)
         if let frontmostBundleId { bundleIds.insert(frontmostBundleId) }
 
-        let installed = InstalledApplicationsCatalog.cachedInstalledApps()
+        let installed = InstalledApplicationsCatalog.discoverInstalledApps()
         let installedByBundle = Dictionary(uniqueKeysWithValues: installed.map { ($0.bundleId, $0) })
         let named = bundleIds.compactMap { bundleId -> (name: String, bundleId: String)? in
             if let adapter = adapterByBundle[bundleId] { return (adapter.appName, bundleId) }
@@ -1092,13 +1756,64 @@ final class GeneralAIActionResolver {
         }
     }
 
+    /// Words that only *modify* a noun. On their own they say nothing about WHAT to read:
+    /// "recent commit", "last email" and "latest build" all contain one, and none of them
+    /// mean the app's Open Recent menu. Under plain substring matching they were
+    /// indistinguishable from "recent files", which is how "what is recent commit i did?"
+    /// ended up offering to read Recent in Code, Notes and Finder.
+    static let temporalModifiers: Set<String> = [
+        "recent", "recently", "last", "latest", "current", "previous", "newest",
+    ]
+
+    /// Nouns the generic recent/opened semantics actually cover. A temporal modifier may
+    /// only select a semantic when the query also names one of these.
+    private static let genericReadNouns: Set<String> = [
+        "file", "files", "document", "documents", "doc", "docs",
+        "project", "projects", "folder", "folders", "item", "items",
+    ]
+
+    private static let readStopwords: Set<String> = [
+        "what", "whats", "is", "was", "were", "are", "the", "a", "an", "my", "me", "i",
+        "did", "do", "does", "show", "tell", "list", "of", "in", "on", "for", "to", "from",
+        "with", "and", "or", "any", "there", "how", "many", "much", "when", "who", "which",
+        "where", "you", "your", "it", "this", "that", "can", "please", "give", "get", "see",
+        "find", "look", "up", "about", "some", "all", "have", "has", "had", "been", "be",
+    ]
+
+    /// The words in a query that carry its subject — everything that is not a stopword and
+    /// not a temporal modifier. For "what is recent commit i did?" this is ["commit"].
+    static func contentWords(of query: String) -> Set<String> {
+        Set(
+            query.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter {
+                    $0.count > 1
+                        && !readStopwords.contains($0)
+                        && !temporalModifiers.contains($0)
+                }
+        )
+    }
+
     private func readSemanticTypes(for query: String) -> [DoraXActionCandidate.SemanticType] {
         let q = query.lowercased()
+        let content = Self.contentWords(of: q)
+        // Does the query name a noun the generic recent/opened semantics actually cover?
+        let namesGenericNoun = !content.isDisjoint(with: Self.genericReadNouns)
+
         var out: [DoraXActionCandidate.SemanticType] = []
-        for spec in menuReadSemantics where spec.queryWords.contains(where: q.contains) {
+        for spec in menuReadSemantics {
+            let matched = spec.queryWords.filter(q.contains)
+            guard !matched.isEmpty else { continue }
+            // A spec that matched only on a bare modifier has not identified a subject.
+            // Let it through only when the query also names a noun the spec covers.
+            let matchedSomethingSubstantive = matched.contains {
+                !Self.temporalModifiers.contains($0)
+            }
+            guard matchedSomethingSubstantive || namesGenericNoun else { continue }
             out.append(spec.type)
         }
-        if q.contains("last") || q.contains("latest") || q.contains("recent") {
+        if namesGenericNoun, q.contains("last") || q.contains("latest") || q.contains("recent") {
             out.append(.recent)
         }
         if q.contains("video") || q.contains("watched") || q.contains("played") {
@@ -1172,6 +1887,7 @@ final class GeneralAIActionResolver {
         guard case .candidates(var candidates) = base else { return base }
         let mcp = await mcpCandidates(
             appName: appName, bundleID: bundleID, actionPhrase: actionPhrase)
+        step(mcp.isEmpty ? "MCP tools: no match" : "MCP tools: \(mcp.count) matched")
         guard !mcp.isEmpty else { return base }
         // Drop the honest "no verified route" launch fallback if a real MCP route now exists.
         if candidates.count == 1, candidates[0].route == .appLaunch, candidates[0].caveat != nil {
@@ -1451,10 +2167,14 @@ final class GeneralAIActionResolver {
 
     private func bestMenuMatch(_ items: [AXMenuItem], actionPhrase: String) -> AXMenuItem? {
         guard !items.isEmpty else { return nil }
+        let conversationalNoise: Set<String> = [
+            "a", "an", "as", "current", "currently", "in", "into", "my", "of", "on",
+            "please", "selected", "that", "the", "this", "to", "using",
+        ]
         let tokens = actionPhrase
             .split { !$0.isLetter && !$0.isNumber }
             .map { String($0).lowercased() }
-            .filter { $0.count > 1 }
+            .filter { $0.count > 1 && !conversationalNoise.contains($0) }
         guard !tokens.isEmpty else { return nil }
         // Require every meaningful token to appear somewhere in the title or path —
         // "new private window" must not settle for plain "New Window".
@@ -1484,6 +2204,12 @@ final class GeneralAIActionResolver {
               title: "New Window", menuPath: ["File", "New Window"], char: "n", modifiers: 0),
         .init(bundleID: "com.apple.Safari", phrases: ["new tab"],
               title: "New Tab", menuPath: ["File", "New Tab"], char: "t", modifiers: 0),
+        .init(bundleID: "com.apple.Safari",
+              phrases: ["reopen recently closed tabs", "reopen last closed tab",
+                        "reopen last closed tabs", "restore closed tab", "restore last tab"],
+              title: "Reopen Last Closed Window",
+              menuPath: ["History", "Reopen Last Closed Window"],
+              char: "t", modifiers: 1),
         .init(bundleID: "com.apple.TextEdit", phrases: ["new document", "new file", "new text file"],
               title: "New Document", menuPath: ["File", "New"], char: "n", modifiers: 0),
         .init(bundleID: "com.apple.finder", phrases: ["new folder"],
@@ -1904,6 +2630,53 @@ final class GeneralAIActionResolver {
         candidate.shortcutChar = char
         candidate.shortcutModifiers = modifiers
         return candidate
+    }
+
+    /// A menu command for an app, by name, for callers outside the resolver.
+    ///
+    /// The agent loop had no way to click a menu. It could run shell commands and named
+    /// capabilities, and for an app whose only capability *is* its menu bar that left it
+    /// nothing legal to call — so it recommended building an adapter pack, ten times, and
+    /// then reported "commands completed" having done nothing.
+    /// The three ways a requested menu path can turn out, told apart.
+    ///
+    /// One nil for all of them read as "that command does not exist", so a greyed-out item
+    /// — Add Title with no entry open, All Entries when they are already showing — came back
+    /// as "this specific command may not exist in Journal" about a command sitting in the
+    /// cache. A command that exists and is unavailable right now is a different fact, and
+    /// the user can act on it.
+    enum MenuCommandLookup {
+        case ready(DoraXActionCandidate)
+        case disabled(path: String, appName: String)
+        case missing(appName: String, nearest: [String])
+    }
+
+    func menuCommandCandidate(appName: String, path: [String]) -> MenuCommandLookup {
+        guard let target = resolveTargetApp(in: appName.lowercased()) else {
+            return .missing(appName: appName, nearest: [])
+        }
+        // Matched against the cache rather than trusted: a path the model wrote from memory
+        // is a guess, and clicking a guessed menu item is how an agent ends up in Erase.
+        let wanted = path.map { $0.lowercased() }
+        let records = AppMenuCapabilityCache.shared.menuItems(
+            bundleIdentifier: target.bundleId, appName: target.name,
+            query: path.last ?? "", maxResults: 24)
+        let match = records.first { record in
+            let recorded = record.path.map { $0.lowercased() }
+            return recorded == wanted || (recorded.last == wanted.last && wanted.count == 1)
+        }
+        guard let match else {
+            return .missing(
+                appName: target.name, nearest: records.prefix(5).map(\.pathString))
+        }
+        guard match.isEnabled else {
+            return .disabled(path: match.pathString, appName: target.name)
+        }
+        return .ready(verifiedMenuCandidate(
+            title: match.path.joined(separator: " → "),
+            path: match.path,
+            shortcutChar: match.shortcutChar, shortcutModifiers: match.shortcutModifiers,
+            appName: target.name, bundleID: target.bundleId, confidence: 0.9))
     }
 
     private func verifiedMenuCandidate(

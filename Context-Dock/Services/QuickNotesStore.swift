@@ -9,19 +9,43 @@ import AppKit
 import Combine
 import Foundation
 
-struct QuickNote: Identifiable, Codable, Hashable {
+struct QuickNote: Identifiable, Codable {
     let id: UUID
     var text: String
     var createdAt: Date
     /// Filenames of real files the user dropped, copied into the note's storage folder
     /// (QuickNoteFiles/) — Quick Note doubles as a drop/storage box.
     var attachments: [String] = []
+    /// A note owns its sidecar conversation.  Keeping this separate from `text`
+    /// means an AI answer never overwrites or pollutes the editable note.
+    var chatMessages: [ChatMessage] = []
 
-    init(id: UUID = UUID(), text: String, createdAt: Date = Date(), attachments: [String] = []) {
+    init(
+        id: UUID = UUID(),
+        text: String,
+        createdAt: Date = Date(),
+        attachments: [String] = [],
+        chatMessages: [ChatMessage] = []
+    ) {
         self.id = id
         self.text = text
         self.createdAt = createdAt
         self.attachments = attachments
+        self.chatMessages = chatMessages
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, text, createdAt, attachments, chatMessages
+    }
+
+    /// Old notes predate attachments and sidecar chat. Decode them losslessly.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        text = try values.decode(String.self, forKey: .text)
+        createdAt = try values.decode(Date.self, forKey: .createdAt)
+        attachments = try values.decodeIfPresent([String].self, forKey: .attachments) ?? []
+        chatMessages = try values.decodeIfPresent([ChatMessage].self, forKey: .chatMessages) ?? []
     }
 }
 
@@ -32,6 +56,8 @@ final class QuickNotesStore: ObservableObject {
     @Published private(set) var notes: [QuickNote] = []
 
     private let fileURL: URL
+    /// The pending mirror write, cancelled and rescheduled on each edit.
+    private var mirrorTask: Task<Void, Never>?
     /// Folder holding the real dropped files (copies), so notes survive the originals
     /// being moved or deleted.
     let attachmentsDir: URL
@@ -96,6 +122,9 @@ final class QuickNotesStore: ObservableObject {
             let decoded = try? JSONDecoder().decode([QuickNote].self, from: data)
         else { return }
         notes = decoded.sorted { $0.createdAt > $1.createdAt }
+        // Notes written before the mirror existed have no markdown yet, and a note the
+        // user deleted while the app was closed still would. One pass at load settles both.
+        scheduleMemoryMirror()
     }
 
     @discardableResult
@@ -124,6 +153,12 @@ final class QuickNotesStore: ObservableObject {
         save()
     }
 
+    func appendChatMessage(_ message: ChatMessage, for id: UUID) {
+        guard let idx = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[idx].chatMessages.append(message)
+        save()
+    }
+
     func delete(_ note: QuickNote) {
         deleteAttachmentFiles(note.attachments)
         notes.removeAll { $0.id == note.id }
@@ -147,5 +182,23 @@ final class QuickNotesStore: ObservableObject {
     private func save() {
         guard let data = try? JSONEncoder().encode(notes) else { return }
         try? data.write(to: fileURL, options: .atomic)
+        scheduleMemoryMirror()
+    }
+
+    /// Mirrors into markdown memory a beat after the typing stops.
+    ///
+    /// `save()` runs on every keystroke of the split editor, and the mirror walks every
+    /// note and rewrites the folder — doing that per character would turn a sentence into
+    /// a few hundred directory scans. The delay is short enough that a note is searchable
+    /// by the time the user has finished the thought.
+    private func scheduleMemoryMirror() {
+        mirrorTask?.cancel()
+        let snapshot = notes
+        mirrorTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            QuickNoteMemoryMirror.sync(snapshot)
+            self?.mirrorTask = nil
+        }
     }
 }

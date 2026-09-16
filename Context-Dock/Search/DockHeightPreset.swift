@@ -76,6 +76,9 @@ struct DockHeightMetrics {
     var aiMessageCount: Int
     var showsContextDockAppPanel: Bool
     var compactSmartScope: Bool
+    /// Panel height reserved for a compact smart scope. Defaults to 450, but the window
+    /// switcher shrinks it to a compact bar when idle (app row only, nothing selected).
+    var compactScopePanelHeight: CGFloat = 450
     var mediaHasDuration: Bool
     var contextDockChatMessageCount: Int
     var listViewDockHeight: CGFloat
@@ -84,6 +87,13 @@ struct DockHeightMetrics {
     var loadingApps: Bool
     var l1ResultsReservedHeight: CGFloat
     var measuredChatContentHeight: CGFloat = 0
+    /// Reserved space for the strip that tells a scoped thread what it can do before
+    /// anything has been said. Nothing was reserved for it, so it rendered below the
+    /// window's edge and the user saw a summary line with a row sliced in half.
+    var dockScopeStartHeight: CGFloat = 0
+    /// Reserved space for the terminal that belongs to a scoped CLI chat. It is
+    /// part of the chat sheet, never an independently resizing window.
+    var cliTerminalReservedHeight: CGFloat = 0
 }
 
 struct DockHeightPresetMetrics {
@@ -175,11 +185,30 @@ struct DockHeightResolver {
     private static func contextDockChatHeight(_ metrics: DockHeightMetrics) -> CGFloat {
         let bars = metrics.statusBarHeight + metrics.searchBarHeight
         // Gate on real message count (ignore stale measured) so Clear/Exit collapses to the pill.
-        guard metrics.contextDockChatMessageCount > 0 else { return bars }
+        guard metrics.contextDockChatMessageCount > 0 else {
+            return bars + metrics.cliTerminalReservedHeight + metrics.dockScopeStartHeight
+        }
         // Fixed header (~52) above a scroll capped at 400; measured is the message height only.
         let header: CGFloat = 52
-        let scroll = min(max(metrics.measuredChatContentHeight, 60), 400)
-        return bars + header + scroll + 18
+        // Terminal expansion trades transcript viewport for terminal viewport. This
+        // keeps the whole CLI workspace bounded instead of stacking two full panels.
+        let maxSheetContent: CGFloat = 620
+        let availableScroll = max(
+            120,
+            maxSheetContent - bars - header - 18 - metrics.cliTerminalReservedHeight
+        )
+        // Hug the conversation, up to a bounded viewport — the same shape generalChat uses
+        // directly above, and what the chat window does by being a window.
+        //
+        // This was a fixed 400 for a reason worth keeping in mind: feeding a measured height
+        // back into the NSWindow once made the sheet breathe while the model typed. What is
+        // measured now is the messages' *intrinsic* height, taken inside the scroll view, so
+        // it cannot be changed by the frame it is placed in — no loop to close. The cost of
+        // the fixed viewport was that one short answer sat at the top of 400 points of empty
+        // sheet, which is the thing a scoped thread is most often showing.
+        let cap = min(400, availableScroll)
+        let content = min(max(metrics.measuredChatContentHeight, 60), cap)
+        return bars + header + content + 18 + metrics.cliTerminalReservedHeight
     }
 
     private static func mediaDockHeight(_ metrics: DockHeightMetrics) -> CGFloat {
@@ -200,7 +229,7 @@ struct DockHeightResolver {
         }
 
         if metrics.compactSmartScope {
-            let panelHeight: CGFloat = 450
+            let panelHeight: CGFloat = metrics.compactScopePanelHeight
             let panelGap: CGFloat = 8
             return metrics.statusBarHeight + pinnedAppsHeight + metrics.searchBarHeight
                 + panelHeight + panelGap
@@ -244,7 +273,7 @@ struct DockHeightResolver {
     static func l1ResultsHeight(for resultCount: Int) -> CGFloat {
         guard resultCount > 0 else { return 0 }
         let headerHeight: CGFloat = 32
-        let rowHeight: CGFloat = 58
+        let rowHeight: CGFloat = DockMetrics.l1ResultRow
         let verticalPadding: CGFloat = 12
         let contentHeight = headerHeight + CGFloat(resultCount) * rowHeight + verticalPadding
         let minimumHeight: CGFloat = resultCount <= 2 ? contentHeight : 112

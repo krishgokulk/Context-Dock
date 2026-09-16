@@ -59,9 +59,13 @@ enum AdapterSkillSeeder {
             let isGeneratedV11 = skill.version == "1.1"
                 && (skill.instructions == basicsInstructionsV11(appName: adapter.appName)
                     || isLegacyGeneratedBasics(skill.instructions))
-            guard isGeneratedV10 || isGeneratedV11 else { continue }
+            // 1.2 taught the model to stop at "no linked tool fits" and send the user to
+            // Settings, which is how a question one approved command away became advice.
+            let isGeneratedV12 = skill.version == "1.2"
+                && skill.instructions == generatedBasicsV12(appName: adapter.appName)
+            guard isGeneratedV10 || isGeneratedV11 || isGeneratedV12 else { continue }
             var updated = skill
-            updated.version = "1.2"
+            updated.version = "1.3"
             updated.instructions = basicsInstructions(appName: adapter.appName)
             SkillStore.shared.upsert(updated)
         }
@@ -81,9 +85,42 @@ enum AdapterSkillSeeder {
         commands may be proposed immediately. Any command that writes, deletes, installs, sends, \
         publishes, changes accounts, or affects remote state must wait for explicit approval. \
         Skills guide tool selection but never grant permission by themselves. If no linked tool \
+        fits, do not stop at that: when a read-only command could answer the question, name the \
+        exact command and propose it through run_command — the user approves it before it runs, \
+        so proposing costs a tap and refusing costs the answer. Say what is knowable now, and \
+        that linking the missing capability in Settings → App Adapters → \(appName) would make \
+        it one tap next time. Never claim a tool is ungranted or unavailable for this session; \
+        no such per-session grant exists.
+        """
+    }
+
+    /// The generated text this seeder shipped before the approval rung was added. Kept so a
+    /// skill still carrying it can be recognised and upgraded, while one the user edited is
+    /// left alone.
+    static func generatedBasicsV12(appName: String) -> String {
+        """
+        You are assisting inside \(appName) — you always know this is the app in use; \
+        never say you cannot see which app is open. Ground every answer in the live \
+        app context (window title, selection, current document/page) and never claim more \
+        than that evidence proves. Inspect this adapter's complete capability pack for every \
+        request: built-in readers, MCP, linked CLI, actions, Shortcuts, APIs, and browser \
+        extensions. Choose the single best capability instead of giving generic instructions. \
+        When a linked, installed CLI can directly retrieve or perform what the user requested, \
+        request one exact executable terminal_call with a concrete command and purpose; never \
+        invent paths, URLs, arguments, or placeholder values. Read-only status/list/show/help \
+        commands may be proposed immediately. Any command that writes, deletes, installs, sends, \
+        publishes, changes accounts, or affects remote state must wait for explicit approval. \
+        Skills guide tool selection but never grant permission by themselves. If no linked tool \
         fits, say what is knowable now and identify the missing capability in Settings → App \
         Adapters → \(appName).
         """
+    }
+
+    /// Is this text one this app generated, rather than something the user wrote?
+    static func isGeneratedBasics(_ instructions: String, appName: String) -> Bool {
+        instructions == generatedBasicsV12(appName: appName)
+            || instructions == basicsInstructionsV11(appName: appName)
+            || isLegacyGeneratedBasics(instructions)
     }
 
     private static func basicsInstructionsV11(appName: String) -> String {
@@ -152,7 +189,7 @@ enum AdapterSkillSeeder {
                 name: "\(adapter.appName) Assistant Basics",
                 summary: "Starter skill — edit me to teach the AI your workflow",
                 instructions: basicsInstructions(appName: adapter.appName),
-                version: "1.2"
+                version: "1.3"
             ))
         }
 

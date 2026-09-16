@@ -72,7 +72,18 @@ enum MetadataResolver {
         case "contacts":
             return await resolveContacts(matching: query, limit: maxResults)
         case "mail":
-            return resolveMailSenders(matching: query, limit: maxResults).map { sender in
+            // Off the calling executor, because this one blocks. resolveMailSenders drives
+            // an AppleScript mailbox scan, and its two siblings here — contacts and
+            // calendar — are awaited while it was called straight through. On the main
+            // actor that freezes the app for the length of the scan: a spin report caught
+            // the main thread inside NSAppleScript, under a single General Chat message.
+            //
+            // It is nonisolated, so it belongs off the main thread rather than in front
+            // of it.
+            let senders = await Task.detached(priority: .userInitiated) {
+                resolveMailSenders(matching: query, limit: maxResults)
+            }.value
+            return senders.map { sender in
                 MetadataResolutionRecord(
                     kind: "mail_sender",
                     displayName: sender.displayName,

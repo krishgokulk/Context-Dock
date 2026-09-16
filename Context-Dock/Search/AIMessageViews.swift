@@ -99,6 +99,298 @@ struct AICapabilityApprovalView: View {
     }
 }
 
+/// Inline consent card. The same decision as `AIPrivacyApprovalView`, rendered inside the chat
+/// instead of a separate floating window — a modal panel over the dock broke the flow and hid
+/// the very context the user is being asked about.
+struct InlinePrivacyApprovalCard: View {
+    let pending: AIPrivacyApprovalCenter.PendingApproval
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "lock.trianglebadge.exclamationmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.orange)
+                Text("Send this context to \(pending.provider.displayName)?")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            Text(pending.contextDescription)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            Text("Selected text, files or contact data leaves this Mac.")
+                .font(.system(size: 11))
+                .foregroundStyle(.orange.opacity(0.9))
+            HStack(spacing: 8) {
+                Button("Cancel") { AIPrivacyApprovalCenter.shared.deny() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button("Send") { AIPrivacyApprovalCenter.shared.approve() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(Color.accentColor, in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.orange.opacity(0.35), lineWidth: 0.8)
+        )
+        .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
+    }
+}
+
+/// Capability approval rendered inside the conversation. Same decision as the floating
+/// `AICapabilityApprovalView`, but it stays in the chat that asked for it — a separate
+/// window lands over the dock and hides the request it is asking about, which is the one
+/// thing someone needs to see before approving.
+struct InlineCapabilityApprovalCard: View {
+    let pending: AICapabilityApprovalCenter.PendingApproval
+
+    private var isHighRisk: Bool {
+        pending.capability.riskLevel == .high || pending.capability.riskLevel == .critical
+    }
+
+    private var accent: Color { isHighRisk ? .orange : .accentColor }
+
+    /// The files this call would touch, resolved the way the guard resolves them — so the
+    /// card and the boundary check are reading the same thing.
+    private var targets: [URL] {
+        CapabilityScopeGuard.candidatePaths(
+            input: pending.plan.input, context: pending.context)
+    }
+
+    /// What happens if this turns out to be wrong. Said plainly and per capability: "undo
+    /// is not guaranteed" over a move to the Trash is a warning about the wrong thing, and
+    /// a user who learns the warning is generic stops reading it.
+    private var reversibility: String {
+        switch pending.capability.id {
+        case "finder.trash":
+            return "Goes to the Trash — recoverable from there until you empty it."
+        case "finder.moveFiles", "finder.organize":
+            return "Moves files. Reversible by moving them back; nothing is deleted."
+        case "finder.renameFiles":
+            return "Renames in place. Reversible by renaming back; nothing is deleted."
+        case "finder.copyFiles", "finder.newFolder":
+            return "Adds without removing anything."
+        default:
+            return isHighRisk ? "Undo is not guaranteed." : "Low risk."
+        }
+    }
+
+    private var isReversible: Bool {
+        switch pending.capability.id {
+        case "finder.trash", "finder.moveFiles", "finder.organize", "finder.renameFiles",
+            "finder.copyFiles", "finder.newFolder":
+            return true
+        default:
+            return !isHighRisk
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: "checkmark.shield")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(accent)
+                Text(pending.capability.title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                Spacer(minLength: 0)
+                Text(pending.capability.riskLevel.rawValue.capitalized)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isHighRisk ? .orange : .secondary)
+            }
+            if !pending.plan.explanation.isEmpty {
+                Text(pending.plan.explanation)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            // The inputs are the approval. A title without them is a request to trust that
+            // the right values were filled in somewhere off screen.
+            if !pending.plan.input.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(pending.plan.input.keys.sorted(), id: \.self) { key in
+                        Text("\(key): \(pending.plan.input[key] ?? "")")
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(3)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            // Which files, by name. The inputs above may say "the selection" or a pattern,
+            // and approving a rename of six files you cannot see is not approval.
+            if !targets.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(
+                        targets.count == 1
+                            ? "This will act on 1 item:"
+                            : "This will act on \(targets.count) items:"
+                    )
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    ForEach(targets.prefix(8), id: \.path) { url in
+                        Text(url.path)
+                            .font(.system(size: 10.5, design: .monospaced))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                    }
+                    if targets.count > 8 {
+                        Text("+ \(targets.count - 8) more")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.05),
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+
+            if let root = pending.scopeRoot {
+                Label("Confined to \(root.lastPathComponent)", systemImage: "folder")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(reversibility)
+                .font(.system(size: 10))
+                .foregroundStyle(
+                    isReversible ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.orange))
+
+            Text("Expires after 60 seconds.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button("Cancel") { AICapabilityApprovalCenter.shared.deny() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button("Approve") { AICapabilityApprovalCenter.shared.approve() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(accent, in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(accent.opacity(0.35), lineWidth: 0.8)
+        )
+        .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
+    }
+}
+
+/// Adapter / menu-command approval rendered inside the conversation. Same decision as the
+/// floating `AdapterApprovalPopupView`, but it stays in the chat that asked for it instead of
+/// throwing a second window over the dock.
+struct InlineAdapterApprovalCard: View {
+    let request: AdapterActionRequest
+
+    private var detailLine: String {
+        switch request.action.type {
+        case .menubar:
+            return request.action.menuPath?.joined(separator: " ▸ ") ?? request.action.name
+        case .applescript: return "AppleScript"
+        case .jxa: return "JXA script"
+        case .shell: return "Shell command"
+        case .cliTool: return request.action.cliToolCommand ?? "CLI tool"
+        case .urlScheme: return request.action.urlScheme ?? "Open URL"
+        case .openItem, .scriptFile:
+            return request.action.scriptFile ?? request.action.script ?? "Open item"
+        case .shortcut: return request.action.shortcutName ?? "Shortcut"
+        case .aiPrompt: return "AI prompt"
+        case .pageJS: return "Page JavaScript"
+        }
+    }
+
+    private var accent: Color { request.action.isDestructive ? .orange : .accentColor }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(
+                    systemName: request.action.isDestructive
+                        ? "exclamationmark.triangle.fill" : "cursorarrow.click"
+                )
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(accent)
+                Text(request.action.name)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text(request.adapter.appName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.07), in: Capsule())
+            }
+            Text(detailLine)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.middle)
+            if !request.action.description.isEmpty {
+                Text(request.action.description)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            HStack(spacing: 8) {
+                Button("Cancel") { request.onDeny() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12).padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                Button(request.action.isDestructive ? "Allow" : "Run") { request.onApprove() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).padding(.vertical, 5)
+                    .background(accent, in: Capsule())
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 2)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(accent.opacity(0.35), lineWidth: 0.8)
+        )
+        .transition(.scale(scale: 0.94, anchor: .bottom).combined(with: .opacity))
+    }
+}
+
 struct AIPrivacyApprovalView: View {
     let pending: AIPrivacyApprovalCenter.PendingApproval
 
@@ -161,6 +453,88 @@ struct AppLaunchAction: Equatable {
     let bundleId: String
 }
 
+/// A concrete file returned by DoraX's local Recent Items index. Keeping the URL on
+/// the message lets the chat render desktop-native actions without asking the model
+/// to reproduce a path or issuing another AI request.
+struct RecentFileAction: Equatable {
+    let url: URL
+
+    var name: String { url.lastPathComponent }
+    var folder: String { url.deletingLastPathComponent().path }
+}
+
+/// One grounded Apple Notes search hit. Structured rows keep metadata readable and
+/// actionable instead of flattening the entire result set into one chat paragraph.
+struct NoteSearchAction: Equatable {
+    let id: String
+    let title: String
+    let folder: String
+    let snippet: String
+    let modifiedDate: Date?
+}
+
+/// A task extracted from a grounded Apple Note. Keeping tasks structured lets the
+/// result surface offer direct copy actions without asking an AI provider again.
+struct NoteTaskAction: Equatable, Identifiable {
+    let id: UUID
+    let text: String
+
+    init(text: String) {
+        self.id = UUID()
+        self.text = text
+    }
+}
+
+/// A grounded Reminders result. Action receipts and list rows stay structured so the
+/// conversation reads like a task manager instead of an MCP debug console.
+struct ReminderResultAction: Equatable, Identifiable {
+    enum State: Equatable {
+        case active
+        case overdue
+        case created
+        case completed
+        case deleted
+    }
+
+    let id: UUID
+    let title: String
+    let detail: String?
+    let state: State
+
+    init(title: String, detail: String? = nil, state: State) {
+        self.id = UUID()
+        self.title = title
+        self.detail = detail
+        self.state = state
+    }
+}
+
+/// One live Safari tab with enough identity to activate the existing tab rather than
+/// opening a duplicate URL.
+struct BrowserTabAction: Equatable, Identifiable {
+    let title: String
+    let url: String
+    let windowIndex: Int
+    let tabIndex: Int
+
+    var id: String { "\(windowIndex):\(tabIndex):\(url)" }
+    var domain: String {
+        guard let host = URL(string: url)?.host else { return url }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
+
+struct PageLinkAction: Equatable, Identifiable {
+    let title: String
+    let url: String
+    let pageTitle: String
+
+    var id: String { url }
+    var domain: String {
+        URL(string: url)?.host?.replacingOccurrences(of: "www.", with: "") ?? url
+    }
+}
+
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
@@ -171,7 +545,19 @@ struct AIChatMessage: Identifiable, Equatable {
     var hasInstallButton: Bool  // Show "Add to Extensions" button
     var attachments: [URL]  // Files the user attached to this message (shown as chips)
     var appLaunches: [AppLaunchAction]  // "Open in <App>" buttons (Apple-apps answers)
+    var recentFiles: [RecentFileAction]  // Local file rows with Open / Show in Finder
+    var noteResults: [NoteSearchAction]  // Structured Apple Notes search results
+    var noteTasks: [NoteTaskAction]  // Grounded tasks extracted from one Apple Note
+    var reminderResults: [ReminderResultAction]  // Structured Reminders rows and receipts
+    var browserTabs: [BrowserTabAction]  // Live browser tabs with direct activation
+    var pageLinks: [PageLinkAction]  // Grounded links from the active Safari page
     var mcpToolsRan: [String]  // "tool via server" chips for executed MCP calls
+    var evidenceReceipts: [DoraXActionReceipt]  // Typed action/verification outcomes
+    var subjectiveEvaluation: SubjectiveEvaluation?  // Independent read-only review
+    var enableAppRequest: EnableAppRequest?  // "Enable <app> for this chat" one-tap button
+    var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
+    var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
+    var runOutput: String?  // terminal/script output, collapsed behind a disclosure
 
     enum ChatRole {
         case user
@@ -180,39 +566,114 @@ struct AIChatMessage: Identifiable, Equatable {
         case approval  // inline approve/deny card (replaces popup window)
     }
 
+    /// Protocol is never UI.
+    ///
+    /// A tool call the model wrote as text is a call that did not run. Rendering it shows
+    /// the user plumbing in place of an answer and hides the fact that nothing happened —
+    /// which is how {"globalcmd.empty-trash":{}} ended up in a chat bubble under the words
+    /// "No tools ran".
+    ///
+    /// This sits in the initialiser on purpose. There are fifty-odd places that append an
+    /// assistant message across the surfaces, and an invariant enforced at fifty call sites
+    /// is one that the fifty-first will break. Every bubble is built here.
+    private static func presentable(_ content: String, role: ChatRole) -> String {
+        guard role == .assistant else { return content }
+        // An empty assistant bubble is the same failure wearing a quieter face: it happens
+        // when scaffolding was stripped and nothing was left, so the user sees the app
+        // apparently having nothing to say about a request it understood. Say what
+        // happened instead.
+        if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return ChatAnswerSanitizer.protocolFallback
+        }
+        guard ChatAnswerSanitizer.isProtocolOnly(content) else { return content }
+        return ChatAnswerSanitizer.protocolFallback
+    }
+
     init(
         role: ChatRole, content: String, isError: Bool = false, structuredData: String? = nil,
         hasInstallButton: Bool = false, attachments: [URL] = [],
-        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = []
+        appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
+        noteResults: [NoteSearchAction] = [],
+        noteTasks: [NoteTaskAction] = [],
+        reminderResults: [ReminderResultAction] = [],
+        browserTabs: [BrowserTabAction] = [],
+        pageLinks: [PageLinkAction] = [],
+        mcpToolsRan: [String] = [],
+        evidenceReceipts: [DoraXActionReceipt] = [],
+        subjectiveEvaluation: SubjectiveEvaluation? = nil,
+        enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
+        runOutput: String? = nil, actionChoices: [ActionChoice] = [],
+        // Defaults to now, which is right for a message being said. A message being
+        // *loaded* has a time of its own and must pass it, or history claims to be current.
+        timestamp: Date = Date()
     ) {
         self.id = UUID()
         self.role = role
-        self.content = content
-        self.timestamp = Date()
+        self.content = Self.presentable(content, role: role)
+        self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
         self.hasInstallButton = hasInstallButton
         self.attachments = attachments
         self.appLaunches = appLaunches
+        self.recentFiles = recentFiles
+        self.noteResults = noteResults
+        self.noteTasks = noteTasks
+        self.reminderResults = reminderResults
+        self.browserTabs = browserTabs
+        self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
+        self.evidenceReceipts = evidenceReceipts
+        self.subjectiveEvaluation = subjectiveEvaluation
+        self.enableAppRequest = enableAppRequest
+        self.trace = trace
+        self.runOutput = runOutput
+        self.actionChoices = actionChoices
     }
 
     /// Streaming update — preserves the original UUID so the message can be updated in-place.
     init(
         id: UUID, role: ChatRole, content: String, isError: Bool = false,
         structuredData: String? = nil, hasInstallButton: Bool = false, attachments: [URL] = [],
-        appLaunches: [AppLaunchAction] = [], mcpToolsRan: [String] = []
+        appLaunches: [AppLaunchAction] = [], recentFiles: [RecentFileAction] = [],
+        noteResults: [NoteSearchAction] = [],
+        noteTasks: [NoteTaskAction] = [],
+        reminderResults: [ReminderResultAction] = [],
+        browserTabs: [BrowserTabAction] = [],
+        pageLinks: [PageLinkAction] = [],
+        mcpToolsRan: [String] = [],
+        evidenceReceipts: [DoraXActionReceipt] = [],
+        subjectiveEvaluation: SubjectiveEvaluation? = nil,
+        enableAppRequest: EnableAppRequest? = nil, trace: [String] = [],
+        runOutput: String? = nil, actionChoices: [ActionChoice] = [],
+        // Defaults to now, which is right for a message being said. A message being
+        // *loaded* has a time of its own and must pass it, or history claims to be current.
+        timestamp: Date = Date()
     ) {
         self.id = id
         self.role = role
-        self.content = content
-        self.timestamp = Date()
+        // Streaming too: a partial object is not valid JSON and passes through untouched,
+        // so this only bites once the message has actually settled into a complete call.
+        self.content = Self.presentable(content, role: role)
+        self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
         self.hasInstallButton = hasInstallButton
         self.attachments = attachments
         self.appLaunches = appLaunches
+        self.recentFiles = recentFiles
+        self.noteResults = noteResults
+        self.noteTasks = noteTasks
+        self.reminderResults = reminderResults
+        self.browserTabs = browserTabs
+        self.pageLinks = pageLinks
         self.mcpToolsRan = mcpToolsRan
+        self.evidenceReceipts = evidenceReceipts
+        self.subjectiveEvaluation = subjectiveEvaluation
+        self.enableAppRequest = enableAppRequest
+        self.trace = trace
+        self.runOutput = runOutput
+        self.actionChoices = actionChoices
     }
 
     static func == (lhs: AIChatMessage, rhs: AIChatMessage) -> Bool {
@@ -284,11 +745,30 @@ struct AIChatMessageView: View {
     var onInstallProposal: ((String) -> Void)? = nil
     var onRunOnceProposal: ((String) -> Void)? = nil
     var onReplaceText: (() -> Void)? = nil
+    /// One-tap "Enable <app> for this chat" — adds the app to the focus picker and re-runs.
+    var onEnableApp: ((EnableAppRequest) -> Void)? = nil
+    /// Show a file in the chat window's Preview panel. Nil on surfaces that already have
+    /// one — the window does not need a button that opens the window.
+    var onPreviewFile: ((URL) -> Void)? = nil
+    var onPickAction: ((ActionChoice) -> Void)? = nil
+    var onReminderAction: ((ReminderResultAction, String) -> Void)? = nil
     /// Chat-style avatars (Context Dock scoped chat): the selected AI provider's
     /// symbol beside user messages, the scoped app's icon beside assistant answers.
     /// Both nil (General Chat) → renders exactly as before, no avatars.
     var userAvatarSymbol: String? = nil
     var assistantAvatarImage: NSImage? = nil
+    /// Execution steps for the turn still running into this message.
+    ///
+    /// Live activity used to be a sibling rendered *after* the whole message list, so once an
+    /// answer started streaming it appeared above while the activity stayed pinned below —
+    /// reading as though the reasoning came after the result. It belongs inside the assistant
+    /// turn, above the answer, where it collapses into `routerTraceView` in the same place
+    /// rather than being destroyed and redrawn somewhere else.
+    var liveSteps: [String] = []
+    @State private var isTraceExpanded = false
+    @State private var isRunOutputExpanded = false
+    @State private var isEvidenceExpanded = false
+    @State private var isEvaluationExpanded = false
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -297,10 +777,12 @@ struct AIChatMessageView: View {
         case .googleGemini: return .blue
         case .openAI: return .green
         case .anthropic: return .orange
+        case .claudeCode: return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts: return .indigo
         }
     }
@@ -333,20 +815,734 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// Concrete local-file actions for a grounded Recent Items answer. Both actions
+    /// are direct AppKit calls: they never go back through the provider or automation.
     @ViewBuilder
-    private var mcpToolChips: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(message.mcpToolsRan, id: \.self) { label in
+    private var recentFileRows: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Recent files")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ForEach(message.recentFiles, id: \.url) { file in
+                HStack(spacing: 8) {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(file.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(file.folder)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer(minLength: 4)
+                    if let onPreviewFile {
+                        // Reading a file in the dock costs the conversation, and going back
+                        // to the conversation costs the file. The window shows both.
+                        Button("Preview") { onPreviewFile(file.url) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                            .disabled(!FileManager.default.fileExists(atPath: file.url.path))
+                            .help("Open \(file.name) beside this chat")
+                    }
+                    Button("Open") {
+                        NSWorkspace.shared.open(file.url)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(!FileManager.default.fileExists(atPath: file.url.path))
+                    .help("Open \(file.name)")
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([file.url])
+                    } label: {
+                        Image(systemName: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .disabled(!FileManager.default.fileExists(atPath: file.url.path))
+                    .help("Show \(file.name) in Finder")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var noteResultRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Matching notes")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            ForEach(message.noteResults, id: \.id) { note in
+                HStack(alignment: .top, spacing: 9) {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.yellow)
+                        .frame(width: 20, height: 20)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(note.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(1)
+                        HStack(spacing: 5) {
+                            Text(note.folder.isEmpty ? "Notes" : note.folder)
+                            if let modifiedDate = note.modifiedDate {
+                                Text("·")
+                                Text(modifiedDate, style: .date)
+                            }
+                        }
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        if !note.snippet.isEmpty {
+                            Text(note.snippet)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    Spacer(minLength: 6)
+                    Button("Open") {
+                        var components = URLComponents()
+                        components.scheme = "notes"
+                        components.host = "showNote"
+                        components.queryItems = [URLQueryItem(name: "identifier", value: note.id)]
+                        if let url = components.url { NSWorkspace.shared.open(url) }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+                .padding(9)
+                .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var noteTaskRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Tasks from this note")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Copy all") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(
+                        message.noteTasks.map { "• \($0.text)" }.joined(separator: "\n"),
+                        forType: .string)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.mini)
+            }
+            ForEach(message.noteTasks) { task in
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 2)
+                    Text(task.text)
+                        .font(.system(size: 12))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(task.text, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help("Copy task")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    Color.primary.opacity(0.055),
+                    in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var reminderResultRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if message.reminderResults.count > 1 {
+                HStack {
+                    Text(reminderSectionTitle)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(message.reminderResults.count)")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+                }
+            }
+            ForEach(message.reminderResults) { reminder in
+                HStack(spacing: 11) {
+                    ZStack {
+                        Circle()
+                            .fill(reminderColor(reminder.state).opacity(0.14))
+                        Image(systemName: reminderIcon(reminder.state))
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(reminderColor(reminder.state))
+                    }
+                    .frame(width: 30, height: 30)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(reminder.title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .lineLimit(2)
+                        HStack(spacing: 5) {
+                            Text(reminderLabel(reminder.state))
+                            if let detail = reminder.detail, !detail.isEmpty {
+                                Text("·")
+                                Text(detail)
+                            }
+                        }
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if reminder.state == .active || reminder.state == .overdue {
+                        Button {
+                            onReminderAction?(reminder, "complete")
+                        } label: {
+                            Label("Complete", systemImage: "checkmark")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+
+                        Menu {
+                            Button("Open Reminders", systemImage: "arrow.up.forward.app") {
+                                openReminders()
+                            }
+                            Divider()
+                            Button("Delete Reminder", systemImage: "trash", role: .destructive) {
+                                onReminderAction?(reminder, "delete")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                    } else {
+                        Button {
+                            openReminders()
+                        } label: {
+                            Image(systemName: "arrow.up.forward.app")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                        .help("Open Reminders")
+                    }
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 9)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(reminderColor(reminder.state).opacity(0.22), lineWidth: 0.7)
+                }
+            }
+
+            Label(
+                hasReminderReceipt ? "Updated in Reminders" : "Live from Reminders",
+                systemImage: hasReminderReceipt ? "checkmark.icloud" : "arrow.triangle.2.circlepath"
+            )
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
+        }
+    }
+
+    private var hasReminderReceipt: Bool {
+        message.reminderResults.contains {
+            $0.state == .created || $0.state == .completed || $0.state == .deleted
+        }
+    }
+
+    private var reminderSectionTitle: String {
+        if message.reminderResults.allSatisfy({ $0.state == .overdue }) { return "Overdue" }
+        return "Reminders"
+    }
+
+    private func openReminders() {
+        guard let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: "com.apple.reminders")
+        else { return }
+        NSWorkspace.shared.openApplication(
+            at: url, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    private func reminderColor(_ state: ReminderResultAction.State) -> Color {
+        switch state {
+        case .overdue: return .red
+        case .deleted: return .orange
+        case .completed: return .green
+        case .created: return .blue
+        case .active: return .orange
+        }
+    }
+
+    private func reminderIcon(_ state: ReminderResultAction.State) -> String {
+        switch state {
+        case .overdue: return "exclamationmark"
+        case .deleted: return "trash"
+        case .completed: return "checkmark"
+        case .created: return "plus"
+        case .active: return "circle"
+        }
+    }
+
+    private func reminderLabel(_ state: ReminderResultAction.State) -> String {
+        switch state {
+        case .overdue: return "Overdue"
+        case .deleted: return "Deleted"
+        case .completed: return "Completed"
+        case .created: return "Created"
+        case .active: return "Reminder"
+        }
+    }
+
+    @ViewBuilder
+    private var browserTabRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Open tabs")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(message.browserTabs.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+
+            ForEach(message.browserTabs) { tab in
+                Button {
+                    SafariTabManager.shared.switchTo(
+                        SafariTab(
+                            title: tab.title, url: tab.url,
+                            windowIndex: tab.windowIndex, tabIndex: tab.tabIndex))
+                } label: {
+                    HStack(spacing: 10) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(Color.blue.opacity(0.13))
+                            Image(systemName: "safari")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(.blue)
+                        }
+                        .frame(width: 30, height: 30)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(tab.title.isEmpty ? tab.domain : tab.title)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            Text(tab.domain)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        Text("Window \(tab.windowIndex)")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(.tertiary)
+                        Image(systemName: "arrow.up.forward")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Copy Link", systemImage: "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(tab.url, forType: .string)
+                    }
+                    Button("Open in New Tab", systemImage: "plus.square.on.square") {
+                        SafariTabManager.shared.openURL(tab.url)
+                    }
+                }
+            }
+
+            Label("Live from Safari", systemImage: "arrow.triangle.2.circlepath")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
+        }
+    }
+
+    @ViewBuilder
+    private var pageLinkRows: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Links on this page")
+                        .font(.system(size: 11, weight: .semibold))
+                    if let page = message.pageLinks.first?.pageTitle, !page.isEmpty {
+                        Text(page)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Text("\(message.pageLinks.count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+            }
+
+            ForEach(message.pageLinks.prefix(30)) { link in
+                HStack(spacing: 9) {
+                    Image(systemName: "link")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.blue)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(link.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Text(link.domain)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 6)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(link.url, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini).help("Copy link")
+                    Button {
+                        SafariTabManager.shared.openURL(link.url)
+                    } label: {
+                        Image(systemName: "arrow.up.forward")
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini).help("Open in Safari")
+                }
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+
+            Label("Read locally from Safari Extension", systemImage: "lock.shield")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 3)
+        }
+    }
+
+    /// Pick-one routes as buttons. The same information the bullet list carried, except a
+    /// click runs the route instead of asking the user to retype what they wanted.
+    @ViewBuilder
+    private var actionChoiceButtons: some View {
+        if !message.actionChoices.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(message.actionChoices) { choice in
+                    Button {
+                        onPickAction?(choice)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.tint)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(choice.title)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                Text(
+                                    [choice.appName, choice.routeLabel]
+                                        .compactMap { $0 }
+                                        .joined(separator: " · ")
+                                )
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            Color.primary.opacity(0.06),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    @ViewBuilder
+    private var enableAppButton: some View {
+        if let req = message.enableAppRequest {
+            Button {
+                onEnableApp?(req)
+            } label: {
+                HStack(spacing: 6) {
+                    if let icon = NSWorkspace.shared.urlForApplication(
+                        withBundleIdentifier: req.bundleId).map({
+                            NSWorkspace.shared.icon(forFile: $0.path)
+                        })
+                    {
+                        Image(nsImage: icon)
+                            .resizable().aspectRatio(contentMode: .fit)
+                            .frame(width: 15, height: 15)
+                            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    } else {
+                        Image(systemName: "plus.app")
+                    }
+                    Text("Enable \(req.name) for this chat").fontWeight(.semibold)
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(providerColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(providerColor.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(providerColor.opacity(0.35)))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var evidenceReceiptView: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button {
+                withAnimation(.dockSoft) { isEvidenceExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isEvidenceExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "checkmark.seal")
+                    Text("Evidence · \(message.evidenceReceipts.count) receipt\(message.evidenceReceipts.count == 1 ? "" : "s")")
+                        .fontWeight(.semibold)
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+
+            if isEvidenceExpanded {
+                ForEach(message.evidenceReceipts) { receipt in
+                    HStack(alignment: .top, spacing: 7) {
+                        Image(systemName: receipt.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(receipt.success ? .green : .red)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(receipt.isVerification ? "Verification" : "Action")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.secondary)
+                            Text(receipt.command)
+                                .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                                .textSelection(.enabled)
+                            Text(receipt.observation)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var subjectiveEvaluationView: some View {
+        if let evaluation = message.subjectiveEvaluation {
+            VStack(alignment: .leading, spacing: 5) {
+                Button {
+                    withAnimation(.dockSoft) { isEvaluationExpanded.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isEvaluationExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 8, weight: .bold))
+                        Image(systemName: evaluation.verdict == .pass
+                            ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                        Text(evaluation.verdict == .pass
+                            ? "Independent review · Pass" : "Independent review · Needs revision")
+                            .fontWeight(.semibold)
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(evaluation.verdict == .pass ? .green : .orange)
+                }
+                .buttonStyle(.plain)
+                if isEvaluationExpanded {
+                    Text(evaluation.summary)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                    ForEach(evaluation.issues, id: \.self) { issue in
+                        Label(issue, systemImage: "exclamationmark.circle")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Collapsed record of how the answer was routed. Every line is real work the app did
+    /// (catalog size, chosen path, executed row) — never model reasoning.
+    /// One line describing what the trace did, instead of a bare step count.
+    ///
+    /// Categorised by the prefixes this app writes itself — `dockTraceStep`,
+    /// `actionTraceStep` and `selectionRouterStep` produce every line here — so this reads
+    /// its own vocabulary rather than guessing at arbitrary text. Anything uncategorised
+    /// still counts toward the total, and a trace with nothing recognisable falls back to
+    /// the plain count, so the label can never overstate what happened.
+    static func traceSummary(_ trace: [String]) -> String {
+        var commands = 0
+        var reads = 0
+        for line in trace {
+            let lower = line.lowercased()
+            // Completions only. Each run also emits a "Running …" line first, so counting
+            // both would report one command as two.
+            if lower.hasPrefix("ran ") || lower.hasSuffix(" failed") {
+                commands += 1
+            } else if lower.hasPrefix("reading ") {
+                reads += 1
+            }
+        }
+        var parts: [String] = []
+        if commands > 0 { parts.append("Ran \(commands) command\(commands == 1 ? "" : "s")") }
+        if reads > 0 { parts.append("read \(reads) source\(reads == 1 ? "" : "s")") }
+        guard !parts.isEmpty else {
+            return "\(trace.count) step\(trace.count == 1 ? "" : "s")"
+        }
+        let others = trace.count - commands - reads
+        if others > 0 { parts.append("\(others) more") }
+        return parts.joined(separator: ", ")
+    }
+
+    /// The provider tool labels and the routing trace describe the same completed work.
+    /// Keep one ordered, deduplicated list so the transcript does not expose a second row
+    /// of purple implementation chips beneath the Steps disclosure.
+    static func completedStepLines(trace: [String], toolCalls: [String]) -> [String] {
+        var seen: Set<String> = []
+        return (trace + toolCalls).filter { line in
+            let key = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty, seen.insert(key).inserted else { return false }
+            return true
+        }
+    }
+
+    private var completedStepLines: [String] {
+        Self.completedStepLines(trace: message.trace, toolCalls: message.mcpToolsRan)
+    }
+
+    private var routerTraceView: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.dockSoft) {
+                    isTraceExpanded.toggle()
+                }
+            } label: {
                 HStack(spacing: 5) {
-                    Image(systemName: "cpu")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("ran \(label)")
+                    Image(systemName: isTraceExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text(Self.traceSummary(completedStepLines))
                         .font(.system(size: 11, weight: .medium))
                 }
-                .foregroundStyle(.purple)
+                .foregroundStyle(.secondary)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(Color.purple.opacity(0.12), in: Capsule())
+                .background(Color.primary.opacity(0.05), in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            if isTraceExpanded {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(completedStepLines.enumerated()), id: \.offset) { _, step in
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .fill(Color.secondary.opacity(0.45))
+                                .frame(width: 4, height: 4)
+                                .padding(.top, 5)
+                            Text(step)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .padding(.leading, 10)
+                .padding(.top, 4)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    /// Collapsed script output. Header states the size so the user can judge whether to open it.
+    @ViewBuilder
+    private func runOutputView(_ output: String) -> some View {
+        let lineCount = output.split(separator: "\n", omittingEmptySubsequences: false).count
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.dockSoft) {
+                    isRunOutputExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: isRunOutputExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Image(systemName: "terminal")
+                        .font(.system(size: 9, weight: .semibold))
+                    Text("Output · \(lineCount) line\(lineCount == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.05), in: Capsule())
+            }
+            .buttonStyle(.plain)
+
+            if isRunOutputExpanded {
+                ScrollView {
+                    Text(output)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                }
+                .frame(maxHeight: 220)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.black.opacity(0.35))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08))
+                )
+                .padding(.top, 5)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
     }
@@ -391,10 +1587,26 @@ struct AIChatMessageView: View {
                 if !message.attachments.isEmpty {
                     attachmentChips
                 }
-                // MCP tool-run chips ("ran <tool> via <server>")
-                if !message.mcpToolsRan.isEmpty {
-                    mcpToolChips
+                // Live activity, in the place the answer is about to occupy.
+                if message.role == .assistant, !liveSteps.isEmpty {
+                    LiveAgentProgressView(steps: liveSteps)
                 }
+                // Completed routing and tool activity stays behind one disclosure — the same
+                // work the live view showed while it ran, in the same position, so finishing
+                // collapses the block instead of moving it.
+                if message.role == .assistant, !completedStepLines.isEmpty {
+                    routerTraceView
+                }
+                // Script/terminal output — collapsed. A conversion log is hundreds of lines of
+                // ffmpeg banner the user did not ask to read; it belongs one tap away, not
+                // dumped between two chat bubbles.
+                if let runOutput = message.runOutput, !runOutput.isEmpty {
+                    runOutputView(runOutput)
+                }
+                if !message.evidenceReceipts.isEmpty {
+                    evidenceReceiptView
+                }
+                subjectiveEvaluationView
                 // Detect extension proposal in structuredData
                 if let sd = message.structuredData, message.role == .assistant,
                     let data = sd.data(using: .utf8),
@@ -418,7 +1630,7 @@ struct AIChatMessageView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background { pillBubble(bright: false) }
-                } else {
+                } else if !message.content.isEmpty || isStreaming {
                     HStack(alignment: .bottom, spacing: 4) {
                         MarkdownMessageView(
                             content: message.content.isEmpty && isStreaming ? "" : message.content,
@@ -448,6 +1660,37 @@ struct AIChatMessageView: View {
 
                 if !message.appLaunches.isEmpty {
                     appLaunchButtons
+                }
+
+                if !message.recentFiles.isEmpty {
+                    recentFileRows
+                }
+
+                if !message.noteResults.isEmpty {
+                    noteResultRows
+                }
+
+                if !message.noteTasks.isEmpty {
+                    noteTaskRows
+                }
+
+                if !message.reminderResults.isEmpty {
+                    reminderResultRows
+                }
+
+                if !message.browserTabs.isEmpty {
+                    browserTabRows
+                }
+
+                if !message.pageLinks.isEmpty {
+                    pageLinkRows
+                }
+
+                if message.enableAppRequest != nil {
+                    enableAppButton
+                }
+                if !message.actionChoices.isEmpty {
+                    actionChoiceButtons
                 }
 
                 if message.role == .assistant, let onReplaceText, !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -499,7 +1742,10 @@ struct AIChatMessageView: View {
                     .padding(.top, 5)
                     .padding(.leading, 7)
             }
-            if message.role == .assistant { Spacer(minLength: 52) }
+            // Tool/run confirmations belong to the assistant side too. Previously only
+            // `.assistant` received this spacer, so `.tool` expanded across the row and its
+            // compact success bubble appeared centred.
+            if message.role != .user { Spacer(minLength: 52) }
         }
     }
 
@@ -737,10 +1983,12 @@ struct AILoadingView: View {
         case .googleGemini: return .blue
         case .openAI: return .green
         case .anthropic: return .orange
+        case .claudeCode: return .orange
         case .claudeBridge: return .purple
         case .chatGPTBridge: return .green
         case .ollama: return .cyan
         case .openAICompatible: return .mint
+        case .kimi: return .blue
         case .shortcuts: return .indigo
         }
     }
@@ -748,8 +1996,7 @@ struct AILoadingView: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // AI Avatar - uses provider icon
-            Image(systemName: settings.selectedAIProvider.iconName)
-                .font(.system(size: 16))
+            AIProviderIcon(provider: settings.selectedAIProvider, size: 16)
                 .foregroundStyle(providerColor)
                 .frame(width: 28, height: 28)
                 .background(providerColor.opacity(0.1))
@@ -799,6 +2046,7 @@ struct AdapterApprovalPopupView: View {
     let request: AdapterActionRequest
     @State private var isHoveringAllow = false
     @State private var isHoveringDeny = false
+    @State private var isHoveringAlways = false
 
     private var typeLabel: String {
         switch request.action.type {
@@ -834,7 +2082,7 @@ struct AdapterApprovalPopupView: View {
                 )
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("ILauncher wants to:")
+                    Text("Context Dock wants to:")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
                     Text(request.action.name)
@@ -906,7 +2154,30 @@ struct AdapterApprovalPopupView: View {
             }
             .padding(.horizontal, 18)
             .padding(.top, 14)
-            .padding(.bottom, 18)
+            .padding(.bottom, request.onApproveAlways == nil ? 18 : 10)
+
+            // Standing grant — offered only for non-destructive actions. Browser
+            // Extensions are the main beneficiary: without it a userscript re-prompts
+            // on every single run.
+            if let approveAlways = request.onApproveAlways {
+                Button {
+                    approveAlways()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.shield")
+                        Text("Always allow \(request.action.name) for \(request.adapter.appName)")
+                    }
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isHoveringAlways ? .primary : .secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { isHoveringAlways = $0 }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 14)
+            }
         }
         .frame(width: 460)
         .background(
@@ -1160,6 +2431,7 @@ struct MarkdownMessageView: View {
         enum Kind {
             case text(String)
             case codeBlock(code: String, language: String?)
+            case table(header: [String], rows: [[String]])
         }
         let kind: Kind
     }
@@ -1196,6 +2468,9 @@ struct MarkdownMessageView: View {
 
                 case .codeBlock(let code, let language):
                     CodeBlockView(code: code, language: language)
+
+                case .table(let header, let rows):
+                    MarkdownTableView(header: header, rows: rows)
                 }
             }
         }
@@ -1226,7 +2501,7 @@ struct MarkdownMessageView: View {
 
             let pre = String(src[lastIndex..<matchRange.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !pre.isEmpty { blocks.append(MessageBlock(kind: .text(pre))) }
+            if !pre.isEmpty { blocks.append(contentsOf: Self.splitTables(pre)) }
 
             if match.numberOfRanges >= 3,
                 let langRange = Range(match.range(at: 1), in: src),
@@ -1244,9 +2519,71 @@ struct MarkdownMessageView: View {
         }
 
         let tail = String(src[lastIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if !tail.isEmpty { blocks.append(MessageBlock(kind: .text(tail))) }
+        if !tail.isEmpty { blocks.append(contentsOf: Self.splitTables(tail)) }
 
         return blocks.isEmpty ? [MessageBlock(kind: .text(src))] : blocks
+    }
+
+    /// Pulls Markdown tables out of prose so they can be laid out as a grid.
+    ///
+    /// The text renderer parses with `.inlineOnlyPreservingWhitespace`, which handles bold,
+    /// code and links and drops every *block* construct on the floor. A table therefore
+    /// reached the user as the raw pipes that produced it — `| Surface | Job |` over
+    /// `|---|---|` — which is not a formatting nit: a comparison is the shape an answer
+    /// takes when it has something to compare, and it was arriving unreadable.
+    static func splitTables(_ text: String) -> [MessageBlock] {
+        let lines = text.components(separatedBy: "\n")
+        var blocks: [MessageBlock] = []
+        var prose: [String] = []
+        var index = 0
+
+        func flushProse() {
+            let joined = prose.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !joined.isEmpty { blocks.append(MessageBlock(kind: .text(joined))) }
+            prose.removeAll()
+        }
+
+        func cells(_ line: String) -> [String] {
+            var row = line.trimmingCharacters(in: .whitespaces)
+            if row.hasPrefix("|") { row.removeFirst() }
+            if row.hasSuffix("|") { row.removeLast() }
+            return row.components(separatedBy: "|")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        }
+
+        while index < lines.count {
+            let line = lines[index]
+            // A table is a header row plus a `|---|---|` separator. Requiring the separator
+            // is what keeps a sentence that merely contains a pipe from being eaten.
+            let isRow = line.trimmingCharacters(in: .whitespaces).hasPrefix("|")
+            let separator = index + 1 < lines.count
+                ? lines[index + 1].trimmingCharacters(in: .whitespaces) : ""
+            let isSeparator = separator.range(
+                of: "^\\|?[\\s:-]*-[-\\s:|]*\\|?$", options: .regularExpression) != nil
+                && separator.contains("-") && separator.contains("|")
+
+            guard isRow, isSeparator else {
+                prose.append(line)
+                index += 1
+                continue
+            }
+
+            flushProse()
+            let header = cells(line)
+            var rows: [[String]] = []
+            index += 2
+            while index < lines.count,
+                lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("|")
+            {
+                rows.append(cells(lines[index]))
+                index += 1
+            }
+            blocks.append(MessageBlock(kind: .table(header: header, rows: rows)))
+        }
+
+        flushProse()
+        return blocks
     }
 
     /// Some OpenAI-compatible bridges occasionally return Claude's internal XML-style
@@ -1327,8 +2664,23 @@ struct MarkdownMessageView: View {
             .replacingOccurrences(of: "&amp;", with: "&")
     }
 
+    /// Rewrites the block constructs the inline parser discards into inline ones it keeps.
+    ///
+    /// `## Heading` loses its hashes and its weight, and `- item` loses its bullet — the
+    /// answer arrives as a wall of undifferentiated text. Bold and a real bullet character
+    /// survive inline parsing, so the structure the model wrote is still visible.
+    private static func inlineFriendlyMarkdown(_ text: String) -> String {
+        var out = text.replacingOccurrences(
+            of: "(?m)^\\s{0,3}#{1,6}\\s+(.+?)\\s*$", with: "**$1**",
+            options: .regularExpression)
+        out = out.replacingOccurrences(
+            of: "(?m)^(\\s*)[-*+]\\s+(?!\\s)", with: "$1• ", options: .regularExpression)
+        return out
+    }
+
     @available(macOS 12.0, *)
     private func attributedMarkdown(_ text: String) -> AttributedString {
+        let text = Self.inlineFriendlyMarkdown(text)
         do {
             var attributed = try AttributedString(
                 markdown: text,
@@ -1345,6 +2697,63 @@ struct MarkdownMessageView: View {
 }
 
 // MARK: - Code Block View
+/// A Markdown table, laid out as a grid.
+///
+/// Wide tables scroll inside their own row rather than stretching the bubble: a chat
+/// panel is narrow and fixed, and a comparison with four columns would otherwise push the
+/// whole conversation sideways.
+struct MarkdownTableView: View {
+    let header: [String]
+    let rows: [[String]]
+
+    private var columnCount: Int {
+        max(header.count, rows.map(\.count).max() ?? 0)
+    }
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
+                GridRow {
+                    ForEach(0..<columnCount, id: \.self) { column in
+                        Text(cell(header, column))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                Divider().gridCellUnsizedAxes(.horizontal)
+                ForEach(rows.indices, id: \.self) { index in
+                    GridRow {
+                        ForEach(0..<columnCount, id: \.self) { column in
+                            Text(inline(cell(rows[index], column)))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 10)
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.05)))
+        .textSelection(.enabled)
+    }
+
+    private func cell(_ row: [String], _ column: Int) -> String {
+        column < row.count ? row[column] : ""
+    }
+
+    /// Cells carry their own `**bold**` and `` `code` `` — dropping it would make the
+    /// table less readable than the raw pipes it replaced.
+    private func inline(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}
+
 struct CodeBlockView: View {
     let code: String
     let language: String?
@@ -1538,7 +2947,7 @@ struct CodeBlockView: View {
                 }
 
                 #if DEBUG
-                print("✅ Saved extension to Documents/ILauncher/Extensions")
+                print("✅ Saved extension to Application Support/Context-Dock/Extensions")
                 #endif
 
             } catch {

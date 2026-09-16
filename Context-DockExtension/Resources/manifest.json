@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Context Dock",
-  "version": "1.0",
-  "description": "Sends rich browser context (page text, selected text, scroll position) to Context Dock.",
+  "version": "1.2",
+  "description": "Connects Safari to Context Dock AI with local page text, selections, links, metadata, and safe page actions.",
 
   "icons": {
     "48": "icon-48.png",
@@ -27,17 +27,21 @@
 
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
 
   "permissions": [
     "nativeMessaging",
     "activeTab",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
+
+  "host_permissions": ["http://*/*", "https://*/*"],
 
   "browser_specific_settings": {
     "safari": {

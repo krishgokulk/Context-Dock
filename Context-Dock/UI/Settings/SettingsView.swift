@@ -3,6 +3,7 @@ import AppKit
 
 struct SettingsView: View {
     @State private var selectedPage: SettingsPage = .general
+    @State private var integrationDestination: IntegrationDestination?
     // Sidebar visibility lives in shared chrome state so the native titlebar
     // button (added in AppDelegate) toggles the same value.
     @ObservedObject private var chrome = SettingsChromeState.shared
@@ -17,11 +18,21 @@ struct SettingsView: View {
                 Divider()
             }
 
-            SettingsDetailView(page: selectedPage)
+            SettingsDetailView(
+                page: selectedPage,
+                integrationDestination: integrationDestination
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(NotificationCenter.default.publisher(for: .openSettingsPage)) { note in
+            // The one decoder: typed integration payloads and bare legacy page raw values
+            // both arrive here, and selection plus destination move together.
+            if let destination = SettingsRouteResolver.destination(from: note.userInfo) {
+                integrationDestination = destination
+                selectedPage = .integrations
+                return
+            }
             guard let raw = note.userInfo?["page"] as? String,
                 let page = SettingsPage(rawValue: raw)
             else { return }

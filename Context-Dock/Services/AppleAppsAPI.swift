@@ -326,6 +326,68 @@ class AppleAppsAPI {
         } catch { return nil }
     }
 
+    /// Change the due date and/or priority of several reminders in one pass.
+    ///
+    /// One call rather than one per reminder, because a bulk edit is approved once — see the
+    /// decision "A bulk edit is one approval that names every record".
+    ///
+    /// Returns what the store says *afterwards*, re-read rather than assumed. A reminder whose
+    /// save was rejected simply does not come back, so the answer cannot report a change that
+    /// did not happen.
+    func rescheduleReminders(
+        titles: [String], dueDate: Date?, priority: Int?
+    ) -> [(title: String, dueDate: Date?, priority: Int)] {
+        guard requestReminderAccess() else { return [] }
+        let needles = titles
+            .map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        guard !needles.isEmpty, dueDate != nil || priority != nil else { return [] }
+
+        var changedTitles: [String] = []
+        let writeDone = DispatchSemaphore(value: 0)
+        eventStore.fetchReminders(matching: eventStore.predicateForReminders(in: nil)) {
+            [weak self] reminders in
+            guard let self, let reminders else { writeDone.signal(); return }
+            for needle in needles {
+                // Each title claims its own reminder: matching by `contains` twice over would
+                // otherwise let one reminder answer for two names and silently skip the other.
+                guard let match = reminders.first(where: {
+                    !$0.isCompleted
+                        && ($0.title ?? "").lowercased().contains(needle)
+                        && !changedTitles.contains($0.title ?? "")
+                }) else { continue }
+                if let dueDate {
+                    match.dueDateComponents = Calendar.current.dateComponents(
+                        [.year, .month, .day, .hour, .minute], from: dueDate)
+                }
+                if let priority { match.priority = priority }
+                do {
+                    try self.eventStore.save(match, commit: true)
+                    changedTitles.append(match.title ?? needle)
+                } catch {
+                    continue
+                }
+            }
+            writeDone.signal()
+        }
+        _ = writeDone.wait(timeout: .now() + 8)
+        guard !changedTitles.isEmpty else { return [] }
+
+        var observed: [(title: String, dueDate: Date?, priority: Int)] = []
+        let readDone = DispatchSemaphore(value: 0)
+        eventStore.fetchReminders(matching: eventStore.predicateForReminders(in: nil)) { reminders in
+            for title in changedTitles {
+                guard let match = reminders?.first(where: { ($0.title ?? "") == title }) else {
+                    continue
+                }
+                observed.append((title, match.dueDateComponents?.date, match.priority))
+            }
+            readDone.signal()
+        }
+        _ = readDone.wait(timeout: .now() + 6)
+        return observed
+    }
+
     private func modifyReminder(
         matchingTitle: String, _ change: @escaping (EKReminder) -> Void
     ) -> String? {
@@ -875,8 +937,12 @@ class AppleAppsAPI {
         return createNote(title: noteTitle, body: body, folder: folder)
     }
 
-    func composeMail(subject: String, body: String) -> Bool {
-        var components = URLComponents(string: "mailto:")!
+    /// Opens a composer with the message filled in. Deliberately built on `mailto:` rather
+    /// than AppleScript: a mailto URL has no send verb, so this path *cannot* send, whatever
+    /// a model asks for. The user presses Send, or nothing is sent.
+    func composeMail(to recipient: String = "", subject: String, body: String) -> Bool {
+        let trimmedRecipient = recipient.trimmingCharacters(in: .whitespacesAndNewlines)
+        var components = URLComponents(string: "mailto:\(trimmedRecipient)")!
         var queryItems: [URLQueryItem] = []
         if !subject.isEmpty {
             queryItems.append(URLQueryItem(name: "subject", value: subject))
@@ -941,6 +1007,37 @@ class AppleAppsAPI {
             }
         }
         return emails
+    }
+
+    /// The message the user currently has selected, or nil when Mail is not running, no
+    /// viewer is open, or nothing is selected. Never launches Mail to read — the same rule
+    /// getRecentEmails follows.
+    func getSelectedEmail() -> [String: Any]? {
+        guard Self.isRunning("com.apple.mail") else { return nil }
+        let script = """
+            tell application "Mail"
+                if (count of message viewers) is 0 then return ""
+                set viewerRef to item 1 of message viewers
+                set selectedMsgs to selected messages of viewerRef
+                if (count of selectedMsgs) is 0 then return ""
+                set m to item 1 of selectedMsgs
+                set msgBody to ""
+                try
+                    set msgBody to content of m
+                end try
+                return (subject of m) & "|||" & (sender of m) & "|||" & \
+                    ((date received of m) as text) & "|||" & msgBody
+            end tell
+            """
+        guard let result = runAppleScript(script), !result.isEmpty else { return nil }
+        let parts = result.components(separatedBy: "|||")
+        guard parts.count >= 3 else { return nil }
+        return [
+            "subject": parts[0],
+            "sender": parts[1],
+            "date": parts[2],
+            "body": parts.count >= 4 ? parts[3] : "",
+        ]
     }
 
     // MARK: - Helper

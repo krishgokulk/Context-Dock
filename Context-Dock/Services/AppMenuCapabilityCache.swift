@@ -534,10 +534,33 @@ final class AppMenuCapabilityCache {
         if removed { scheduleSaveToDisk() }
     }
 
+    /// One app's own Open Recent entries, from the cached menu snapshot.
+    ///
+    /// `snapshots` is keyed by bundle identifier, but the cross-app accessor below flattens
+    /// every app together and loses that association — so a question about one app's recent
+    /// files could only be answered with a mixed list that had to be disclaimed as "not this
+    /// app's". Reading one snapshot keeps the association, needs no Full Disk Access (unlike
+    /// the on-disk sfl3 lists), and works whether or not the app is running.
+    nonisolated func resolvedRecentDocumentURLs(
+        bundleIdentifier: String, limit: Int = 40
+    ) -> [URL] {
+        guard !bundleIdentifier.isEmpty else { return [] }
+        lock.lock()
+        let records = snapshots[bundleIdentifier]?.records ?? []
+        lock.unlock()
+        return resolveExistingFileURLs(from: records, limit: limit)
+    }
+
     nonisolated func resolvedRecentDocumentURLs(limit: Int = 120) -> [URL] {
         lock.lock()
         let records = snapshots.values.flatMap(\.records)
         lock.unlock()
+        return resolveExistingFileURLs(from: records, limit: limit)
+    }
+
+    private nonisolated func resolveExistingFileURLs(
+        from records: [AppMenuCapabilityRecord], limit: Int
+    ) -> [URL] {
 
         var seen = Set<String>()
         return records

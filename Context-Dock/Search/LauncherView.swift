@@ -38,6 +38,16 @@ struct LauncherView: View {
     @State var clipboardSourcePillFocusIndex: Int? = nil
     // Running apps explicitly shared with General AI chat from the app picker.
     @State var chatFocusApps: [GeneralChatFocusApp] = []
+    /// The newest thing this general-chat session built, if it built one.
+    ///
+    /// The dock throws no window at the user here: the sheet is where they asked, so the
+    /// artifact arrives as a button beside Clear and opens only when pressed. Session
+    /// state, not a store read — an artifact from a thread that has since been cleared is
+    /// not something this composer should still be offering.
+    @State var generalChatArtifact: URL? = nil
+    /// True while a submitted dock turn is carrying files or captured text. Early routes
+    /// check it so an attachment is never dropped without the user being told.
+    @State var pendingAttachmentTurn = false
     @State var isShowingChatFocusAppPicker = false
     @State var hoveredChatFocusBundleId: String? = nil
     // Max visible list height: rows beyond this scroll inside the glass card.
@@ -102,19 +112,25 @@ struct LauncherView: View {
     }
     @State var livePanelMode: LivePanelMode = .results([])
     @State var livePanelVisible: Bool = false  // drives the slide-in animation
+    /// One cancellable idle timer for a batch of Global Context quit actions. Keeping
+    /// this in the view avoids polling and makes a second quit simply reset the timer.
+    @State var globalQuitIdleDismissTask: Task<Void, Never>?
+    @State var globalQuitIdleDismissGeneration: Int = 0
     @State var qlRightClickPos: CGPoint? = nil  // position for QL pill context menu
     @State var panelTerminalHost: TerminalHostController? = nil
     @ObservedObject var workerPool = BackgroundWorkerPool.shared
     @ObservedObject var miniPlayer = MiniPlayerController.shared
     @StateObject var mediaDockEngine = MediaDockEngine.shared
     @State var l2 = L2State()
+    /// The dock chat's messages live in an object now, so the view has to watch it: a
+    /// mutation through `l2.chatMessages` no longer invalidates this view by itself.
+    @ObservedObject var chatConversation = AppChatConversation.shared
     @ObservedObject var contactManager = ContactSearchManager.shared
     @ObservedObject var systemDataManager = SystemDataSearchManager.shared
     @ObservedObject var terminalBridge = TerminalAIBridge.shared
     @ObservedObject var terminalPackageManager = TerminalPackageManager.shared
+    @ObservedObject var cliScopeTerminal = CLIScopeTerminalManager.shared
     @ObservedObject var adapterManager = AppAdapterManager.shared
-    @ObservedObject var windowReviewService = RunningAppPreviewService.shared
-    @State var windowReviewFocusedID: String? = nil
 
     @ObservedObject var notificationManager = ILauncherNotificationManager.shared
     @ObservedObject var usageStore = AIProviderUsageStore.shared
@@ -171,8 +187,46 @@ struct LauncherView: View {
     /// selection jumped surfaces, and clicking the selection icon in Context Dock threw the user
     /// out of it.
     @State var selectionScopePayload: GlobalContextActivation?
+    /// Hotkey-opened Selection Scope starts as a bare compact bar (input + selection pill only),
+    /// matching the idle launcher shell. Typing — or ↓ — unfolds the actions sheet. Entering the
+    /// scope from the selection button keeps the sheet open immediately, as before.
+    @State var selectionScopeSheetCollapsed = false
+    /// True only when the frozen selection came from a writable text control, so "Replace text"
+    /// is offered for a Mail draft or code editor but not for Finder files or a read-only page.
+    @State var selectionScopeSourceAcceptsReplacement = false
+    /// Set by the Selection Scope router when it ran a real row, so the answer path knows the
+    /// work actually happened (and may attach app buttons). Nil means nothing executed.
+    @State var selectionRouterExecutedRouteTitle: String?
+    /// Set when the router checked the whole catalog and found no route — turns the fallback
+    /// answer into "here's the gap, here's the extension" instead of a guess.
+    @State var selectionRouterNoRouteNote: String?
+    /// Recipient remembered by the `deliver.email` route while the answer is still being written.
+    /// The finished text becomes the draft body, so "summarise this and mail it to X" is one
+    /// request instead of two disconnected ones.
+    @State var selectionRouterPendingEmail: PendingSelectionEmail?
+    /// Activation generation already entered, so the window-open handler and the posted
+    /// activation don't both rebuild the surface for one hotkey press.
+    @State var lastAppliedSelectionActivation: Int = -1
+    /// Cloud-consent request rendered inline in the chat (instead of the floating window)
+    /// whenever a chat surface is already on screen.
+    @State var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval?
+    @State var pendingCapabilityApproval: AICapabilityApprovalCenter.PendingApproval?
+    /// Adapter / menu-command approval rendered inline in the chat (instead of the
+    /// floating panel) whenever a chat surface is already on screen.
+    @State var pendingAdapterApproval: AdapterActionRequest?
+    /// Candidates behind the pick-one buttons on the last answer, kept so a click runs the
+    /// exact route that was offered.
+    @State var pendingActionCandidates: [DoraXActionCandidate] = []
+    @State var pendingActionQuery: String = ""
+    /// "This scope has no tool for that" offer — link an installed CLI, or install one.
+    @State var pendingCapabilityGap: CapabilityGapService.Gap?
+    @State var capabilityGapWorking = false
     @State var lastAppliedDockHeightPreset: DockHeightPreset?
     @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
+    /// Global Context's collapsed⇄expanded phase at the last applied frame. The height preset
+    /// and surface mode both stay put across that transition, so without this the resize
+    /// cannot tell it apart from a row appearing.
+    @State var lastAppliedGlobalTypingPhase: GlobalContextTypingPhase?
     // Visible shell height is staged separately from the NSWindow's target capacity so the
     // input stays pinned while only the area beneath it animates open/closed.
     @State var renderedDockHeight: CGFloat?
@@ -289,6 +343,30 @@ struct LauncherView: View {
     // Combined search pool
     var allItems: [SearchResult] {
         allApplications + cliToolSearchResults + systemCommandSearchResults
+            + userExtensionSearchResults
+    }
+
+    /// User-authored Global Context extensions. Unlike a command, picking one opens a
+    /// floating panel (the same window class as Quick Note) rather than running once.
+    var userExtensionSearchResults: [SearchResult] {
+        UserGlobalExtensionStore.shared.enabledExtensions.map { ext in
+            var result = SearchResult(
+                title: ext.name,
+                subtitle: "userext://\(ext.id.uuidString)",
+                icon: NSImage(systemSymbolName: ext.icon, accessibilityDescription: ext.name),
+                action: {
+                    ExtensionPanelManager.shared.open(ext)
+                },
+                type: .extensionCommand,
+                filePath: nil,
+                contactData: nil,
+                displayBadges: [ext.aiEnabled ? "Extension · AI" : "Extension"],
+                showsTypeLabel: false,
+                stableID: "userext://\(ext.id.uuidString)"
+            )
+            result.dismissesLauncher = true
+            return result
+        }
     }
 
     /// Synthetic Homebrew search result — shows up when user types "brew" or "homebrew".
@@ -312,11 +390,12 @@ struct LauncherView: View {
         )
     }
 
-    /// Registered CLI tools appear in search results alongside applications.
+    /// CLI tools the user added appear in search results alongside applications. `packages`
+    /// also holds every executable found on PATH, which must not be searchable as a scope.
     var cliToolSearchResults: [SearchResult] {
         return TerminalPackageManager.shared.packages
             .filter(\.isEnabled)
-            .filter(isUserAddedGlobalCLITool)
+            .filter(TerminalPackageManager.shared.isUserAddedGlobalScope)
             .map { pkg in
                 let isTUI = TerminalAIBridge.shared.isTUICommand(pkg.command)
                 let symbolName = isTUI ? "terminal.fill" : "arrow.right.square.fill"
@@ -422,7 +501,7 @@ struct LauncherView: View {
 
     var isCompactSmartScope: Bool {
         guard let key = searchState.activeSmartQueryKey else { return false }
-        return key == "clipboard" || key == "notifications" || key == "windows"
+        return key == "clipboard" || key == "notifications"
     }
 
     var hasSecondaryDockContentBesideInput: Bool {
@@ -554,6 +633,10 @@ struct LauncherView: View {
             && searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return isGlobalContextActive
             && !hasSelectionScopeSurface
+            // Browsing a folder is file search by definition — the folder's contents are
+            // the surface. Falling back to app search there collapsed the sheet the moment
+            // the field was cleared on entry.
+            && !isBrowsingFinderFolder
             && !clipboardClaimsSurface
             && l2.targetApp == nil
             && !explicitFinderScope
@@ -565,6 +648,16 @@ struct LauncherView: View {
             && !isContextDockChatRoutingLocked
     }
 
+    /// True when the dock has a conversation on screen to put a card in.
+    ///
+    /// ApprovalCenter decides which surface owns a request; this is the dock's half of
+    /// the answer — with no chat open there is nowhere inline to draw one, and the
+    /// floating panel is the honest fallback rather than a card nobody can see.
+    var dockOwnsInlineApproval: Bool {
+        guard ApprovalCenter.shared.frontmostSurface == .dock else { return false }
+        return aiMode.isActive || shouldShowContextDockChatSheet || l2.chatArmed
+    }
+
     var shouldShowSeparateActionList: Bool {
         guard showContextInDock,
             !showMediaLayer,
@@ -573,17 +666,30 @@ struct LauncherView: View {
             shouldShowL2UnifiedDockRow
         else { return false }
 
-        // Selection Scope always shows its result sheet (Ask AI + actions + share), even with
-        // an empty query — so it's visible the moment the launcher opens with a selection.
+        // Selection Scope shows its result sheet (Ask AI + actions + share) on an empty query too,
+        // except when it was opened by the dedicated hotkey — that entry starts as a compact bar
+        // and unfolds on the first keystroke (or ↓).
         if hasSelectionScopeSurface {
-            return !aiMode.isActive
+            guard !aiMode.isActive else { return false }
+            let selectionQuery = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if selectionQuery.isEmpty { return !selectionScopeSheetCollapsed }
+            // Any typed query opens the sheet. With no menu/extension match it holds just the
+            // Ask AI row, which is the stable way into selection-grounded chat — one row is a
+            // destination, not an empty state.
+            return true
         }
 
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         // Finder desktop-only mode is a dedicated file-search scope. Once the user types,
         // it owns the result sheet even while its fast index or Spotlight enrichment is
         // publishing rows; never collapse back to the input capsule between snapshots.
-        if isFinderDesktopOnlyMode && !q.isEmpty { return true }
+        // Finder desktop file search owns the sheet whenever it has something to show:
+        // once the user types, and — this is the browse case — whenever a folder has been
+        // drilled into, where the field is empty on purpose and the folder's contents are
+        // the list. Without the browse clause the rows existed and were rendered into a
+        // layout that has no room for them, which showed as a sliver of one row under the
+        // input.
+        if isFinderDesktopOnlyMode && (!q.isEmpty || isBrowsingFinderFolder) { return true }
         if shouldUsePureGlobalAppSearch {
             let hasExtensionScope =
                 currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
@@ -735,7 +841,20 @@ struct LauncherView: View {
             return current
         }
         if hasSelectionScopeSurface {
-            return current
+            // Hold the previous matching rows while a keystroke rebuild is still resolving —
+            // otherwise the sheet blanks between snapshots and the rows visibly jump.
+            guard isResolvingDockPills(for: q) else { return current }
+            let previous = selectionScopedDockPills(cachedDockPills).filter { pill in
+                guard !pill.isSeparator else { return false }
+                return dockPillHasQuerySignal(
+                    pill,
+                    query: q,
+                    rawQuery: q,
+                    scopedBundleId: "com.apple.finder",
+                    scopedAppName: "Finder"
+                )
+            }
+            return previous.contains(where: { !$0.isSeparator }) ? previous : current
         }
         let preview = selectionScopedDockPills(contextDockPreviewPills(for: query))
         if preview.contains(where: { !$0.isSeparator }) {
@@ -772,10 +891,10 @@ struct LauncherView: View {
         let appName = l2.targetApp?.name ?? frontmost.name
         var pill = DockPill(
             id: "context-fallback-ai-\(normalizedDockPillText(q))",
-            name: "Ask \(appName)",
-            icon: "bubble.left.and.bubble.right",
+            name: q.isEmpty ? "Ask AI" : "Ask AI: \(q)",
+            icon: "sparkles",
             accentColorName: "purple",
-            badge: nil,
+            badge: appName.isEmpty ? nil : appName,
             execute: {
                 guard !q.isEmpty else { return }
                 dismissMediaLayer()
@@ -1310,48 +1429,179 @@ struct LauncherView: View {
 
         }
         .onReceive(adapterManager.$pendingApproval) { pending in
+            // Where this belongs is ApprovalCenter's decision now — the same one the chat
+            // window and the preview ask. This block only carries it out: show the card
+            // here, or open the floating panel when no surface will draw it.
             DispatchQueue.main.async {
+                let mine = ApprovalCenter.shared.pending(for: .dock) != nil
                 if let pending {
-                    openAdapterApprovalWindow(request: pending)
+                    if mine, dockOwnsInlineApproval {
+                        AdapterApprovalWindowHost.close()
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            pendingAdapterApproval = pending
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    } else if ApprovalCenter.shared.needsFloatingWindow, !dockOwnsInlineApproval {
+                        pendingAdapterApproval = nil
+                        openAdapterApprovalWindow(request: pending)
+                    } else {
+                        // Another surface draws it.
+                        pendingAdapterApproval = nil
+                        AdapterApprovalWindowHost.close()
+                    }
                 } else {
+                    if pendingAdapterApproval != nil {
+                        withAnimation(.dockSoft) {
+                            pendingAdapterApproval = nil
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    }
                     AdapterApprovalWindowHost.close()
                 }
             }
         }
         .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
             if let pending {
-                openAICapabilityApprovalWindow(pending: pending)
+                if dockOwnsInlineApproval {
+                    AICapabilityApprovalWindowHost.close()
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        pendingCapabilityApproval = pending
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                } else if ApprovalCenter.shared.needsFloatingWindow {
+                    pendingCapabilityApproval = nil
+                    openAICapabilityApprovalWindow(pending: pending)
+                } else {
+                    pendingCapabilityApproval = nil
+                    AICapabilityApprovalWindowHost.close()
+                }
             } else {
+                if pendingCapabilityApproval != nil {
+                    withAnimation(.dockSoft) {
+                        pendingCapabilityApproval = nil
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                }
                 AICapabilityApprovalWindowHost.close()
             }
         }
         .onReceive(AIPrivacyApprovalCenter.shared.$pending) { pending in
+            // Prefer the inline card whenever a chat surface is on screen — a separate floating
+            // window covered the dock and hid the context the question is about.
             if let pending {
-                openAIPrivacyApprovalWindow(pending: pending)
+                if dockOwnsInlineApproval {
+                    AIPrivacyApprovalWindowHost.close()
+                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                        pendingPrivacyApproval = pending
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                } else if ApprovalCenter.shared.frontmostSurface == .dock {
+                    pendingPrivacyApproval = nil
+                    openAIPrivacyApprovalWindow(pending: pending)
+                } else {
+                    pendingPrivacyApproval = nil
+                    AIPrivacyApprovalWindowHost.close()
+                }
             } else {
+                if pendingPrivacyApproval != nil {
+                    withAnimation(.dockSoft) {
+                        pendingPrivacyApproval = nil
+                    }
+                    requestWindowSizeUpdate(reason: .chatChanged)
+                }
                 AIPrivacyApprovalWindowHost.close()
             }
         }
         .onReceive(TerminalAIBridge.shared.$pendingApproval) { pending in
-            if let pending = pending {
+            // Only what this surface asked for. A card from the chat window landing here
+            // is someone else's conversation appearing in the user's.
+            if let pending = pending, pending.origin == .dock {
+                // A CLI scope is a real command workspace, not an app adapter. Keep its
+                // live status honest while the approval card is on screen.
+                let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                    || l2.targetApp?.bundleId.hasPrefix("cli://") == true
+                if isCLIScope, l2.isLoading {
+                    l2.loadingStatus = "Waiting for your approval to run \(pending.command)…"
+                }
                 let risk = pending.classification.riskLevel.displayName
                 let approvalMsg = AIChatMessage(
                     role: .approval,
                     content: pending.command,
                     structuredData: "\(pending.purpose)|||/\(risk)"
                 )
-                if l2.targetApp != nil || showContextInDock {
+                // An explicit app / CLI scope owns its entire conversation, including
+                // on-device tool approvals.  Checking L2 first used to send this card
+                // to an invisible L2 transcript while the visible scoped chat remained
+                // stuck on its empty streaming placeholder.
+                if searchState.activeSmartQueryKey != nil {
+                    let alreadyShown = remPanelChatMessages.contains {
+                        $0.role == .approval && $0.content == pending.command
+                    }
+                    if !alreadyShown {
+                        appendPanelMessage(approvalMsg)
+                    }
+                    if let statusIndex = remPanelChatMessages.lastIndex(where: {
+                        $0.role == .assistant
+                            && $0.structuredData == "on-device-status"
+                    }) {
+                        let status = remPanelChatMessages[statusIndex]
+                        remPanelChatMessages[statusIndex] = AIChatMessage(
+                            id: status.id,
+                            role: .assistant,
+                            content: "Waiting for your approval to run the command below…",
+                            structuredData: "on-device-status"
+                        )
+                    }
+                } else if l2.targetApp != nil || showContextInDock {
                     // L2 app scope active — show inline in L2 chat
                     l2.chatMessages.append(approvalMsg)
-                } else if searchState.activeSmartQueryKey != nil {
-                    // Legacy panel fallback
-                    remPanelChatMessages.append(approvalMsg)
                 } else {
                     openCommandApprovalWindow(pending: pending)
                 }
             } else {
                 // Close popup if one was open (for non-panel contexts)
                 CommandApprovalWindowHost.close()
+            }
+        }
+        .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
+            // A capability approval is a second, separate way a turn can block — its own
+            // window, its own centre, nothing to do with TerminalAIBridge. The status line
+            // watched only the bridge, so a chat waiting on this window kept displaying
+            // whatever stage set it last ("Checking that actually happened…") and read as a
+            // hang while the answer was one click away, behind a window the dock had put on
+            // screen itself.
+            guard l2.isLoading else { return }
+            if let pending {
+                l2.loadingStatus =
+                    "Waiting for your approval — \(pending.capability.title.lowercased())…"
+            } else if l2.loadingStatus?.hasPrefix("Waiting for your approval") == true {
+                l2.loadingStatus = "Working…"
+            }
+        }
+        .onReceive(TerminalAIBridge.shared.$currentCommand) { command in
+            // TerminalAIBridge is the authoritative execution signal. Updating from it
+            // avoids fake timer-based progress and keeps the CLI agent transcript aligned
+            // with the actual approval/execution lifecycle.
+            let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                || l2.targetApp?.bundleId.hasPrefix("cli://") == true
+            guard isCLIScope else { return }
+
+            let status = command.map { "Running \($0)…" } ?? "Reading command result…"
+            if l2.isLoading {
+                l2.loadingStatus = status
+            }
+            if remPanelIsProcessing,
+                let statusIndex = remPanelChatMessages.lastIndex(where: {
+                    $0.role == .assistant && $0.structuredData == "on-device-status"
+                })
+            {
+                let message = remPanelChatMessages[statusIndex]
+                remPanelChatMessages[statusIndex] = AIChatMessage(
+                    id: message.id,
+                    role: .assistant,
+                    content: status,
+                    structuredData: "on-device-status"
+                )
             }
         }
     }
@@ -1970,6 +2220,35 @@ struct LauncherView: View {
     /// Finder desktop-scope Enter: open the keyboard-focused row, else the first visible
     /// file/folder result. Pure file search — no app-launch fallback, no menu routing.
     @discardableResult
+    /// File behind the pill the user has arrow-keyed to, if that pill stands for one.
+    /// Returns nil unless keyboard navigation is active, which is what keeps Space a
+    /// normal character while the user is still typing a query.
+    func focusedPillPreviewPath() -> String? {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let pills = renderedOrderDockPills(for: q)
+        if let idx = l2.focusedPillIndex, idx < pills.count, !pills[idx].isSeparator {
+            return pills[idx].previewPath
+        }
+        // Nothing arrow-selected yet: a file scope still highlights its first row, so
+        // Space should preview that. Requiring a keypress first meant Space did
+        // nothing on a freshly opened Screenshots scope.
+        guard isActiveCustomListFileScope else { return nil }
+        return pills.first(where: { !$0.isSeparator && $0.previewPath != nil })?.previewPath
+    }
+
+    /// Every previewable file currently listed, so Quick Look can walk the scope.
+    func visiblePreviewPaths() -> [String] {
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return renderedOrderDockPills(for: q).compactMap { $0.previewPath }
+    }
+
+    /// True when the current scope is a list extension whose rows are files.
+    var isActiveCustomListFileScope: Bool {
+        guard activeCustomListScopeCommand != nil else { return false }
+        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return renderedOrderDockPills(for: q).contains { $0.previewPath != nil }
+    }
+
     func executeFirstVisibleFinderDesktopPillIfNeeded() -> Bool {
         let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let displayed = renderedOrderDockPills(for: q)
@@ -2404,6 +2683,37 @@ struct LauncherView: View {
             return nil
         }
 
+        // Pure global app search: the ghost MUST resolve to the SAME app Enter launches
+        // (launchTypedAppMatchIfNeeded). Previously it fell through to crossAppMenuPills,
+        // so the ghost/icon showed an app while Enter — which runs the ghost pill first —
+        // fired an unrelated cross-app menu command, launching a random app. Build the
+        // ghost from the same app completion Enter uses so text, icon and Enter all agree.
+        if shouldUsePureGlobalAppSearch {
+            let runningOnly =
+                contextDockRunningOnlyAppMatching && !contextDockInstalledAppScopeMatching
+            guard
+                let completion = bestL2PartialAppCompletion(for: lower, runningOnly: runningOnly),
+                completion.actionQuery.isEmpty,
+                !completion.bundleId.isEmpty,
+                completion.appName.lowercased().hasPrefix(lower),
+                completion.appName.count > searchState.query.count
+            else { return nil }
+            let bid = completion.bundleId
+            let name = completion.appName
+            let iconPath =
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid)?.path ?? ""
+            return DockPill(
+                id: "global-app-ghost-\(bid)",
+                name: name,
+                icon: iconPath.isEmpty ? "app.fill" : iconPath,
+                accentColorName: nil,
+                badge: nil,
+                execute: { [self] in
+                    _ = self.launchApplication(bundleIdentifier: bid, appName: name)
+                }
+            )
+        }
+
         // Frontmost-scoped sources: cached pills + frontmost menu cache.
         // Skip in pure global app search — not frontmost-scoped there.
         if !shouldUsePureGlobalAppSearch {
@@ -2644,6 +2954,8 @@ struct LauncherView: View {
         if !dismissedFinderPaths.isEmpty {
             dismissedFinderSelectionSignature = finderSelectionSignature(dismissedFinderPaths)
         }
+        AppDelegate.shared?.clearSmartScope(key: "selection")
+        if hasSelectionScopeSurface { exitSelectionScopeAIChat() }
         withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
             currentContext = .none
             globalContextActivation = nil
@@ -2660,6 +2972,11 @@ struct LauncherView: View {
     func dismissSelectionAndStayInGlobalContext() {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
+        // Hotkey-opened scopes park their key on the delegate; drop it so the shortcut re-enters
+        // Selection Scope instead of reading as a toggle-off and hiding the dock.
+        AppDelegate.shared?.clearSmartScope(key: "selection")
+        selectionScopeSheetCollapsed = false
+        exitSelectionScopeAIChat()
         let payloadToKeepLive = selectionScopePayload
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
             if let payload = payloadToKeepLive {
@@ -2712,27 +3029,57 @@ struct LauncherView: View {
     func selectionChipView(icon: String, label: String, onDismiss: @escaping () -> Void)
         -> some View
     {
-        HStack(spacing: 4) {
+        // One capsule owns the leading slot in Selection Scope — same shape language as the
+        // app/clipboard scope chips, green accent. The standalone leading glyph is suppressed
+        // by shouldHideStandaloneLeadingIcon(compactScopeKey:) so this is the only selection mark.
+        let accent = SwiftUI.Color.green
+        let chipTextColor: SwiftUI.Color =
+            systemColorScheme == .dark
+            ? SwiftUI.Color.white.opacity(0.94)
+            : SwiftUI.Color.black.opacity(0.82)
+        HStack(spacing: 6) {
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.green.opacity(0.85))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(accent)
+                .frame(width: 18, height: 18)
             Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.primary.opacity(0.75))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(chipTextColor)
                 .lineLimit(1)
-                .frame(maxWidth: 130)
+                .truncationMode(.middle)
+                .frame(maxWidth: 180, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             Button(action: onDismiss) {
                 Image(systemName: "minus")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(chipTextColor)
+                    .frame(width: 16, height: 16)
+                    .background(
+                        chipTextColor.opacity(systemColorScheme == .dark ? 0.14 : 0.10),
+                        in: Circle())
             }
             .buttonStyle(.plain)
+            .help("Remove selection scope")
+            .opacity(0.72)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(Color.green.opacity(0.10), in: Capsule())
-        .overlay(Capsule().strokeBorder(Color.green.opacity(0.25), lineWidth: 0.5))
-        .transition(.scale(scale: 0.85).combined(with: .opacity))
+        .padding(.leading, 8)
+        .padding(.trailing, 6)
+        .padding(.vertical, 4)
+        .background(.regularMaterial, in: Capsule(style: .continuous))
+        .background(
+            accent.opacity(systemColorScheme == .dark ? 0.26 : 0.16),
+            in: Capsule(style: .continuous)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(
+                    accent.opacity(systemColorScheme == .dark ? 0.46 : 0.32), lineWidth: 0.8)
+        )
+        .shadow(
+            color: accent.opacity(systemColorScheme == .dark ? 0.26 : 0.14),
+            radius: 8, x: 0, y: 2
+        )
+        .transition(.scale(scale: 0.86, anchor: .leading).combined(with: .opacity))
     }
 
     // Shared condition: whether any results panel should be visible.
@@ -2770,8 +3117,11 @@ struct LauncherView: View {
     }
 
     var hasResultsToShow: Bool {
-        guard !shouldSuppressIdleBottomResultsPanel else { return false }
         guard !showMediaLayer else { return false }
+        // A browsed folder always has something to show — even an empty one, which has to
+        // say so rather than silently collapsing back to the search field.
+        if isBrowsingFinderFolder { return true }
+        guard !shouldSuppressIdleBottomResultsPanel else { return false }
         if hasExpandedGlobalContextResults { return true }
         if showContextInDock && currentDockSurfaceMode == .contextDock {
             return shouldShowSeparateActionList
@@ -2926,7 +3276,7 @@ struct LauncherView: View {
             ZStack(alignment: .topTrailing) {
                 DLogoButton(
                     action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+                        withAnimation(.dockSheet) {
                             showNotificationDock.toggle()
                             if showNotificationDock { notifDockTab = 0 }
                         }
@@ -3180,31 +3530,6 @@ struct LauncherView: View {
     }
 
     @discardableResult
-    func activateSelectedApplicationScopeFromRightArrowIfPossible() -> Bool {
-        guard searchInputCursorIsAtEnd(),
-            let index = searchState.selectedIndex,
-            searchState.results.indices.contains(index)
-        else { return false }
-
-        let result = searchState.results[index]
-        if isGlobalContextActive,
-            result.type == .extensionCommand,
-            result.subtitle.hasPrefix("syscmd://")
-        {
-            let activated = activateGlobalInlineScope(result: result, bundleID: result.subtitle)
-            if activated {
-                focusedAppPillIndex = nil
-                l2.focusedPillIndex = nil
-                reclaimSearchInputFocus()
-            }
-            return activated
-        }
-        guard !isGlobalContextActive,
-            result.type == .application || result.type == .cliTool
-        else { return false }
-        activateSearchContext(for: result)
-        return true
-    }
 
     /// Exits the pinned L2 dock scope (l2.targetApp) without clearing other state.
     func exitL2DockScope() {
@@ -3248,7 +3573,7 @@ struct LauncherView: View {
             clearPinnedResults()
             searchState.results = []
             searchState.selectedIndex = nil
-            selectedClipboardEntryIDs.removeAll()
+            clearClipboardSelection()
             focusedClipboardEntryIndex = nil
             livePanelVisible = false
             if !preserveQuery {

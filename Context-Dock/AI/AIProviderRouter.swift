@@ -58,6 +58,10 @@ struct AIRequest {
     var includesWorkflowCapabilities = false
     var additionalContextPrompt = ""
     var providerSelection: AIProviderSelection? = nil
+    /// The product surface this turn is being asked on, when the caller knows it more
+    /// precisely than `source` does — the dock's clipboard, selection and CLI scopes all
+    /// arrive as `.contextDock`, and each has its own skills.
+    var surface: DoraXSurface? = nil
 }
 
 typealias AIContextSnapshot = ContextSnapshot
@@ -100,22 +104,43 @@ private enum AIProviderHTTP {
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await AIProviderService.directSession.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AIServiceError.networkError("Invalid provider response")
-        }
-        // Record live rate-limit usage from the response headers (keyed by host).
-        if let host = url.host {
-            AIProviderUsageStore.shared.record(host: host, headers: http.allHeaderFields)
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
-            if http.statusCode == 401 || http.statusCode == 403 {
-                throw AIServiceError.authenticationFailed("Provider authentication failed")
+        // A busy provider is asked again rather than reported as a failure. Only the send
+        // repeats — this path executes nothing on the user's Mac.
+        for attempt in 1...AIProviderRetry.maxAttempts {
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await AIProviderService.directSession.data(for: request)
+            } catch {
+                guard let delay = AIProviderRetry.delay(forTransport: error, attempt: attempt),
+                    await AIProviderRetry.wait(delay)
+                else { throw error }
+                continue
             }
-            throw AIServiceError.networkError("Provider HTTP \(http.statusCode): \(detail)")
+            guard let http = response as? HTTPURLResponse else {
+                throw AIServiceError.networkError("Invalid provider response")
+            }
+            // Record live rate-limit usage from the response headers (keyed by host).
+            if let host = url.host {
+                AIProviderUsageStore.shared.record(host: host, headers: http.allHeaderFields)
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let detail = String(data: data, encoding: .utf8).map { String($0.prefix(300)) } ?? ""
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    throw AIServiceError.authenticationFailed("Provider authentication failed")
+                }
+                if let delay = AIProviderRetry.delay(
+                    forStatus: http.statusCode, headers: http.allHeaderFields, attempt: attempt),
+                    await AIProviderRetry.wait(delay)
+                {
+                    continue
+                }
+                throw AIServiceError.networkError("Provider HTTP \(http.statusCode): \(detail)")
+            }
+            return data
         }
-        return data
+        throw AIServiceError.networkError(
+            "The provider was busy and did not answer after \(AIProviderRetry.maxAttempts) tries.")
     }
 
     static func chatMessages(
@@ -124,8 +149,7 @@ private enum AIProviderHTTP {
         history: [ChatMessage]
     ) -> [[String: String]] {
         var messages = [["role": "system", "content": contextPrompt]]
-        messages += history.suffix(10)
-            .filter { $0.role != .system }
+        messages += ChatHistoryBudget.fit(history, provider: .openAI)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         messages.append(["role": "user", "content": message])
         return messages
@@ -175,6 +199,25 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
         )
     }
 
+    /// Appended to the system prompt for every OpenAI-compatible endpoint. Subscription bridges
+    /// (VibeProxy → Claude Pro / ChatGPT Plus) serve a coding agent whose own tools run in the
+    /// proxy's sandbox, not on the user's Mac — so left alone it "verifies" by shelling out to
+    /// find/ls in the wrong filesystem and reports the file missing. Point it back at the
+    /// context it was given, and at the one channel that can actually reach this machine.
+    static let hostRuntimeNote = """
+
+
+        ── DoraX runtime ──
+        You are answering inside DoraX on the user's Mac. Any tools you normally have (bash,
+        file read/write, search) run somewhere else and cannot see this Mac — never use them to
+        verify or look for something, and never report a file or page as missing based on them.
+        Everything above is read live from the user's machine and is authoritative. If a fact you
+        need is not there, say it is unavailable rather than searching for it.
+        To make something happen on this Mac, emit the typed JSON call described above (for
+        example {"terminal_call":{"command":"…","purpose":"…"}}); DoraX executes it after the
+        user approves.
+        """
+
     static func sendCompatible(
         request: AIRequest,
         contextPrompt: String,
@@ -187,9 +230,10 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
         if !configuration.apiKey.isEmpty {
             headers["Authorization"] = "Bearer \(configuration.apiKey)"
         }
-        var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
-        messages += request.history.suffix(10)
-            .filter { $0.role != .system }
+        var messages: [[String: Any]] = [
+            ["role": "system", "content": contextPrompt + Self.hostRuntimeNote]
+        ]
+        messages += ChatHistoryBudget.fit(request.history, provider: .openAICompatible)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         let images = AIProviderHTTP.imageData(for: request.attachments)
         if images.isEmpty {
@@ -212,7 +256,10 @@ struct OpenAICompatibleProviderAdapter: AIProviderAdapter {
                 "messages": messages,
                 // No temperature: newer Claude models served through OpenAI-compatible
                 // proxies reject sampling parameters with HTTP 400.
-                "max_tokens": 1000,
+                // 1000 was too tight for subscription bridges: those serve an agent that
+                // narrates before it acts, so replies were cut mid-sentence — and a truncated
+                // {"terminal_call":…} line silently degrades into prose that never executes.
+                "max_tokens": 4096,
             ]
         )
         let response = try JSONDecoder().decode(OpenAIResponse.self, from: data)
@@ -249,8 +296,8 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
         contextPrompt: String,
         configuration: AIProviderAdapterConfiguration
     ) async throws -> String {
-        var messages: [[String: Any]] = request.history.suffix(10)
-            .filter { $0.role != .system }
+        var messages: [[String: Any]] = ChatHistoryBudget
+            .fit(request.history, provider: .anthropic)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         let images = AIProviderHTTP.imageData(for: request.attachments)
         if images.isEmpty {
@@ -280,12 +327,18 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
             ],
             body: [
                 "model": configuration.modelID,
-                "system": contextPrompt,
-                "messages": messages,
-                "max_tokens": 1024,
+                // Cacheable block form: consecutive questions against the same scope share
+                // this system prompt, so the second one reads it at ~0.1× instead of full
+                // price. Below the model's minimum prefix it simply doesn't cache.
+                "system": AnthropicPromptCache.systemBlocks(contextPrompt) ?? contextPrompt,
+                "messages": AnthropicPromptCache.markingLastBlock(messages),
+                // Was 1024 — long answers were cut mid-sentence. Models that think by
+                // default spend part of this budget before writing a word.
+                "max_tokens": 8192,
             ]
         )
         let response = try JSONDecoder().decode(Response.self, from: data)
+        AnthropicPromptCache.logUsage(response.usage, label: "anthropicSend")
         guard let content = response.content.first?.text, !content.isEmpty else {
             throw AIServiceError.emptyResponse("No response from Anthropic")
         }
@@ -294,6 +347,7 @@ struct AnthropicProviderAdapter: AIProviderAdapter {
 
     private struct Response: Decodable {
         let content: [Content]
+        let usage: AnthropicUsage?
         struct Content: Decodable { let text: String }
     }
 }
@@ -313,7 +367,7 @@ struct GeminiProviderAdapter: AIProviderAdapter {
             ["role": "user", "parts": [["text": contextPrompt]]],
             ["role": "model", "parts": [["text": "Understood."]]],
         ]
-        for item in request.history.suffix(10).filter({ $0.role != .system }) {
+        for item in ChatHistoryBudget.fit(request.history, provider: .googleGemini) {
             contents.append([
                 "role": item.role == .assistant ? "model" : "user",
                 "parts": [["text": item.content]],
@@ -332,7 +386,8 @@ struct GeminiProviderAdapter: AIProviderAdapter {
             headers: ["x-goog-api-key": configuration.apiKey],
             body: [
                 "contents": contents,
-                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 1000],
+                // 1000 cut long answers mid-sentence, the same way it did in the tool loop.
+                "generationConfig": ["temperature": 0.7, "maxOutputTokens": 8192],
             ]
         )
         let response = try JSONDecoder().decode(Response.self, from: data)
@@ -366,8 +421,7 @@ struct OllamaProviderAdapter: AIProviderAdapter {
             throw AIServiceError.networkError("Invalid Ollama endpoint")
         }
         var messages: [[String: Any]] = [["role": "system", "content": contextPrompt]]
-        messages += request.history.suffix(10)
-            .filter { $0.role != .system }
+        messages += ChatHistoryBudget.fit(request.history, provider: .ollama)
             .map { ["role": $0.role.rawValue, "content": $0.content] }
         var userMessage: [String: Any] = ["role": "user", "content": request.text]
         let images = AIProviderHTTP.imageData(for: request.attachments).map(\.data)
@@ -379,7 +433,9 @@ struct OllamaProviderAdapter: AIProviderAdapter {
                 "model": configuration.modelID,
                 "messages": messages,
                 "stream": false,
-                "options": ["temperature": 0.7, "num_predict": 1000],
+                // num_predict is Ollama's output cap; 1000 truncated local answers that the
+                // same model completed fine when run from the terminal.
+                "options": ["temperature": 0.7, "num_predict": 8192],
             ],
             timeout: 120
         )
@@ -479,7 +535,48 @@ final class AIProviderRouter {
         )
     }
 
-    func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt: String) async throws -> String {
+    /// Fold the user's Settings-level prompt into whatever system prompt a surface built.
+    /// Applied at the router because every AI surface funnels through here — putting it
+    /// in each caller would guarantee one gets missed.
+    private func withGlobalContext(_ contextPrompt: String) -> String {
+        let global = settings.globalContextPrompt
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !global.isEmpty else { return contextPrompt }
+        guard !contextPrompt.isEmpty else { return global }
+        return "\(global)\n\n\(contextPrompt)"
+    }
+
+    /// The surface a request is being asked on. An explicit one wins; otherwise the request's
+    /// source names it, and a source that maps to no surface (a workflow, an extension) gets
+    /// no surface skills rather than the nearest-looking ones.
+    static func surface(for request: AIRequest) -> DoraXSurface? {
+        if let explicit = request.surface { return explicit }
+        switch request.source {
+        case .globalContext: return .globalContext
+        case .contextDock: return .contextDockChat
+        case .aiChat: return .generalChat
+        case .mediaDock, .extensionSystem, .workflow: return nil
+        }
+    }
+
+    /// Tell a surface which skills steer it. Names and summaries only — the body arrives
+    /// through `skills.read` when a turn needs it.
+    ///
+    /// Applied at the router for the same reason the user's global prompt is: every AI surface
+    /// funnels through here, and doing it per caller guarantees one is missed.
+    private func withSurfaceSkills(_ contextPrompt: String, request: AIRequest) async -> String {
+        guard let surface = Self.surface(for: request) else { return contextPrompt }
+        let block = await MainActor.run {
+            SkillStore.shared.surfaceInstructionsBlock(for: surface)
+        }
+        guard !block.isEmpty else { return contextPrompt }
+        guard !contextPrompt.isEmpty else { return block }
+        return "\(contextPrompt)\n\n\(block)"
+    }
+
+    func sendPrepared(request: AIRequest, provider: AIProvider, contextPrompt rawContextPrompt: String) async throws -> String {
+        let contextPrompt = await withSurfaceSkills(
+            withGlobalContext(rawContextPrompt), request: request)
         if !safetyPolicy.isLocal(provider),
             request.liveContext?.selectedTextCharacterCount ?? 0 > 0,
             !settings.allowSelectedTextCloudSharing
@@ -547,6 +644,15 @@ final class AIProviderRouter {
                 imageURLs: imageURLs
             )
         }
+        // The subscription is reached by running the CLI the user has already signed in to,
+        // so it takes its own path rather than an adapter with no endpoint to point at.
+        if provider == .claudeCode {
+            return try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: request.text, history: request.history),
+                systemPrompt: contextPrompt + liveContextPrompt + attachmentPrompt,
+                model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
+        }
 
         let configuration = try configuration(for: provider, apiKeyOverride: nil)
         return try await adapter(for: provider).send(
@@ -560,11 +666,12 @@ final class AIProviderRouter {
         provider: AIProvider,
         message: String,
         context: UserContext,
-        contextPrompt: String,
+        contextPrompt rawContextPrompt: String,
         apiKeyOverride: String? = nil,
         conversationHistory: [ChatMessage] = [],
         attachments: [AIAttachment] = []
     ) async throws -> String {
+        let contextPrompt = withGlobalContext(rawContextPrompt)
         let request = AIRequest(
             text: message,
             context: context,
@@ -597,6 +704,13 @@ final class AIProviderRouter {
                 history: conversationHistory, imageURLs: imageURLs
             )
         }
+        if provider == .claudeCode {
+            return try await ClaudeCodeCLIService.send(
+                prompt: ClaudeCodeCLIService.promptWithHistory(
+                    message: message, history: conversationHistory),
+                systemPrompt: contextPrompt + attachmentPrompt,
+                model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
+        }
         let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
         return try await adapter(for: provider).send(
             request: request, contextPrompt: contextPrompt + attachmentPrompt,
@@ -616,7 +730,20 @@ final class AIProviderRouter {
         return adapter(for: provider).capabilities
     }
 
-    private func configuration(
+    /// Providers reached by running something on this Mac rather than by calling an
+    /// endpoint. Every send path must intercept these *before* `configuration(for:)`, which
+    /// has no endpoint to hand them and throws.
+    ///
+    /// `.onDevice` was intercepted in both send paths and `.claudeCode` in neither, so the
+    /// subscription answered from AIProviderService and failed with "Provider does not use an
+    /// HTTP adapter" from the router — the same question working or not depending on which
+    /// surface asked it.
+    static let localProviders: Set<AIProvider> = [.onDevice, .claudeCode]
+
+    /// Internal rather than private so a test can assert every other provider actually has an
+    /// endpoint to call. A provider added without one is otherwise only discovered by a person
+    /// typing into it.
+    func configuration(
         for provider: AIProvider,
         apiKeyOverride: String?
     ) throws -> AIProviderAdapterConfiguration {
@@ -638,7 +765,14 @@ final class AIProviderRouter {
                 modelID: settings.selectedAnthropicModel.isEmpty
                     ? AnthropicModelCatalog.defaultModelID : settings.selectedAnthropicModel)
         case .googleGemini:
-            return .init(apiKey: key, endpoint: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", modelID: "gemini-2.0-flash")
+            // Gemini names the model in the path rather than the body, which is why it was
+            // the one provider whose model could not be chosen.
+            let model = settings.selectedGeminiModel.isEmpty
+                ? GeminiModelCatalog.defaultModelID : settings.selectedGeminiModel
+            return .init(
+                apiKey: key,
+                endpoint: GeminiModelCatalog.generateContentEndpoint(model: model),
+                modelID: model)
         case .ollama:
             return .init(
                 apiKey: "",
@@ -654,6 +788,14 @@ final class AIProviderRouter {
                 endpoint: settings.openAICompatibleEndpoint,
                 modelID: settings.openAICompatibleModelID
             )
+        case .kimi:
+            guard !key.isEmpty, !settings.selectedKimiModel.isEmpty else {
+                throw AIServiceError.missingAPIKey("Kimi API key and model are required")
+            }
+            return .init(
+                apiKey: key,
+                endpoint: "https://api.moonshot.ai/v1",
+                modelID: settings.selectedKimiModel)
         case .claudeBridge:
             guard !settings.claudeBridgeEndpoint.isEmpty else {
                 throw AIServiceError.networkError("Claude bridge endpoint is required. Start VibeProxy or a compatible bridge.")
@@ -666,7 +808,7 @@ final class AIProviderRouter {
             return .init(apiKey: "", endpoint: settings.chatGPTBridgeEndpoint, modelID: settings.chatGPTBridgeModelID)
         case .shortcuts:
             return .init(apiKey: "", endpoint: "", modelID: settings.shortcutsProviderShortcut)
-        case .onDevice:
+        case .onDevice, .claudeCode:
             throw AIServiceError.unsupportedProvider("Provider does not use an HTTP adapter")
         }
     }
@@ -677,9 +819,10 @@ final class AIProviderRouter {
         case .anthropic: return AnthropicProviderAdapter()
         case .googleGemini: return GeminiProviderAdapter()
         case .ollama: return OllamaProviderAdapter()
-        case .openAICompatible: return OpenAICompatibleProviderAdapter()
+        case .openAICompatible, .kimi: return OpenAICompatibleProviderAdapter()
         case .claudeBridge, .chatGPTBridge: return OpenAICompatibleProviderAdapter()
         case .shortcuts: return ShortcutsProviderAdapter()
+        case .claudeCode: return ShortcutsProviderAdapter()
         case .onDevice:
             assertionFailure("Provider does not use an adapter")
             return OpenAICompatibleProviderAdapter()
@@ -719,6 +862,8 @@ final class AIProviderRouter {
         case .openAICompatible:
             return AIAttachmentPreparer.modelSupportsVision(
                 modelID: settings.openAICompatibleModelID)
+        case .kimi:
+            return AIAttachmentPreparer.modelSupportsVision(modelID: settings.selectedKimiModel)
         case .shortcuts:
             return false
         default:
