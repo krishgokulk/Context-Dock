@@ -15,6 +15,7 @@ struct PluginsSettingsPage: View {
     @State private var selection: String = PluginExamples.all.first?.id ?? ""
     @State private var showsMigrated = true
     @State private var running = false
+    @State private var installMessage: String?
 
     /// Everything previewable, in one list: the shipped examples, anything actually installed,
     /// and every Global Command and Global Extension as it would arrive after migration.
@@ -83,6 +84,9 @@ struct PluginsSettingsPage: View {
                     .font(.headline)
                 Spacer()
                 Text("\(items.count)").font(.caption).foregroundStyle(.secondary)
+                Button("Install all that convert") { installAll(items) }
+                    .buttonStyle(.borderless).font(.caption)
+                    .disabled(items.isEmpty)
                 Button(showsMigrated ? "Hide" : "Show") {
                     withAnimation(.smooth(duration: 0.2)) { showsMigrated.toggle() }
                 }
@@ -98,6 +102,10 @@ struct PluginsSettingsPage: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            if let installMessage {
+                Text(installMessage).font(.caption).foregroundStyle(.secondary)
+            }
 
             if showsMigrated {
                 VStack(alignment: .leading, spacing: 0) {
@@ -195,6 +203,38 @@ struct PluginsSettingsPage: View {
                 }
             }
             Spacer(minLength: 0)
+
+            Button {
+                PluginWindowManager.shared.open(manifest)
+            } label: {
+                Label("Open window", systemImage: "macwindow")
+            }
+            .buttonStyle(.bordered)
+            .help("The detached host — the same renderer at window width")
+        }
+    }
+
+    /// Writes every cleanly-converting item into the user's plugin folder, where the registry
+    /// reads it. This is the cut-over made real for the ones that are ready, and it refuses
+    /// the rest by name rather than installing something that cannot work.
+    private func installAll(_ items: [MigratedPlugin]) {
+        let clean = items.map(\.manifest).filter {
+            PluginSchema.validate($0).filter { $0.severity == .error }.isEmpty
+        }
+        guard !clean.isEmpty else {
+            installMessage = "None of them convert cleanly yet, so nothing was installed."
+            return
+        }
+        do {
+            _ = try PluginInstaller.install(
+                clean, into: PluginInstaller.userRoot,
+                packID: "migrated", packName: "Migrated from Global Context")
+            registry.reload()
+            let skipped = items.count - clean.count
+            installMessage = "Installed \(clean.count)"
+                + (skipped > 0 ? ", skipped \(skipped) that do not convert cleanly." : ".")
+        } catch {
+            installMessage = "Could not install: \(error)"
         }
     }
 
