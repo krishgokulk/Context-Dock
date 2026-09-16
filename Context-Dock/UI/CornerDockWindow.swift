@@ -418,7 +418,7 @@ final class CornerDockController: NSObject {
             messages: prompt.messages.count,
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
             attachments: prompt.attachments.count,
-            running: prompt.stripIcons.count,
+            running: prompt.dockStripIcons.count,
             pinned: DockPinStore.shared.pins.count,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible))
     }

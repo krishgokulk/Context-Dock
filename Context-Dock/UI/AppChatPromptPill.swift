@@ -158,7 +158,7 @@ struct AppChatPromptPill: View {
             hasApproval: approvals.pending(for: .corner) != nil,
             attachments: model.attachments.count,
             hasSelectionRow: model.isShowingSelectionScope,
-            running: model.stripIcons.count,
+            running: model.dockStripIcons.count,
             pinned: DockPinStore.shared.pins.count,
             tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
     }

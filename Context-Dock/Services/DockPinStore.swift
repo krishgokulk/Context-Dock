@@ -37,6 +37,15 @@ final class DockPinStore: ObservableObject {
             .sorted { $0.order < $1.order }
     }
 
+    /// The bundle ids of pinned apps. The strip's running section subtracts these, so a
+    /// pinned app is drawn once — by its pin — rather than on both sides of the divider.
+    var pinnedAppBundleIDs: Set<String> {
+        Set(pins.compactMap { pin in
+            if case .app(let bundleID) = pin.kind { return bundleID }
+            return nil
+        })
+    }
+
     func isPinned(_ kind: DockPinKind) -> Bool { pins.contains { $0.kind == kind } }
 
     @discardableResult

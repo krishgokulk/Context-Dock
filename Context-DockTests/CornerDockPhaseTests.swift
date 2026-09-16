@@ -109,6 +109,28 @@ struct CornerDockPhaseTests {
         #expect(model.hiddenRunningBundleIDs == ["com.apple.Safari"])
     }
 
+    @Test func aPinnedAppIsNotAlsoARunningIcon() {
+        // Pinning a running app showed it twice, once on each side of the divider. The pin is
+        // its home: pinning is what says "keep this here", and the running dot goes with it.
+        // Membership, not counts: the running list fills in asynchronously, so any count
+        // captured now can be stale by the next line — which is what made the first version
+        // of this test fail for a reason that had nothing to do with pinning.
+        let (model, _) = globalModel()
+        model.pinnedAppBundleIDs = { [] }
+        guard let bundleID = model.dockStripIcons.compactMap(\.bundleID).first else { return }
+        #expect(model.dockStripIcons.contains { $0.bundleID == bundleID })
+
+        model.pinnedAppBundleIDs = { [bundleID] }
+        #expect(model.dockStripIcons.allSatisfy { $0.bundleID != bundleID })
+        // Still one of the running apps: pinning changes where it is drawn, not what ← and →
+        // walk through. Filtering the navigation list made a swipe skip a pinned app.
+        #expect(model.stripIcons.contains { $0.bundleID == bundleID })
+
+        // Unpinned, it comes straight back — the strip is a view of two lists, not a move.
+        model.pinnedAppBundleIDs = { [] }
+        #expect(model.dockStripIcons.contains { $0.bundleID == bundleID })
+    }
+
     @Test func leftArrowFoldsAnEmptyGlobalFieldAtOnce() {
         let (model, _) = globalModel()
         #expect(model.foldToDock())

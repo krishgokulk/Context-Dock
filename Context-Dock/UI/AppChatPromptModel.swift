@@ -685,11 +685,36 @@ final class AppChatPromptModel: ObservableObject {
             && autoShrinkEnabled()
     }
 
+    /// Which apps are pinned. A closure rather than a direct read of `DockPinStore.shared`,
+    /// so this model can be built in a test without the developer's own pins deciding what it
+    /// contains.
+    var pinnedAppBundleIDs: () -> Set<String> = { DockPinStore.shared.pinnedAppBundleIDs }
+
     /// The strip's running section: the dock's own running pills, minus the removed ones.
+    ///
+    /// This is the NAVIGATION list — what ← and → walk, what a swipe moves through — so a
+    /// pinned app stays in it. Pinning changes where an app is drawn, not whether it is one
+    /// of the running apps.
     var stripIcons: [MatchDockIcon] {
         globalMatchIcons.filter { icon in
             guard let bundleID = icon.bundleID else { return true }
             return !hiddenRunningBundleIDs.contains(bundleID)
+        }
+    }
+
+    /// What the strip DRAWS in its running section: the same list, minus anything already
+    /// drawn as a pin. Pinning a running app used to show it twice, once on each side of the
+    /// divider; the pin is its home, and the running dot goes with it.
+    ///
+    /// Separate from `stripIcons` rather than a filter on it, because the two answer different
+    /// questions — and because `AppChatPromptMetrics.dockLayout` must be handed the same list
+    /// the view iterates, or the capsule is sized for one number of icons while another is
+    /// drawn (memory `corner-pill-size-must-be-pure`).
+    var dockStripIcons: [MatchDockIcon] {
+        let pinned = pinnedAppBundleIDs()
+        return stripIcons.filter { icon in
+            guard let bundleID = icon.bundleID else { return true }
+            return !pinned.contains(bundleID)
         }
     }
 

@@ -24,7 +24,7 @@ struct CornerDockStrip: View {
 
     private var layout: M.DockLayout {
         M.dockLayout(
-            running: model.stripIcons.count, pinned: pins.pins.count,
+            running: model.dockStripIcons.count, pinned: pins.pins.count,
             tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
     }
 
@@ -41,7 +41,7 @@ struct CornerDockStrip: View {
             // strip's own layout stays exactly as wide as the metrics say (memory
             // `corner-pill-size-must-be-pure`); only what is drawn inside it moves.
             Group {
-            ForEach(Array(model.stripIcons.prefix(layout.shownRunning))) { icon in
+            ForEach(Array(model.dockStripIcons.prefix(layout.shownRunning))) { icon in
                 runningIcon(icon)
             }
             if layout.overflow > 0 {
@@ -244,7 +244,7 @@ struct CornerDockStrip: View {
     private func scale(for id: String) -> CGFloat {
         guard let hoveredID else { return 1 }
         if hoveredID == id { return 1.25 }
-        let ids = model.stripIcons.prefix(layout.shownRunning).map(\.id)
+        let ids = model.dockStripIcons.prefix(layout.shownRunning).map(\.id)
             + pins.pins.map(\.id.uuidString)
         guard let a = ids.firstIndex(of: hoveredID), let b = ids.firstIndex(of: id)
         else { return 1 }
