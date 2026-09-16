@@ -137,7 +137,11 @@ final class PluginRuntime: ObservableObject {
 
     // MARK: Actions
 
-    func run(_ request: PluginActionRequest, manifest: PluginManifest, inputs: PluginInputs) async
+    /// `skipApproval` is for the one caller that has already been approved: the capability
+    /// executor built by PluginCapability, which is reached THROUGH the approval centre. Asking
+    /// again there would show the same card twice for one decision.
+    func run(_ request: PluginActionRequest, manifest: PluginManifest, inputs: PluginInputs,
+             skipApproval: Bool = false) async
         -> Result<String, PluginRunFailure>
     {
         // An action nobody declared is not run, whatever asked for it. The renderer can emit a
@@ -147,7 +151,7 @@ final class PluginRuntime: ObservableObject {
                 message: "\(manifest.name) does not declare an action called \"\(request.name)\"",
                 kind: .blocked))
         }
-        if PluginPermissions.needsApproval(action) {
+        if !skipApproval, PluginPermissions.needsApproval(action) {
             guard await approvalProvider(request, action, manifest) else {
                 return .failure(PluginRunFailure(
                     message: "\(action.title ?? request.name) was not approved", kind: .blocked))
