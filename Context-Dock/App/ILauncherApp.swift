@@ -607,6 +607,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // whose buttons quietly do nothing, and "nothing happened" is the hardest bug to
         // report. Routing through AICapabilityApprovalCenter keeps one approval surface.
         PluginCapability.installApprovalProvider()
+        // The plugins the app ships, written onto disk where every other plugin lives so they
+        // can be read and edited by hand. Never overwrites an edited one.
+        PluginEssentials.seedIfNeeded()
         // Which apps exist on this Mac, read once in the background. Nothing owned this
         // before, so the catalog was built by whichever feature happened to touch an app
         // first — and General Chat, asked about an app on an empty desktop, resolved

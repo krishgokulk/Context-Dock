@@ -157,11 +157,24 @@ enum GlobalContextRow {
             break
 
         case .plugin(let id):
-            // A plugin IS its panel, so choosing one opens that panel rather than running
-            // something. The window host is used here because this path has no board to put
-            // it in; the corner opens it inline through ExtensionScopeCard instead.
-            if let manifest = PluginRegistry.shared.plugin(id: id)?.manifest {
+            guard let manifest = PluginRegistry.shared.plugin(id: id)?.manifest else { break }
+            switch PluginLaunch.behaviour(for: manifest) {
+            case .openPanel:
+                // A plugin with a panel IS that panel, so choosing it shows the panel rather
+                // than running something. The window host is used here because this path has
+                // no board to put it in; the corner opens it inline instead.
                 PluginWindowManager.shared.open(manifest)
+            case .run(let action):
+                // A one-shot — Sleep is the first. Opening an empty window for it would be a
+                // worse answer than doing the thing. The gate still applies: anything above
+                // read asks before it runs.
+                Task { @MainActor in
+                    _ = await PluginRuntime.shared.run(
+                        PluginActionRequest(name: action), manifest: manifest,
+                        inputs: PluginInputs())
+                }
+            case .nothing:
+                break
             }
 
         case .cliScope:
