@@ -26,6 +26,24 @@ struct WindowSnapshotFilterTests {
             AppWindowSnapshotService.eligibleWindows(all, bundleID: "com.x").map(\.id) == [1, 3, 6])
     }
 
+    @Test func dropsTheUntitledWindowsAnAppKeepsAliveOffScreen() {
+        // Safari holds an untitled 1148x662 window nobody can see; Claude, being Electron,
+        // holds two. Each is layer 0 and past the size floor, so the row drew a black tile
+        // labelled "Untitled" beside the real window. A window the user can point at either
+        // carries a title or is on screen.
+        let all = [
+            window(1, title: "Personal — AI / ML Associate", onScreen: false),
+            window(2, title: "", w: 1148, h: 662, onScreen: false),
+            window(3, title: "", w: 500, h: 500, onScreen: false),
+        ]
+        #expect(AppWindowSnapshotService.eligibleWindows(all, bundleID: "com.x").map(\.id) == [1])
+    }
+
+    @Test func keepsAnUntitledWindowTheUserCanActuallySee() {
+        let all = [window(1, title: "", onScreen: true)]
+        #expect(AppWindowSnapshotService.eligibleWindows(all, bundleID: "com.x").map(\.id) == [1])
+    }
+
     @Test func keepsFrontToBackOrderAndCapsAtTheLimit() {
         let all = (1...10).map { window(CGWindowID($0)) }
         let kept = AppWindowSnapshotService.eligibleWindows(all, bundleID: "com.x")
