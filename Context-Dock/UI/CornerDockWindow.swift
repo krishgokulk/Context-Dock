@@ -412,14 +412,21 @@ final class CornerDockController: NSObject {
                 ? AppChatPromptMetrics.miniSize
                 : CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
         }
+        // The same composition the strip draws from: a pinned app that is running is one
+        // icon there, so it must be one icon wide here.
+        let composition = DockStripPlan.make(
+            running: prompt.stripIcons, pins: DockPinStore.shared.pins,
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible)
+        ).composition
         return AppChatPromptMetrics.size(
             for: prompt.phase,
             suggestions: prompt.listRowCount,
             messages: prompt.messages.count,
             hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
             attachments: prompt.attachments.count,
-            running: prompt.stripIcons.count,
-            pinned: DockPinStore.shared.pins.count,
+            running: composition.unpinnedRunningCount,
+            pinnedApps: composition.pinnedAppCount,
+            pinned: composition.otherPins.count,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible))
     }
 

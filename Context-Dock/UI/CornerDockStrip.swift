@@ -22,9 +22,11 @@ struct CornerDockStrip: View {
 
     private typealias M = AppChatPromptMetrics
 
-    private var layout: M.DockLayout {
-        M.dockLayout(
-            running: model.stripIcons.count, pinned: pins.pins.count,
+    /// The row and its geometry, made together: an app appears once, whether it is pinned,
+    /// running or both.
+    private var plan: DockStripPlan {
+        DockStripPlan.make(
+            running: model.stripIcons, pins: pins.pins,
             tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
     }
 
@@ -41,23 +43,29 @@ struct CornerDockStrip: View {
             // strip's own layout stays exactly as wide as the metrics say (memory
             // `corner-pill-size-must-be-pure`); only what is drawn inside it moves.
             Group {
-            ForEach(Array(model.stripIcons.prefix(layout.shownRunning))) { icon in
-                runningIcon(icon)
+            // One region for apps: the pinned ones first, in the order the user placed
+            // them, then whatever else is running. Composed once for the whole pass —
+            // `scale(for:)` runs per icon per hover frame and must not compose again.
+            let plan = self.plan
+            let ids = plan.composition.apps.map(\.id)
+                + plan.composition.otherPins.map(\.id.uuidString)
+            ForEach(plan.composition.apps) { slot in
+                appIcon(slot, ids: ids)
             }
-            if layout.overflow > 0 {
-                overflowPill(layout.overflow)
+            if plan.layout.overflow > 0 {
+                overflowPill(plan.layout.overflow)
             }
-            if !pins.pins.isEmpty {
+            if !plan.composition.otherPins.isEmpty {
                 // The HStack's own gap on each side of this hairline is the 17-point
                 // `dockDividerSpan` the metrics count.
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
-                ForEach(pins.pins) { pin in
-                    pinnedIcon(pin)
+                ForEach(plan.composition.otherPins) { pin in
+                    pinnedIcon(pin, ids: ids)
                 }
             }
-            if layout.tools > 0 {
+            if plan.layout.tools > 0 {
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
@@ -116,25 +124,36 @@ struct CornerDockStrip: View {
 
     // MARK: Icons
 
-    private func runningIcon(_ icon: MatchDockIcon) -> some View {
+    /// An app, once. A pinned app that is running is this same icon with a dot under it —
+    /// never a second copy beside the pins.
+    @ViewBuilder
+    private func appIcon(_ slot: DockAppSlot, ids: [String]) -> some View {
+        let id = slot.id
         DockStripIcon(
-            image: icon.icon, title: icon.title, isRunning: icon.isRunning,
-            isAvailable: true, scale: scale(for: icon.id)
+            image: slot.running?.icon ?? slot.pin?.kind.icon, title: slot.title,
+            isRunning: slot.isRunning,
+            isAvailable: slot.pin.map { $0.kind.isAvailable } ?? true,
+            scale: scale(for: id, among: ids)
         )
         .onHover { inside in
-            hoveredID = inside ? icon.id : (hoveredID == icon.id ? nil : hoveredID)
-            model.hoveredStripBundleID = inside ? icon.bundleID : nil
+            hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
+            model.hoveredStripBundleID = inside ? slot.bundleID : nil
         }
-        .onTapGesture { activate(bundleID: icon.bundleID) }
-        .overlay(RightClickReporter { menuID = icon.id })
-        .popover(isPresented: menuBinding(icon.id), arrowEdge: .top) {
-            DockIconMenu(items: runningMenuItems(icon))
+        .onTapGesture { openApp(slot) }
+        // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
+        // and a running app nobody pinned has no place to be moved to.
+        .modifier(DockPinDrag(pinID: slot.pin?.id, dragging: $draggingPinID))
+        .overlay(RightClickReporter { menuID = id })
+        .popover(isPresented: menuBinding(id), arrowEdge: .top) {
+            DockIconMenu(items: appMenuItems(slot))
         }
-        .accessibilityLabel(icon.title)
+        .accessibilityLabel(slot.title)
         .accessibilityAddTraits(.isButton)
     }
 
-    private func pinnedIcon(_ pin: DockPin) -> some View {
+    /// A pin that is not an app — a command, a CLI tool, a file, a folder. Apps never come
+    /// through here; they are slots in the app region, pinned or not.
+    private func pinnedIcon(_ pin: DockPin, ids: [String]) -> some View {
         let document = pin.documentID.flatMap { GlobalSearchService.shared.document(withID: $0) }
         let image = pin.kind.icon ?? document?.icon
         let available: Bool = {
@@ -143,29 +162,16 @@ struct CornerDockStrip: View {
             default: return pin.kind.isAvailable
             }
         }()
-        let running: Bool = {
-            if case .app(let bundleID) = pin.kind {
-                return !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                    .isEmpty
-            }
-            return false
-        }()
         return DockStripIcon(
-            image: image, title: pin.title, isRunning: running,
-            isAvailable: available, scale: scale(for: pin.id.uuidString)
+            image: image, title: pin.title, isRunning: false,
+            isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids)
         )
         .onHover { inside in
             let id = pin.id.uuidString
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
-            if case .app(let bundleID) = pin.kind {
-                model.hoveredStripBundleID = inside ? bundleID : nil
-            }
         }
         .onTapGesture { open(pin, document: document) }
-        .onDrag {
-            draggingPinID = pin.id
-            return NSItemProvider(object: "dockpin:\(pin.id.uuidString)" as NSString)
-        }
+        .modifier(DockPinDrag(pinID: pin.id, dragging: $draggingPinID))
         .overlay(RightClickReporter { menuID = pin.id.uuidString })
         .popover(isPresented: menuBinding(pin.id.uuidString), arrowEdge: .top) {
             DockIconMenu(items: pinnedMenuItems(pin))
@@ -194,26 +200,38 @@ struct CornerDockStrip: View {
         Binding(get: { menuID == id }, set: { if !$0, menuID == id { menuID = nil } })
     }
 
-    private func runningMenuItems(_ icon: MatchDockIcon) -> [DockIconMenu.Item] {
-        guard let bundleID = icon.bundleID else { return [] }
-        var items: [DockIconMenu.Item] = [
-            .init(title: "Ask about \(icon.title)") {
+    /// One menu for one icon. What it offers follows from the two facts the slot carries:
+    /// a running app can be asked about and quit, a pinned one can be unpinned, and an app
+    /// that is neither is not on the strip at all.
+    private func appMenuItems(_ slot: DockAppSlot) -> [DockIconMenu.Item] {
+        let bundleID = slot.bundleID
+        var items: [DockIconMenu.Item] = []
+        if slot.isRunning {
+            items.append(.init(title: "Ask about \(slot.title)") {
                 model.expandFromDock(seeding: nil)
-                model.scopeIntoApp(name: icon.title, bundleID: bundleID)
-            },
-            .separator,
-        ]
-        if !pins.isPinned(.app(bundleID: bundleID)) {
+                model.scopeIntoApp(name: slot.title, bundleID: bundleID)
+            })
+        } else {
+            items.append(.init(title: "Open \(slot.title)") { openApp(slot) })
+        }
+        items.append(.separator)
+        if let pin = slot.pin {
+            items.append(.init(title: "Unpin") { pins.unpin(pin.id) })
+        } else {
             items.append(.init(title: "Pin to Dock") {
-                pins.pin(.app(bundleID: bundleID), title: icon.title)
+                pins.pin(.app(bundleID: bundleID), title: slot.title)
+            })
+            // Only meaningful for an app the user never placed: a pin is removed by
+            // unpinning it, not by hiding the app that is running under it.
+            items.append(.init(title: "Remove from Strip") { model.hideRunningApp(bundleID) })
+        }
+        if slot.isRunning {
+            items.append(.separator)
+            items.append(.init(title: "Quit \(slot.title)") {
+                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+                    .forEach { $0.terminate() }
             })
         }
-        items.append(.init(title: "Remove from Strip") { model.hideRunningApp(bundleID) })
-        items.append(.separator)
-        items.append(.init(title: "Quit \(icon.title)") {
-            NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                .forEach { $0.terminate() }
-        })
         return items
     }
 
@@ -241,11 +259,10 @@ struct CornerDockStrip: View {
     }
 
     /// Dock magnify: the hovered icon up, its neighbours a little, everything else at rest.
-    private func scale(for id: String) -> CGFloat {
+    /// `ids` is the row as drawn, passed in rather than rebuilt per icon.
+    private func scale(for id: String, among ids: [String]) -> CGFloat {
         guard let hoveredID else { return 1 }
         if hoveredID == id { return 1.25 }
-        let ids = model.stripIcons.prefix(layout.shownRunning).map(\.id)
-            + pins.pins.map(\.id.uuidString)
         guard let a = ids.firstIndex(of: hoveredID), let b = ids.firstIndex(of: id)
         else { return 1 }
         return abs(a - b) == 1 ? 1.1 : 1
@@ -285,12 +302,19 @@ struct CornerDockStrip: View {
         condensing = false
     }
 
-    private func activate(bundleID: String?) {
-        guard let bundleID,
-            let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                .first
-        else { return }
-        app.activate()
+    /// Clicking an app: bring it forward if it is up, launch it if it is not. A pinned app
+    /// that has been quit is still a place to go, which is what pinning it was for.
+    private func openApp(_ slot: DockAppSlot) {
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: slot.bundleID)
+            .first
+        {
+            app.activate()
+        } else if let url = NSWorkspace.shared.urlForApplication(
+            withBundleIdentifier: slot.bundleID)
+        {
+            NSWorkspace.shared.openApplication(
+                at: url, configuration: NSWorkspace.OpenConfiguration())
+        }
     }
 
     private func open(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
@@ -354,6 +378,25 @@ struct CornerDockStrip: View {
             accepted = true
         }
         return accepted
+    }
+}
+
+/// Drag to reorder, drag off to unpin — for pinned icons only. A running app nobody pinned
+/// has no order of its own, so `.onDrag` is not attached at all rather than attached and
+/// refused: an armed drag that goes nowhere still lifts the icon off the strip.
+private struct DockPinDrag: ViewModifier {
+    let pinID: UUID?
+    @Binding var dragging: UUID?
+
+    func body(content: Content) -> some View {
+        if let pinID {
+            content.onDrag {
+                dragging = pinID
+                return NSItemProvider(object: "dockpin:\(pinID.uuidString)" as NSString)
+            }
+        } else {
+            content
+        }
     }
 }
 

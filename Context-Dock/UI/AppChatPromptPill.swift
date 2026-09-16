@@ -73,12 +73,27 @@ enum AppChatPromptMetrics {
     /// the running section is what gives way, keeping one slot for the `+N` pill.
     /// `tools` are the corner's own affordances — clipboard, selection — that sit in the
     /// field's row when it is up and join the strip when it is not.
-    static func dockLayout(running: Int, pinned: Int, tools: Int = 0) -> DockLayout {
+    ///
+    /// `pinnedApps` are pinned *and* share the app region with the running ones, with no
+    /// divider between them, because an app is one icon whether it is pinned, running or
+    /// both. Like every other pin they are never dropped; `running` here counts only the
+    /// apps nobody pinned, and those are what give way. `pinned` is the rest of the pins —
+    /// commands, tools, files — which keep their own region after the divider.
+    static func dockLayout(running: Int, pinnedApps: Int = 0, pinned: Int, tools: Int = 0)
+        -> DockLayout
+    {
         let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) : 0
         let toolsWidth = tools > 0 ? dockDividerSpan + runWidth(tools) : 0
-        let available = dockMaximumWidth - dockSearchStubSpan - 2 * dockInset - pinsWidth - toolsWidth
-        // How many running icons fit in what is left, at least one slot.
-        let capacity = max(1, Int((available + dockIconGap) / (dockIconSize + dockIconGap)))
+        // Pinned apps take their slots out of the same region, gap included, before the
+        // running ones are counted.
+        let pinnedAppsWidth = pinnedApps > 0
+            ? CGFloat(pinnedApps) * (dockIconSize + dockIconGap) : 0
+        let available = dockMaximumWidth - dockSearchStubSpan - 2 * dockInset - pinsWidth
+            - toolsWidth - pinnedAppsWidth
+        // How many running icons fit in what is left. At least one slot unless pinned apps
+        // are already holding the region, in which case a strip of only pins is honest.
+        let capacity = max(
+            pinnedApps > 0 ? 0 : 1, Int((available + dockIconGap) / (dockIconSize + dockIconGap)))
         let shownRunning: Int
         let overflow: Int
         if running <= capacity {
@@ -89,8 +104,8 @@ enum AppChatPromptMetrics {
             overflow = running - shownRunning
         }
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
-        let width = dockSearchStubSpan + 2 * dockInset + runWidth(max(1, runningSlots))
-            + pinsWidth + toolsWidth
+        let width = dockSearchStubSpan + 2 * dockInset
+            + runWidth(max(1, pinnedApps + runningSlots)) + pinsWidth + toolsWidth
         return DockLayout(
             shownRunning: shownRunning, overflow: overflow, tools: tools, width: width)
     }
@@ -116,6 +131,7 @@ enum AppChatPromptMetrics {
         attachments: Int = 0,
         hasSelectionRow: Bool = false,
         running: Int = 0,
+        pinnedApps: Int = 0,
         pinned: Int = 0,
         tools: Int = 0
     ) -> CGSize {
@@ -126,7 +142,8 @@ enum AppChatPromptMetrics {
             return miniSize
         case .dock:
             return CGSize(
-                width: dockLayout(running: running, pinned: pinned, tools: tools).width,
+                width: dockLayout(
+                    running: running, pinnedApps: pinnedApps, pinned: pinned, tools: tools).width,
                 height: dockHeight)
         case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field.
