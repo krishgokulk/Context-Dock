@@ -9,6 +9,10 @@ import SwiftUI
 @MainActor
 struct PluginPreviewHarness: View {
     let manifest: PluginManifest
+    /// What the plugin's data script actually returned, when someone has run it. `nil` means
+    /// nobody has, and the manifest's own `sample` speaks for it — which is the only thing
+    /// available before Phase 3 and the only thing available for a plugin with no data at all.
+    var live: PluginBinding?
     @State private var sink = RecordingActionSink()
 
     static func binding(for manifest: PluginManifest) -> PluginBinding {
@@ -80,7 +84,7 @@ struct PluginPreviewHarness: View {
 
     @ViewBuilder
     private func host(_ traits: HostTraits) -> some View {
-        let binding = Self.binding(for: manifest)
+        let binding = live ?? Self.binding(for: manifest)
         VStack(alignment: .leading, spacing: 4) {
             Text("\(traits.presentation.rawValue) · \(traits.widthClass.rawValue)")
                 .font(.system(size: 10, weight: .medium))

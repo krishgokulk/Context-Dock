@@ -113,4 +113,54 @@ struct PluginRuntimeTests {
         runtime.startTicking(for: live, host: .widget, budget: .none, inputs: PluginInputs())
         #expect(runtime.tickingCount == 0)
     }
+    @Test func anActionAboveReadAsksBeforeItRuns() async throws {
+        let runtime = PluginRuntime()
+        var asked: [String] = []
+        runtime.approvalProvider = { request, _, _ in asked.append(request.name); return true }
+        let m = try manifest(#"""
+        { "id": "x", "name": "X",
+          "actions": { "wipe": { "type": "bash", "script": "echo wiped", "risk": "high" } } }
+        """#)
+        _ = await runtime.run(PluginActionRequest(name: "wipe"), manifest: m, inputs: PluginInputs())
+        #expect(asked == ["wipe"])
+    }
+
+    @Test func aReadActionRunsWithoutAsking() async throws {
+        let runtime = PluginRuntime()
+        var asked = false
+        runtime.approvalProvider = { _, _, _ in asked = true; return true }
+        let m = try manifest(#"""
+        { "id": "x", "name": "X",
+          "actions": { "look": { "type": "bash", "script": "echo ok", "risk": "read" } } }
+        """#)
+        _ = await runtime.run(PluginActionRequest(name: "look"), manifest: m, inputs: PluginInputs())
+        #expect(asked == false)
+    }
+
+    @Test func aRefusedActionDoesNotRun() async throws {
+        let runtime = PluginRuntime()
+        runtime.approvalProvider = { _, _, _ in false }
+        let m = try manifest(#"""
+        { "id": "x", "name": "X",
+          "actions": { "wipe": { "type": "bash", "script": "echo wiped", "risk": "high" } } }
+        """#)
+        switch await runtime.run(PluginActionRequest(name: "wipe"), manifest: m, inputs: PluginInputs()) {
+        case .success: Issue.record("a refused action ran anyway")
+        case .failure(let failure): #expect(failure.kind == .blocked)
+        }
+    }
+
+    @Test func withNoProviderInstalledNothingAboveReadRuns() async throws {
+        // The default refuses. A caller that forgets to install a provider gets a plugin that
+        // does nothing, which is the failure worth having.
+        let runtime = PluginRuntime()
+        let m = try manifest(#"""
+        { "id": "x", "name": "X",
+          "actions": { "wipe": { "type": "bash", "script": "echo wiped", "risk": "high" } } }
+        """#)
+        switch await runtime.run(PluginActionRequest(name: "wipe"), manifest: m, inputs: PluginInputs()) {
+        case .success: Issue.record("an unapproved action ran with no provider installed")
+        case .failure(let failure): #expect(failure.kind == .blocked)
+        }
+    }
 }

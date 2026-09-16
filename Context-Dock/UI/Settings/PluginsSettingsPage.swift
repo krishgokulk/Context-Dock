@@ -11,8 +11,10 @@ import SwiftUI
 struct PluginsSettingsPage: View {
     @ObservedObject private var registry = PluginRegistry.shared
     @ObservedObject private var globalExtensions = UserGlobalExtensionStore.shared
+    @StateObject private var runtime = PluginRuntime()
     @State private var selection: String = PluginExamples.all.first?.id ?? ""
     @State private var showsMigrated = true
+    @State private var running = false
 
     /// Everything previewable, in one list: the shipped examples, anything actually installed,
     /// and every Global Command and Global Extension as it would arrive after migration.
@@ -146,12 +148,62 @@ struct PluginsSettingsPage: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if let manifest = previewable.first(where: { $0.id == selection }) ?? previewable.first {
-                PluginPreviewHarness(manifest: manifest)
+                runRow(manifest)
+                PluginPreviewHarness(manifest: manifest, live: liveBinding(for: manifest))
                     .id(manifest.id)
                     .transition(.opacity)
             }
         }
         .animation(.smooth(duration: 0.22), value: selection)
+    }
+
+    /// Runs the plugin's DATA script and draws what it returns instead of the sample.
+    ///
+    /// Data only. A plugin's actions stay refused here: routing them through the app's
+    /// approval centre means deciding whether a plugin action is an AICapability, which is
+    /// what the PluginToolset work settles — and inventing a second approval sheet in the
+    /// meantime is exactly the thing worth not doing.
+    @ViewBuilder
+    private func runRow(_ manifest: PluginManifest) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                running = true
+                Task {
+                    await runtime.refresh(manifest, host: .panel, inputs: PluginInputs())
+                    running = false
+                }
+            } label: {
+                Label(running ? "Running…" : "Run data script", systemImage: "play.fill")
+            }
+            .buttonStyle(.bordered)
+            .disabled(manifest.data == nil || running)
+
+            switch runtime.state(for: manifest, host: .panel, inputs: PluginInputs()) {
+            case .ready where manifest.data != nil:
+                Label("Showing live output", systemImage: "checkmark.circle.fill")
+                    .font(.caption).foregroundStyle(.green)
+            case .failed(let diagnostic):
+                Label(diagnostic.message, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange).lineLimit(2)
+            case .ready, .loading:
+                if manifest.data == nil {
+                    Text("No data script — this plugin is its sample.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Text("Sample data. Press Run to see what the script returns.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func liveBinding(for manifest: PluginManifest) -> PluginBinding? {
+        guard manifest.data != nil,
+            case .ready(let binding) = runtime.state(
+                for: manifest, host: .panel, inputs: PluginInputs())
+        else { return nil }
+        return binding
     }
 
     private func row(icon: String, name: String, detail: String, badge: String?, enabled: Bool)
