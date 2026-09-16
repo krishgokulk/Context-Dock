@@ -168,16 +168,23 @@ struct AppChatPromptPill: View {
     @Namespace private var glassNamespace
 
     private var size: CGSize {
-        AppChatPromptMetrics.size(
+        // The strip's own composition, not the raw counts: an app that is pinned and
+        // running is one icon there, and a pin this build cannot resolve is none.
+        let tools = model.dockToolCount(clipboardVisible: clipboard.phase.isVisible)
+        let composition = DockStripPlan.make(
+            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools
+        ).composition
+        return AppChatPromptMetrics.size(
             for: model.phase,
             suggestions: model.listRowCount,  // list rows live in AppChatListCard now
             messages: model.messages.count,
             hasApproval: approvals.pending(for: .corner) != nil,
             attachments: model.attachments.count,
             hasSelectionRow: model.isShowingSelectionScope,
-            running: model.stripIcons.count,
-            pinned: DockPinStore.shared.pins.count,
-            tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
+            running: composition.unpinnedRunningCount,
+            pinnedApps: composition.pinnedAppCount,
+            pinned: composition.otherPins.count,
+            tools: tools)
     }
 
     var body: some View {
@@ -216,12 +223,23 @@ struct AppChatPromptPill: View {
                         .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
                         .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
                         .glassEffectID("field", in: glassNamespace)
+                        // Deliberately no geometry transition on this layer, and the reason
+                        // is worth keeping: this subtree holds the TextField and the
+                        // FocusState. A scale transition re-lays it out every frame while
+                        // focus is being claimed, and SwiftUI's FocusBridge rebuilds the key
+                        // view loop on every one of those passes — the app hung on hover,
+                        // with 100% of samples in updateDefaultKeyViewLoop. The glass morph
+                        // is what opens the field; it costs no layout.
                         .transition(reduceMotion ? .opacity : .identity)
                 }
                 if model.phase == .dock {
                     CornerDockStrip(model: model)
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .glassEffectID("dock", in: glassNamespace)
+                        // Same rule as the field: an instant swap, so the two layers are
+                        // never mounted together. The strip's own gather is a scaleEffect
+                        // inside it, which draws smaller without laying out smaller and so
+                        // costs the focus machinery nothing.
                         .transition(reduceMotion ? .opacity : .identity)
                 }
                 if model.phase == .mini {
@@ -232,8 +250,11 @@ struct AppChatPromptPill: View {
             }
         }
         .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
+        // One curve for the shape, the frame and both layers' transitions, so the whole
+        // corner moves as a single object. Shorter than it was: this runs after a hover
+        // dwell, and 0.45s on top of the wait read as the dock thinking about it.
         .animation(
-            reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.45),
+            reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.38),
             value: model.phase)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
     }
@@ -568,6 +589,9 @@ struct AppChatPromptPill: View {
                     overflowCount: model.globalOverflowCount,
                     isSearching: false,
                     onSelect: { icon in model.openGlobalMatchIcon(icon) })
+                    // Opacity only, for the same reason as the field above: this pill is a
+                    // sibling of the TextField inside the focused subtree, and a geometry
+                    // transition here moves the field's own layout while focus is claimed.
                     .transition(.opacity)
                     // Resting the pointer on the small pills asks for the big ones: the
                     // field folds into the dock at once rather than waiting out the dwell.

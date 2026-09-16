@@ -46,15 +46,24 @@ struct DockStripComposition: Equatable {
     ///
     /// `runningBundleIDs` is every app that is up, which is a wider set than `running` —
     /// that one is what the strip is willing to show.
+    ///
+    /// `unresolvedDocumentIDs` are commands and tools whose document this build cannot
+    /// find — a plugin that is not installed here, an extension since deleted. They are
+    /// dropped from the row rather than drawn as an empty box: the icon said nothing, the
+    /// click did nothing, and the pin itself stays in the store so it comes back with the
+    /// thing it points at.
     static func compose(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
-        capacity: Int = .max
+        unresolvedDocumentIDs: Set<String> = [], capacity: Int = .max
     ) -> DockStripComposition {
         var appSlots: [DockAppSlot] = []
         var otherPins: [DockPin] = []
         var pinnedBundleIDs: Set<String> = []
 
         for pin in pins {
+            if let documentID = pin.documentID, unresolvedDocumentIDs.contains(documentID) {
+                continue
+            }
             guard case .app(let bundleID) = pin.kind else {
                 otherPins.append(pin)
                 continue
@@ -95,20 +104,49 @@ struct DockStripPlan {
     let composition: DockStripComposition
     let layout: AppChatPromptMetrics.DockLayout
 
+    /// What is running and what resolves, remembered briefly.
+    ///
+    /// This is read from `body` and from two `size` computations, so it runs several times
+    /// per layout pass and every frame of an animation. Walking every running application
+    /// and asking the search index about every pin at that rate is work nobody sees: an app
+    /// launching or quitting shows up within the window instead, which is faster than the
+    /// dot could be noticed anyway.
+    @MainActor private static var environmentCache: (taken: Date, running: Set<String>,
+        unresolved: Set<String>)?
+    @MainActor private static let environmentTTL: TimeInterval = 0.5
+
     @MainActor
     static func make(running: [MatchDockIcon], pins: [DockPin], tools: Int) -> DockStripPlan {
-        make(
-            running: running, pins: pins,
-            runningBundleIDs: Set(
-                NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)),
-            tools: tools)
+        let environment: (running: Set<String>, unresolved: Set<String>)
+        if let cached = environmentCache,
+            Date().timeIntervalSince(cached.taken) < environmentTTL
+        {
+            environment = (cached.running, cached.unresolved)
+        } else {
+            let runningBundleIDs = Set(
+                NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+            let unresolved = Set(
+                pins.compactMap { pin -> String? in
+                    guard let documentID = pin.documentID,
+                        GlobalSearchService.shared.document(withID: documentID) == nil
+                    else { return nil }
+                    return documentID
+                })
+            environmentCache = (Date(), runningBundleIDs, unresolved)
+            environment = (runningBundleIDs, unresolved)
+        }
+        return make(
+            running: running, pins: pins, runningBundleIDs: environment.running,
+            unresolvedDocumentIDs: environment.unresolved, tools: tools)
     }
 
     static func make(
-        running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>, tools: Int
+        running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
+        unresolvedDocumentIDs: Set<String> = [], tools: Int
     ) -> DockStripPlan {
         let full = DockStripComposition.compose(
-            running: running, pins: pins, runningBundleIDs: runningBundleIDs)
+            running: running, pins: pins, runningBundleIDs: runningBundleIDs,
+            unresolvedDocumentIDs: unresolvedDocumentIDs)
         let layout = AppChatPromptMetrics.dockLayout(
             running: full.unpinnedRunningCount, pinnedApps: full.pinnedAppCount,
             pinned: full.otherPins.count, tools: tools)
@@ -116,7 +154,7 @@ struct DockStripPlan {
         return DockStripPlan(
             composition: DockStripComposition.compose(
                 running: running, pins: pins, runningBundleIDs: runningBundleIDs,
-                capacity: layout.shownRunning),
+                unresolvedDocumentIDs: unresolvedDocumentIDs, capacity: layout.shownRunning),
             layout: layout)
     }
 }

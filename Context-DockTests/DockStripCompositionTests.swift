@@ -84,6 +84,21 @@ struct DockStripCompositionTests {
         #expect(composed.apps.first?.isPinned == true)
     }
 
+    @Test func aPinWhoseDocumentThisBuildCannotFindIsNotDrawn() {
+        // A plugin pinned on a build that has the plugin, opened on a build that does not:
+        // the row drew an empty dashed square that said nothing and did nothing. The pin
+        // stays in the store — it comes back with the thing it points at.
+        var sleep = pin(.globalCommand(id: "plugin:sleep"), "Sleep", order: 0)
+        sleep = DockPin(
+            id: sleep.id, kind: sleep.kind, title: sleep.title, order: sleep.order,
+            documentID: "plugin://sleep")
+        let composed = DockStripComposition.compose(
+            running: [], pins: [sleep, pin(.folder(path: "/tmp"), "tmp", order: 1)],
+            runningBundleIDs: [], unresolvedDocumentIDs: ["plugin://sleep"])
+
+        #expect(composed.otherPins.map(\.title) == ["tmp"])
+    }
+
     @Test func theCountsTheStripIsSizedFromMatchWhatItDraws() {
         let pins = [
             pin(.app(bundleID: "com.apple.Safari"), "Safari", order: 0),

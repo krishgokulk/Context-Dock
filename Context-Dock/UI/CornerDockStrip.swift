@@ -90,11 +90,16 @@ struct CornerDockStrip: View {
                 }
             }
             }
-            .scaleEffect(condensing ? 0.55 : 1, anchor: .center)
+            // Gathering toward the trailing edge, which is where the field's own small
+            // pill of running apps lands: the dock reads as shrinking into that pill
+            // rather than dissolving and something else appearing.
+            .scaleEffect(condensing ? 0.62 : 1, anchor: .trailing)
             .opacity(condensing ? 0 : 1)
-            .blur(radius: condensing ? 1.5 : 0)
+            .blur(radius: condensing ? 1.2 : 0)
         }
-        .animation(.smooth(duration: 0.22), value: condensing)
+        // Scale leads, opacity follows a beat later, so the row is seen to gather before
+        // it goes. One curve with the shell's, so nothing arrives at a different time.
+        .animation(.smooth(duration: 0.32), value: condensing)
         .padding(.horizontal, M.dockInset)
         .frame(height: M.dockHeight)
         .contentShape(Rectangle())
@@ -117,6 +122,12 @@ struct CornerDockStrip: View {
             if isDropTarget {
                 Capsule().strokeBorder(Color.accentColor.opacity(0.6), lineWidth: 2)
             }
+        }
+        // The strip is unmounted while the field is up, so this normally has nothing to
+        // do — it clears the flag on the path where SwiftUI keeps the view's identity
+        // instead, which would otherwise leave the dock permanently condensed.
+        .onChange(of: model.phase) { _, phase in
+            if phase == .dock { condensing = false }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Dock")
@@ -164,7 +175,8 @@ struct CornerDockStrip: View {
         }()
         return DockStripIcon(
             image: image, title: pin.title, isRunning: false,
-            isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids)
+            isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids),
+            fallbackSymbol: pin.kind.fallbackSymbol
         )
         .onHover { inside in
             let id = pin.id.uuidString
@@ -273,7 +285,9 @@ struct CornerDockStrip: View {
     private func expandField() {
         hoverIntent?.cancel()
         hoverIntent = nil
-        condensing = false
+        // `condensing` is deliberately left standing: the strip is on its way out and
+        // must not spring back to full size underneath the field arriving over it. It is
+        // cleared when the phase comes back to `.dock`, below.
         if model.expandFromDock(seeding: nil) {
             CornerDockController.shared.requestComposerFocus()
         }
@@ -283,7 +297,7 @@ struct CornerDockStrip: View {
     /// way to an app icon crosses the magnifier, and expanding there means the strip pulls
     /// itself out from under the hand. It waits `Self.hoverDwell`, condensing while it waits,
     /// so the gesture is visible before it is committed and leaving cancels it cleanly.
-    private static let hoverDwell: TimeInterval = 0.18
+    private static let hoverDwell: TimeInterval = 0.16
 
     private func beginHoverExpand() {
         guard model.phase == .dock, hoverIntent == nil else { return }
@@ -408,6 +422,10 @@ struct DockStripIcon: View {
     let isRunning: Bool
     let isAvailable: Bool
     let scale: CGFloat
+    /// What to draw when the real icon is missing — a file that has been moved, an app that
+    /// has been uninstalled. It names what the icon stands for rather than leaving an empty
+    /// dashed square, which told the user nothing about what they had pinned.
+    var fallbackSymbol: String = "app.dashed"
 
     var body: some View {
         VStack(spacing: 2) {
@@ -415,7 +433,9 @@ struct DockStripIcon: View {
                 if let image {
                     Image(nsImage: image).resizable().interpolation(.high)
                 } else {
-                    Image(systemName: "app.dashed").resizable().foregroundStyle(.secondary)
+                    Image(systemName: fallbackSymbol)
+                        .resizable().aspectRatio(contentMode: .fit)
+                        .foregroundStyle(.secondary)
                 }
             }
             .aspectRatio(contentMode: .fit)

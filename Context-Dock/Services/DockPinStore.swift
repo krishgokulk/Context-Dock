@@ -143,6 +143,18 @@ extension DockPinKind {
         }
     }
 
+    /// What the strip draws when the real icon is missing. Never an empty square: the user
+    /// pinned something, and the shape of what they pinned is the least the row can say.
+    var fallbackSymbol: String {
+        switch self {
+        case .app: return "app.dashed"
+        case .globalCommand: return "command"
+        case .cliTool: return "terminal"
+        case .file: return "doc"
+        case .folder: return "folder"
+        }
+    }
+
     /// Whether what this stands for is still there.
     var isAvailable: Bool {
         switch self {
