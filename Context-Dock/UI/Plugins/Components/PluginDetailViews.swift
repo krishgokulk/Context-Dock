@@ -57,11 +57,16 @@ struct PluginListDetailView: View {
             VStack(spacing: 0) {
                 ForEach(Array(models.enumerated()), id: \.element.id) { index, model in
                     PluginRowView(model: model, traits: traits, sink: sink)
-                        .background(index == selection ? Theme.selectionFill(true) : Color.clear)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(index == selection
+                                    ? Color.accentColor.opacity(0.16) : Color.clear))
                         .onTapGesture { selection = index }
                 }
             }
-            .frame(width: traits.width * 0.4)
+            // The list keeps a readable column and the detail takes the rest; a 0.4 split of
+            // a narrow host leaves neither side able to show a title.
+            .frame(width: max(200, traits.width * 0.4))
             if let detail = Self.detail(for: node, binding: binding, selection: selection) {
                 PluginDetailBody(detail: detail, traits: traits)
             }
@@ -79,10 +84,15 @@ struct PluginDetailBody: View {
                 Text(LocalizedStringKey(detail.markdown)).font(.system(size: 12))
             }
             ForEach(detail.metadata) { item in
-                HStack {
-                    Text(item.title).font(.system(size: 11)).foregroundStyle(.secondary)
-                    Spacer()
+                // Label and value together, not pushed to opposite edges. A greedy Spacer
+                // reads as two unrelated words once the host is wide — 640pt of gap between
+                // "Artist" and "Casio" is not a pair.
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(item.title)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(width: 84, alignment: .leading)
                     Text(item.text).font(.system(size: 11))
+                    Spacer(minLength: 0)
                 }
                 .frame(height: PluginKit.leafHeight("caption", traits: traits))
             }

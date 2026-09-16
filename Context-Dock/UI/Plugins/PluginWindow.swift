@@ -26,10 +26,7 @@ final class PluginWindowManager {
             size: NSSize(width: traits.width, height: min(traits.maxHeight, 520)),
             minSize: NSSize(width: 320, height: 240))
         panel.title = manifest.name
-        panel.contentView = NSHostingView(
-            rootView: PluginHostView(model: model)
-                .padding(12)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top))
+        panel.contentView = NSHostingView(rootView: PluginWindowContent(model: model))
 
         // Cascade, so opening a second plugin does not land exactly on the first.
         if let screen = NSScreen.main {
@@ -54,5 +51,41 @@ final class PluginWindowManager {
         MinimizedPanelRegistry.shared.watch(
             panel, id: "plugin:\(manifest.id)", symbol: manifest.icon, title: { manifest.name })
         panel.orderFrontRegardless()
+    }
+}
+
+/// The window's own chrome. The panel is transparent so Liquid Glass can show the desktop,
+/// which means the material has to come from the content — without it the plugin draws
+/// straight onto the wallpaper. `ScopedListPanel` carries the same note for the same reason;
+/// this is that lesson, not a new one.
+private struct PluginWindowContent: View {
+    @ObservedObject var model: PluginHostModel
+    @ObservedObject private var settings = AppSettings.shared
+
+    init(model: PluginHostModel) { self.model = model }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: model.manifest.icon)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+                Text(model.manifest.name)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            PluginHostView(model: model)
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.10 + 0.45 * settings.glassDarkness)))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
     }
 }
