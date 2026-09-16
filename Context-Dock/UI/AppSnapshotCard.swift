@@ -116,6 +116,5 @@ struct AppSnapshotCard: View {
             $0.bundleIdentifier == model.appBundleID && !$0.isTerminated
         }) else { return }
         app.activate()
-        model.hasActed = true
     }
 }

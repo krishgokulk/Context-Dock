@@ -167,8 +167,24 @@ final class AppChatPromptModel: ObservableObject {
     /// Whether the corner chat starts pinned. A toggle that reset itself every relaunch was
     /// not a preference — it was a button that occasionally worked, so pressing it wrote the
     /// choice down rather than only holding it in memory for as long as this object exists.
-    @Published private(set) var isPinned = UserDefaults.standard.bool(
+    @Published private(set) var isPinned = AppChatPromptModel.pinStore.bool(
         forKey: AppChatPromptModel.pinnedDefaultsKey)
+
+    /// Where the pin preference lives. The app's own defaults — except under the test
+    /// suite, which runs inside a copy of this app and so shares its domain: a developer
+    /// who had pinned their own corner made every model the suite built start pinned, and
+    /// a pinned model ignores `standDown`. Half a dozen tests across three files read
+    /// "expected .mini, got .prompt" for weeks and were filed as an idle-timer flake. The
+    /// test script names a separate suite in `CONTEXT_DOCK_DEFAULTS_SUITE`; nothing else
+    /// sets it, so the app never sees it.
+    static let pinStore: UserDefaults = {
+        if let suite = ProcessInfo.processInfo.environment["CONTEXT_DOCK_DEFAULTS_SUITE"],
+            let store = UserDefaults(suiteName: suite)
+        {
+            return store
+        }
+        return .standard
+    }()
 
     /// A question is out and its answer has not arrived. The transcript legitimately goes
     /// empty in between, so the card holds rather than reading that as "nothing here".
@@ -182,9 +198,6 @@ final class AppChatPromptModel: ObservableObject {
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
     private var hasPresentedConversation = false
-    /// The user has already done something here — asked, or run a command. What the app can
-    /// do is an opening offer, not a thing to re-present after every action.
-    var hasActed = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
     private var standDownTask: Task<Void, Never>?
@@ -430,8 +443,12 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
-    /// Opens on suggestions when there are any, because a blank field asks the user to
-    /// guess what the app can do.
+    /// The field, alone. It used to open on the app's suggestions whenever there were any,
+    /// on the theory that a blank field asks the user to guess what the app can do — and
+    /// what that produced was a sheet of 224 rows over a field nobody had typed into, gone
+    /// again two seconds later. The owner asked not to see it (2026-09-16). The list is
+    /// still there: ↓ opens it (`moveMenuFocus`), the same door the dock's own results
+    /// sheet has, and the capability summary under the field still says what is in scope.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Typed: the field alone, same as the dock. Typing never pops the sheet open by
@@ -444,11 +461,15 @@ final class AppChatPromptModel: ObservableObject {
         // A scope stepped into from Global shows only what it found. With nothing found the
         // field rests alone rather than opening an empty board.
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
-        if hasActed { return .prompt }
-        // Attaching a file is composing a question about it. Offering the app's opening
-        // menu on top of that answers something the user has already stopped asking.
+        // Attaching a file is composing a question about it. A list open over that is
+        // answering something the user has already stopped asking.
         if !attachments.isEmpty { return .prompt }
-        return (rows.isEmpty && suggestions.isEmpty) ? .prompt : .suggesting
+        // A list the user arrowed open stays open while it still has rows — this is also
+        // asked when a live menu read lands, and that must not close what was just opened.
+        if phase == .suggesting, !rows.isEmpty { return .suggesting }
+        // Nothing else opens the list by itself: not a scope-in, not a cleared field, not
+        // a detached file, not the pointer coming back to the badge. Only the arrows.
+        return .prompt
     }
 
     // MARK: - Controls
@@ -478,7 +499,7 @@ final class AppChatPromptModel: ObservableObject {
         // Only here, not wherever this session happens to reset the in-memory flag (idling
         // out, dismissing): a toggle is the user stating a preference, an idle timeout is
         // not them changing their mind about it.
-        UserDefaults.standard.set(isPinned, forKey: Self.pinnedDefaultsKey)
+        Self.pinStore.set(isPinned, forKey: Self.pinnedDefaultsKey)
         if isPinned {
             cancel()
         } else {
@@ -517,7 +538,6 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         attachments = []
         hasPresentedConversation = false
-        hasActed = false
         stopAwaitingAnswer()
         set(restingInputPhase)
         touch()
@@ -788,7 +808,6 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         isPinned = false
         hasPresentedConversation = false
-        hasActed = false
         stopAwaitingAnswer()
         set(.hidden)
     }
@@ -806,7 +825,6 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         attachments = []
         hasPresentedConversation = true
-        hasActed = true
         awaitingAnswer = true
         armAnswerWatchdog()
         set(.chat)
@@ -821,7 +839,6 @@ final class AppChatPromptModel: ObservableObject {
     /// see the dock clear the session for the new scope, and step straight back to a field.
     func expectAnswer() {
         hasPresentedConversation = true
-        hasActed = true
         awaitingAnswer = true
         armAnswerWatchdog()
         set(.chat)

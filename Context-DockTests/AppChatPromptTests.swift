@@ -6,15 +6,22 @@ import Testing
 
 /// The corner prompt: a hotkey opens an input in the shared shell, and it stands down the
 /// same way every other corner surface does.
+///
+/// The pin preference is read from `AppChatPromptModel.pinStore`, which the test script
+/// points at a suite of its own. Before that, the host shared the developer's live defaults:
+/// a pinned corner on their screen made every model here start pinned, a pinned model
+/// ignores `standDown`, and "expected .mini, got .prompt" across three files was filed as
+/// an idle-timer flake for weeks.
 @MainActor
 struct AppChatPromptTests {
     @Test func itShowsNothingUntilTheHotkeyAsksForIt() {
         #expect(AppChatPromptModel().phase == .hidden)
     }
 
-    /// Launching shows what this app can actually do, the way Siri opens with
-    /// suggestions rather than a blank line.
-    @Test func launchingOpensOnTheAppsOwnSuggestions() {
+    /// The field opens alone. The app's actions are still there — the arrow keys open them
+    /// — but a sheet of 224 rows over a field nobody has typed into was a launch screen,
+    /// and the owner asked not to see it (2026-09-16).
+    @Test func launchingOpensAsAPlainFieldWithTheSuggestionsBehindTheArrow() {
         let model = AppChatPromptModel()
 
         model.summon(
@@ -25,9 +32,10 @@ struct AppChatPromptTests {
             ],
             summary: "5 actions · 2 skills · 1 built-in tools · 3 cli tools")
 
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
         #expect(model.isStandDownArmed)
         #expect(model.appName == "Code")
+        // Kept, not dropped: the list is a keystroke away.
         #expect(model.suggestions.count == 2)
         #expect(model.capabilitySummary.hasPrefix("5 actions"))
     }
@@ -91,16 +99,20 @@ struct AppChatPromptTests {
         #expect(model.query == "half a question")
     }
 
-    /// Idling away from the suggestions closes them back to just the field first — the
-    /// dock's own results sheet stays hidden until the arrow keys ask for it, and this
-    /// offer works the same way now — before the whole thing eventually shrinks to the
-    /// app's icon like any other untouched prompt.
-    @Test func idlingAwayFromSuggestionsClosesToThePlainFieldFirst() {
-        let model = AppChatPromptModel()
+    /// A list the user arrowed open is the first thing to go when they look away — the
+    /// field itself stays one step longer.
+    @Test func idlingAwayFromAnOpenListClosesToThePlainFieldFirst() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
             summary: "5 actions")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.phase == .suggesting)
 
         model.standDown()
 
@@ -127,8 +139,9 @@ struct AppChatPromptTests {
         #expect(model.leaveSelectionScope() == false)
     }
 
-    /// The arrow keys are exactly how the dock's own hidden results sheet comes back too.
-    @Test func arrowingBackInReopensTheClosedSuggestions() {
+    /// The arrows are the door, the same one the dock's own hidden results sheet has: they open the list from a plain field, and open it again
+    /// after idling closed it.
+    @Test func arrowingOpensTheListAndReopensItAfterItClosed() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
@@ -138,29 +151,34 @@ struct AppChatPromptTests {
             AdapterAction(
                 id: "new-window", name: "New Window", icon: "bolt.fill",
                 description: "", triggers: [], type: .menubar))]
+        #expect(model.phase == .prompt)
+
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.phase == .suggesting)
+
         model.standDown()
         #expect(model.phase == .prompt)
 
         #expect(model.moveMenuFocus(by: 1))
-
         #expect(model.phase == .suggesting)
     }
 
-    /// Coming back to an untouched prompt should show the suggestions again, not a blank
-    /// field the user has to guess at.
-    @Test func reachingForTheIconWithNothingTypedRestoresTheSuggestions() {
+    /// Coming back to an untouched prompt gives the field back, the same as it opened —
+    /// not a sheet the user did not ask for the first time either.
+    @Test func reachingForTheIconWithNothingTypedRestoresThePlainField() {
         let model = AppChatPromptModel()
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
             summary: "5 actions")
-        model.standDown()
+        // The field opens plain now, so one stand-down is the badge.
         model.standDown()
         #expect(model.phase == .mini)
 
         model.hoverBegan()
 
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
+        #expect(model.suggestions.count == 1)
     }
 
     @Test func theIconEventuallyGoesToo() {
@@ -187,7 +205,7 @@ struct AppChatPromptTests {
         #expect(model.phase == .prompt)
     }
 
-    @Test func clearingTheFieldBringsTheSuggestionsBack() {
+    @Test func clearingTheFieldLeavesItAField() {
         let model = AppChatPromptModel()
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
@@ -199,7 +217,8 @@ struct AppChatPromptTests {
         model.query = ""
         model.queryChanged()
 
-        #expect(model.phase == .suggesting)
+        // Deleting what was typed is not a request to browse.
+        #expect(model.phase == .prompt)
     }
 
     /// The turn belongs to the dock's pipeline, so stopping it is a request, not a reach-in.
@@ -315,22 +334,27 @@ struct AppChatPromptTests {
         #expect(model.phase != .chat)
     }
 
-    /// Attaching a file is composing a question about it — the opening menu of what the
-    /// app can do is answering something the user has already stopped asking.
-    @Test func attachingAFilePutsTheOpeningOfferAway() {
+    /// Attaching a file is composing a question about it — a list the user had arrowed
+    /// open is answering something they have stopped asking, so it closes.
+    @Test func attachingAFilePutsAnOpenListAway() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
             summary: "5 actions")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+        #expect(model.moveMenuFocus(by: 1))
         #expect(model.phase == .suggesting)
 
         model.attach(URL(fileURLWithPath: "/tmp/shot.png"))
         #expect(model.phase == .prompt)
 
-        // Remove it and the offer comes back — nothing was asked in between.
+        // Removing it does not reopen the list: nothing opens the list but the arrows.
         model.detach(URL(fileURLWithPath: "/tmp/shot.png"))
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
     }
 
     /// Attachments were never counted, so pasting a file into App mode drew a row the
@@ -401,7 +425,7 @@ struct AppChatPromptTests {
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
             summary: "5 actions")
 
-        #expect(model.phase == .suggesting)
+        #expect(model.phase == .prompt)
         #expect(model.appName == "Code")
         #expect(model.appBundleID == "com.microsoft.VSCode")
         #expect(model.query.isEmpty)
@@ -449,15 +473,15 @@ struct AppChatControlsTests {
     /// constructed. Started at a known value and put back exactly as found, the same way
     /// DoraXTurnLogTests isolates its own real default.
     private func resetPinDefault() -> Bool {
-        let previous = UserDefaults.standard.bool(forKey: AppChatPromptModel.pinnedDefaultsKey)
-        UserDefaults.standard.set(false, forKey: AppChatPromptModel.pinnedDefaultsKey)
+        let previous = AppChatPromptModel.pinStore.bool(forKey: AppChatPromptModel.pinnedDefaultsKey)
+        AppChatPromptModel.pinStore.set(false, forKey: AppChatPromptModel.pinnedDefaultsKey)
         return previous
     }
 
     /// Pinning is the user saying "stay". Nothing times it out after that.
     @Test func pinningStopsTheStandDown() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
 
         model.togglePin()
@@ -468,7 +492,7 @@ struct AppChatControlsTests {
 
     @Test func aPinnedPromptIgnoresTheClockEntirely() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
         model.togglePin()
 
@@ -480,7 +504,7 @@ struct AppChatControlsTests {
 
     @Test func unpinningPutsTheClockBack() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
         model.togglePin()
 
@@ -602,7 +626,7 @@ struct AppChatControlsTests {
 
     @Test func dismissingDropsTheAttachmentsAndThePin() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
         model.attach(URL(fileURLWithPath: "/tmp/shot.png"))
         model.togglePin()
@@ -619,8 +643,8 @@ struct AppChatControlsTests {
     /// explicitly written down — this is the only thing that should be.
     @Test func aFreshModelStartsPinnedIfThatWasLastSetTrue() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
-        UserDefaults.standard.set(true, forKey: AppChatPromptModel.pinnedDefaultsKey)
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        AppChatPromptModel.pinStore.set(true, forKey: AppChatPromptModel.pinnedDefaultsKey)
 
         let model = AppChatPromptModel()
 
@@ -629,7 +653,7 @@ struct AppChatControlsTests {
 
     @Test func aFreshModelStartsUnpinnedIfThatWasLastSetFalse() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
 
         let model = AppChatPromptModel()
 
@@ -641,15 +665,15 @@ struct AppChatControlsTests {
     /// user changing their mind about whether this should always start pinned.
     @Test func togglingIsWhatPersistsNotIdlingOrDismissing() {
         let previous = resetPinDefault()
-        defer { UserDefaults.standard.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
+        defer { AppChatPromptModel.pinStore.set(previous, forKey: AppChatPromptModel.pinnedDefaultsKey) }
         let model = opened()
 
         model.togglePin()
-        #expect(UserDefaults.standard.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
+        #expect(AppChatPromptModel.pinStore.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
 
         model.dismiss()
         // dismiss() clears the in-memory flag for this appearance — a fact about this
         // session, not the user rescinding the preference they just stated.
-        #expect(UserDefaults.standard.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
+        #expect(AppChatPromptModel.pinStore.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
     }
 }
