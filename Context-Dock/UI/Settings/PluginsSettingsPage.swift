@@ -218,8 +218,14 @@ struct PluginsSettingsPage: View {
     /// reads it. This is the cut-over made real for the ones that are ready, and it refuses
     /// the rest by name rather than installing something that cannot work.
     private func installAll(_ items: [MigratedPlugin]) {
-        let clean = items.map(\.manifest).filter {
-            PluginSchema.validate($0).filter { $0.severity == .error }.isEmpty
+        // Each installed plugin remembers the legacy item it stands in for, so the launcher
+        // can hide that original for exactly as long as the plugin is installed.
+        let clean = items.compactMap { item -> PluginManifest? in
+            var manifest = item.manifest
+            guard PluginSchema.validate(manifest).filter({ $0.severity == .error }).isEmpty
+            else { return nil }
+            manifest.keywords.append(PluginSupersession.keyword(forLegacyID: item.legacyID))
+            return manifest
         }
         guard !clean.isEmpty else {
             installMessage = "None of them convert cleanly yet, so nothing was installed."
