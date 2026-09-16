@@ -50,6 +50,10 @@ enum AppChatPromptMetrics {
     /// gap + hairline + gap between the running section and the pins.
     static let dockDividerSpan: CGFloat = 17
     static let dockHeight: CGFloat = 68
+    /// How long the dock takes to become the field, and the field the dock. One number for
+    /// the shell, both layers' crossings and the strip's own gather, so nothing in the
+    /// corner arrives at a different time from anything else.
+    static let dockMorphDuration: TimeInterval = 0.9
     /// The field, folded: a magnifier as the strip's first item, one icon slot wide.
     static var dockSearchStubSpan: CGFloat { dockIconSize + dockIconGap }
     /// Wider than the field, never wider than the corner can hold.
@@ -203,6 +207,10 @@ struct AppChatPromptPill: View {
         // decided has no change to react to, which is exactly how the clipboard ended up
         // armed and keyless.
         .onAppear { syncFocus() }
+        // The phase is now part of the answer to "may this field hold the caret", so it has
+        // to be asked again when the phase moves — expanding from the dock changes nothing
+        // about the keyboard owner.
+        .onChange(of: model.phase) { _, _ in syncFocus() }
         .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
         // A panel minimised or restored changes the pills without anything being typed, so
@@ -212,51 +220,86 @@ struct AppChatPromptPill: View {
         }
     }
 
-    /// Global Context: field and strip are two glass shapes in one container, so when the
-    /// field goes the container morphs it into the strip, and when the strip goes it
-    /// morphs back into the field. Reduced motion crossfades.
+    /// Global Context: one glass shell whose frame and corner radius carry the whole
+    /// morph, with the field and the strip mounted inside it the whole time and crossing
+    /// over by opacity.
+    ///
+    /// This replaced two glass shapes swapped by `glassEffectID`, and the reason is not
+    /// taste. A layer that mounts and unmounts has to be given a transition to move at all,
+    /// and any transition that changes geometry on the layer holding the TextField and its
+    /// FocusState re-lays that subtree out every frame — SwiftUI's FocusBridge then rebuilds
+    /// the window's key view loop every frame and the app hangs on hover (every sample in
+    /// `updateDefaultKeyViewLoop`). Nothing here mounts during the morph and no inner width
+    /// changes: `inputStack` is laid out at its full width from the first frame and the
+    /// shell simply reveals more of it. Layout stays still; only the shell and opacity move.
+    /// This is the shape `legacyBody` has always used, for the same reason.
     private var globalBody: some View {
-        GlassEffectContainer(spacing: 24) {
-            ZStack(alignment: .bottomTrailing) {
-                if model.phase.showsInput {
-                    inputStack
-                        .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-                        .glassEffectID("field", in: glassNamespace)
-                        // Deliberately no geometry transition on this layer, and the reason
-                        // is worth keeping: this subtree holds the TextField and the
-                        // FocusState. A scale transition re-lays it out every frame while
-                        // focus is being claimed, and SwiftUI's FocusBridge rebuilds the key
-                        // view loop on every one of those passes — the app hung on hover,
-                        // with 100% of samples in updateDefaultKeyViewLoop. The glass morph
-                        // is what opens the field; it costs no layout.
-                        .transition(reduceMotion ? .opacity : .identity)
-                }
-                if model.phase == .dock {
-                    CornerDockStrip(model: model)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .glassEffectID("dock", in: glassNamespace)
-                        // Same rule as the field: an instant swap, so the two layers are
-                        // never mounted together. The strip's own gather is a scaleEffect
-                        // inside it, which draws smaller without laying out smaller and so
-                        // costs the focus machinery nothing.
-                        .transition(reduceMotion ? .opacity : .identity)
-                }
-                if model.phase == .mini {
-                    miniContent
-                        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-                        .glassEffectID("field", in: glassNamespace)
-                }
-            }
+        let showsInput = model.phase.showsInput
+        let isDock = model.phase == .dock
+        return ZStack(alignment: .bottomTrailing) {
+            inputStack
+                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                .opacity(showsInput ? 1 : 0)
+                .allowsHitTesting(showsInput)
+                .animation(fieldFade, value: model.phase)
+
+            CornerDockStrip(model: model)
+                .opacity(isDock ? 1 : 0)
+                .allowsHitTesting(isDock)
+                .animation(stripFade, value: model.phase)
+
+            miniContent
+                .opacity(model.phase == .mini ? 1 : 0)
+                .allowsHitTesting(model.phase == .mini)
+                .animation(.easeInOut(duration: 0.2), value: model.phase)
         }
         .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
-        // One curve for the shape, the frame and both layers' transitions, so the whole
-        // corner moves as a single object. Shorter than it was: this runs after a hover
-        // dwell, and 0.45s on top of the wait read as the dock thinking about it.
-        .animation(
-            reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.38),
-            value: model.phase)
+        // The shell's own shape carries the morph: a capsule at dock height, the field's
+        // 22-point card once it is open. Clipped to it so the wide layer never shows
+        // outside the glass while the frame is still narrow.
+        .clipShape(
+            RoundedRectangle(cornerRadius: shellRadius, style: .continuous))
+        .glassEffect(
+            .regular.interactive(),
+            in: .rect(cornerRadius: shellRadius, style: .continuous))
+        .animation(shellMorph, value: model.phase)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+    }
+
+    /// A capsule while it rests as a dock, a card once the field is open. Animated as one
+    /// number, so the corner never looks like two shapes changing at once.
+    private var shellRadius: CGFloat {
+        model.phase == .dock ? AppChatPromptMetrics.dockHeight / 2 : 22
+    }
+
+    /// The whole morph, one curve. `dockMorphDuration` is the single number to turn when
+    /// this feels fast or slow.
+    private var shellMorph: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.15)
+            : .smooth(duration: AppChatPromptMetrics.dockMorphDuration)
+    }
+
+    /// The field arrives after the shell has started widening, so it is read as the shell
+    /// opening rather than a card fading in over a dock; it leaves at once, before the
+    /// shell narrows enough to slice it.
+    private var fieldFade: Animation {
+        guard !reduceMotion else { return .easeOut(duration: 0.15) }
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return model.phase.showsInput
+            ? .easeOut(duration: full * 0.5).delay(full * 0.34)
+            : .easeIn(duration: full * 0.22)
+    }
+
+    /// The mirror of `fieldFade`: the strip goes early on the way out and comes back late
+    /// on the way in, so the small pill of apps inside the field is the thing on screen in
+    /// the middle of the morph, and it is what appears to grow back into the dock.
+    private var stripFade: Animation {
+        guard !reduceMotion else { return .easeOut(duration: 0.15) }
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return model.phase == .dock
+            ? .easeOut(duration: full * 0.42).delay(full * 0.42)
+            : .easeIn(duration: full * 0.3)
     }
 
     /// Everything that is not Global keeps the shell it had.
@@ -298,7 +341,11 @@ struct AppChatPromptPill: View {
     }
 
     private func syncFocus() {
-        fieldFocused = keyboardState.owner == .chat
+        // The field is mounted in every phase now, including while the corner rests as a
+        // dock — the morph needs it laid out and still. A mounted field must not be
+        // focusable when it is not the thing on screen, or the dock's own keys go into an
+        // invisible text field instead of bringing it back.
+        fieldFocused = keyboardState.owner == .chat && model.phase.showsInput
     }
 
     // MARK: - Input

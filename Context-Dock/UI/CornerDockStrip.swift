@@ -22,6 +22,11 @@ struct CornerDockStrip: View {
 
     private typealias M = AppChatPromptMetrics
 
+    /// The icons are collapsed toward the pill whenever the field is on its way in or
+    /// already up — not only while the magnifier is hovered. Typing a letter and clicking
+    /// the magnifier open the field too, and they are the same motion.
+    private var gathered: Bool { condensing || model.phase != .dock }
+
     /// The row and its geometry, made together: an app appears once, whether it is pinned,
     /// running or both.
     private var plan: DockStripPlan {
@@ -91,15 +96,19 @@ struct CornerDockStrip: View {
             }
             }
             // Gathering toward the trailing edge, which is where the field's own small
-            // pill of running apps lands: the dock reads as shrinking into that pill
-            // rather than dissolving and something else appearing.
-            .scaleEffect(condensing ? 0.62 : 1, anchor: .trailing)
-            .opacity(condensing ? 0 : 1)
-            .blur(radius: condensing ? 1.2 : 0)
+            // pill of running apps lands: the big icons are seen to collapse into that
+            // pill rather than dissolving while something else appears somewhere else.
+            // A scaleEffect draws smaller without laying out smaller, which is what keeps
+            // this off the focus machinery's books.
+            .scaleEffect(gathered ? 0.38 : 1, anchor: .trailing)
+            .blur(radius: gathered ? 1.2 : 0)
         }
-        // Scale leads, opacity follows a beat later, so the row is seen to gather before
-        // it goes. One curve with the shell's, so nothing arrives at a different time.
-        .animation(.smooth(duration: 0.32), value: condensing)
+        // The same curve and length as the shell's morph: the icons are still collapsing
+        // while the field opens, which is the whole point of the flow. Fading is the
+        // shell's job — this layer only shrinks, so the two are never fighting over how
+        // visible the row is.
+        .animation(
+            .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .padding(.horizontal, M.dockInset)
         .frame(height: M.dockHeight)
         .contentShape(Rectangle())
