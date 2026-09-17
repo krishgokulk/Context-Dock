@@ -50,7 +50,7 @@ enum ActionFeedbackTint {
 
 @MainActor
 final class CornerActionFeedback: ObservableObject {
-    static let shared = CornerActionFeedback()
+    static let shared = CornerActionFeedback(listening: true)
 
     /// The result on show, if any. Progress stays until its own completion or dismissal;
     /// a finished result leaves after `holdDuration`.
@@ -62,8 +62,11 @@ final class CornerActionFeedback: ObservableObject {
     private var clearTask: Task<Void, Never>?
     private var subscription: AnyCancellable?
 
-    /// The app uses `shared`; a test builds its own so two tests never share a clock.
-    init() {
+    /// The app uses `shared`, which listens to the dock's notification; a test builds its
+    /// own, deaf by default, so a post from one test is not heard by every other test's
+    /// store. Only the test of the listening itself asks to listen.
+    init(listening: Bool = false) {
+        guard listening else { return }
         subscription = NotificationCenter.default.publisher(for: .dockInlineFeedbackChanged)
             .receive(on: RunLoop.main)
             .sink { [weak self] note in

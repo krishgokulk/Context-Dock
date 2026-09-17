@@ -21,6 +21,10 @@ enum PluginEssentials {
     /// for something that needed a `SystemCommand` record, a registry entry and a row in the
     /// dock's own switch before.
     ///
+    /// `replaces:Sleep` retires the built-in Global Command of the same name while this is
+    /// installed. Two rows called Sleep answered to one search, and the old one's ⏎ opened a
+    /// presets panel rather than sleeping — which is what "sleep isn't working" was.
+    ///
     /// No `views`. A plugin with a `primaryAction` and no panel is a one-shot: ⏎ runs it.
     /// `risk: medium` because it interrupts whatever the machine is doing — `read` would run
     /// it the moment a fuzzy match put it under the cursor and somebody pressed return.
@@ -28,9 +32,9 @@ enum PluginEssentials {
     {
       "id": "sleep",
       "name": "Sleep",
-      "icon": "moon.fill",
+      "icon": "moon.zzz.fill",
       "description": "Put this Mac to sleep.",
-      "keywords": ["sleep", "suspend"],
+      "keywords": ["sleep", "suspend", "replaces:Sleep"],
       "inputs": [],
       "actions": {
         "sleep": {

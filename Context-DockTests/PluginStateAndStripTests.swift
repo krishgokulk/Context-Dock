@@ -249,3 +249,39 @@ struct PluginStateAndStripTests {
         #expect(size.height <= HostTraits.cornerPanel.maxHeight)
     }
 }
+
+/// A shipped plugin cannot know the id of the built-in command it replaces — that id is a
+/// fresh UUID on every install — so it names it.
+struct PluginSupersessionByNameTests {
+    @Test func aPluginThatNamesACommandRetiresItWhateverTheCase() {
+        let sleep = PluginManifest(id: "sleep", name: "Sleep", keywords: ["sleep", "replaces:Sleep"])
+        let replaced = PluginSupersession.replacedNames(in: [sleep])
+        #expect(PluginSupersession.supersedes(legacyName: "Sleep", replaced: replaced))
+        #expect(PluginSupersession.supersedes(legacyName: "SLEEP", replaced: replaced))
+        #expect(!PluginSupersession.supersedes(legacyName: "Stay Awake", replaced: replaced))
+    }
+
+    @Test func theReplacesStampIsBookkeepingNotAKeywordAPersonReads() {
+        let sleep = PluginManifest(
+            id: "sleep", name: "Sleep", keywords: ["sleep", "replaces:Sleep", "migrated-from:abc"])
+        #expect(PluginSupersession.userVisibleKeywords(of: sleep) == ["sleep"])
+    }
+
+    @Test func aPersonsOwnChoiceIsConsentUpToMediumAnAgentsIsNot() {
+        let medium = PluginAction(type: "bash", script: "pmset sleepnow", risk: .medium)
+        let high = PluginAction(type: "bash", script: "rm -rf x", risk: .high)
+        let read = PluginAction(type: "bash", script: "ls", risk: .read)
+        #expect(!PluginPermissions.needsApproval(medium, origin: .user))
+        #expect(PluginPermissions.needsApproval(medium, origin: .agent))
+        #expect(PluginPermissions.needsApproval(high, origin: .user))
+        #expect(!PluginPermissions.needsApproval(read, origin: .agent))
+    }
+
+    @Test func theShippedSleepReplacesTheBuiltInOne() throws {
+        let sleep = try JSONDecoder().decode(
+            PluginManifest.self, from: Data(PluginEssentials.sleepJSON.utf8))
+        #expect(PluginSupersession.replacedNames(in: [sleep]).contains("sleep"))
+        #expect(sleep.icon == "moon.zzz.fill")
+        #expect(!PluginSchema.hasErrors(PluginSchema.validate(sleep)))
+    }
+}

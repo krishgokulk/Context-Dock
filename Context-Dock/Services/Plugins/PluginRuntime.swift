@@ -40,6 +40,10 @@ struct PluginDataKey: Hashable {
     }
 }
 
+/// Who asked for an action to run. The gate reads it: a person's own choice is consent up
+/// to `medium`; a model's is not.
+enum PluginRunOrigin { case user, agent }
+
 enum PluginDataState {
     case loading
     case ready(PluginBinding)
@@ -165,7 +169,7 @@ final class PluginRuntime: ObservableObject {
     /// executor built by PluginCapability, which is reached THROUGH the approval centre. Asking
     /// again there would show the same card twice for one decision.
     func run(_ request: PluginActionRequest, manifest: PluginManifest, inputs: PluginInputs,
-             skipApproval: Bool = false) async
+             skipApproval: Bool = false, origin: PluginRunOrigin = .agent) async
         -> Result<String, PluginRunFailure>
     {
         // An action nobody declared is not run, whatever asked for it. The renderer can emit a
@@ -175,7 +179,7 @@ final class PluginRuntime: ObservableObject {
                 message: "\(manifest.name) does not declare an action called \"\(request.name)\"",
                 kind: .blocked))
         }
-        if !skipApproval, PluginPermissions.needsApproval(action) {
+        if !skipApproval, PluginPermissions.needsApproval(action, origin: origin) {
             guard await approvalProvider(request, action, manifest) else {
                 return .failure(PluginRunFailure(
                     message: "\(action.title ?? request.name) was not approved", kind: .blocked))

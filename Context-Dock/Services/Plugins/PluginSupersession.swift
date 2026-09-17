@@ -32,8 +32,29 @@ enum PluginSupersession {
         covered.contains(legacyID)
     }
 
+    /// The second stamp, by name. A migrated plugin knows the id of the command it came
+    /// from; a plugin the app ships cannot — the built-in Sleep's id is a fresh UUID on every
+    /// install — so it names what it replaces instead: `replaces:Sleep`. Case-insensitive,
+    /// because a name is how a person tells the two apart and a person does not read case.
+    static let replacesPrefix = "replaces:"
+
+    static func keyword(replacingName name: String) -> String { replacesPrefix + name }
+
+    static func replacedNames(in manifests: [PluginManifest]) -> Set<String> {
+        Set(manifests.flatMap { manifest in
+            manifest.keywords.compactMap { keyword in
+                keyword.hasPrefix(replacesPrefix)
+                    ? String(keyword.dropFirst(replacesPrefix.count)).lowercased() : nil
+            }
+        })
+    }
+
+    static func supersedes(legacyName: String, replaced: Set<String>) -> Bool {
+        replaced.contains(legacyName.lowercased())
+    }
+
     /// The keywords a person wrote, without the bookkeeping.
     static func userVisibleKeywords(of manifest: PluginManifest) -> [String] {
-        manifest.keywords.filter { !$0.hasPrefix(prefix) }
+        manifest.keywords.filter { !$0.hasPrefix(prefix) && !$0.hasPrefix(replacesPrefix) }
     }
 }

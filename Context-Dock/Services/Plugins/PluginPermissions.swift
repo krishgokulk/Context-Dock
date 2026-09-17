@@ -45,6 +45,17 @@ enum PluginPermissions {
     /// which is the app's one approval surface rather than a second one grown here.
     static func needsApproval(_ action: PluginAction) -> Bool { action.risk != .read }
 
+    /// Whether this run asks first, given who asked. An agent is gated on anything above
+    /// read. A person choosing the row — ⏎ on it, a click on its pin — is the consent for
+    /// anything up to `medium`: a Sleep that put a dialog between the click and the sleep was
+    /// asking the user to confirm what they had just done. `high` asks whoever asks.
+    static func needsApproval(_ action: PluginAction, origin: PluginRunOrigin) -> Bool {
+        switch origin {
+        case .agent: return needsApproval(action)
+        case .user: return action.risk == .high
+        }
+    }
+
     /// A host is reachable only when the manifest declared it. `network:local` covers loopback
     /// and the private ranges — the Sonos case, where the speaker is on the LAN and has no
     /// public name — and nothing else. A manifest that declared no network reaches nothing.

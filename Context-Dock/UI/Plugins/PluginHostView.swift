@@ -130,7 +130,7 @@ final class PluginHostSink: PluginActionSink {
                     _ = await runtime.run(
                         PluginActionRequest(
                             name: request.name, value: request.value ?? action.value.map(PluginValue.string)),
-                        manifest: model.manifest, inputs: inputs)
+                        manifest: model.manifest, inputs: inputs, origin: .user)
                     model.handle(request)
                 }
                 return
@@ -140,8 +140,9 @@ final class PluginHostSink: PluginActionSink {
         }
         Task { [weak self] in
             guard let self else { return }
+            // A tap in the plugin's own view is the person's choice.
             let result = await runtime.run(
-                request, manifest: model.manifest, inputs: inputs)
+                request, manifest: model.manifest, inputs: inputs, origin: .user)
             onResult?(result)
             if case .success = result {
                 model.onActionCompleted?(request, true)

@@ -121,6 +121,12 @@ actor PluginScriptRunner {
         let err = Pipe()
         process.standardOutput = out
         process.standardError = err
+        // Never the host's stdin. A script has no terminal: left unset, the shell inherits
+        // whatever launched the app — a real tty when the test host is started from one —
+        // and a login zsh with a tty can settle at an interactive prompt that reads
+        // forever and ignores SIGTERM. Three did, and the suite waited on them for half an
+        // hour.
+        process.standardInput = FileHandle.nullDevice
 
         do {
             try process.run()
@@ -134,21 +140,29 @@ actor PluginScriptRunner {
         async let stdoutData = Self.read(out)
         async let stderrData = Self.read(err)
 
-        let timedOut = await withTaskGroup(of: Bool.self) { group -> Bool in
+        // The wait is a blocking `waitUntilExit` on a GCD thread and cannot be cancelled, so
+        // the group must not be left holding it: on timeout the process is made to exit —
+        // SIGTERM first, SIGKILL if it is still there a moment later, since an interactive
+        // shell ignores the first — and only then does the group return.
+        // Whether the clock ran out is decided by the clock, not by which task reports
+        // first: a process killed by the timeout exits, and its wait can win the race.
+        let deadline = TimeoutFlag()
+        await withTaskGroup(of: Void.self) { group in
             group.addTask {
                 await Self.wait(for: process)
-                return false
             }
             group.addTask {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                guard process.isRunning else { return false }
+                guard process.isRunning else { return }
+                deadline.set()
                 process.terminate()
-                return true
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             }
-            let first = await group.next() ?? false
+            await group.next()
             group.cancelAll()
-            return first
         }
+        let timedOut = deadline.isSet
 
         let stdout = String(data: await stdoutData, encoding: .utf8) ?? ""
         let stderr = String(data: await stderrData, encoding: .utf8) ?? ""
@@ -168,6 +182,14 @@ actor PluginScriptRunner {
             stdout: stdout.trimmingCharacters(in: .whitespacesAndNewlines),
             stderr: stderr.trimmingCharacters(in: .whitespacesAndNewlines),
             exitCode: process.terminationStatus))
+    }
+
+    /// One bit shared by the two racing tasks, set by the one that owns the clock.
+    private final class TimeoutFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.lock(); value = true; lock.unlock() }
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
     }
 
     private static func read(_ pipe: Pipe) async -> Data {

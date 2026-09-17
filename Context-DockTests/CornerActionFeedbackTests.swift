@@ -66,6 +66,21 @@ struct CornerActionFeedbackTests {
         store.dismiss(id: "2")
     }
 
+    @Test func aResultPostedTheDocksWayReachesTheCorner() async throws {
+        // The one notification both surfaces read. A launch or a quit posts through
+        // DockActionFeedback and the corner's store must hear it without anything routing.
+        let store = CornerActionFeedback(listening: true)
+        DockActionFeedback.showResult(
+            "Opened Safari", icon: "arrow.up.forward.app", success: true, id: "nc-test",
+            bundleID: "com.apple.Safari")
+        for _ in 0..<40 where store.current == nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        #expect(store.current?.id == "nc-test")
+        #expect(store.current?.bundleID == "com.apple.Safari")
+        store.dismiss(id: "nc-test")
+    }
+
     @Test func dismissingSomethingElseLeavesTheCurrentResultAlone() {
         let store = CornerActionFeedback()
         store.show(result("Kept", phase: .progress, id: "k"))

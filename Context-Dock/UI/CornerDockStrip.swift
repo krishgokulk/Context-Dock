@@ -389,6 +389,20 @@ struct CornerDockStrip: View {
             }
         case .globalCommand, .cliTool:
             guard let document else { return }
+            // A pinned plugin answers where it is: a one-shot runs from the dock, a plugin
+            // with a panel opens it as the card above the pin — the field is not brought
+            // back for either, since neither has anything to type into it. Opening the
+            // field and folding it again read as the click having misfired.
+            if let pluginID = pin.kind.pluginID,
+                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+            {
+                if manifest.views.panel != nil {
+                    model.pluginCardPinID = model.pluginCardPinID == pin.id ? nil : pin.id
+                } else {
+                    GlobalContextRow.run(document)
+                }
+                return
+            }
             // Commands and tools run through the list's own path so a CLI scopes the field
             // and a system command opens its scope, exactly as choosing the row would.
             model.expandFromDock(seeding: nil)

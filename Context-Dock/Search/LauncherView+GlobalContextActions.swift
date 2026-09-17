@@ -3444,11 +3444,13 @@ extension LauncherView {
         // migrated plugin does not delete the original (the Phase 8 cut-over does), so
         // without this both answer to the same name and one of the two rows is quietly the
         // old implementation. Uninstall the plugin and the command is back.
-        let supersededLegacyIDs = PluginSupersession.legacyIDs(
-            in: PluginRegistry.shared.enabledPlugins.map(\.manifest))
+        let enabledManifests = PluginRegistry.shared.enabledPlugins.map(\.manifest)
+        let supersededLegacyIDs = PluginSupersession.legacyIDs(in: enabledManifests)
+        let replacedNames = PluginSupersession.replacedNames(in: enabledManifests)
         for command in SystemCommandsRegistry.shared.commands where command.isEnabled {
             guard !PluginSupersession.supersedes(
-                legacyID: command.id.uuidString, covered: supersededLegacyIDs)
+                legacyID: command.id.uuidString, covered: supersededLegacyIDs),
+                !PluginSupersession.supersedes(legacyName: command.name, replaced: replacedNames)
             else { continue }
             let icon = NSImage(systemSymbolName: command.icon, accessibilityDescription: command.name)
             addIfNew(.init(systemCommand: command, icon: icon))
