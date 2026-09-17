@@ -81,6 +81,18 @@ struct PluginRegistryTests {
         #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("manifest.json").path))
     }
 
+    @Test("Uninstalling removes the plugin's own folder and nothing beside it")
+    func uninstallRemovesTheFolder() throws {
+        let r = try root(with: ["one": ["ok": ok, "broken": broken]])
+        let registry = PluginRegistry(roots: [r], stateFile: r.appendingPathComponent("state.json"))
+        let folder = try #require(registry.folder(forPlugin: "ok"))
+        try registry.uninstall(pluginID: "ok")
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+        #expect(registry.plugins.map(\.id) == ["broken"])
+        // Asking again for something already gone is not an error either.
+        try registry.uninstall(pluginID: "ok")
+    }
+
     @Test("A missing root is not an error")
     func missingRoot() {
         let r = FileManager.default.temporaryDirectory.appendingPathComponent("absent-\(UUID().uuidString)")

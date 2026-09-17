@@ -143,4 +143,16 @@ final class PluginRegistry: ObservableObject {
             try? data.write(to: stateFile, options: .atomic)
         }
     }
+
+    /// Takes a plugin off the disk and out of the strip. Its folder goes; a pin pointing at
+    /// it goes with it, or the strip would hold a slot for something that no longer exists.
+    /// What it remembered (`PluginStateStore`) is left — a reinstall picks it back up.
+    func uninstall(pluginID: String) throws {
+        guard let plugin = plugins.first(where: { $0.id == pluginID }) else { return }
+        try FileManager.default.removeItem(at: plugin.folder)
+        for pin in DockPinStore.shared.pins where pin.kind.pluginID == pluginID {
+            DockPinStore.shared.unpin(pin.id)
+        }
+        reload()
+    }
 }

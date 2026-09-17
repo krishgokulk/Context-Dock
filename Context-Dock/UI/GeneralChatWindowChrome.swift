@@ -43,6 +43,9 @@ final class GeneralChatWindowChromeState: ObservableObject {
     static let shared = GeneralChatWindowChromeState()
 
     @Published var mode: GeneralChatWindowMode = .chat
+    /// A manifest the Creator was asked to open on — Edit from Settings, an example to try.
+    /// The pane takes it and clears it; a stale request must not reopen on the next visit.
+    @Published var creatorOpens: PluginManifest?
     @Published var sidebarVisible: Bool = true
     @Published var bottomPanelVisible: Bool = false
     @Published var sidePanelVisible: Bool = false

@@ -10,6 +10,7 @@ import SwiftUI
 struct PluginCreatorPane: View {
     @ObservedObject private var registry = PluginRegistry.shared
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var chrome = GeneralChatWindowChromeState.shared
     @StateObject private var model = PluginCreatorModel(text: PluginCreatorPane.starter)
     @State private var saved: String?
 
@@ -37,6 +38,16 @@ struct PluginCreatorPane: View {
                 .frame(minWidth: 320)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { takeRequestedManifest() }
+        .onChange(of: chrome.creatorOpens?.id) { _, _ in takeRequestedManifest() }
+    }
+
+    /// Settings asked for a manifest to be opened here (Edit, or an example to try). Taken
+    /// once and cleared, so the next visit to this mode starts where the person left it.
+    private func takeRequestedManifest() {
+        guard let manifest = chrome.creatorOpens else { return }
+        chrome.creatorOpens = nil
+        open(manifest)
     }
 
     // MARK: Editor
@@ -170,14 +181,46 @@ struct PluginCreatorPane: View {
     @ViewBuilder
     private var preview: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Preview", systemImage: "eye")
-                .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 8) {
+                Label("Preview", systemImage: "eye")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 0)
+                if model.previewManifest?.data != nil {
+                    Button {
+                        Task { await model.runTest() }
+                    } label: {
+                        Label(model.isRunning ? "Running…" : "Run test", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(model.isRunning)
+                    .help("Run the data script and draw what it returns instead of the sample")
+                }
+                if let manifest = model.previewManifest, !manifest.declaredPresentations.isEmpty {
+                    Button {
+                        PluginWindowManager.shared.open(manifest)
+                    } label: {
+                        Label("Window", systemImage: "macwindow")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("The detached host — the same renderer at window width")
+                }
+            }
+            if let status = model.runStatus {
+                Label(status.text, systemImage: status.failed
+                    ? "exclamationmark.triangle.fill" : "info.circle")
+                    .font(.system(size: 11))
+                    .foregroundStyle(status.failed ? Color.orange : Color.secondary)
+                    .lineLimit(2)
+            }
             if let manifest = model.previewManifest {
                 if manifest.declaredPresentations.isEmpty {
                     oneShotPreview(manifest)
                 } else {
                     ScrollView {
-                        PluginPreviewHarness(manifest: manifest)
+                        PluginPreviewHarness(manifest: manifest, live: model.live)
+                            .id(manifest.id)
                             .padding(.vertical, 4)
                     }
                 }
@@ -228,14 +271,7 @@ struct PluginCreatorPane: View {
 
     private func open(_ manifest: PluginManifest?) {
         saved = nil
-        if let manifest {
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            model.text = (try? encoder.encode(manifest))
-                .flatMap { String(data: $0, encoding: .utf8) } ?? Self.starter
-        } else {
-            model.text = Self.starter
-        }
+        model.open(manifest)
     }
 
     private func save() {

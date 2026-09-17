@@ -32,7 +32,8 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
 
     /// The Creator is a mode of this window, not a window of its own (decision 67a1106d):
     /// opening it is showing this window in that mode.
-    func showCreator() {
+    func showCreator(editing manifest: PluginManifest? = nil) {
+        GeneralChatWindowChromeState.shared.creatorOpens = manifest
         GeneralChatWindowChromeState.shared.mode = .creator
         show()
     }

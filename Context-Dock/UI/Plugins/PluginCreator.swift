@@ -35,10 +35,66 @@ final class PluginCreatorModel: ObservableObject {
     /// Injected so a test can drive the round without a provider; the pane passes the live one.
     var makeEngine: (() -> PluginAuthoringEngine)?
 
+    /// Run test: the plugin's DATA script, run for real, and what it returned drawn in the
+    /// preview in place of `sample`. Data only — actions stay refused here, because routing
+    /// them through the approval centre is the PluginToolset work, and a second approval
+    /// sheet in the meantime is the thing worth not building. Its own runtime, so a test run
+    /// never warms or pollutes the one the strip is ticking.
+    let runtime = PluginRuntime()
+    @Published private(set) var isRunning = false
+
+    private var runtimeChanges: AnyCancellable?
+
     init(text: String, editingID: String? = nil) {
         self.text = text
         self.editingID = editingID
         reparse()
+        // The runtime's states are what `live` and `runStatus` read; a change there is a
+        // change here, or the preview would keep the sample after the script returned.
+        runtimeChanges = runtime.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
+    }
+
+    /// Puts a manifest in the editor, pretty-printed the way Save reads it back.
+    func open(_ manifest: PluginManifest?) {
+        note = nil
+        draftError = nil
+        guard let manifest else {
+            text = PluginCreatorPane.starter
+            return
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        text = (try? encoder.encode(manifest)).flatMap { String(data: $0, encoding: .utf8) }
+            ?? PluginCreatorPane.starter
+    }
+
+    func runTest() async {
+        guard let manifest = previewManifest, manifest.data != nil, !isRunning else { return }
+        isRunning = true
+        defer { isRunning = false }
+        await runtime.refresh(manifest, host: .panel, inputs: PluginInputs())
+    }
+
+    /// What the last Run test returned for the manifest being previewed, if it ran clean.
+    var live: PluginBinding? {
+        guard let manifest = previewManifest, manifest.data != nil,
+            case .ready(let binding) = runtime.state(
+                for: manifest, host: .panel, inputs: PluginInputs())
+        else { return nil }
+        return binding
+    }
+
+    /// The Run test line: what the preview is drawing from, or why the script failed.
+    var runStatus: (text: String, failed: Bool)? {
+        guard let manifest = previewManifest else { return nil }
+        guard manifest.data != nil else { return nil }
+        switch runtime.state(for: manifest, host: .panel, inputs: PluginInputs()) {
+        case .ready: return ("Showing what the script returned", false)
+        case .failed(let diagnostic): return (diagnostic.message, true)
+        case .loading: return ("Sample data. Run test to see what the script returns.", false)
+        }
     }
 
     /// Describe → draft. A non-empty editor is what the description edits; the starter is
