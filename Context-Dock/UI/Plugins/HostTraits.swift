@@ -58,6 +58,9 @@ struct HostTraits: Equatable {
     /// The strip's bar tile: everything inside has to fit in one icon's height.
     var isBar: Bool { presentation == .widget && maxHeight <= HostTraits.stripSlot }
 
+    /// The strip's icon host: one slot, drawn like an app icon.
+    var isIcon: Bool { presentation == .icon }
+
     /// Spec §5: 360 / 480 / 640 wide, content height up to 70 % of the screen.
     static func window(_ width: PluginWindowWidth, screenHeight: CGFloat) -> HostTraits {
         let points: CGFloat

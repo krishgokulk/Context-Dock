@@ -410,22 +410,20 @@ final class CornerDockController: NSObject {
         return nil
     }
 
-    /// A pinned plugin's panel, opened by a tap in its tile. It holds the slot the hover
-    /// cards use and wins over them: a card the user opened is not put away by the pointer
-    /// crossing the next icon.
+    /// A pinned plugin's panel: opened by a tap in its tile, or by the pointer resting on a
+    /// plugin that draws as an icon — its panel is what that icon previews, the way an app
+    /// previews its windows. It holds the slot the hover cards use; a tapped-open card wins
+    /// over the hover, so it is not put away by the pointer crossing the next icon.
     var showsPluginCard: Bool {
         chatPresentation.isVisible && chatPresentation.mode != .general
             && prompt.phase == .dock && pluginCardPin != nil
     }
 
     var pluginCardPin: (pin: DockPin, manifest: PluginManifest)? {
-        guard let id = prompt.pluginCardPinID,
-            let pin = DockPinStore.shared.pins.first(where: { $0.id == id }),
-            let pluginID = pin.kind.pluginID,
-            let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest,
-            manifest.views.panel != nil
-        else { return nil }
-        return (pin, manifest)
+        CornerPluginCardRouting.cardPin(
+            open: prompt.pluginCardPinID, hovered: prompt.previewPinID,
+            pins: DockPinStore.shared.pins,
+            manifest: { PluginRegistry.shared.plugin(id: $0)?.manifest })
     }
 
     private var windowRowSize: CGSize {
@@ -465,8 +463,8 @@ final class CornerDockController: NSObject {
     /// the field and stay centred on it.
     private var hoverCardAnchorOffset: CGFloat? {
         let target: DockHoverTarget?
-        if showsPluginCard, let id = prompt.pluginCardPinID {
-            target = .pin(id: id)
+        if showsPluginCard, let card = pluginCardPin {
+            target = .pin(id: card.pin.id)
         } else if showsWindowRow || showsPinPreview {
             target = prompt.dockPreviewTarget
         } else {

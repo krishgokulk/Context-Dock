@@ -192,6 +192,57 @@ struct PluginStateAndStripTests {
         #expect(!CornerPluginCardMetrics.panelNamesItself(PluginExamples.releases))
     }
 
+    // MARK: Which pin's panel the card shows
+
+    private func pluginPin(_ id: String) -> DockPin {
+        DockPin(id: UUID(), kind: .globalCommand(id: "plugin:\(id)"), title: id, order: 0,
+            documentID: "plugin:\(id)")
+    }
+
+    @Test func hoveringAPluginIconOpensItsPanelButATileIsItsOwnPreview() throws {
+        let currency = try JSONDecoder().decode(
+            PluginManifest.self, from: Data(PluginEssentials.currencyJSON.utf8))
+        let sleep = try JSONDecoder().decode(
+            PluginManifest.self, from: Data(PluginEssentials.sleepJSON.utf8))
+        let manifests = ["releases": PluginExamples.releases, "currency": currency, "sleep": sleep]
+        let releases = pluginPin("releases"), tile = pluginPin("currency"), moon = pluginPin("sleep")
+        let pins = [releases, tile, moon]
+        let route = { (open: UUID?, hovered: UUID?) in
+            CornerPluginCardRouting.cardPin(
+                open: open, hovered: hovered, pins: pins, manifest: { manifests[$0] })?.pin.id
+        }
+        // An icon with a panel: the hover is the preview.
+        #expect(route(nil, releases.id) == releases.id)
+        // A bar tile draws its widget in the row; hovering it opens nothing.
+        #expect(route(nil, tile.id) == nil)
+        // No panel, nothing to show — the generic pin card takes over.
+        #expect(route(nil, moon.id) == nil)
+        // A card a tap opened stays up whatever the pointer crosses.
+        #expect(route(tile.id, releases.id) == tile.id)
+        #expect(route(tile.id, nil) == tile.id)
+        #expect(route(nil, nil) == nil)
+    }
+
+    // MARK: The strip's icon host
+
+    @Test func aPluginWithAnIconViewDrawsItLiveInTheStripAndOneWithoutDrawsItsSymbol() throws {
+        let currency = try JSONDecoder().decode(
+            PluginManifest.self, from: Data(PluginEssentials.currencyJSON.utf8))
+        #expect(PluginStripIcon.drawsLive(PluginExamples.sonos))
+        #expect(!PluginStripIcon.drawsLive(PluginExamples.releases))
+        // A bar widget is the tile; its icon view, if any, is not what the strip draws.
+        #expect(!PluginStripIcon.drawsLive(currency))
+    }
+
+    @Test func everyIconLeafFitsInsideOneSlot() {
+        let traits = HostTraits.strip(.icon)
+        let inset = PluginStripIcon.content
+        for leaf in ["thumbnail", "cell", "waveform", "pulse", "progress", "caption", "avatar"] {
+            #expect(PluginKit.leafHeight(leaf, traits: traits) <= inset, Comment(rawValue: leaf))
+        }
+        #expect(PluginKit.leafHeight("thumbnail", traits: traits) == inset)
+    }
+
     // MARK: Navigation and state through the host
 
     private func temporaryRuntime() -> (PluginRuntime, URL) {

@@ -42,13 +42,28 @@ enum PluginKit {
         }
     }
 
-    static func gap(_ traits: HostTraits) -> CGFloat { traits.isBar ? barGap : gap }
+    /// Inside a strip icon — one slot, drawn like an app icon — a leaf is at most the icon's
+    /// content square. The thumbnail *is* the icon; the rest is a badge on it.
+    static func iconLeafHeight(_ component: String) -> CGFloat? {
+        switch component {
+        case "thumbnail", "cell", "avatar": return PluginStripIcon.content
+        case "waveform", "pulse", "progress", "timer": return 10
+        case "caption", "tag", "statusBadge": return 12
+        case "title", "subtitle", "body", "liveText": return 14
+        default: return nil
+        }
+    }
+
+    static func gap(_ traits: HostTraits) -> CGFloat {
+        traits.isBar ? barGap : (traits.isIcon ? 2 : gap)
+    }
 
     /// The height of a component, whatever it holds. A row is a row's height whether it
     /// carries one line or a thumbnail and two — the kit decides, not the content, which is
     /// what keeps this arithmetic rather than a measurement.
     static func leafHeight(_ component: String, traits: HostTraits) -> CGFloat {
         if traits.isBar, let height = barLeafHeight(component) { return height }
+        if traits.isIcon, let height = iconLeafHeight(component) { return height }
         let compact = traits.widthClass == .compact
         switch component {
         case "row", "fileRow": return rowHeight(traits)

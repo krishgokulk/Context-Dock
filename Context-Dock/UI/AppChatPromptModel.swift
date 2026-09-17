@@ -756,6 +756,16 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// Puts the plugin card away however it came up. A tapped-open card is closed by
+    /// forgetting the tap; a hover-opened one by letting go of the hover, so it stays away
+    /// until the pointer leaves the icon and comes back — the pointer is still on the icon
+    /// that opened it, and a card that came straight back would read as the × misfiring.
+    func dismissPluginCard() {
+        pluginCardPinID = nil
+        windowRowTask?.cancel()
+        dockPreviewTarget = nil
+    }
+
     func windowRowHovered(_ inside: Bool) {
         pointerInWindowRow = inside
         if inside { windowRowTask?.cancel() } else { scheduleWindowRowUpdate() }

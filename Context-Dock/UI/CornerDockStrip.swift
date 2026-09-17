@@ -206,11 +206,23 @@ struct CornerDockStrip: View {
             default: return pin.kind.isAvailable
             }
         }()
-        return DockStripIcon(
-            image: image, title: pin.title, isRunning: false,
-            isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids),
-            fallbackSymbol: pin.kind.fallbackSymbol
-        )
+        // A plugin that declares an icon view is drawn live — its artwork, its waveform —
+        // in the slot its symbol would take. Everything around the icon is the same.
+        let liveIcon = pin.kind.pluginID
+            .flatMap { PluginRegistry.shared.plugin(id: $0)?.manifest }
+            .flatMap { PluginStripIcon.drawsLive($0) ? $0 : nil }
+        return Group {
+            if let liveIcon {
+                PluginStripIcon(manifest: liveIcon, scale: scale(for: pin.id.uuidString, among: ids))
+                    .id(liveIcon.id)
+            } else {
+                DockStripIcon(
+                    image: image, title: pin.title, isRunning: false,
+                    isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids),
+                    fallbackSymbol: pin.kind.fallbackSymbol
+                )
+            }
+        }
         .onHover { inside in
             let id = pin.id.uuidString
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
@@ -397,7 +409,13 @@ struct CornerDockStrip: View {
                 let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
             {
                 if manifest.views.panel != nil {
-                    model.pluginCardPinID = model.pluginCardPinID == pin.id ? nil : pin.id
+                    // The click toggles the card whichever way it came up — hover already
+                    // shows an icon's panel, so a click on that icon puts it away.
+                    if model.pluginCardPinID == pin.id || model.previewPinID == pin.id {
+                        model.dismissPluginCard()
+                    } else {
+                        model.pluginCardPinID = pin.id
+                    }
                 } else {
                     GlobalContextRow.run(document)
                 }

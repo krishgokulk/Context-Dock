@@ -14,6 +14,30 @@ struct PluginContainerView: View {
 
     var body: some View {
         switch node.component {
+        case "capsule" where traits.isIcon:
+            // In one strip slot a capsule cannot lay its children side by side — a thumbnail
+            // beside a waveform is twice the slot. The first child is the icon and fills the
+            // square; whatever follows sits on it as a badge along the bottom edge, the way
+            // a Dock icon carries its progress bar.
+            ZStack(alignment: .bottom) {
+                if let first = node.children.first {
+                    PluginRenderer(node: first, traits: traits, binding: binding, sink: sink)
+                }
+                if node.children.count > 1 {
+                    HStack(spacing: 2) {
+                        ForEach(Array(node.children.dropFirst().enumerated()), id: \.offset) {
+                            _, child in
+                            PluginRenderer(node: child, traits: traits, binding: binding, sink: sink)
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 2)
+                }
+            }
+            .frame(width: PluginStripIcon.content, height: PluginStripIcon.content)
+            .clipShape(RoundedRectangle(cornerRadius: PluginStripIcon.radius, style: .continuous))
         case "hstack", "capsule":
             HStack(spacing: PluginKit.gap(traits)) { children }
         case "card", "footerCard":

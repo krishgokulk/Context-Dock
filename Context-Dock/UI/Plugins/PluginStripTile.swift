@@ -66,8 +66,53 @@ struct PluginStripTile: View {
     }
 }
 
-/// The plugin's panel, above its tile. Opened by a tap in the widget, closed by ×, by the
-/// tap that made the choice (a `set` action completing), or by the corner folding.
+/// A plugin in the strip as an icon: its `icon` view, live, in one slot — the Sonos capsule
+/// with the artwork and the waveform on it, where a symbol stood before. The second strip
+/// host. Same footprint as `DockStripIcon` (content square over the running dot's row), so
+/// it lines up with the apps and magnifies with them; the strip wraps it in the hover, tap,
+/// drag and menu every other pin has.
+struct PluginStripIcon: View {
+    /// The content square inside a slot, the size an app icon draws at.
+    static let content: CGFloat = AppChatPromptMetrics.dockIconSize - 8
+    static let radius: CGFloat = 10
+
+    let manifest: PluginManifest
+    let scale: CGFloat
+    @StateObject private var host: PluginHostModel
+
+    init(manifest: PluginManifest, scale: CGFloat) {
+        self.manifest = manifest
+        self.scale = scale
+        _host = StateObject(wrappedValue: PluginHostModel(
+            manifest: manifest, presentation: .icon, compact: true))
+    }
+
+    /// Whether the strip draws this plugin's icon view rather than its symbol: it declares
+    /// one, and it is not a bar widget — the bar is the tile, and the tile is what shows.
+    static func drawsLive(_ manifest: PluginManifest) -> Bool {
+        manifest.views.widget?.family != .bar
+            && PluginHostModel.root(of: manifest, for: .icon) != nil
+    }
+
+    var body: some View {
+        VStack(spacing: 2) {
+            PluginHostView(model: host)
+                .frame(width: Self.content, height: Self.content)
+                .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+                .scaleEffect(scale, anchor: .bottom)
+                .animation(.snappy(duration: 0.18), value: scale)
+            Circle().fill(.clear).frame(width: 4, height: 4)
+        }
+        .frame(
+            width: AppChatPromptMetrics.dockIconSize, height: AppChatPromptMetrics.dockIconSize)
+        .contentShape(Rectangle())
+        .help(manifest.name)
+    }
+}
+
+/// The plugin's panel, above its tile or icon. Opened by a tap in the widget or by resting
+/// on the icon; closed by ×, by the tap that made the choice (a `set` action completing),
+/// by the pointer leaving a hover-opened card, or by the corner folding.
 struct CornerPluginCard: View {
     let pin: DockPin
     let manifest: PluginManifest
@@ -97,15 +142,14 @@ struct CornerPluginCard: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 Spacer(minLength: 0)
-                Button { model.pluginCardPinID = nil } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18, height: 18)
-                        .background(Color.primary.opacity(0.08), in: Circle())
+                // ▢ takes the plugin out of the corner into its own window — the same
+                // renderer at window width — and the card, whose job the window now has,
+                // goes away with it.
+                chromeButton("macwindow", help: "Open as a window") {
+                    PluginWindowManager.shared.open(manifest)
+                    model.dismissPluginCard()
                 }
-                .buttonStyle(.plain)
-                .help("Close")
+                chromeButton("xmark", help: "Close") { model.dismissPluginCard() }
             }
             .frame(height: M.headerHeight)
             // What does not fit scrolls. The corner's swipe monitor only claims scrolls over
@@ -124,9 +168,52 @@ struct CornerPluginCard: View {
                 // A choice made is the card's job done. A push or a failure keeps it up: the
                 // first is navigation inside it, the second has something to say.
                 guard succeeded, manifest.actions[request.name]?.type == "set" else { return }
-                model?.pluginCardPinID = nil
+                model?.dismissPluginCard()
             }
         }
+    }
+
+    private func chromeButton(_ symbol: String, help: String, action: @escaping () -> Void)
+        -> some View
+    {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+                .background(Color.primary.opacity(0.08), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+/// Which pin's panel the card above the strip shows. Two ways in: a tap opened it, or the
+/// pointer is resting on a plugin that draws as an icon. The tap wins — a card a person
+/// opened is not put away by the pointer crossing the next icon — and a bar tile never
+/// opens on hover, because the tile is already the plugin's preview and its chips open the
+/// card themselves; a hover-opened card would fight the chip that closes it.
+enum CornerPluginCardRouting {
+    static func cardPin(
+        open: UUID?, hovered: UUID?, pins: [DockPin],
+        manifest: (String) -> PluginManifest?
+    ) -> (pin: DockPin, manifest: PluginManifest)? {
+        if let open, let found = resolve(open, pins: pins, manifest: manifest) { return found }
+        guard let hovered, let found = resolve(hovered, pins: pins, manifest: manifest),
+            found.manifest.views.widget?.family != .bar
+        else { return nil }
+        return found
+    }
+
+    private static func resolve(
+        _ id: UUID, pins: [DockPin], manifest: (String) -> PluginManifest?
+    ) -> (pin: DockPin, manifest: PluginManifest)? {
+        guard let pin = pins.first(where: { $0.id == id }),
+            let pluginID = pin.kind.pluginID,
+            let manifest = manifest(pluginID),
+            manifest.views.panel != nil
+        else { return nil }
+        return (pin, manifest)
     }
 }
 
