@@ -166,6 +166,7 @@ struct AppChatPromptPill: View {
     /// the caret has to leave when it does.
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var selection = CornerDockController.shared.selection
+    @ObservedObject private var actionFeedback = CornerActionFeedback.shared
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -174,7 +175,9 @@ struct AppChatPromptPill: View {
     private var size: CGSize {
         // The strip's own composition, not the raw counts: an app that is pinned and
         // running is one icon there, and a pin this build cannot resolve is none.
-        let tools = model.dockToolCount(clipboardVisible: clipboard.phase.isVisible)
+        let tools = model.dockToolCount(
+            clipboardVisible: clipboard.phase.isVisible,
+            feedbackVisible: actionFeedback.current != nil)
         let composition = DockStripPlan.make(
             running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools
         ).composition
@@ -262,8 +265,24 @@ struct AppChatPromptPill: View {
         .glassEffect(
             .regular.interactive(),
             in: .rect(cornerRadius: shellRadius, style: .continuous))
+        // The dock glows in the result's colour; here the glass takes a stroke of it. Red
+        // for anything destructive, the acted-on app's own colour otherwise, the phase's
+        // when there is no app. Gone with the result.
+        .overlay {
+            RoundedRectangle(cornerRadius: shellRadius, style: .continuous)
+                .strokeBorder(feedbackTint ?? .clear, lineWidth: 1.5)
+                .opacity(feedbackTint == nil ? 0 : 0.85)
+                .allowsHitTesting(false)
+        }
+        .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(shellMorph, value: model.phase)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+    }
+
+    private var feedbackTint: Color? {
+        guard let result = actionFeedback.current else { return nil }
+        return ActionFeedbackTint.color(
+            for: result, appColor: actionFeedback.appIcon(for: result)?.dominantSwiftUIColor)
     }
 
     /// A capsule while it rests as a dock, a card once the field is open. Animated as one
@@ -660,6 +679,14 @@ struct AppChatPromptPill: View {
             // all, whatever the frontmost app's AX tree actually reported.
             if model.isSearchField, model.selection != nil {
                 selectionScopeButton
+            }
+
+            // What the last action came to, beside the field for a few seconds — the
+            // dock's inline result, carried here so a result reaches the surface the user
+            // is on. Same transient lifetime as the clipboard's own icon.
+            if let result = actionFeedback.current {
+                ActionFeedbackGlyph(feedback: result)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
 
             // What Return does, shown rather than left to the row below to explain: the

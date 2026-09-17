@@ -731,9 +731,10 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// The corner's own affordances that join the strip: the clipboard when a copy just
-    /// happened, the selection when there is one. Same rules as the field's own row.
-    func dockToolCount(clipboardVisible: Bool) -> Int {
-        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
+    /// happened, the selection when there is one, the result of an action for a few seconds
+    /// after it ran. Same rules as the field's own row.
+    func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
+        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 
     /// The first printable character brings the field back and lands in it. Anything the

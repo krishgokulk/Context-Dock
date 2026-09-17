@@ -68,6 +68,9 @@ final class CornerDockController: NSObject {
     private var sinks: Set<AnyCancellable> = []
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
+    /// The result of the last action the corner ran, for a few seconds. One more tool slot
+    /// in the strip while it shows, so the shell is measured for it.
+    private var actionFeedback: CornerActionFeedback { CornerActionFeedback.shared }
     /// The selection, when the user has raised it. A corner surface like the others, not
     /// the launcher wearing a smaller coat.
     let selection = SelectionScopeModel()
@@ -77,6 +80,12 @@ final class CornerDockController: NSObject {
     var prompt: AppChatPromptModel { chatPresentation.appChat }
 
     var window: NSPanel? { panel }
+
+    /// The corner chat is on screen in some phase — dock, field, badge, conversation — so a
+    /// result can be shown here instead of in a floating pill of its own.
+    var isCornerChatVisible: Bool {
+        chatPresentation.isVisible && panel?.isVisible == true
+    }
 
     func activate() {
         ensurePanel()
@@ -173,6 +182,10 @@ final class CornerDockController: NSObject {
         }.store(in: &sinks)
         clipboardModel.$isKeyboardArmed.sink { [weak self] _ in
             Task { @MainActor in self?.publishKeyboardOwner() }
+        }.store(in: &sinks)
+        // A result arriving or leaving changes the strip's width by one slot.
+        actionFeedback.$current.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         }.store(in: &sinks)
         // The preview card appears and disappears with the walk through the list, so the
         // stack has to be measured again when the focus moves — otherwise the card is drawn
@@ -410,7 +423,7 @@ final class CornerDockController: NSObject {
         else { return nil }
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: DockPinStore.shared.pins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible)
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.current != nil)
         ).iconCenterOffset(for: target)
     }
 
@@ -476,7 +489,7 @@ final class CornerDockController: NSObject {
         // icon there, so it must be one icon wide here.
         let composition = DockStripPlan.make(
             running: prompt.stripIcons, pins: DockPinStore.shared.pins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible)
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.current != nil)
         ).composition
         return AppChatPromptMetrics.size(
             for: prompt.phase,
@@ -487,7 +500,7 @@ final class CornerDockController: NSObject {
             running: composition.unpinnedRunningCount,
             pinnedApps: composition.pinnedAppCount,
             pinned: composition.otherPins.count,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible))
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.current != nil))
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.

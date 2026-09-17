@@ -589,11 +589,18 @@ extension LauncherView {
 
         requestWindowSizeUpdate(reason: .modeChanged)
 
+        // Re-scoping the context dock to the next app is for a dock that is on screen. This
+        // view outlives the window being hidden and still hears every termination, and
+        // activateContextDock() *shows* the dock — so quitting an app from the corner chat
+        // brought the dock up over the user's work, scoped to whatever came next. A dock the
+        // user is not looking at has nothing to re-scope.
         if shouldStayInContextDockAfterQuit,
             let fallback,
-            fallback.bundleIdentifier != nil
+            fallback.bundleIdentifier != nil,
+            AppDelegate.shared?.launcherWindow?.isVisible == true
         {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                guard AppDelegate.shared?.launcherWindow?.isVisible == true else { return }
                 AppDelegate.shared?.activateContextDock()
             }
         }

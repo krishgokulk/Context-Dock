@@ -57,9 +57,15 @@ final class AppToast: ObservableObject {
             // toasts/notifications. Persistent toasts and those with an action button keep
             // the floating pill (the inline feedback is transient and button-less), and the
             // floating pill is the fallback whenever the dock is closed.
+            // The corner is a surface too: a result raised while the corner chat is up
+            // and the dock is not belongs in the corner, in its own idiom — an icon in the
+            // strip, a tint on the shell — rather than as a separate pill floating over
+            // the bottom of the screen. Both surfaces read the same notification, so one
+            // post reaches whichever is on screen.
             let canRouteToDock =
                 !persistent && actionTitle == nil
-                && AppDelegate.shared?.launcherWindow?.isVisible == true
+                && (AppDelegate.shared?.launcherWindow?.isVisible == true
+                    || CornerDockController.shared.isCornerChatVisible)
             if canRouteToDock {
                 let warning =
                     icon.contains("exclamationmark") || icon.contains("shield")

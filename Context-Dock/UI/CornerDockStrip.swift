@@ -8,6 +8,7 @@ struct CornerDockStrip: View {
     @ObservedObject var model: AppChatPromptModel
     @ObservedObject private var pins = DockPinStore.shared
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
+    @ObservedObject private var feedback = CornerActionFeedback.shared
     @State private var hoveredID: String?
     @State private var isDropTarget = false
     @State private var draggingPinID: UUID?
@@ -32,7 +33,9 @@ struct CornerDockStrip: View {
     private var plan: DockStripPlan {
         DockStripPlan.make(
             running: model.stripIcons, pins: pins.pins,
-            tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
+            tools: model.dockToolCount(
+                clipboardVisible: clipboard.phase.isVisible,
+                feedbackVisible: feedback.current != nil))
     }
 
     var body: some View {
@@ -93,6 +96,12 @@ struct CornerDockStrip: View {
                         CornerDockController.shared.showSelectionScopeFromDock()
                     }
                 }
+                // What the last action came to, for a few seconds — the dock's inline
+                // result, in the corner's own idiom: the clipboard's slot and lifetime.
+                if let result = feedback.current {
+                    ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
+                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                }
             }
             }
             // Gathering toward the trailing edge, which is where the field's own small
@@ -109,6 +118,7 @@ struct CornerDockStrip: View {
         // visible the row is.
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
+        .animation(.smooth(duration: 0.25), value: feedback.current?.id)
         .padding(.horizontal, M.dockInset)
         .frame(height: M.dockHeight)
         .contentShape(Rectangle())
