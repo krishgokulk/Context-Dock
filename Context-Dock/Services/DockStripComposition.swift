@@ -140,6 +140,10 @@ struct DockStripPlan {
         unresolved: Set<String>, widgetSlots: [UUID: Int])?
     @MainActor private static let environmentTTL: TimeInterval = 0.5
 
+    /// The search index was rebuilt: what resolved a moment ago is not what resolves now,
+    /// and half a second is long enough for a freshly installed pin to draw as nothing.
+    @MainActor static func forgetEnvironment() { environmentCache = nil }
+
     @MainActor
     static func make(running: [MatchDockIcon], pins: [DockPin], tools: Int) -> DockStripPlan {
         let environment: (running: Set<String>, unresolved: Set<String>, widgetSlots: [UUID: Int])

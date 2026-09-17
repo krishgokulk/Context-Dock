@@ -60,10 +60,15 @@ final class PluginRegistry: ObservableObject {
     /// plugin root without being a pack.
     @Published private(set) var rootErrors: [String] = []
 
+    /// Set once the first load is done: the announcement is for changes, and the first
+    /// load is not one — the index it would ask for is being built from this very list.
+    private var didLoad = false
+
     init(roots: [URL], stateFile: URL) {
         self.roots = roots
         self.stateFile = stateFile
         reload()
+        didLoad = true
     }
 
     var enabledPlugins: [InstalledPlugin] {
@@ -131,6 +136,18 @@ final class PluginRegistry: ObservableObject {
             }
         }
         plugins = installed
+        announceChange()
+    }
+
+    /// What is installed and enabled is what search indexes, and the search index is what
+    /// the strip resolves a pin against. Until this was posted, a plugin saved from the
+    /// Creator was invisible to the corner field and its pin drawn as nothing until an app
+    /// happened to launch or quit — the only other things that rebuild the index. The
+    /// Advanced page's Rebuild button posts the same name; this is that button, pressed by
+    /// the thing that changed. Skipped while the registry is still being built.
+    private func announceChange() {
+        guard didLoad else { return }
+        NotificationCenter.default.post(name: .globalSearchIndexRebuildRequested, object: nil)
     }
 
     func setEnabled(_ enabled: Bool, pluginID: String) {
@@ -142,6 +159,7 @@ final class PluginRegistry: ObservableObject {
         if let data = try? JSONEncoder().encode(state) {
             try? data.write(to: stateFile, options: .atomic)
         }
+        announceChange()
     }
 
     /// Takes a plugin off the disk and out of the strip. Its folder goes; a pin pointing at

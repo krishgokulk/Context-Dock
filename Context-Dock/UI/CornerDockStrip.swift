@@ -9,6 +9,8 @@ struct CornerDockStrip: View {
     @ObservedObject private var pins = DockPinStore.shared
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var feedback = CornerActionFeedback.shared
+    /// A pin draws only when the search index resolves it; a rebuilt index is a redraw.
+    @ObservedObject private var index = GlobalSearchIndexStatus.shared
     @State private var hoveredID: String?
     @State private var isDropTarget = false
     @State private var draggingPinID: UUID?

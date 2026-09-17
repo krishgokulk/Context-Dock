@@ -93,6 +93,27 @@ struct PluginRegistryTests {
         try registry.uninstall(pluginID: "ok")
     }
 
+    @Test("A change asks for the search index to be rebuilt; the first load does not")
+    func changesAnnounceThemselves() throws {
+        // A plugin saved from the Creator was invisible to the corner field, and its pin
+        // was drawn as nothing, until an app happened to launch: nothing told the index.
+        let r = try root(with: ["one": ["ok": ok]])
+        var posts = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: .globalSearchIndexRebuildRequested, object: nil, queue: nil
+        ) { _ in posts += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+
+        let registry = PluginRegistry(roots: [r], stateFile: r.appendingPathComponent("state.json"))
+        #expect(posts == 0)
+        registry.reload()
+        #expect(posts == 1)
+        registry.setEnabled(false, pluginID: "ok")
+        #expect(posts == 2)
+        try registry.uninstall(pluginID: "ok")
+        #expect(posts == 3)
+    }
+
     @Test("A missing root is not an error")
     func missingRoot() {
         let r = FileManager.default.temporaryDirectory.appendingPathComponent("absent-\(UUID().uuidString)")

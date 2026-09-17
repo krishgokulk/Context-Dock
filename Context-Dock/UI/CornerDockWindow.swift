@@ -259,6 +259,19 @@ final class CornerDockController: NSObject {
         prompt.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.refresh() }
         }.store(in: &sinks)
+        // The strip is as wide as its pins, and a pin is drawn only when the search index
+        // can resolve it. Both change from outside the corner — a pin added in Settings, a
+        // plugin saved from the Creator — so both re-measure the shell here, or the strip
+        // keeps the width it had until the pointer happens to cross it.
+        DockPinStore.shared.objectWillChange.sink { [weak self] _ in
+            DispatchQueue.main.async { self?.refresh() }
+        }.store(in: &sinks)
+        GlobalSearchIndexStatus.shared.$documentCount.dropFirst().sink { [weak self] _ in
+            DispatchQueue.main.async {
+                DockStripPlan.forgetEnvironment()
+                self?.refresh()
+            }
+        }.store(in: &sinks)
     }
 
     /// Which edge the shell is anchored to. Read fresh each time rather than cached: the
