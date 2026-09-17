@@ -15,7 +15,7 @@ struct PluginContainerView: View {
     var body: some View {
         switch node.component {
         case "hstack", "capsule":
-            HStack(spacing: PluginKit.gap) { children }
+            HStack(spacing: PluginKit.gap(traits)) { children }
         case "card", "footerCard":
             VStack(alignment: .leading, spacing: PluginKit.gap) { children }
                 .padding(PluginKit.cardPadding)
@@ -33,7 +33,7 @@ struct PluginContainerView: View {
                 .frame(height: 1)
                 .padding(.vertical, 4)
         default:  // vstack
-            VStack(alignment: .leading, spacing: PluginKit.gap) { children }
+            VStack(alignment: .leading, spacing: PluginKit.gap(traits)) { children }
         }
     }
 

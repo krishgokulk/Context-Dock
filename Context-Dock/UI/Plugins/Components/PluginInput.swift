@@ -11,6 +11,7 @@ struct PluginInputView: View {
     let binding: PluginBinding
     weak var sink: (any PluginActionSink)?
     @State private var text = ""
+    @FocusState private var focused: Bool
 
     var body: some View {
         switch node.component {
@@ -53,9 +54,24 @@ struct PluginInputView: View {
                     message: "native panel \"\(binding.text(node.props["text"]))\" is not wired yet")
             ])
         default:  // textField
+            // `value` is where it starts (a bound state key, say); `action` is what Return
+            // sends the typed text to. A field with nowhere to send it is a note to self.
             TextField(binding.text(node.props["placeholder"]), text: $text)
                 .textFieldStyle(.roundedBorder).font(.system(size: 12))
                 .frame(height: PluginKit.leafHeight("textField", traits: traits))
+                .onAppear {
+                    if text.isEmpty { text = binding.text(node.props["value"]) }
+                }
+                .focused($focused)
+                .onChange(of: focused) { _, isFocused in
+                    PluginKeyboardClaim.shared.fieldFocusChanged(isFocused)
+                }
+                .onDisappear { PluginKeyboardClaim.shared.fieldFocusChanged(false) }
+                .onSubmit {
+                    let name = binding.text(node.props["action"])
+                    guard !name.isEmpty else { return }
+                    sink?.run(PluginActionRequest(name: name, value: .string(text)))
+                }
         }
     }
 }

@@ -120,12 +120,32 @@ struct PluginControlView: View {
                 }
             }
         default:  // button
-            Button(PluginTextView.text(of: node, binding: binding)) {
-                if let request = Self.request(of: node, binding: binding) {
-                    Self.send(request, sink: sink)
+            if traits.isBar {
+                // In a bar tile a button is a chip — the currency pill, the unit, the state —
+                // drawn the way the reference dock draws them: small, capsule, quiet until
+                // hovered. The kit's bordered button is 32 points tall and would not fit.
+                Button {
+                    if let request = Self.request(of: node, binding: binding) {
+                        Self.send(request, sink: sink)
+                    }
+                } label: {
+                    Text(PluginTextView.text(of: node, binding: binding))
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .frame(height: PluginKit.barLeafHeight("button") ?? 20)
+                        .background(Color.primary.opacity(0.12), in: Capsule(style: .continuous))
+                        .contentShape(Capsule(style: .continuous))
                 }
+                .buttonStyle(.plain)
+            } else {
+                Button(PluginTextView.text(of: node, binding: binding)) {
+                    if let request = Self.request(of: node, binding: binding) {
+                        Self.send(request, sink: sink)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
             }
-            .font(.system(size: 12, weight: .medium))
         }
     }
 }

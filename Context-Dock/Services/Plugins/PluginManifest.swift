@@ -10,7 +10,10 @@ enum PluginDataFormat: String, Codable { case json, jsonl, lines, raw }
 enum PluginScriptType: String, Codable { case bash, applescript, jxa, scriptFile, shortcut, http }
 enum PluginRisk: String, Codable { case read, low, medium, high }
 enum PluginPresentation: String, Codable, CaseIterable { case icon, widget, panel, window }
-enum PluginWidgetFamily: String, Codable { case small, medium, large }
+/// `small` / `medium` / `large` are the iOS squares. `bar` is the dock strip's own family: a
+/// tile the height of a strip icon, `slots` icons wide, so a widget sits in the row with the
+/// apps and pins rather than towering over them.
+enum PluginWidgetFamily: String, Codable { case small, medium, large, bar }
 enum PluginWindowWidth: String, Codable { case narrow, regular, wide }
 
 struct PluginDataSource: Codable, Equatable {
@@ -57,11 +60,13 @@ struct PluginActionFeedback: Codable, Equatable {
 
 struct PluginAction: Codable, Equatable {
     /// A script type (`bash`, `applescript`, `jxa`, `scriptFile`, `shortcut`, `http`) or a
-    /// built-in: `copy`, `open`, `reveal`, `paste`, `push:<view>`.
+    /// built-in: `copy`, `open`, `reveal`, `paste`, `push:<view>`, `set` (state[key] = value).
     var type: String
     var script: String?
     var value: String?
     var app: String?
+    /// `set` only: which state key the tapped value goes into.
+    var key: String?
     var title: String?
     var risk: PluginRisk
     var optimistic: String?
@@ -70,14 +75,14 @@ struct PluginAction: Codable, Equatable {
     var success: PluginActionFeedback?
 
     init(type: String, script: String? = nil, value: String? = nil, app: String? = nil,
-         title: String? = nil, risk: PluginRisk = .read, optimistic: String? = nil,
-         undo: String? = nil, success: PluginActionFeedback? = nil) {
+         key: String? = nil, title: String? = nil, risk: PluginRisk = .read,
+         optimistic: String? = nil, undo: String? = nil, success: PluginActionFeedback? = nil) {
         self.type = type; self.script = script; self.value = value; self.app = app
-        self.title = title; self.risk = risk; self.optimistic = optimistic
+        self.key = key; self.title = title; self.risk = risk; self.optimistic = optimistic
         self.undo = undo; self.success = success
     }
 
-    enum CodingKeys: String, CodingKey { case type, script, value, app, title, risk, optimistic, undo, success }
+    enum CodingKeys: String, CodingKey { case type, script, value, app, key, title, risk, optimistic, undo, success }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -85,6 +90,7 @@ struct PluginAction: Codable, Equatable {
         script = try c.decodeIfPresent(String.self, forKey: .script)
         value = try c.decodeIfPresent(String.self, forKey: .value)
         app = try c.decodeIfPresent(String.self, forKey: .app)
+        key = try c.decodeIfPresent(String.self, forKey: .key)
         title = try c.decodeIfPresent(String.self, forKey: .title)
         // Spec §11.3 gates anything beyond read through the approval centre. A script
         // action (bash, applescript, jxa, scriptFile, shortcut, http) that omits `risk`
@@ -169,18 +175,26 @@ struct PluginIconView: Codable, Equatable {
 /// and lands as a named `PluginSchema` diagnostic instead.
 struct PluginWidgetView: Codable, Equatable {
     var family: PluginWidgetFamily
+    /// `bar` only: how many strip icons wide, 1…4. Ignored by the square families.
+    var slots: Int
     var root: PluginNode?
 
-    init(family: PluginWidgetFamily, root: PluginNode?) {
+    static let defaultSlots = 3
+    static let slotRange = 1...4
+
+    init(family: PluginWidgetFamily, slots: Int = PluginWidgetView.defaultSlots, root: PluginNode?) {
         self.family = family
+        self.slots = Self.slotRange.contains(slots) ? slots : Self.defaultSlots
         self.root = root
     }
 
-    private enum CodingKeys: String, CodingKey { case family, root }
+    private enum CodingKeys: String, CodingKey { case family, slots, root }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         family = try c.decode(PluginWidgetFamily.self, forKey: .family)
+        let declared = try c.decodeIfPresent(Int.self, forKey: .slots) ?? Self.defaultSlots
+        slots = Self.slotRange.contains(declared) ? declared : Self.defaultSlots
         root = try c.decodeIfPresent(PluginNode.self, forKey: .root)
     }
 }
@@ -273,24 +287,31 @@ struct PluginManifest: Codable, Equatable, Identifiable {
     var primaryAction: String?
     var permissions: [String]
     var sample: [String: PluginValue]
+    /// What the plugin remembers between runs, with its starting values: a converter's
+    /// currencies, a timer's target. Scripts read it as `CD_STATE_<KEY>`; views bind it like
+    /// data; the `set` built-in and a script's `"state"` output change it. Kept on disk per
+    /// plugin, so it survives a relaunch — a preference nobody asked twice for.
+    var state: [String: PluginValue]
     var agent: PluginAgent?
     var views: PluginViews
 
     init(id: String, name: String, icon: String = PluginManifest.defaultIcon, description: String = "",
          keywords: [String] = [], inputs: [String] = ["query"], scope: Bool = true,
          data: PluginDataSource? = nil, actions: [String: PluginAction] = [:], primaryAction: String? = nil,
-         permissions: [String] = [], sample: [String: PluginValue] = [:], agent: PluginAgent? = nil,
+         permissions: [String] = [], sample: [String: PluginValue] = [:],
+         state: [String: PluginValue] = [:], agent: PluginAgent? = nil,
          views: PluginViews = PluginViews()) {
         self.id = id; self.name = name; self.icon = icon
         self.description = description.isEmpty ? name : description
         self.keywords = keywords; self.inputs = inputs; self.scope = scope
         self.data = data; self.actions = actions; self.primaryAction = primaryAction
-        self.permissions = permissions; self.sample = sample; self.agent = agent; self.views = views
+        self.permissions = permissions; self.sample = sample; self.state = state
+        self.agent = agent; self.views = views
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, icon, description, keywords, inputs, scope, data, actions, primaryAction
-        case permissions, sample, agent, views
+        case permissions, sample, state, agent, views
     }
 
     init(from decoder: Decoder) throws {
@@ -308,6 +329,7 @@ struct PluginManifest: Codable, Equatable, Identifiable {
         primaryAction = try c.decodeIfPresent(String.self, forKey: .primaryAction)
         permissions = try c.decodeIfPresent([String].self, forKey: .permissions) ?? []
         sample = try c.decodeIfPresent([String: PluginValue].self, forKey: .sample) ?? [:]
+        state = try c.decodeIfPresent([String: PluginValue].self, forKey: .state) ?? [:]
         agent = try c.decodeIfPresent(PluginAgent.self, forKey: .agent)
         views = try c.decodeIfPresent(PluginViews.self, forKey: .views) ?? PluginViews()
     }

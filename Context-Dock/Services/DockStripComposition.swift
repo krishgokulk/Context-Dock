@@ -38,9 +38,32 @@ struct DockStripComposition: Equatable {
     let otherPins: [DockPin]
     /// Running apps past capacity, drawn as `+N`. A pinned app is never in this count.
     let overflow: Int
+    /// Pins that draw as a plugin's bar widget instead of an icon, and how many icon slots
+    /// each spans. A pin absent here is one slot wide.
+    let widgetSlots: [UUID: Int]
+
+    init(apps: [DockAppSlot], otherPins: [DockPin], overflow: Int, widgetSlots: [UUID: Int] = [:]) {
+        self.apps = apps
+        self.otherPins = otherPins
+        self.overflow = overflow
+        self.widgetSlots = widgetSlots
+    }
 
     var pinnedAppCount: Int { apps.count { $0.isPinned } }
     var unpinnedRunningCount: Int { apps.count { !$0.isPinned } }
+
+    /// How wide one pin draws: an icon, or a bar widget of `slots` icons with the strip's
+    /// gaps between them.
+    func width(of pin: DockPin) -> CGFloat {
+        guard let slots = widgetSlots[pin.id] else { return AppChatPromptMetrics.dockIconSize }
+        return HostTraits.barWidth(slots: slots)
+    }
+
+    /// What the pins region costs beyond one icon per pin — the extra the widgets take, which
+    /// the metrics add to the pins run so the shell is measured for what is drawn.
+    var widgetExtraWidth: CGFloat {
+        otherPins.reduce(0) { $0 + width(of: $1) - AppChatPromptMetrics.dockIconSize }
+    }
 
     /// Pure: two lists in, one row out.
     ///
@@ -54,7 +77,8 @@ struct DockStripComposition: Equatable {
     /// thing it points at.
     static func compose(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
-        unresolvedDocumentIDs: Set<String> = [], capacity: Int = .max
+        unresolvedDocumentIDs: Set<String> = [], widgetSlots: [UUID: Int] = [:],
+        capacity: Int = .max
     ) -> DockStripComposition {
         var appSlots: [DockAppSlot] = []
         var otherPins: [DockPin] = []
@@ -90,7 +114,8 @@ struct DockStripComposition: Equatable {
         }
 
         return DockStripComposition(
-            apps: appSlots, otherPins: otherPins, overflow: unpinned.count - shown.count)
+            apps: appSlots, otherPins: otherPins, overflow: unpinned.count - shown.count,
+            widgetSlots: widgetSlots.filter { id, _ in otherPins.contains { $0.id == id } })
     }
 }
 
@@ -112,16 +137,16 @@ struct DockStripPlan {
     /// launching or quitting shows up within the window instead, which is faster than the
     /// dot could be noticed anyway.
     @MainActor private static var environmentCache: (taken: Date, running: Set<String>,
-        unresolved: Set<String>)?
+        unresolved: Set<String>, widgetSlots: [UUID: Int])?
     @MainActor private static let environmentTTL: TimeInterval = 0.5
 
     @MainActor
     static func make(running: [MatchDockIcon], pins: [DockPin], tools: Int) -> DockStripPlan {
-        let environment: (running: Set<String>, unresolved: Set<String>)
+        let environment: (running: Set<String>, unresolved: Set<String>, widgetSlots: [UUID: Int])
         if let cached = environmentCache,
             Date().timeIntervalSince(cached.taken) < environmentTTL
         {
-            environment = (cached.running, cached.unresolved)
+            environment = (cached.running, cached.unresolved, cached.widgetSlots)
         } else {
             let runningBundleIDs = Set(
                 NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
@@ -132,12 +157,22 @@ struct DockStripPlan {
                     else { return nil }
                     return documentID
                 })
-            environmentCache = (Date(), runningBundleIDs, unresolved)
-            environment = (runningBundleIDs, unresolved)
+            // A pinned plugin with a bar widget draws as that widget, `slots` icons wide.
+            var widgetSlots: [UUID: Int] = [:]
+            for pin in pins {
+                guard let pluginID = pin.kind.pluginID,
+                    let widget = PluginRegistry.shared.plugin(id: pluginID)?.manifest.views.widget,
+                    widget.family == .bar
+                else { continue }
+                widgetSlots[pin.id] = widget.slots
+            }
+            environmentCache = (Date(), runningBundleIDs, unresolved, widgetSlots)
+            environment = (runningBundleIDs, unresolved, widgetSlots)
         }
         return make(
             running: running, pins: pins, runningBundleIDs: environment.running,
-            unresolvedDocumentIDs: environment.unresolved, tools: tools)
+            unresolvedDocumentIDs: environment.unresolved, widgetSlots: environment.widgetSlots,
+            tools: tools)
     }
 
     /// How far from the strip's leading edge the centre of one icon sits, or nil when that
@@ -166,27 +201,29 @@ struct DockStripPlan {
         guard !composition.otherPins.isEmpty else { return nil }
         advance(1)  // the hairline divider
         for pin in composition.otherPins {
-            if case .pin(let id) = target, pin.id == id { return cursor + M.dockIconSize / 2 }
-            advance(M.dockIconSize)
+            let width = composition.width(of: pin)
+            if case .pin(let id) = target, pin.id == id { return cursor + width / 2 }
+            advance(width)
         }
         return nil
     }
 
     static func make(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
-        unresolvedDocumentIDs: Set<String> = [], tools: Int
+        unresolvedDocumentIDs: Set<String> = [], widgetSlots: [UUID: Int] = [:], tools: Int
     ) -> DockStripPlan {
         let full = DockStripComposition.compose(
             running: running, pins: pins, runningBundleIDs: runningBundleIDs,
-            unresolvedDocumentIDs: unresolvedDocumentIDs)
+            unresolvedDocumentIDs: unresolvedDocumentIDs, widgetSlots: widgetSlots)
         let layout = AppChatPromptMetrics.dockLayout(
             running: full.unpinnedRunningCount, pinnedApps: full.pinnedAppCount,
-            pinned: full.otherPins.count, tools: tools)
+            pinned: full.otherPins.count, pinnedExtraWidth: full.widgetExtraWidth, tools: tools)
         guard layout.overflow > 0 else { return DockStripPlan(composition: full, layout: layout) }
         return DockStripPlan(
             composition: DockStripComposition.compose(
                 running: running, pins: pins, runningBundleIDs: runningBundleIDs,
-                unresolvedDocumentIDs: unresolvedDocumentIDs, capacity: layout.shownRunning),
+                unresolvedDocumentIDs: unresolvedDocumentIDs, widgetSlots: widgetSlots,
+                capacity: layout.shownRunning),
             layout: layout)
     }
 }

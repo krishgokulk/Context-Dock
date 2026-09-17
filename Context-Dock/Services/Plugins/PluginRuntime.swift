@@ -61,23 +61,46 @@ final class PluginRuntime: ObservableObject {
 
     private let runner = PluginScriptRunner()
     private var tickers: [String: Task<Void, Never>] = [:]
+    /// What each plugin remembers. Folded into the inputs on every call, so a data script
+    /// sees `CD_STATE_*`, a view binds `{{from}}`, and a changed value is a new data key.
+    let stateStore: PluginStateStore
 
-    init() {}
+    init(stateStore: PluginStateStore = .shared) {
+        self.stateStore = stateStore
+    }
+
+    /// The caller's inputs with the plugin's remembered values underneath.
+    private func withState(_ inputs: PluginInputs, for manifest: PluginManifest) -> PluginInputs {
+        var scoped = inputs
+        scoped.state = stateStore.state(for: manifest)
+        return scoped
+    }
 
     // MARK: Data
 
     func state(for manifest: PluginManifest, host: PluginPresentation, inputs: PluginInputs)
         -> PluginDataState
     {
+        let inputs = withState(inputs, for: manifest)
         // A plugin with no data source is never loading: its sample IS its data.
         guard manifest.data != nil else {
-            return .ready(PluginBinding(data: manifest.sample))
+            return .ready(PluginBinding(data: Self.bindable(inputs.state, under: manifest.sample)))
         }
         return states[PluginDataKey(manifest: manifest, query: "", inputs: inputs)] ?? .loading
     }
 
+    /// What a view binds against: the script's data, with the remembered state underneath.
+    /// State is the floor — `{{from}}` reads before the script has answered, and a script
+    /// that echoes a key it was given wins on that key.
+    nonisolated static func bindable(
+        _ state: [String: PluginValue], under data: [String: PluginValue]
+    ) -> [String: PluginValue] {
+        state.merging(data) { _, fromData in fromData }
+    }
+
     func refresh(_ manifest: PluginManifest, host: PluginPresentation, inputs: PluginInputs) async {
         guard let source = manifest.data else { return }
+        let inputs = withState(inputs, for: manifest)
         let key = PluginDataKey(manifest: manifest, query: "", inputs: inputs)
         let env = PluginEnvironment.build(
             inputs: inputs, host: host,
@@ -102,7 +125,8 @@ final class PluginRuntime: ObservableObject {
             case .failure(let diagnostic):
                 states[key] = .failed(diagnostic)
             case .success(let value):
-                states[key] = .ready(PluginBinding(data: value.objectValue ?? [:]))
+                states[key] = .ready(PluginBinding(
+                    data: Self.bindable(inputs.state, under: value.objectValue ?? [:])))
             }
         }
     }
@@ -158,12 +182,41 @@ final class PluginRuntime: ObservableObject {
             }
         }
 
-        var scoped = inputs
+        var scoped = withState(inputs, for: manifest)
         scoped.value = request.value
         let env = PluginEnvironment.build(inputs: scoped, host: .panel, widthClass: .regular)
 
+        // A push that names a key remembers what was tapped on the way — the host does the
+        // navigating; this is the memory. Without a key it is navigation only, and nothing
+        // here has anything to do.
+        if let target = action.pushTarget {
+            guard let key = action.key, !key.isEmpty else { return .success(target) }
+            let value = request.value ?? action.value.map(PluginValue.string) ?? .null
+            stateStore.set(key, to: value, for: manifest)
+            await refresh(manifest, host: .panel, inputs: inputs)
+            return .success(target)
+        }
+
         // The built-ins act through AppKit rather than a process.
         switch action.type {
+        case "set":
+            // The tapped value into the named key, then the data again with it: a picker
+            // that changes the currency is not done until the row shows the new figure.
+            // The key may itself be a binding — `"key": "{{picking}}"` writes to whichever
+            // key the plugin remembered last, which is how one grid serves both currencies.
+            guard let declaredKey = action.key, !declaredKey.isEmpty else {
+                return .failure(PluginRunFailure(
+                    message: "\(request.name) is a set action with no key", kind: .blocked))
+            }
+            let key = PluginBinding(data: scoped.state).text(.string(declaredKey))
+            guard !key.isEmpty else {
+                return .failure(PluginRunFailure(
+                    message: "\(request.name)'s key \(declaredKey) resolved to nothing", kind: .blocked))
+            }
+            let value = request.value ?? action.value.map(PluginValue.string) ?? .null
+            stateStore.set(key, to: value, for: manifest)
+            await refresh(manifest, host: .panel, inputs: inputs)
+            return .success(key)
         case "copy":
             let text = action.value ?? request.value?.stringValue ?? ""
             NSPasteboard.general.clearContents()
@@ -200,7 +253,25 @@ final class PluginRuntime: ObservableObject {
         }
         let result = await runner.run(
             type: type, script: script, env: env, timeout: 30, workingDirectory: nil)
+        // A script that answers with `{ "state": { … } }` is changing what the plugin
+        // remembers — a swap, a chosen item — and the data is asked again with it.
+        if case .success(let run) = result,
+            let patch = Self.statePatch(in: run.stdout), !patch.isEmpty
+        {
+            stateStore.merge(patch, for: manifest)
+            await refresh(manifest, host: .panel, inputs: inputs)
+        }
         return result.map(\.stdout)
+    }
+
+    /// Pure: the `state` object in a script's output, if the output is JSON and carries one.
+    nonisolated static func statePatch(in stdout: String) -> [String: PluginValue]? {
+        guard let data = stdout.data(using: .utf8),
+            let value = try? JSONDecoder().decode(PluginValue.self, from: data),
+            let object = value.objectValue,
+            let patch = object["state"]?.objectValue
+        else { return nil }
+        return patch
     }
 
     private func appURL(named name: String) -> URL? {

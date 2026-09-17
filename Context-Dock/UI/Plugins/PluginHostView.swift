@@ -20,6 +20,13 @@ final class PluginHostModel: ObservableObject {
     /// Views pushed on top of the first one — `push:<view>` from an action, back by ⌫ or the
     /// header's chevron.
     @Published private(set) var stack: [PluginPresentation] = []
+    /// A host that would rather show a pushed view somewhere else — the strip opens a
+    /// widget's `push:panel` as a card above the tile, not inside a 48-point tile — claims
+    /// it here by returning true. Nil, or false, and the view is pushed in place.
+    var onPush: ((PluginPresentation, PluginActionRequest) -> Bool)?
+    /// Told when an action the runtime ran has finished, and whether it succeeded, so a
+    /// card that exists to take one choice can close once the choice is made.
+    var onActionCompleted: ((PluginActionRequest, Bool) -> Void)?
 
     init(manifest: PluginManifest, presentation: PluginPresentation, compact: Bool = false) {
         self.manifest = manifest
@@ -68,16 +75,26 @@ final class PluginHostModel: ObservableObject {
         }
     }
 
+    /// The view a request navigates to, if it is navigation: an action declared as
+    /// `push:<view>`, or the literal name. Looked up by name — a button says `"action":
+    /// "pick"` and the manifest says what pick is; the old check read the name alone, so
+    /// every declared push action went to the runtime, which cannot run one.
+    func pushTarget(of request: PluginActionRequest) -> PluginPresentation? {
+        let raw = manifest.actions[request.name]?.pushTarget
+            ?? (request.name.hasPrefix("push:") ? String(request.name.dropFirst("push:".count)) : nil)
+        guard let raw, let target = PluginPresentation(rawValue: raw),
+            Self.root(of: manifest, for: target) != nil
+        else { return nil }
+        return target
+    }
+
     /// True when this request was navigation and the host consumed it. Everything else belongs
     /// to the runtime — a host that swallowed an ordinary action would make it silently do
     /// nothing, which is indistinguishable from a broken plugin.
     @discardableResult
     func handle(_ request: PluginActionRequest) -> Bool {
-        guard request.name.hasPrefix("push:") else { return false }
-        let name = String(request.name.dropFirst("push:".count))
-        guard let target = PluginPresentation(rawValue: name),
-            Self.root(of: manifest, for: target) != nil
-        else { return false }
+        guard let target = pushTarget(of: request) else { return false }
+        if let onPush, onPush(target, request) { return true }
         stack.append(target)
         return true
     }
@@ -103,12 +120,34 @@ final class PluginHostSink: PluginActionSink {
     }
 
     func run(_ request: PluginActionRequest) {
-        if model.handle(request) { return }
+        // A push that names a state key remembers what was tapped before it navigates —
+        // `pickFrom` writes `picking = "from"` so the one panel knows which currency it is
+        // choosing. Written through the runtime so the data is asked again with it.
+        if model.pushTarget(of: request) != nil {
+            if let action = model.manifest.actions[request.name], action.key != nil {
+                Task { [weak self] in
+                    guard let self else { return }
+                    _ = await runtime.run(
+                        PluginActionRequest(
+                            name: request.name, value: request.value ?? action.value.map(PluginValue.string)),
+                        manifest: model.manifest, inputs: inputs)
+                    model.handle(request)
+                }
+                return
+            }
+            model.handle(request)
+            return
+        }
         Task { [weak self] in
             guard let self else { return }
             let result = await runtime.run(
                 request, manifest: model.manifest, inputs: inputs)
             onResult?(result)
+            if case .success = result {
+                model.onActionCompleted?(request, true)
+            } else {
+                model.onActionCompleted?(request, false)
+            }
         }
     }
 }

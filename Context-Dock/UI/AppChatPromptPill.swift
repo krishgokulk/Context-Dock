@@ -83,10 +83,15 @@ enum AppChatPromptMetrics {
     /// both. Like every other pin they are never dropped; `running` here counts only the
     /// apps nobody pinned, and those are what give way. `pinned` is the rest of the pins —
     /// commands, tools, files — which keep their own region after the divider.
-    static func dockLayout(running: Int, pinnedApps: Int = 0, pinned: Int, tools: Int = 0)
-        -> DockLayout
-    {
-        let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) : 0
+    ///
+    /// `pinnedExtraWidth` is what the pins region needs beyond one icon per pin: a pinned
+    /// plugin drawing as a bar widget is `slots` icons wide, and the shell has to be measured
+    /// for the tile that is drawn, not the icon that is not.
+    static func dockLayout(
+        running: Int, pinnedApps: Int = 0, pinned: Int, pinnedExtraWidth: CGFloat = 0,
+        tools: Int = 0
+    ) -> DockLayout {
+        let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) + pinnedExtraWidth : 0
         let toolsWidth = tools > 0 ? dockDividerSpan + runWidth(tools) : 0
         // Pinned apps take their slots out of the same region, gap included, before the
         // running ones are counted.
@@ -137,6 +142,7 @@ enum AppChatPromptMetrics {
         running: Int = 0,
         pinnedApps: Int = 0,
         pinned: Int = 0,
+        pinnedExtraWidth: CGFloat = 0,
         tools: Int = 0
     ) -> CGSize {
         let sheet = sheetHeight(
@@ -147,7 +153,8 @@ enum AppChatPromptMetrics {
         case .dock:
             return CGSize(
                 width: dockLayout(
-                    running: running, pinnedApps: pinnedApps, pinned: pinned, tools: tools).width,
+                    running: running, pinnedApps: pinnedApps, pinned: pinned,
+                    pinnedExtraWidth: pinnedExtraWidth, tools: tools).width,
                 height: dockHeight)
         case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field.
@@ -191,6 +198,7 @@ struct AppChatPromptPill: View {
             running: composition.unpinnedRunningCount,
             pinnedApps: composition.pinnedAppCount,
             pinned: composition.otherPins.count,
+            pinnedExtraWidth: composition.widgetExtraWidth,
             tools: tools)
     }
 

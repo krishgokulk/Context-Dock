@@ -126,6 +126,6 @@ enum PluginSizing {
         let total = children.reduce(CGFloat.zero) {
             $0 + height(of: $1, traits: traits, binding: binding)
         }
-        return total + PluginKit.gap * CGFloat(children.count - 1)
+        return total + PluginKit.gap(traits) * CGFloat(children.count - 1)
     }
 }

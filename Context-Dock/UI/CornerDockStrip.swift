@@ -70,7 +70,21 @@ struct CornerDockStrip: View {
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
                 ForEach(plan.composition.otherPins) { pin in
-                    pinnedIcon(pin, ids: ids)
+                    if plan.composition.widgetSlots[pin.id] != nil,
+                        let pluginID = pin.kind.pluginID,
+                        let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+                    {
+                        // A pinned plugin with a bar widget IS its widget here — a live
+                        // tile in the row, Phase 4's strip host.
+                        PluginStripTile(pin: pin, manifest: manifest, model: model)
+                            .modifier(DockPinDrag(pinID: pin.id, dragging: $draggingPinID))
+                            .overlay(RightClickReporter { menuID = pin.id.uuidString })
+                            .popover(isPresented: menuBinding(pin.id.uuidString), arrowEdge: .top) {
+                                DockIconMenu(items: pinnedMenuItems(pin))
+                            }
+                    } else {
+                        pinnedIcon(pin, ids: ids)
+                    }
                 }
             }
             if plan.layout.tools > 0 {

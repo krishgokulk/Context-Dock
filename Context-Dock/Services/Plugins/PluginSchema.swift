@@ -24,7 +24,7 @@ enum PluginSchema {
     ]
 
     /// Built-in action types that are not one of `PluginScriptType`'s script interpreters.
-    static let builtInActionTypes: Set<String> = ["copy", "open", "reveal", "paste"]
+    static let builtInActionTypes: Set<String> = ["copy", "open", "reveal", "paste", "set"]
 
     /// Rebuilt once, not per `validate(_:)` call — a manifest can be validated many times
     /// (every reload, every Creator keystroke), and `try!` on a hardcoded pattern is only
@@ -113,6 +113,15 @@ enum PluginSchema {
             if action.isScript, (action.script ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 error(path, "a \(action.type) action needs a non-empty script")
             }
+            if action.type == "set" || (action.pushTarget != nil && action.key != nil) {
+                if (action.key ?? "").isEmpty {
+                    error(path, "a set action needs a key — which state value the tap goes into")
+                } else if let key = action.key, !key.contains("{{"), m.state[key] == nil {
+                    // A templated key (`{{picking}}`) is resolved at run time from state and
+                    // cannot be checked here; a literal one must be declared.
+                    error(path, "set writes \"\(key)\", which is not declared under state")
+                }
+            }
             if action.type == "open", action.value == nil, action.app == nil {
                 error(path, "an open action needs a value or an app")
             }
@@ -133,7 +142,9 @@ enum PluginSchema {
         }
 
         // 1–4. views
-        let sampleKeys = Set(m.sample.keys)
+        // State keys bind like data: `{{from}}` reads from what the plugin remembers before
+        // any script has answered, and the preview shows the declared default.
+        let sampleKeys = Set(m.sample.keys).union(m.state.keys)
         for node in m.allNodes {
             let path = "views.\(node.component)"
             if !PluginComponentCatalog.isKnown(node.component) {

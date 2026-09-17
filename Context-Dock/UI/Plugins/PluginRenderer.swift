@@ -112,7 +112,7 @@ struct PluginRenderer: View {
         case "vstack", "hstack", "card", "footerCard", "capsule", "divider":
             PluginContainerView(node: node, traits: traits, binding: binding, sink: sink)
         case "title", "subtitle", "body", "caption", "markdown", "stat", "header":
-            PluginTextView(node: node, traits: traits, binding: binding)
+            PluginTextView(node: node, traits: traits, binding: binding, sink: sink)
         case "tag", "statusBadge", "chipRow", "segment":
             PluginChipView(node: node, traits: traits, binding: binding)
         case "button", "iconButton", "buttonRow", "toggle", "slider", "stateButton":

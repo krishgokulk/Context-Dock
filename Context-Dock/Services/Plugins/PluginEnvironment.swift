@@ -20,6 +20,9 @@ struct PluginInputs: Equatable {
     var rowTitle: String?
     var rowRaw: String?
     var value: PluginValue?
+    /// The plugin's remembered values (`PluginStateStore`), carried with the inputs so a
+    /// data script reads them as `CD_STATE_<KEY>` and a change to them is a new data key.
+    var state: [String: PluginValue] = [:]
 
     init() {}
 }
@@ -55,7 +58,18 @@ enum PluginEnvironment {
         put("CD_ROW_TITLE", inputs.rowTitle)
         put("CD_ROW", inputs.rowRaw)
         put("CD_VALUE", inputs.value.map(string(from:)))
+        // `from` → `CD_STATE_FROM`. Sorted so the same state always builds the same
+        // environment, which the data key hashes.
+        for (key, value) in inputs.state.sorted(by: { $0.key < $1.key }) {
+            put("CD_STATE_\(Self.envKey(key))", string(from: value))
+        }
         return env
+    }
+
+    /// `baseCurrency` → `BASECURRENCY`, `refresh-rate` → `REFRESH_RATE`: what a shell can
+    /// name. Anything that is not a letter or digit becomes an underscore.
+    static func envKey(_ key: String) -> String {
+        String(key.uppercased().map { $0.isLetter || $0.isNumber ? $0 : "_" })
     }
 
     /// A number a script can do arithmetic on: `35`, never `35.0`.

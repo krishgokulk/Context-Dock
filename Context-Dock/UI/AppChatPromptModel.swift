@@ -103,6 +103,11 @@ final class AppChatPromptModel: ObservableObject {
         return nil
     }
 
+    /// A pinned plugin whose panel is open above its tile — a tap in the widget asked for it.
+    /// Takes the same slot as the hover cards and wins over them while it is up: a card the
+    /// user opened is not put away by the pointer passing over the next icon.
+    @Published var pluginCardPinID: UUID?
+
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
     /// The app the question is about, captured when the prompt opened — not read live,
@@ -803,6 +808,7 @@ final class AppChatPromptModel: ObservableObject {
         windowRowTask?.cancel()
         dockPreviewTarget = nil
         hoveredStripTarget = nil
+        pluginCardPinID = nil
         query = ""
         suggestions = []
         capabilitySummary = ""
@@ -897,6 +903,8 @@ final class AppChatPromptModel: ObservableObject {
     func set(_ next: AppChatPromptPhase) {
         guard phase != next else { return }
         phase = next
+        // A plugin's card belongs to the strip; leaving the dock takes it down with it.
+        if next != .dock { pluginCardPinID = nil }
         onPhaseChange?(next)
     }
 }

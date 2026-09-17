@@ -18,10 +18,37 @@ enum PluginKit {
         traits.widthClass == .compact ? 38 : 44
     }
 
+    /// Inside a bar tile — one strip icon tall — the kit's ordinary heights do not fit: a
+    /// title and a caption alone would be 36 of 48 points before any gap. These are the
+    /// heights a two-line tile is built from, so `caption` over `title` beside two `button`
+    /// chips is a tile and not an overflow. Only what a bar can sensibly hold has a height;
+    /// anything else falls through to the ordinary kit and the sizing says it does not fit.
+    static let barGap: CGFloat = 2
+
+    static func barLeafHeight(_ component: String) -> CGFloat? {
+        switch component {
+        case "title": return 20
+        case "subtitle", "body", "liveText": return 16
+        case "caption": return 12
+        case "stat": return 44
+        case "button", "iconButton", "tag", "statusBadge": return 20
+        case "toggle": return 22
+        case "progress": return 8
+        case "timer": return 18
+        case "waveform", "pulse": return 16
+        case "thumbnail", "avatar": return 40
+        case "divider": return 1
+        default: return nil
+        }
+    }
+
+    static func gap(_ traits: HostTraits) -> CGFloat { traits.isBar ? barGap : gap }
+
     /// The height of a component, whatever it holds. A row is a row's height whether it
     /// carries one line or a thumbnail and two — the kit decides, not the content, which is
     /// what keeps this arithmetic rather than a measurement.
     static func leafHeight(_ component: String, traits: HostTraits) -> CGFloat {
+        if traits.isBar, let height = barLeafHeight(component) { return height }
         let compact = traits.widthClass == .compact
         switch component {
         case "row", "fileRow": return rowHeight(traits)

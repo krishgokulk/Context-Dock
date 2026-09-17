@@ -45,7 +45,106 @@ enum PluginEssentials {
     }
     """
 
-    static var all: [PluginManifest] { [decode(sleepJSON)].compactMap { $0 } }
+    /// The rates script, kept as a raw string so its backslashes and quotes read as written
+    /// and are JSON-escaped once, below, rather than by hand in a JSON literal.
+    ///
+    /// Frankfurter (ECB rates, no key) when the network answers; a small built-in table when
+    /// it does not, marked `offline` so the tile can say so. `amount=` makes the API do the
+    /// multiplication, so the figure under the currency's key is already the answer. The
+    /// `.dev/v1` host is the current one — `.app` answers with a 301 that `curl -fsS` treats
+    /// as an HTML page, and following it would reach a host the manifest never declared.
+    static let currencyScript = #"""
+    from="${CD_STATE_FROM:-USD}"; to="${CD_STATE_TO:-EUR}"; amt="${CD_STATE_AMOUNT:-500}"
+    case "$amt" in ''|*[!0-9.]*) amt=500;; esac
+    body=$(curl -fsS --max-time 4 "https://api.frankfurter.dev/v1/latest?amount=${amt}&base=${from}&symbols=${to}" 2>/dev/null)
+    result=$(printf '%s' "$body" | awk -v k="$to" '{ n=index($0, "\"" k "\":"); if (n) { s=substr($0, n+length(k)+3); sub(/[^0-9.].*/, "", s); print s } }')
+    offline=false
+    if [ -z "$result" ]; then
+      offline=true
+      result=$(awk -v a="$amt" -v f="$from" -v t="$to" 'BEGIN {
+        r["USD"]=1; r["EUR"]=0.92; r["GBP"]=0.79; r["CHF"]=0.88; r["JPY"]=150; r["CNY"]=7.2;
+        r["INR"]=83; r["AED"]=3.67; r["TRY"]=34; r["PLN"]=4.0; r["CAD"]=1.36; r["AUD"]=1.52;
+        r["SEK"]=10.5; r["NOK"]=10.7; r["KRW"]=1330; r["SGD"]=1.34;
+        if (!(f in r) || !(t in r)) { print ""; exit }
+        printf "%.4f", a / r[f] * r[t] }')
+    fi
+    [ -z "$result" ] && result=0
+    pretty=$(awk -v v="$result" 'BEGIN { printf "%'"'"'.2f", v }')
+    printf '{"result":"%s","pair":"%s → %s","offline":%s,"currencies":[' "$pretty" "$from" "$to" "$offline"
+    first=1
+    for c in USD EUR GBP CHF JPY CNY INR AED TRY PLN CAD AUD SEK NOK KRW SGD; do
+      [ $first -eq 1 ] || printf ','
+      printf '{"code":"%s"}' "$c"; first=0
+    done
+    printf ']}\n'
+    """#
+
+    /// Swap the two currencies. A script action whose output carries `state` changes what
+    /// the plugin remembers; the runtime asks for the rate again with the pair reversed.
+    static let currencySwapScript = #"""
+    printf '{"state":{"from":"%s","to":"%s"}}\n' "${CD_STATE_TO:-EUR}" "${CD_STATE_FROM:-USD}"
+    """#
+
+    /// A currency converter that lives in the dock strip as a bar tile — the amount over
+    /// the result, the two currencies as chips beside them — and opens its picker as a card
+    /// above the tile. The first plugin with `state`: the pair and the amount survive a
+    /// relaunch, and every tap is a `set` the data script reads on its next run.
+    static var currencyJSON: String {
+        let data = jsonString(currencyScript)
+        let swap = jsonString(currencySwapScript)
+        return """
+        {
+          "id": "currency",
+          "name": "Currency",
+          "icon": "dollarsign.arrow.circlepath",
+          "description": "Convert an amount between currencies, live from the ECB.",
+          "keywords": ["currency", "convert", "exchange", "usd", "eur", "gbp", "rate"],
+          "inputs": [],
+          "permissions": ["network:api.frankfurter.dev"],
+          "state": { "from": "USD", "to": "EUR", "amount": "500", "picking": "from" },
+          "data": { "type": "bash", "script": \(data), "format": "json",
+                    "refresh": { "widget": 600, "panel": 0 }, "timeout": 8 },
+          "sample": { "result": "433.36", "pair": "USD → EUR", "offline": false,
+                      "currencies": [ { "code": "USD" }, { "code": "EUR" }, { "code": "GBP" },
+                                      { "code": "CHF" }, { "code": "JPY" }, { "code": "CNY" } ] },
+          "actions": {
+            "pickFrom":  { "type": "push:panel", "key": "picking", "value": "from", "title": "Convert from" },
+            "pickTo":    { "type": "push:panel", "key": "picking", "value": "to", "title": "Convert to" },
+            "choose":    { "type": "set", "key": "{{picking}}", "title": "Choose" },
+            "setAmount": { "type": "set", "key": "amount", "title": "Amount" },
+            "swap":      { "type": "bash", "script": \(swap), "title": "Swap", "risk": "read" }
+          },
+          "views": {
+            "widget": { "family": "bar", "slots": 3,
+              "root": { "hstack": [
+                { "vstack": [
+                    { "caption": { "text": "{{amount}} {{from}}", "value": "{{amount}}", "edit": "setAmount" } },
+                    { "title": "{{result}}" } ] },
+                { "iconButton": { "icon": "arrow.up.arrow.down", "action": "swap" } },
+                { "vstack": [
+                    { "button": { "title": "{{from}}", "action": "pickFrom" } },
+                    { "button": { "title": "{{to}}", "action": "pickTo" } } ] }
+              ] } },
+            "panel": { "vstack": [
+              { "header": { "text": "Convert {{picking}}", "icon": "dollarsign.arrow.circlepath" } },
+              { "grid": { "columns": 2, "items": "{{currencies}}",
+                          "cell": { "button": { "title": "{{item.code}}", "action": "choose",
+                                                "value": "{{item.code}}" } } } }
+            ] }
+          }
+        }
+        """
+    }
+
+    static var all: [PluginManifest] { [decode(sleepJSON), decode(currencyJSON)].compactMap { $0 } }
+
+    /// A string as a JSON string literal, quotes included — so a script can be written as it
+    /// is run and embedded without hand-escaping.
+    private static func jsonString(_ raw: String) -> String {
+        guard let data = try? JSONEncoder().encode(raw), let text = String(data: data, encoding: .utf8)
+        else { return "\"\"" }
+        return text
+    }
 
     /// Write the shipped plugins where the registry reads them, skipping any whose manifest
     /// is already on disk — an edited one stays edited, and a deleted one stays deleted until

@@ -44,7 +44,7 @@ enum PluginComponentCatalog {
 
     /// Props whose value names an action. Kept here so the schema and the renderer agree
     /// on which strings are references and which are text.
-    static let actionProps: Set<String> = ["action", "transport", "volume", "submit", "onTap", "primary", "secondary"]
+    static let actionProps: Set<String> = ["action", "transport", "volume", "submit", "onTap", "primary", "secondary", "edit"]
 
     /// A prop is node-valued in one of two spellings:
     ///   "row":    { "title": … }        the prop key names the component

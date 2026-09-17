@@ -148,6 +148,14 @@ extension DockPinKind {
         }
     }
 
+    /// The plugin this pin stands for, when it is one: `globalCommand(id: "plugin:<id>")`.
+    /// A pinned plugin with a bar widget draws as that widget in the strip.
+    var pluginID: String? {
+        guard case .globalCommand(let id) = self, id.hasPrefix("plugin:") else { return nil }
+        let pluginID = String(id.dropFirst("plugin:".count))
+        return pluginID.isEmpty ? nil : pluginID
+    }
+
     /// What the strip draws when the real icon is missing. Never an empty square: the user
     /// pinned something, and the shape of what they pinned is the least the row can say.
     var fallbackSymbol: String {
