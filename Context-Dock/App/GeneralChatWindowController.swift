@@ -30,6 +30,13 @@ final class GeneralChatWindowController: NSObject, NSWindowDelegate {
         show()
     }
 
+    /// The Creator is a mode of this window, not a window of its own (decision 67a1106d):
+    /// opening it is showing this window in that mode.
+    func showCreator() {
+        GeneralChatWindowChromeState.shared.mode = .creator
+        show()
+    }
+
     func show() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)

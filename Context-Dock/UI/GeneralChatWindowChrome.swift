@@ -33,7 +33,7 @@ enum GeneralChatWindowMode: String, CaseIterable, Identifiable {
         case .chat: return "Chat"
         case .work: return "Work"
         case .dashboard: return "Dashboard"
-        case .creator: return "Extension Creator"
+        case .creator: return "Plugin Creator"
         }
     }
 }

@@ -9,7 +9,7 @@ struct SettingsDetailView: View {
             // Integrations renders its own header so the scope switch and integration list
             // sit flush beneath it; a shared header here would stack two. Pages it
             // superseded render it too, for the same reason.
-            if page != .extensionImport, !rendersOwnHeader {
+            if !rendersOwnHeader {
                 SettingsPageHeader(page: page)
                 Divider()
             }
@@ -44,7 +44,7 @@ struct SettingsDetailView: View {
             // rather than reviving a page with no sidebar row.
             IntegrationsSettingsPage(destination: SettingsRouteResolver.destination(for: page))
         case .extensionImport:
-            AutomationImportPanel(onClose: {})
+            PluginCreatorDoor()
         case .mediaActions:
             MediaActionsSettingsPage()
         case .permissions:

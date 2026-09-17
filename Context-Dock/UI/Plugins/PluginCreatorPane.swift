@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor
 struct PluginCreatorPane: View {
     @ObservedObject private var registry = PluginRegistry.shared
+    @ObservedObject private var settings = AppSettings.shared
     @StateObject private var model = PluginCreatorModel(text: PluginCreatorPane.starter)
     @State private var saved: String?
 
@@ -66,6 +67,8 @@ struct PluginCreatorPane: View {
                         : "Fix the errors below first")
             }
 
+            describe
+
             TextEditor(text: $model.text)
                 .font(.system(size: 12, design: .monospaced))
                 .scrollContentBackground(.hidden)
@@ -77,6 +80,71 @@ struct PluginCreatorPane: View {
             status
         }
         .padding(12)
+    }
+
+    /// Describe it, or describe a change to it, and the configured provider writes the
+    /// manifest into the editor. "Copy prompt" is the same ask for any other AI.
+    private var describe: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                TextField(
+                    model.text == Self.starter
+                        ? "Describe the plugin — “a pomodoro timer in the dock”"
+                        : "Describe a change — “add a reset button”",
+                    text: $model.request)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .disabled(model.isDrafting)
+                    .onSubmit { Task { await model.draft() } }
+                if model.isDrafting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button { Task { await model.draft() } } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(model.request.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .help("Draft it with \(settings.selectedAIProvider.displayName)")
+                }
+                Menu {
+                    Button("Copy prompt for another AI") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(model.promptForAnotherAI(), forType: .string)
+                        saved = "Prompt copied. Paste what the AI returns into the editor."
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.05)))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5))
+
+            if let note = model.note {
+                Label(note, systemImage: "sparkles")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if let error = model.draftError {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+                    .lineLimit(2)
+            }
+        }
     }
 
     @ViewBuilder

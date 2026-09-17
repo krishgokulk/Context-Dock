@@ -23,10 +23,51 @@ final class PluginCreatorModel: ObservableObject {
     /// The plugin this was opened on, when it was opened on one.
     let editingID: String?
 
+    /// The AI half. A description goes to the engine; what comes back replaces the text —
+    /// the editor is the one place the manifest lives, so the model writes where the person
+    /// writes and the preview follows either.
+    @Published var request = ""
+    @Published private(set) var isDrafting = false
+    /// The model's one line about what it built, shown until the next draft or edit.
+    @Published private(set) var note: String?
+    @Published private(set) var draftError: String?
+
+    /// Injected so a test can drive the round without a provider; the pane passes the live one.
+    var makeEngine: (() -> PluginAuthoringEngine)?
+
     init(text: String, editingID: String? = nil) {
         self.text = text
         self.editingID = editingID
         reparse()
+    }
+
+    /// Describe → draft. A non-empty editor is what the description edits; the starter is
+    /// treated as empty, so "a pomodoro timer" is a plugin and not a change to "My Plugin".
+    func draft() async {
+        let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty, !isDrafting else { return }
+        let engine = makeEngine?() ?? PluginAuthoringEngine.live(
+            provider: AppSettings.shared.selectedAIProvider)
+        let current = text == PluginCreatorPane.starter ? nil : text
+        isDrafting = true
+        draftError = nil
+        defer { isDrafting = false }
+        do {
+            let draft = try await engine.draft(request, current: current)
+            text = draft.text
+            note = draft.note.isEmpty ? nil : draft.note
+            self.request = ""
+        } catch {
+            draftError = error.localizedDescription
+        }
+    }
+
+    /// The same prompt the engine sends, for a person to paste into any other AI; what
+    /// comes back pastes into this editor and validates the same.
+    func promptForAnotherAI() -> String {
+        let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PluginAuthoringPrompt.exportable(
+            request: request.isEmpty ? "<describe the plugin here>" : request)
     }
 
     convenience init(editing manifest: PluginManifest) {

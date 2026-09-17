@@ -47,8 +47,19 @@ struct PluginsSettingsPage: View {
 
     private var installed: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Installed", systemImage: "shippingbox")
-                .font(.headline)
+            HStack {
+                Label("Installed", systemImage: "shippingbox")
+                    .font(.headline)
+                Spacer(minLength: 0)
+                Button {
+                    GeneralChatWindowController.shared.showCreator()
+                } label: {
+                    Label("Create…", systemImage: "sparkles")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Describe a plugin and draft it with AI")
+            }
 
             if registry.plugins.isEmpty {
                 Text("No plugins installed yet. A plugin is a folder with a `plugin.json` "
