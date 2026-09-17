@@ -109,6 +109,30 @@ struct CornerDockPhaseTests {
         #expect(model.hiddenRunningBundleIDs == ["com.apple.Safari"])
     }
 
+    @Test func pinningAnAppChangesWhereItIsDrawnNotWhatTheArrowsWalk() {
+        // Two sessions fixed "a pinned app is drawn twice" on the same day, differently.
+        // The shape that stayed is decision 26740ecd: one app region, pinned apps first,
+        // composed by DockStripComposition. What the other fix got right is kept here —
+        // `stripIcons` is the NAVIGATION list, what ← and → walk and a swipe moves
+        // through, and a pinned app must stay in it. Filtering that list made a swipe
+        // skip a pinned app. Membership, not counts: the running list fills in
+        // asynchronously.
+        let (model, _) = globalModel()
+        guard let bundleID = model.stripIcons.compactMap(\.bundleID).first else { return }
+
+        let pin = DockPin(
+            id: UUID(), kind: .app(bundleID: bundleID), title: "Pinned", order: 0,
+            documentID: nil)
+        let composed = DockStripComposition.compose(
+            running: model.stripIcons, pins: [pin], runningBundleIDs: [])
+
+        // Drawn once, as the pin, with its running dot.
+        #expect(composed.apps.filter { $0.bundleID == bundleID }.count == 1)
+        #expect(composed.apps.first { $0.bundleID == bundleID }?.isPinned == true)
+        // Still walked by the arrows.
+        #expect(model.stripIcons.contains { $0.bundleID == bundleID })
+    }
+
     @Test func leftArrowFoldsAnEmptyGlobalFieldAtOnce() {
         let (model, _) = globalModel()
         #expect(model.foldToDock())

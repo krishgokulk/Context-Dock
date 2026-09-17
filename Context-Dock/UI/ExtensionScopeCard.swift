@@ -32,6 +32,9 @@ struct ExtensionScopeCard: View {
     /// and so they get one board rather than two that drift.
     var ext: UserGlobalExtension?
     var command: SystemCommand?
+    /// An installed plugin shown here instead. The corner is a compact host: it passes
+    /// compact traits to the one renderer rather than getting a panel of its own.
+    var plugin: PluginManifest?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -100,7 +103,11 @@ struct ExtensionScopeCard: View {
 
     @ViewBuilder
     private var content: some View {
-        if let ext {
+        if let plugin {
+            PluginHostView(
+                model: PluginHostModel(manifest: plugin, presentation: .panel, compact: true),
+                query: model.query)
+        } else if let ext {
             ExtensionPanelContentView(ext: ext, isEmbedded: true)
         } else if let command {
             // The same panel the pinned window shows, so a command that works there works
@@ -111,9 +118,9 @@ struct ExtensionScopeCard: View {
         }
     }
 
-    private var title: String { ext?.name ?? command?.name ?? "" }
+    private var title: String { plugin?.name ?? ext?.name ?? command?.name ?? "" }
     private var symbol: String {
-        let icon = ext?.icon ?? command?.icon ?? ""
+        let icon = plugin?.icon ?? ext?.icon ?? command?.icon ?? ""
         return icon.isEmpty ? "puzzlepiece.extension" : icon
     }
 

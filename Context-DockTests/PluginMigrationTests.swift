@@ -1,0 +1,243 @@
+// Context-DockTests/PluginMigrationTests.swift
+// Nothing a user built may be lost in the move. Every built-in converts with zero errors;
+// a representative of each legacy shape converts to the manifest the table in the plan
+// describes; and keywords the user typed survive while the meta keywords do not.
+
+import Foundation
+import Testing
+
+@testable import Context_Dock
+
+@Suite("Plugin migration")
+@MainActor
+struct PluginMigrationTests {
+
+    @Test("Every built-in Global Command converts with zero schema errors")
+    func allBuiltInsConvert() {
+        for command in SystemCommandsRegistry.defaults {
+            let m = PluginMigration.manifest(from: command)
+            let errors = PluginSchema.validate(m).filter { $0.severity == .error }
+            #expect(errors.isEmpty, "\(command.name): \(errors.map(\.message))")
+            #expect(m.name == command.name)
+            #expect(m.icon == command.icon)
+        }
+    }
+
+    @Test("Names become slugs")
+    func slugs() {
+        #expect(PluginMigration.slug("Wi-Fi") == "wi-fi")
+        #expect(PluginMigration.slug("Restart...") == "restart")
+        #expect(PluginMigration.slug("Top CPU") == "top-cpu")
+        #expect(PluginMigration.slug("  Keep   Awake ") == "keep-awake")
+    }
+
+    @Test("A non-ASCII name transliterates to a schema-valid slug instead of failing rule 12")
+    func nonASCIINameProducesSchemaValidId() {
+        #expect(PluginMigration.slug("Café") == "cafe")
+        for name in ["Café", "Déjà Vu", "Кафе", "日本語"] {
+            let cmd = SystemCommand(name: name, icon: "gear", keywords: [], scriptType: "bash", script: "true")
+            let m = PluginMigration.manifest(from: cmd)
+            let errors = PluginSchema.validate(m).filter { $0.severity == .error }
+            #expect(errors.isEmpty, "\(name) -> id \"\(m.id)\": \(errors.map(\.message))")
+        }
+    }
+
+    @Test("Meta keywords are consumed; user keywords survive")
+    func keywordsSurvive() throws {
+        let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Top Memory" })
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.keywords.contains("ram"))
+        #expect(!m.keywords.contains { $0.hasPrefix("provider:") || $0.hasPrefix("refresh:") })
+
+        // `presets:` is deliberately NOT a meta-prefix (see the file header) — it carries
+        // user-visible options nothing in the manifest yet represents, so it must stay in
+        // `keywords` rather than silently disappear if `metaPrefixes` is ever tidied up.
+        let appearance = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Appearance" })
+        let appearanceManifest = PluginMigration.manifest(from: appearance)
+        #expect(appearanceManifest.keywords.contains { $0.hasPrefix("presets:") })
+    }
+
+    @Test("A provider:custom command becomes a jsonl list with its refresh")
+    func customListBecomesList() throws {
+        let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Top Memory" })
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.data?.format == .jsonl)
+        #expect(m.data?.refresh[.panel] == 3)
+        #expect(m.views.panel?.root.component == "list")
+        #expect(m.views.panel?.root.props["filter"] == .string("local"))
+    }
+
+    @Test("query:live makes the list filter by query")
+    func queryLive() throws {
+        let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Scratch Notes" })
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.views.panel?.root.props["filter"] == .string("query"))
+    }
+
+    @Test("A native provider keeps its Swift panel through the native component")
+    func nativeProvider() throws {
+        let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Wi-Fi" })
+        #expect(PluginMigration.nativeProvider(of: cmd) == "wifi")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.views.panel?.root.component == "native")
+        #expect(m.views.panel?.root.props["provider"] == .string("wifi"))
+        #expect(m.data == nil)
+    }
+
+    @Test("A slider command becomes a slider panel and a small widget over a raw value script")
+    func sliderCommand() throws {
+        let cmd = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Volume" })
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.views.widget?.family == .small)
+        #expect(m.views.widget?.root?.component == "slider")
+        #expect(m.views.panel?.root.component == "slider")
+        #expect(m.views.panel?.root.props["action"] == .string("set"))
+        #expect(m.actions["set"] != nil)
+        if !cmd.valueScript.isEmpty { #expect(m.data?.format == .raw) }
+    }
+
+    @Test("A one-shot command becomes a primaryAction; destructive ones carry medium risk")
+    func oneShot() throws {
+        let trash = try #require(SystemCommandsRegistry.defaults.first { $0.name == "Empty Trash" })
+        let m = PluginMigration.manifest(from: trash)
+        #expect(m.declaredPresentations.isEmpty)
+        #expect(m.primaryAction == "run")
+        #expect(m.actions["run"]?.risk == .medium)
+        #expect(m.actions["run"]?.type == "applescript")
+    }
+
+    @Test("Undo becomes a second action the first one points at")
+    func undoPreserved() {
+        let cmd = SystemCommand(name: "Hide Desktop", icon: "eye.slash", keywords: ["desktop"],
+                                scriptType: "bash", script: "defaults write com.apple.finder CreateDesktop false; killall Finder",
+                                successTitle: "Desktop hidden", successMessage: "Icons are gone",
+                                undoTitle: "Show Desktop", undoScriptType: "bash",
+                                undoScript: "defaults write com.apple.finder CreateDesktop true; killall Finder")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["run"]?.undo == "undo")
+        #expect(m.actions["undo"]?.title == "Show Desktop")
+        #expect(m.actions["run"]?.success?.title == "Desktop hidden")
+    }
+
+    @Test("URL and file commands become open actions")
+    func urlBecomesOpen() {
+        let cmd = SystemCommand(name: "Bluetooth Settings", icon: "gear", keywords: ["bt"],
+                                scriptType: "url", script: "x-apple.systempreferences:com.apple.BluetoothSettings")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["run"]?.type == "open")
+        #expect(m.actions["run"]?.value == "x-apple.systempreferences:com.apple.BluetoothSettings")
+    }
+
+    @Test("A URL command with success and undo fields keeps both, not just the open action")
+    func urlKeepsSuccessAndUndo() {
+        let cmd = SystemCommand(name: "Toggle Focus Filter", icon: "moon.circle", keywords: ["focus"],
+                                scriptType: "url", script: "x-apple.systempreferences:com.apple.Focus-Settings.extension",
+                                successTitle: "Focus toggled", successMessage: "Filter applied",
+                                undoTitle: "Revert Focus", undoScriptType: "bash",
+                                undoScript: "shortcuts run \"Focus Off\"")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["run"]?.type == "open")
+        #expect(m.actions["run"]?.value == "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        #expect(m.actions["run"]?.success?.title == "Focus toggled")
+        #expect(m.actions["run"]?.success?.message == "Filter applied")
+        #expect(m.actions["run"]?.undo == "undo")
+        #expect(m.actions["undo"]?.script == "shortcuts run \"Focus Off\"")
+        #expect(m.actions["undo"]?.title == "Revert Focus")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+
+    @Test("An undoScriptType of url produces an open undo action, never a bash one")
+    func undoURLBecomesOpenNotBash() {
+        let cmd = SystemCommand(name: "Toggle Focus", icon: "moon", keywords: [],
+                                scriptType: "bash", script: "echo on",
+                                undoTitle: "Open Focus Settings", undoScriptType: "url",
+                                undoScript: "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["undo"]?.type == "open")
+        #expect(m.actions["undo"]?.value == "x-apple.systempreferences:com.apple.Focus-Settings.extension")
+        #expect(m.actions["undo"]?.script == nil)
+        #expect(m.actions["undo"]?.title == "Open Focus Settings")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+
+    @Test("An aiPrompt command with an undo script keeps the undo action; no run action is invented")
+    func aiPromptKeepsUndo() {
+        let cmd = SystemCommand(name: "Summarize", icon: "sparkles", keywords: ["summarize"],
+                                scriptType: "aiPrompt", script: "Summarize the current context.",
+                                undoTitle: "Clear Summary", undoScriptType: "bash",
+                                undoScript: "rm -f /tmp/context-dock-summary.txt")
+        let m = PluginMigration.manifest(from: cmd)
+        #expect(m.actions["undo"]?.script == "rm -f /tmp/context-dock-summary.txt")
+        #expect(m.actions["undo"]?.title == "Clear Summary")
+        #expect(m.primaryAction == nil)
+        #expect(m.views.window?.root?.component == "ai")
+        #expect(m.agent?.instructions == "Summarize the current context.")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+
+    @Test("A Global Extension becomes a lines list; AI on makes it a window with an agent")
+    func routeB() {
+        let ext = UserGlobalExtension(name: "Branches", icon: "arrow.triangle.branch", keywords: ["git"],
+                                      rowsScript: "git branch --format='%(refname:short) | %(upstream:short)'",
+                                      rowActionScript: "git switch \"$CD_ROW_TITLE\"",
+                                      aiEnabled: true, aiPrompt: "You help with git branches.")
+        let m = PluginMigration.manifest(from: ext)
+        #expect(m.id == "branches")
+        #expect(m.data?.format == .lines)
+        #expect(m.views.panel?.root.component == "list")
+        #expect(m.actions["rowAction"]?.script == "git switch \"$CD_ROW_TITLE\"")
+        #expect(m.views.window?.root?.flattened.contains { $0.component == "ai" } == true)
+        #expect(m.agent?.instructions == "You help with git branches.")
+        #expect(PluginSchema.validate(m).filter { $0.severity == .error }.isEmpty)
+    }
+    // MARK: The batch — every legacy item at once (what the Plugins page shows)
+
+    @Test("Two commands with the same name get different ids")
+    func batchUniquifiesIDs() {
+        let commands = [
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "a"),
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "b"),
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "c"),
+        ]
+        let ids = PluginMigration.migrateAll(commands: commands, extensions: []).map(\.manifest.id)
+        #expect(ids == ["deploy", "deploy-2", "deploy-3"])
+        #expect(Set(ids).count == ids.count)
+    }
+
+    @Test("A command and an extension of the same name do not collide")
+    func batchUniquifiesAcrossBothSources() {
+        let command = SystemCommand(name: "Branches", icon: "gear", keywords: [], scriptType: "bash", script: "a")
+        let ext = UserGlobalExtension(name: "Branches", icon: "arrow.triangle.branch", keywords: [],
+                                      rowsScript: "git branch", rowActionScript: "git switch x")
+        let out = PluginMigration.migrateAll(commands: [command], extensions: [ext])
+        #expect(out.map(\.manifest.id) == ["branches", "branches-2"])
+        #expect(out.map(\.source) == [.globalCommand, .globalExtension])
+    }
+
+    @Test("Each migrated plugin carries the id it came from, so nothing is migrated twice")
+    func batchRemembersItsOrigin() {
+        let command = SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "a")
+        let out = PluginMigration.migrateAll(commands: [command], extensions: [])
+        #expect(out.first?.legacyID == command.id.uuidString)
+    }
+
+    @Test("Nothing in, nothing out")
+    func batchOfNothing() {
+        #expect(PluginMigration.migrateAll(commands: [], extensions: []).isEmpty)
+    }
+
+    @Test("Every item the batch produces validates")
+    func batchProducesValidManifests() {
+        let commands = [
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "a"),
+            SystemCommand(name: "Deploy", icon: "gear", keywords: [], scriptType: "bash", script: "b"),
+            SystemCommand(name: "Café", icon: "cup.and.saucer", keywords: [], scriptType: "bash", script: "c"),
+        ]
+        let ext = UserGlobalExtension(name: "Branches", icon: "arrow.triangle.branch", keywords: ["git"],
+                                      rowsScript: "git branch", rowActionScript: "git switch x")
+        for migrated in PluginMigration.migrateAll(commands: commands, extensions: [ext]) {
+            let errors = PluginSchema.validate(migrated.manifest).filter { $0.severity == .error }
+            #expect(errors.isEmpty, "\(migrated.manifest.id): \(errors.map(\.message))")
+        }
+    }
+}

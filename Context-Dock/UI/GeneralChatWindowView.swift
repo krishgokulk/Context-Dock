@@ -645,6 +645,7 @@ struct GeneralChatWindowView: View {
                         case .chat: chatPane
                         case .work: workPane
                         case .dashboard: DashboardPane()
+                        case .creator: PluginCreatorPane()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

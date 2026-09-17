@@ -103,6 +103,11 @@ extension DockPinKind {
             self = .globalCommand(id: "user:\(id.uuidString)")
         case .adapterAction(let bundleID, _, let actionID):
             self = .globalCommand(id: "adapter:\(bundleID):\(actionID)")
+        case .plugin(let id):
+            // Pinnable like any other global thing you run by name. The prefix keeps it
+            // distinct from the command it may have been migrated from, so a pin survives
+            // the cut-over instead of pointing at something retired.
+            self = .globalCommand(id: "plugin:\(id)")
         case .cachedMenu, .browserURL:
             return nil
         }

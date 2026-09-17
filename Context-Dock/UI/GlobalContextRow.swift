@@ -51,6 +51,7 @@ enum GlobalContextRow {
             return ([appName] + path.dropLast()).joined(separator: " › ")
         case .adapterAction(_, let appName, _): return "\(appName) · App action"
         case .userExtension: return "Global Extension"
+        case .plugin: return "Plugin"
         case .browserURL(_, let browserName, _, _, let domain):
             return domain.isEmpty ? browserName : "\(domain) · \(browserName)"
         }
@@ -65,6 +66,7 @@ enum GlobalContextRow {
         case .cachedMenu: return "command"
         case .adapterAction: return "bolt.fill"
         case .userExtension: return "puzzlepiece.extension"
+        case .plugin: return "puzzlepiece.extension.fill"
         case .browserURL: return "safari"
         }
     }
@@ -153,6 +155,27 @@ enum GlobalContextRow {
             // Handled by the field that ran the row: in the corner the extension opens in
             // the board, not in a window of its own beside it.
             break
+
+        case .plugin(let id):
+            guard let manifest = PluginRegistry.shared.plugin(id: id)?.manifest else { break }
+            switch PluginLaunch.behaviour(for: manifest) {
+            case .openPanel:
+                // A plugin with a panel IS that panel, so choosing it shows the panel rather
+                // than running something. The window host is used here because this path has
+                // no board to put it in; the corner opens it inline instead.
+                PluginWindowManager.shared.open(manifest)
+            case .run(let action):
+                // A one-shot — Sleep is the first. Opening an empty window for it would be a
+                // worse answer than doing the thing. The gate still applies: anything above
+                // read asks before it runs.
+                Task { @MainActor in
+                    _ = await PluginRuntime.shared.run(
+                        PluginActionRequest(name: action), manifest: manifest,
+                        inputs: PluginInputs())
+                }
+            case .nothing:
+                break
+            }
 
         case .cliScope:
             // Handled by the field that ran the row — stepping into a tool changes that
