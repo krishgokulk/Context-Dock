@@ -48,6 +48,24 @@ enum ActionValue {
         text.replacingOccurrences(of: "{{value}}", with: value ?? "")
     }
 
+    /// Whether the sentence names a number at all. `nil` from `extract` is ambiguous —
+    /// "no number said" and "an action with no unit to convert to" both produce it — and
+    /// the reuse decision needs to tell those apart.
+    static func namesAQuantity(in sentence: String) -> Bool {
+        firstQuantity(in: sentence.lowercased()) != nil
+    }
+
+    /// Whether a word is part of saying a quantity: a number, a word-number, or a unit.
+    /// Used to ask what a sentence says *besides* its value.
+    static func isValueToken(_ token: String) -> Bool {
+        var t = token.lowercased().trimmingCharacters(in: .punctuationCharacters)
+        if t.hasSuffix("%") { t.removeLast() }
+        if t.isEmpty { return false }
+        if Double(t) != nil { return true }
+        if wordNumbers[t] != nil { return true }
+        return unitWords.contains { $0.0 == t }
+    }
+
     // MARK: - Reading the sentence
 
     private enum Unit { case seconds, minutes, hours, percent, none }

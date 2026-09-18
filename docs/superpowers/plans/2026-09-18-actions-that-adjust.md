@@ -36,21 +36,21 @@ in `AdapterActionProposalInstaller.stableID` — byte-for-byte the original — 
   └─ inject {{value}} → sleep 600 — no model, no new action
 ```
 
-- [ ] **A1 `ActionValue`** — pure. `extract(from: sentence, label:) -> String?`: a number with
+- [x] **A1 `ActionValue`** — done, `5dce051`. — pure. `extract(from: sentence, label:) -> String?`: a number with
       an optional unit, normalised to the label's unit. `"10 min"`→`600` for `seconds`;
       `"2 hours"`→`7200`; `"50%"`/`"50 percent"`→`50` for `percent`; bare `"10"`→`"10"`;
       nothing → nil. Word numbers `"five"`→`5` for one..twenty. Tests first.
-- [ ] **A2 `AdapterAction.valueLabel` / `valueDefault`** — optional, `decodeIfPresent`, keys
+- [x] **A2 `AdapterAction.valueLabel` / `valueDefault`** — done, `e7fdd35`. — optional, `decodeIfPresent`, keys
       added to `CodingKeys` so the synthesised encoder writes them. Round-trip test; an
       existing JSON without the keys decodes unchanged.
-- [ ] **A3 `{{value}}` in `inject`** — substituted from an explicit value, else the default.
+- [x] **A3 `{{value}}` in `inject`** — done, `532d730`; script files get `$CD_VALUE` too. — substituted from an explicit value, else the default.
       `AppAdapterManager.execute` gains `value: String?`; `ChatRouteResolver.run` and
       `GeneralAIActionExecutor.executeAdapterRoute` pass `ActionValue.extract(query, label)`.
-- [ ] **A4 Authoring** — `WorkflowAuthor`'s prompt teaches `{{value}}` + `"value":
+- [x] **A4 Authoring** — done, `d653250`. — `WorkflowAuthor`'s prompt teaches `{{value}}` + `"value":
       {"label":…,"default":…}`; `Proposal`, `ExtensionProposalData` and
       `AdapterActionProposalInstaller.action(from:)` carry it. Test: a proposal with a value
       becomes an action with `valueLabel`/`valueDefault`; one without stays exactly as before.
-- [ ] **A5 The confirmation says it** — "*Minimise after a delay* saved to *Finder*. Say a
+- [x] **A5 The confirmation says it** — done, `d653250`. — "*Minimise after a delay* saved to *Finder*. Say a
       different number next time and it uses that." Only when a value exists.
 
 ## B — Adjust on reuse, via the model (structural changes)
