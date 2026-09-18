@@ -112,7 +112,15 @@ struct FrontmostAppTaskPlan: Equatable {
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
-        if hasAction { tools.formUnion(["run_menu_command", "send_keys", "window_control"]) }
+        // operate_app is offered on action turns even when Computer Use is switched off for
+        // this app, because its refusal *is* the offer: it tells the model to ask the user for
+        // permission in one line. Withholding it until the setting is on means nobody who has
+        // not already found the setting ever learns the rung exists.
+        if hasAction {
+            tools.formUnion([
+                "run_menu_command", "send_keys", "window_control", "operate_app",
+            ])
+        }
 
         return Self(goal: intentQuery.trimmingCharacters(in: .whitespacesAndNewlines), appName: appName,
                     bundleId: bundleId, intent: intent, sources: sources,

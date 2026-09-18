@@ -683,7 +683,7 @@ final class AgentToolRegistry {
         }
         let actionOnly: Set<String> = [
             "run_command", "spawn_worker", "send_keys", "window_control",
-            "run_adapter_action", "run_menu_command", "compose_message",
+            "run_adapter_action", "run_menu_command", "compose_message", "operate_app",
         ]
         return policyFiltered.filter { !actionOnly.contains($0.name) }
     }
@@ -985,6 +985,9 @@ final class AgentToolRegistry {
         registerReadingTools()
         // The deterministic resolver, offered rather than applied. See RouteTools.swift.
         registerRouteTools()
+        // The rung below a verified menu, off unless the user turned it on for that app.
+        // See ComputerUseTool.swift.
+        registerComputerUseTool()
 
         register(AgentTool(
             name: "read_tool_result",

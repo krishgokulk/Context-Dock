@@ -265,8 +265,22 @@ enum ScopedAppPromptBuilder {
             + "the answer. Never end with \"I can't\" while an approvable read-only command "
             + "exists. Writes, installs, deletes and anything touching remote state still "
             + "wait for that approval and are never proposed as read-only.")
+        // The rung below a verified menu, and the reason a stale cache is no longer the end of
+        // the road. Asked to update VS Code, every layer read the cached menu map, Electron had
+        // not built its menus when that map was written, and `Code ▸ Check for Updates…` was
+        // therefore invisible — so a working route was reported as impossible.
         lines.append(
-            "Never claim a tool is unavailable, ungranted, or \"not granted this session\". "
+            "Last rung: operate_app. When no adapter action, MCP tool, API, Shortcut, CLI or "
+            + "listed menu command fits, and run_menu_command has already failed or found "
+            + "nothing, call operate_app with the command in the app's own words. It reads the "
+            + "LIVE menu bar — including menus this app builds only when opened, which are "
+            + "absent from the list above — and the user approves the exact item before it is "
+            + "pressed. Try it before concluding a UI command cannot be reached; never use it "
+            + "for something a listed route already does.")
+        lines.append(
+            "Never claim a tool is unavailable, ungranted, or \"not granted this session\" — "
+            + "Computer Use (operate_app) is the one exception, and it says so itself when it "
+            + "is switched off. "
             + "There is no per-session tool grant in this app: a capability either exists for "
             + "this scope or does not, and an app outside the chat's scope produces its own "
             + "enable request. Describing a permission system that does not exist teaches the "
