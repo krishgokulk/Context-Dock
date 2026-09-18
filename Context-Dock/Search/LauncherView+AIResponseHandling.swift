@@ -684,6 +684,8 @@ extension LauncherView {
     }
 
     private func installContextDockAdapterAction(_ proposal: ExtensionProposalData) {
+        // The install itself lives in AdapterActionProposalInstaller so the corner can call
+        // it too; the dock's only contribution is which app it is scoped to.
         let bundleId = [
             l2.chatDraftBundleId,
             l2.targetApp?.bundleId ?? "",
@@ -696,49 +698,10 @@ extension LauncherView {
             frontmost.name,
         ].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? "This App"
-        guard !bundleId.isEmpty else {
-            l2.chatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content: "I couldn't save this action because the scoped app is no longer available.",
-                    isError: true))
-            return
-        }
-
-        let actionType: AdapterActionType = {
-            switch proposal.scriptType.lowercased() {
-            case "applescript": return .applescript
-            case "jxa": return .jxa
-            default: return .shell
-            }
-        }()
-        let triggerWords = proposal.triggers.map(\.value)
-            + proposal.name.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-        let stableId = "ai." + proposal.name.lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        let action = AdapterAction(
-            id: stableId,
-            name: proposal.name,
-            icon: proposal.icon ?? "sparkles",
-            description: proposal.description,
-            triggers: Array(Set(triggerWords.map { $0.lowercased() })).sorted(),
-            category: "AI Workflows",
-            type: actionType,
-            script: proposal.script,
-            requiresApproval: true
-        )
 
         Task { @MainActor in
-            if AppAdapterManager.shared.adapter(for: bundleId) == nil {
-                await AppAdapterManager.shared.createAdapter(
-                    appName: appName, bundleId: bundleId, icon: "app.fill")
-            }
-            await AppAdapterManager.shared.appendAction(action, to: bundleId)
-            l2.chatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content: "**\(proposal.name)** saved to **\(appName)**. Next time, Context Dock will match this app action before asking AI to create another workflow."))
+            await AdapterActionProposalInstaller.install(
+                proposal, bundleId: bundleId, appName: appName)
             persistActiveL2DockSession()
             requestWindowSizeUpdate(reason: .chatChanged)
         }

@@ -1086,6 +1086,35 @@ struct AppChatPromptPill: View {
                         AIChatMessageView(
                             message: message,
                             isStreaming: model.isAnswering && index == model.messages.count - 1,
+                            // The dock passed this and the corner did not, so a proposed app
+                            // action reached this transcript with its Install card drawn
+                            // nowhere. Same message, same flag, same installer — the corner
+                            // only supplies its own scope.
+                            onInstallProposal: { json in
+                                guard let data = json.data(using: .utf8),
+                                    let proposal = try? JSONDecoder()
+                                        .decode(ExtensionProposalData.self, from: data)
+                                else { return }
+                                Task { @MainActor in
+                                    // The corner is a frontmost-app surface, so its proposals
+                                    // are app actions. A selection-scope or rule proposal
+                                    // has its own installer, still on the dock (#12); filing
+                                    // one as an adapter action would be worse than saying so.
+                                    guard proposal.layer.lowercased() == "contextdock" else {
+                                        AppChatConversation.shared.messages.append(
+                                            AIChatMessage(
+                                                role: .assistant,
+                                                content: "That kind of extension is saved from "
+                                                    + "the dock's chat for now — open the same "
+                                                    + "conversation there and press Install."))
+                                        return
+                                    }
+                                    await AdapterActionProposalInstaller.install(
+                                        proposal,
+                                        bundleId: model.appBundleID,
+                                        appName: model.appName)
+                                }
+                            },
                             assistantAvatarImage: appIcon,
                             liveSteps: model.isAnswering && index == model.messages.count - 1
                                 ? model.liveSteps : []
