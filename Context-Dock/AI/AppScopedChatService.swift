@@ -49,6 +49,11 @@ enum AppScopedChatService {
         /// Source collection and planning work performed before tools ran. The window keeps
         /// this behind its completed Steps disclosure instead of exposing debug chips.
         var trace: [String] = []
+        /// An `ExtensionProposalData` as JSON when the answer is something to approve
+        /// rather than something that happened — a revision of a saved action. The surface
+        /// puts it on the message as `structuredData` and the ordinary proposal card draws
+        /// it, so both chats offer the same decision.
+        var proposalJSON: String? = nil
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -1062,7 +1067,9 @@ enum AppScopedChatService {
         if let intent = WorkbenchIntent.intent(in: query) {
             log.notice("stage: workbench intent")
             let outcome = await WorkbenchIntent.handle(intent, scope: scope)
-            return Answer(text: outcome.text, toolChips: outcome.chips)
+            return Answer(
+                text: outcome.text, toolChips: outcome.chips,
+                proposalJSON: outcome.proposalJSON)
         }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from

@@ -70,6 +70,36 @@ enum ActionReuse {
         return .run(value: existing.value(for: request))
     }
 
+    /// The saved action a request is about, or nil when none of them is.
+    ///
+    /// Deliberately not a search: it ranks what an adapter already holds by how much of its
+    /// own vocabulary the request uses, so a request that shares nothing substantive with
+    /// anything saved returns nil and the caller authors — rather than bending the least
+    /// unrelated action to fit.
+    static func best(among actions: [AdapterAction], request: String) -> AdapterAction? {
+        let words = tokens(request).subtracting(filler)
+        guard !words.isEmpty else { return nil }
+        struct Scored {
+            let action: AdapterAction
+            let shared: Int
+            let breadth: Int
+        }
+        var scored: [Scored] = []
+        for action in actions {
+            let known = vocabulary(of: action)
+            let shared = known.intersection(words).count
+            guard shared > 0 else { continue }
+            scored.append(Scored(action: action, shared: shared, breadth: known.count))
+        }
+        // A tie goes to the action with the smaller vocabulary: matching two of an action's
+        // three words says more than matching two of its twelve.
+        let best = scored.max { a, b in
+            if a.shared != b.shared { return a.shared < b.shared }
+            return a.breadth > b.breadth
+        }
+        return best?.action
+    }
+
     /// The words an action answers to: its triggers and every word of its name, minus the
     /// ones that carry no request. "Minimise after a delay" answers to "minimise" and
     /// "delay" — not to "a", which would make every sentence containing the word "a" a

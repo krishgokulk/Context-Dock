@@ -86,4 +86,46 @@ struct ActionReuseTests {
     @Test func noExistingActionIsAuthored() {
         #expect(ActionReuse.decide(existing: nil, request: "minimise after 10 min") == .author)
     }
+
+    // MARK: - Which saved action the request is about (C1)
+
+    private func action(_ name: String, triggers: [String]) -> AdapterAction {
+        AdapterAction(
+            id: "ai." + name.lowercased().replacingOccurrences(of: " ", with: "-"),
+            name: name, icon: "sparkles", description: "", triggers: triggers,
+            type: .shell, script: "true", requiresApproval: true)
+    }
+
+    /// The action that shares the most with the request wins. "minimise after 10 min" is
+    /// about the minimise action, not the export one, though both are saved.
+    @Test func theClosestSavedActionIsTheOneConsidered() {
+        let saved = [
+            action("Export as PDF", triggers: ["export", "pdf"]),
+            minimise(),
+            action("Empty the cache", triggers: ["cache", "empty"]),
+        ]
+        #expect(ActionReuse.best(among: saved, request: "minimise after 10 min")?.id
+            == minimise().id)
+    }
+
+    /// Nothing shares a substantive word: nothing is considered, so the caller authors
+    /// rather than bending an unrelated action to fit.
+    @Test func nothingCloseMeansNothingIsConsidered() {
+        let saved = [action("Export as PDF", triggers: ["export", "pdf"])]
+        #expect(ActionReuse.best(among: saved, request: "email the selection to sam") == nil)
+    }
+
+    /// An empty adapter has nothing to offer.
+    @Test func noSavedActionsMeansNothingIsConsidered() {
+        #expect(ActionReuse.best(among: [], request: "minimise after 10 min") == nil)
+    }
+
+    /// The pick and the decision compose: this is the whole reuse path, end to end, with
+    /// no model in it.
+    @Test func theOwnersSentenceReusesTheOwnersAction() {
+        let saved = [action("Export as PDF", triggers: ["export", "pdf"]), minimise()]
+        let best = ActionReuse.best(among: saved, request: "minimise after 10 min")
+        #expect(ActionReuse.decide(existing: best, request: "minimise after 10 min")
+            == .run(value: "600"))
+    }
 }

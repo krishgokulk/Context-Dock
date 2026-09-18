@@ -441,6 +441,7 @@ struct CornerGeneralChatView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             AIChatMessageView(
                                 message: message,
+                                onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: message.id == model.messages.last?.id

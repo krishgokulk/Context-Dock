@@ -63,23 +63,23 @@ in `AdapterActionProposalInstaller.stableID` — byte-for-byte the original — 
   └─ saved under the SAME stableID → replaces, never a second one
 ```
 
-- [ ] **B1 `WorkflowAuthor.revise`** — takes the existing action and the new request, returns
+- [x] **B1 `WorkflowAuthor.revise`** — done, `86192f1`. — takes the existing action and the new request, returns
       a `Proposal` whose `name` is the existing name (so `stableID` matches). Prompt: change
       only what the request changes; keep `{{value}}` if present.
-- [ ] **B2 The decision** — pure. `ActionReuse.decide(existing:, request:)`:
+- [x] **B2 The decision** — done, `86192f1`; `ActionReuse.best` picks what to judge. — pure. `ActionReuse.decide(existing:, request:)`:
       `.run(value:)` when the sentence differs only by a value the action declares;
       `.revise` when it differs otherwise; `.author` when nothing matches. Tests are the three
       sentences above plus "minimise after 5 min" again → `.run(value: nil)`.
-- [ ] **B3 Diff card** — the Install card, reused: shows old vs new script. Approving calls
+- [x] **B3 Diff card** — done, `ec7602f`. — the Install card, reused: shows old vs new script. Approving calls
       the installer, which replaces by id. Both surfaces get it for free (the corner now has
       the callback).
 
 ## C — Both wired, the resolver chooses
 
-- [ ] **C1** `ChatRouteResolver` / the General Chat read path consult `ActionReuse.decide`
+- [x] **C1** — done. The teach rung consults `ActionReuse` before authoring; General Chat (window and corner) draws and approves the card, each surface keeping its own transcript. `ChatRouteResolver` / the General Chat read path consult `ActionReuse.decide`
       before ever calling `WorkflowAuthor.propose`. Authoring is the last resort, as the
       header always said.
-- [ ] **C2** Eval cases, from the owner's sentences: "minimise after 5 min" (author);
+- [x] **C2** — done, `Context-DockTests/ActionsThatAdjustEvalTests.swift`. "minimise now" runs the saved default (the owner's call, recorded there). Eval cases, from the owner's sentences: "minimise after 5 min" (author);
       "minimise after 10 min" (run, 600); "minimise after five minutes" (run, 300);
       "minimise after 10 min and then mute" (revise, same id); "minimise now" (run, default?
       — owner's call: default or ask).

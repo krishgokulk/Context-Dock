@@ -352,6 +352,7 @@ final class GeneralChatWindowModel: ObservableObject {
         deliver(
             AIChatMessage(
                 role: .assistant, content: answer.text,
+                structuredData: answer.proposalJSON,
                 recentFiles: named.map { RecentFileAction(url: $0) },
                 mcpToolsRan: answer.toolChips,
                 evidenceReceipts: answer.evidenceReceipts,
@@ -445,6 +446,43 @@ final class GeneralChatWindowModel: ObservableObject {
     /// The question the route choice belongs to.
     private var lastUserQuestion: String {
         messages.last { $0.role == .user }?.content ?? ""
+    }
+
+    /// The user approved a proposed action — in practice a revision of one they already
+    /// have — from a General Chat thread.
+    ///
+    /// Saved through the same installer the app chats use, so one action is written one way
+    /// wherever it was approved. The confirmation is appended here rather than posted by
+    /// the installer: General Chat keeps its own transcript, and writing into the app
+    /// chats' conversation would merge two surfaces that are deliberately separate.
+    func installProposal(_ json: String) {
+        guard let data = json.data(using: .utf8),
+            let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
+        else { return }
+        let scope = activeScope
+        let title = activeTitle
+        Task { @MainActor in
+            // A revision names the action it replaces and so knows its own adapter. An
+            // ordinary proposal needs the thread's app, and General has none.
+            var bundleId = ""
+            var appName = ""
+            if case .app(let id) = scope {
+                bundleId = id
+                appName = AppAdapterManager.shared.adapter(for: id)?.appName ?? ""
+            }
+            let message = await AdapterActionProposalInstaller.perform(
+                proposal, bundleId: bundleId, appName: appName)
+            if scope == self.activeScope {
+                self.messages.append(message)
+                GeneralChatSessionStore.save(
+                    self.messages, scope: scope, title: self.activeTitle)
+            } else {
+                var stored = GeneralChatSessionStore.load(scope: scope)
+                stored.append(message)
+                GeneralChatSessionStore.save(stored, scope: scope, title: title)
+            }
+            self.sessions = GeneralChatSessionStore.index()
+        }
     }
 
     /// "Enable <app> for this chat": attach the app, then ask the question again so the

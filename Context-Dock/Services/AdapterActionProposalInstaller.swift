@@ -126,26 +126,57 @@ enum AdapterActionProposalInstaller {
         return text
     }
 
+    /// The adapter holding an action, found from the action's id.
+    ///
+    /// General Chat is not scoped to an app, so a revision approved there cannot assume the
+    /// surface knows which adapter it belongs to. The id the card carries is the only thing
+    /// that does.
+    @MainActor
+    static func bundleId(owning actionId: String) -> String? {
+        AppAdapterManager.shared.adapters
+            .first { $0.actions.contains { $0.id == actionId } }?
+            .bundleId
+    }
+
     /// Install into `bundleId`'s adapter — creating the adapter if the app has none — and
     /// post the confirmation to the shared conversation. Returns the message it posted, so a
     /// caller that keeps its own transcript can mirror it.
+    ///
+    /// This is the app chats' entry point: the dock and the corner show one conversation, so
+    /// the confirmation has one destination. General Chat is a different surface with its
+    /// own transcript and calls `perform` instead — posting there would merge two product
+    /// layers, not misplace a message.
     @MainActor
     @discardableResult
     static func install(
         _ proposal: ExtensionProposalData, bundleId: String, appName: String
     ) async -> AIChatMessage {
-        let trimmedBundle = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let message = await perform(proposal, bundleId: bundleId, appName: appName)
+        AppChatConversation.shared.messages.append(message)
+        return message
+    }
+
+    /// Save the action and hand back the confirmation, without posting it anywhere. The
+    /// caller puts it in its own transcript.
+    @MainActor
+    @discardableResult
+    static func perform(
+        _ proposal: ExtensionProposalData, bundleId: String, appName: String
+    ) async -> AIChatMessage {
+        // A revision knows where it lives: the action it replaces is already in an adapter,
+        // whatever the surface that is showing the card believes its scope to be.
+        // `Self.` because the parameter of the same name shadows the lookup.
+        let owning = proposal.replacesActionId.flatMap { Self.bundleId(owning: $0) }
+        let trimmedBundle = owning
+            ?? bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBundle.isEmpty else {
-            let failure = AIChatMessage(
+            return AIChatMessage(
                 role: .assistant,
                 content: "I couldn't save this action because the scoped app is no longer available.",
                 isError: true)
-            AppChatConversation.shared.messages.append(failure)
-            return failure
         }
 
-        let resolvedName = appName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? "This App" : appName
+        let resolvedName = resolvedAppName(appName, bundleId: trimmedBundle)
         if AppAdapterManager.shared.adapter(for: trimmedBundle) == nil {
             await AppAdapterManager.shared.createAdapter(
                 appName: resolvedName, bundleId: trimmedBundle, icon: "app.fill")
@@ -153,13 +184,21 @@ enum AdapterActionProposalInstaller {
         let action = action(from: proposal)
         await AppAdapterManager.shared.appendAction(action, to: trimmedBundle)
 
-        let message = AIChatMessage(
+        return AIChatMessage(
             role: .assistant,
             content: confirmation(
                 actionName: proposal.name, appName: resolvedName,
                 valueLabel: action.valueLabel, valueDefault: action.valueDefault,
                 replaced: proposal.replacesActionId != nil))
-        AppChatConversation.shared.messages.append(message)
-        return message
+    }
+
+    /// The app's name as the user knows it. A revision approved from General Chat arrives
+    /// with no app name — the surface has no app — so the adapter's own name is used rather
+    /// than telling the user their action was saved to "This App".
+    @MainActor
+    private static func resolvedAppName(_ appName: String, bundleId: String) -> String {
+        let trimmed = appName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        return AppAdapterManager.shared.adapter(for: bundleId)?.appName ?? "This App"
     }
 }

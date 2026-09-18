@@ -4963,6 +4963,7 @@ extension LauncherView {
                             AIChatMessage(
                                 role: .assistant,
                                 content: outcome.text,
+                                structuredData: outcome.proposalJSON,
                                 mcpToolsRan: outcome.chips))
                         finishL2AIRequest(l2RequestID)
                     }
