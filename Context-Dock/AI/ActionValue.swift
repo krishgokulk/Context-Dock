@@ -101,6 +101,19 @@ enum ActionValue {
                 token.removeLast()
                 attached = .percent
             }
+            // "2min", "90s", "1.5hr" — people write the number and its unit as one word as
+            // often as two. The owner's own sentence was "minimise code app after 2min",
+            // which split into a token this loop could not read as a number at all, so the
+            // action ran at its default.
+            if attached == .none, Double(token) == nil,
+                let split = token.firstIndex(where: { $0.isLetter }),
+                split != token.startIndex,
+                Double(token[token.startIndex..<split]) != nil,
+                let unit = unitWords.first(where: { $0.0 == String(token[split...]) })?.1
+            {
+                attached = unit
+                token = String(token[token.startIndex..<split])
+            }
             let amount: Double?
             if let number = Double(token) {
                 amount = number

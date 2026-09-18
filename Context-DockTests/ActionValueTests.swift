@@ -74,6 +74,22 @@ struct ActionValueTests {
         #expect(ActionValue.extract(from: "in 2.5 min", label: "seconds") == "150")
     }
 
+    /// "2min" is one word as often as two. The owner's sentence was "minimise code app
+    /// after 2min", and a token this could not read as a number ran the action at its
+    /// default instead of at two minutes.
+    @Test func aNumberJoinedToItsUnitIsStillAQuantity() {
+        #expect(ActionValue.extract(from: "now minimise code app after 2min", label: "seconds") == "120")
+        #expect(ActionValue.extract(from: "wait 90s", label: "seconds") == "90")
+        #expect(ActionValue.extract(from: "in 1.5hr", label: "seconds") == "5400")
+        #expect(ActionValue.extract(from: "set it to 20percent", label: "percent") == "20")
+    }
+
+    /// A word that merely starts with digits is not a quantity — "3rd" and "2nd" are
+    /// ordinals, and a version like "2x" names no unit this knows.
+    @Test func aNumberJoinedToSomethingElseIsNotOne() {
+        #expect(ActionValue.extract(from: "close the 3rd window", label: "seconds") == nil)
+    }
+
     /// The first quantity is the one meant. "minimise after 10 min, check every 30 sec" is
     /// about ten minutes.
     @Test func theFirstQuantityWins() {

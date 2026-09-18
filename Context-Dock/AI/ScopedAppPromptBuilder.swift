@@ -44,6 +44,23 @@ enum ScopedAppPromptBuilder {
 
     /// Drops provisionally-linked CLIs unless the question names them: a guess about which
     /// binary belongs to an app must not be advertised as one of the app's capabilities.
+    /// One action's line in the inventory.
+    ///
+    /// An action that declares a value says so here, with its unit and what it runs at
+    /// otherwise. Without that the model has no way to know a number can be passed: the
+    /// owner's saved "Minimize Code After Delay" was listed as a bare id and name, so
+    /// "minimise code app after 2min" had nothing to aim the two minutes at.
+    static func inventoryLine(for action: AdapterAction) -> String {
+        let flag = (action.requiresApproval || action.isDestructive) ? " [approval]" : ""
+        var line = "    • \(action.id) — \(action.name)\(flag)"
+        if let label = action.valueLabel {
+            let fallback = action.valueDefault.map { ", default \($0)" } ?? ""
+            line += " [takes a value in \(label)\(fallback) — pass it as 'value', or say "
+                + "the number in the request]"
+        }
+        return line
+    }
+
     static func promptRelevantCLIPackages(
         _ packages: [TerminalPackage], bundleId: String, query: String
     ) -> [TerminalPackage] {
@@ -179,8 +196,7 @@ enum ScopedAppPromptBuilder {
                 + "do NOT ask \"would you like me to?\". Actions marked [approval] pop a native "
                 + "confirmation on their own, so still just call them. Available:")
             for a in actions.prefix(30) {
-                let flag = (a.requiresApproval || a.isDestructive) ? " [approval]" : ""
-                lines.append("    • \(a.id) — \(a.name)\(flag)")
+                lines.append(inventoryLine(for: a))
             }
         }
         lines.append(
