@@ -49,7 +49,16 @@ enum AdapterActionProposalInstaller {
             script: proposal.script,
             // A script the model wrote runs nothing until a person has seen it. Not
             // optional for AI-authored actions, whatever the proposal says.
-            requiresApproval: true)
+            requiresApproval: true,
+            // A value with no label is no value: nothing to convert to, and a default
+            // without a unit is a number nobody can adjust.
+            valueLabel: proposal.value.map(\.label).flatMap(nonEmpty),
+            valueDefault: proposal.value.flatMap { $0.label.isEmpty ? nil : $0.defaultValue })
+    }
+
+    private static func nonEmpty(_ s: String) -> String? {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 
     /// Derived from the name, so installing the same proposal again updates one action
@@ -66,9 +75,21 @@ enum AdapterActionProposalInstaller {
             .filter { $0.isLetter || $0.isNumber || $0 == "-" }
     }
 
-    static func confirmation(actionName: String, appName: String) -> String {
-        "**\(actionName)** saved to **\(appName)**. Next time, Context Dock will match this "
-            + "app action before asking AI to create another workflow."
+    /// When the action declares a value, the confirmation says so. An action that quietly
+    /// takes a new number is a feature nobody uses, because nobody is told it is there —
+    /// and this sentence is the one place the user is certain to read.
+    static func confirmation(
+        actionName: String, appName: String,
+        valueLabel: String? = nil, valueDefault: String? = nil
+    ) -> String {
+        var text = "**\(actionName)** saved to **\(appName)**. Next time, Context Dock will "
+            + "match this app action before asking AI to create another workflow."
+        if let valueLabel {
+            let saved = valueDefault.map { "\($0) \(valueLabel)" } ?? valueLabel
+            text += " It runs at \(saved) — say a different number next time and it uses "
+                + "that, without creating another action."
+        }
+        return text
     }
 
     /// Install into `bundleId`'s adapter — creating the adapter if the app has none — and
@@ -100,7 +121,9 @@ enum AdapterActionProposalInstaller {
 
         let message = AIChatMessage(
             role: .assistant,
-            content: confirmation(actionName: proposal.name, appName: resolvedName))
+            content: confirmation(
+                actionName: proposal.name, appName: resolvedName,
+                valueLabel: action.valueLabel, valueDefault: action.valueDefault))
         AppChatConversation.shared.messages.append(message)
         return message
     }

@@ -268,7 +268,8 @@ extension LauncherView {
               "script": "<complete, runnable script — NO placeholders, NO TODOs>",
               "layer": "contextDock",
               "triggers": [{"type": "appContext", "value": "\(appName)"}],
-              "icon": "<SF Symbol name>"
+              "icon": "<SF Symbol name>",
+              "value": {"label": "<unit>", "default": "<the number in this request>"}
             }
             <<END_PROPOSAL>>
 
@@ -280,6 +281,14 @@ extension LauncherView {
               state at run time (for example `git log -1`) instead of hardcoding today's content.
               A fixed destination such as a person/email may stay fixed when that is the workflow's
               purpose; changing content, files, branch, selection, and URL must stay dynamic.
+            - If the request names a quantity that will change next time — a delay, a count, a
+              percentage, a size — do not bake it in. Put {{value}} where it goes (works in bash
+              and AppleScript) and declare it in "value": "label" is the unit the script needs
+              there ("seconds", "minutes", "percent", "count"); "default" is the number from this
+              request in that unit. "minimise after 5 min" → `sleep {{value}}` with
+              {"label": "seconds", "default": "300"}, so "after 10 min" runs the SAME saved
+              action with 600 instead of a new script. One value per action. Omit "value" when
+              nothing varies.
             - For reusable email actions, extract an email address from $CD_QUERY when one is
               present and use the address from the original request only as the fallback. This
               lets one saved action draft to different people without generating another script.

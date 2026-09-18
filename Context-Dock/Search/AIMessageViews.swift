@@ -692,10 +692,24 @@ struct ExtensionProposalData: Codable {
     var layer: String
     var triggers: [TriggerSpec]
     var icon: String?
+    /// The one thing about the action that varies, when the model declares one: the unit
+    /// its `{{value}}` slot expects and what runs when the sentence names no number.
+    /// Absent on every proposal written before this existed.
+    var value: ValueSpec?
 
     struct TriggerSpec: Codable {
         var type: String
         var value: String
+    }
+
+    struct ValueSpec: Codable, Equatable {
+        var label: String
+        var defaultValue: String?
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case defaultValue = "default"
+        }
     }
 
     static let markerStart = "<<EXTENSION_PROPOSAL>>"
