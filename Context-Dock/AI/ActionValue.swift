@@ -42,6 +42,12 @@ enum ActionValue {
         return format(converted)
     }
 
+    /// `{{value}}` filled the way `{{query}}` is: every occurrence, as text. No value is an
+    /// empty slot — a literal `{{value}}` must never reach a shell.
+    static func fill(_ text: String, with value: String?) -> String {
+        text.replacingOccurrences(of: "{{value}}", with: value ?? "")
+    }
+
     // MARK: - Reading the sentence
 
     private enum Unit { case seconds, minutes, hours, percent, none }

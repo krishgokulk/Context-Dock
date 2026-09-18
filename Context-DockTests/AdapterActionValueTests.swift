@@ -58,4 +58,32 @@ struct AdapterActionValueTests {
         #expect(action(label: "seconds", defaultValue: "300").takesValue)
         #expect(!action().takesValue)
     }
+
+    // MARK: - A3: the value a run uses
+
+    /// "minimise after 10 min" against a seconds action runs with 600 — the number in the
+    /// sentence, in the action's unit, no model involved.
+    @Test func theSentencesNumberIsTheRunsValue() {
+        let a = action(label: "seconds", defaultValue: "300")
+        #expect(a.value(for: "minimise after 10 min") == "600")
+        #expect(a.value(for: "minimise after five minutes") == "300")
+    }
+
+    /// "minimise now" names no number: the action's own default runs, not an invented one.
+    @Test func noNumberFallsBackToTheDefault() {
+        #expect(action(label: "seconds", defaultValue: "300").value(for: "minimise now") == "300")
+    }
+
+    /// An action with no declaration has no value, whatever the sentence says. The number in
+    /// "open tab 3" is not a parameter of an action that never asked for one.
+    @Test func anActionWithoutAValueHasNone() {
+        #expect(action().value(for: "open tab 3") == nil)
+    }
+
+    /// An explicit value from a caller wins over the sentence — this is what B and C hand
+    /// down once they have decided.
+    @Test func anExplicitValueWinsOverTheSentence() {
+        let a = action(label: "seconds", defaultValue: "300")
+        #expect(a.value(for: "minimise after 10 min", explicit: "45") == "45")
+    }
 }

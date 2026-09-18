@@ -112,6 +112,15 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     /// Whether the script has a `{{value}}` slot to fill.
     var takesValue: Bool { valueLabel != nil }
 
+    /// The value this run uses: what a caller decided, else the number in the sentence in
+    /// this action's unit, else the default. Nil for an action that takes no value — the
+    /// "3" in "open tab 3" is not a parameter of an action that never asked for one.
+    func value(for query: String, explicit: String? = nil) -> String? {
+        guard let valueLabel else { return nil }
+        if let explicit { return explicit }
+        return ActionValue.extract(from: query, label: valueLabel) ?? valueDefault
+    }
+
     // Hashable / Equatable by id
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
     static func == (lhs: AdapterAction, rhs: AdapterAction) -> Bool { lhs.id == rhs.id }
@@ -399,7 +408,10 @@ final class AppAdapterManager: ObservableObject {
             + "Answer it from a reader instead."
     }
 
-    func execute(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "") async -> (Bool, String) {
+    /// `value` is a caller's decision for the action's `{{value}}` slot; nil means read it
+    /// from `query` (see `AdapterAction.value(for:)`), so every caller that already passes
+    /// the sentence gets an adjustable action without knowing it is one.
+    func execute(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "", value: String? = nil) async -> (Bool, String) {
         let unattended = AICapabilityApprovalCenter.refusesEveryApprovalUnattended
         if let refusal = Self.refusalReason(for: action, query: query, unattended: unattended) {
             if unattended {
@@ -427,7 +439,7 @@ final class AppAdapterManager: ObservableObject {
                         await MainActor.run {
                             self?.pendingApproval = nil
                         }
-                        let result = await self?.runChain(action, context: context, targetBundleId: targetBundleId, query: query) ?? (false, "")
+                        let result = await self?.runChain(action, context: context, targetBundleId: targetBundleId, query: query, value: value) ?? (false, "")
                         await MainActor.run {
                             self?.lastResult = result
                         }
@@ -455,7 +467,7 @@ final class AppAdapterManager: ObservableObject {
                 }
             }
         }
-        let result = await runChain(action, context: context, targetBundleId: targetBundleId, query: query)
+        let result = await runChain(action, context: context, targetBundleId: targetBundleId, query: query, value: value)
         await MainActor.run {
             self.lastResult = result
         }
@@ -474,14 +486,14 @@ final class AppAdapterManager: ObservableObject {
     /// no video playing). Prefix a link id with `!` when it genuinely is a prerequisite and
     /// its failure must cancel the action.
     private func runChain(_ action: AdapterAction, context: AXContext,
-                          targetBundleId: String?, query: String) async -> (Bool, String) {
+                          targetBundleId: String?, query: String, value: String? = nil) async -> (Bool, String) {
         let links = action.chain ?? []
         guard !links.isEmpty else {
-            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query, value: value)
         }
 
         guard let adapter = adapters.first(where: { $0.actions.contains { $0.id == action.id } }) else {
-            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query)
+            return await runAction(action, context: context, targetBundleId: targetBundleId, query: query, value: value)
         }
 
         var seen: Set<String> = [action.id]
@@ -504,8 +516,10 @@ final class AppAdapterManager: ObservableObject {
             }
         }
 
+        // A caller's value is for the action asked for; each link reads its own from the
+        // sentence.
         let (ok, output) = await runAction(action, context: context,
-                                           targetBundleId: targetBundleId, query: query)
+                                           targetBundleId: targetBundleId, query: query, value: value)
         guard ok, !skipped.isEmpty else { return (ok, output) }
         let note = "Skipped \(skipped.joined(separator: ", "))"
         return (true, output.isEmpty ? note : "\(output) · \(note)")
@@ -1171,7 +1185,10 @@ final class AppAdapterManager: ObservableObject {
         }
     }
 
-    private func runAction(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "") async -> (Bool, String) {
+    private func runAction(_ action: AdapterAction, context: AXContext, targetBundleId: String? = nil, query: String = "", value explicitValue: String? = nil) async -> (Bool, String) {
+        // Resolved once: the same number fills every `{{value}}` in the script and reaches a
+        // script file as $CD_VALUE. Nil for an action that declares no value.
+        let value = action.value(for: query, explicit: explicitValue)
         switch action.type {
 
         case .menubar:
@@ -1209,16 +1226,16 @@ final class AppAdapterManager: ObservableObject {
         case .applescript:
             guard let script = action.script else { return (false, "No script defined") }
             let appleScriptFile = action.scriptFile.flatMap { resolveScriptFile($0) }
-            return await runAppleScript(inject(script, context: context, query: query), scriptFile: appleScriptFile)
+            return await runAppleScript(inject(script, context: context, query: query, value: value), scriptFile: appleScriptFile)
 
         case .jxa:
             guard let script = action.script else { return (false, "No script defined") }
             let jxaFile = action.scriptFile.flatMap { resolveScriptFile($0) }
-            return await runJXA(inject(script, context: context, query: query), scriptFile: jxaFile, context: context)
+            return await runJXA(inject(script, context: context, query: query, value: value), scriptFile: jxaFile, context: context)
 
         case .shell:
             let shellFile = action.scriptFile.flatMap { resolveScriptFile($0) }
-            let inlineScript = action.script.map { inject($0, context: context, query: query) } ?? ""
+            let inlineScript = action.script.map { inject($0, context: context, query: query, value: value) } ?? ""
             guard shellFile != nil || !inlineScript.isEmpty else { return (false, "No script defined") }
             // Long-running download-style commands stream a live progress bar.
             let lower = (inlineScript + " " + action.id).lowercased()
@@ -1228,7 +1245,7 @@ final class AppAdapterManager: ObservableObject {
                 || lower.contains("download")
             return await runShell(
                 inlineScript, scriptFile: shellFile, context: context,
-                progressLabel: showsProgress ? action.name : nil, query: query)
+                progressLabel: showsProgress ? action.name : nil, query: query, value: value)
 
         case .cliTool:
             guard let command = action.cliToolCommand, !command.isEmpty else {
@@ -1238,7 +1255,7 @@ final class AppAdapterManager: ObservableObject {
 
         case .urlScheme:
             guard let scheme = action.urlScheme else { return (false, "No URL scheme defined") }
-            let resolved = inject(scheme, context: context, query: query)
+            let resolved = inject(scheme, context: context, query: query, value: value)
             if let url = URL(string: resolved) {
                 NSWorkspace.shared.open(url)
                 return (true, "Opened: \(resolved)")
@@ -1249,15 +1266,15 @@ final class AppAdapterManager: ObservableObject {
             guard let rawTarget = action.scriptFile ?? action.script ?? action.urlScheme, !rawTarget.isEmpty else {
                 return (false, "No target path defined")
             }
-            let resolvedTarget = inject(rawTarget, context: context, query: query)
+            let resolvedTarget = inject(rawTarget, context: context, query: query, value: value)
             return openResolvedTarget(resolvedTarget)
 
         case .scriptFile:
             guard let rawPath = action.scriptFile ?? action.script, !rawPath.isEmpty else {
                 return (false, "No script file defined")
             }
-            let resolvedPath = inject(rawPath, context: context, query: query)
-            return await runExternalScriptFile(resolvedPath, context: context, query: query)
+            let resolvedPath = inject(rawPath, context: context, query: query, value: value)
+            return await runExternalScriptFile(resolvedPath, context: context, query: query, value: value)
 
         case .shortcut:
             guard let name = action.shortcutName else { return (false, "No shortcut name") }
@@ -1266,14 +1283,14 @@ final class AppAdapterManager: ObservableObject {
         case .aiPrompt:
             // ContentView handles this type: we return the resolved prompt so it can be injected
             let tmpl = action.aiPromptTemplate ?? action.description
-            return (true, inject(tmpl, context: context, query: query))
+            return (true, inject(tmpl, context: context, query: query, value: value))
 
         case .pageJS:
             guard let script = action.script, !script.isEmpty else {
                 return (false, "No page script defined")
             }
             // Resolve context vars (including $PAGE_TEXT and $SELECTED_TEXT from bridge)
-            let resolved = injectPageContext(script, context: context, query: query)
+            let resolved = injectPageContext(script, context: context, query: query, value: value)
 
             let owner = targetBundleId
                 ?? adapters.first { $0.actions.contains { $0.id == action.id } }?.bundleId
@@ -1573,7 +1590,7 @@ final class AppAdapterManager: ObservableObject {
 
     private func runShell(
         _ script: String, scriptFile: URL? = nil, context: AXContext,
-        progressLabel: String? = nil, query: String? = nil
+        progressLabel: String? = nil, query: String? = nil, value: String? = nil
     ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
@@ -1592,6 +1609,10 @@ final class AppAdapterManager: ObservableObject {
             if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
                 env["CD_QUERY"] = q
             }
+            // The action's resolved value, under the name plugins already use, so a script
+            // file — which text injection cannot reach — adjusts the same way an inline
+            // script does.
+            if let value { env["CD_VALUE"] = value }
             task.environment = env
             task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
             if let file = scriptFile {
@@ -1673,7 +1694,7 @@ final class AppAdapterManager: ObservableObject {
     }
 
     private func runExternalScriptFile(
-        _ rawPath: String, context: AXContext, query: String? = nil
+        _ rawPath: String, context: AXContext, query: String? = nil, value: String? = nil
     ) async -> (Bool, String) {
         guard let fileURL = resolveScriptFile(rawPath) ?? resolveOpenTarget(rawPath) else {
             return (false, "Invalid script file: \(rawPath)")
@@ -1684,12 +1705,12 @@ final class AppAdapterManager: ObservableObject {
 
         switch fileURL.pathExtension.lowercased() {
         case "sh", "bash", "zsh":
-            return await runShell("", scriptFile: fileURL, context: context, query: query)
+            return await runShell("", scriptFile: fileURL, context: context, query: query, value: value)
         case "py":
             return await runProcess(
                 executable: "/usr/bin/env",
                 arguments: ["python3", fileURL.path],
-                context: context, query: query
+                context: context, query: query, value: value
             )
         case "js":
             return await runJXA("", scriptFile: fileURL, context: context)
@@ -1697,18 +1718,19 @@ final class AppAdapterManager: ObservableObject {
             return await runProcess(
                 executable: "/usr/bin/env",
                 arguments: ["ruby", fileURL.path],
-                context: context, query: query
+                context: context, query: query, value: value
             )
         case "scpt", "applescript":
             return await runAppleScript("", scriptFile: fileURL)
         default:
             return await runProcess(
-                executable: fileURL.path, arguments: [], context: context, query: query)
+                executable: fileURL.path, arguments: [], context: context, query: query, value: value)
         }
     }
 
     private func runProcess(
-        executable: String, arguments: [String], context: AXContext, query: String? = nil
+        executable: String, arguments: [String], context: AXContext, query: String? = nil,
+        value: String? = nil
     ) async -> (Bool, String) {
         await Task.detached(priority: .userInitiated) { () -> (Bool, String) in
             let task = Process()
@@ -1724,6 +1746,10 @@ final class AppAdapterManager: ObservableObject {
             if let q = query?.trimmingCharacters(in: .whitespacesAndNewlines), !q.isEmpty {
                 env["CD_QUERY"] = q
             }
+            // The action's resolved value, under the name plugins already use, so a script
+            // file — which text injection cannot reach — adjusts the same way an inline
+            // script does.
+            if let value { env["CD_VALUE"] = value }
             task.environment = env
             task.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
 
@@ -1900,7 +1926,7 @@ final class AppAdapterManager: ObservableObject {
 
     // MARK: - Context variable injection
 
-    private func inject(_ text: String, context: AXContext, query: String = "") -> String {
+    private func inject(_ text: String, context: AXContext, query: String = "", value: String? = nil) -> String {
         var s = text
         s = s.replacingOccurrences(of: "$CURRENT_URL",      with: context.currentURL   ?? "")
         s = s.replacingOccurrences(of: "$WINDOW_TITLE",     with: context.windowTitle  ?? "")
@@ -1908,13 +1934,14 @@ final class AppAdapterManager: ObservableObject {
         s = s.replacingOccurrences(of: "$APP_NAME",         with: context.appName)
         s = s.replacingOccurrences(of: "$BUNDLE_ID",        with: context.bundleId)
         s = s.replacingOccurrences(of: "{{query}}",         with: query)
+        s = ActionValue.fill(s, with: value)
         return s
     }
 
     // Like inject(), but also resolves $PAGE_TEXT and $SELECTED_TEXT from SafariBrowserBridge.
-    private func injectPageContext(_ text: String, context: AXContext, query: String = "") -> String {
+    private func injectPageContext(_ text: String, context: AXContext, query: String = "", value: String? = nil) -> String {
         let bridge = SafariBrowserBridge.shared
-        var s = inject(text, context: context, query: query)
+        var s = inject(text, context: context, query: query, value: value)
         s = s.replacingOccurrences(
             of: "$PAGE_TEXT",
             with: bridge.latestContext?.compactedPageText(for: query, limit: 5_000) ?? "")

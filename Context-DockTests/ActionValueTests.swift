@@ -79,4 +79,22 @@ struct ActionValueTests {
     @Test func theFirstQuantityWins() {
         #expect(ActionValue.extract(from: "after 10 min, check every 30 sec", label: "seconds") == "600")
     }
+
+    // MARK: - Filling the script (A3)
+
+    /// `{{value}}` is filled the way `{{query}}` is: every occurrence, as text.
+    @Test func theScriptGetsTheValue() {
+        #expect(ActionValue.fill("sleep {{value}}; echo {{value}}", with: "600") == "sleep 600; echo 600")
+    }
+
+    /// No value means an empty slot, not a literal `{{value}}` reaching the shell. Matches
+    /// what `{{query}}` does with an empty query.
+    @Test func noValueLeavesTheSlotEmpty() {
+        #expect(ActionValue.fill("sleep {{value}}", with: nil) == "sleep ")
+    }
+
+    /// A script with no slot is untouched, value or not.
+    @Test func aScriptWithoutASlotIsUntouched() {
+        #expect(ActionValue.fill("say hi", with: "600") == "say hi")
+    }
 }
