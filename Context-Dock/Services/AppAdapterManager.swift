@@ -100,6 +100,17 @@ struct AdapterAction: Identifiable, Codable, Hashable {
     var requiresApproval: Bool      // Show confirmation dialog before executing
     var isDestructive: Bool         // Show red warning in approval UI
     var accentColor: String?        // SF Symbol accent color name (e.g. "teal", "red")
+    // The one thing about the action that varies. "minimise after 5 min" is the same
+    // action as "minimise after 10 min" with one number changed; an action that declares
+    // its value is reused with the new number instead of authored again. `valueLabel` is
+    // the unit the script expects at `{{value}}` ("seconds", "percent", …); `valueDefault`
+    // is what runs when the sentence names none. Absent on every action that predates
+    // this, and on every action that takes no value.
+    var valueLabel: String?
+    var valueDefault: String?
+
+    /// Whether the script has a `{{value}}` slot to fill.
+    var takesValue: Bool { valueLabel != nil }
 
     // Hashable / Equatable by id
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -111,7 +122,7 @@ struct AdapterAction: Identifiable, Codable, Hashable {
          urlScheme: String? = nil, cliToolCommand: String? = nil, shortcutName: String? = nil,
          aiPromptTemplate: String? = nil, chain: [String]? = nil,
          requiresApproval: Bool? = nil, isDestructive: Bool = false,
-         accentColor: String? = nil) {
+         accentColor: String? = nil, valueLabel: String? = nil, valueDefault: String? = nil) {
         self.id = id; self.name = name; self.icon = icon
         self.description = description; self.triggers = triggers; self.category = category
         self.type = type
@@ -123,12 +134,14 @@ struct AdapterAction: Identifiable, Codable, Hashable {
         self.requiresApproval = requiresApproval ?? (type.riskLevel == .high)
         self.isDestructive = isDestructive
         self.accentColor = accentColor
+        self.valueLabel = valueLabel
+        self.valueDefault = valueDefault
     }
 
     enum CodingKeys: String, CodingKey {
         case id, name, icon, description, triggers, category, type, menuPath, script,
              scriptFile, urlScheme, cliToolCommand, shortcutName, aiPromptTemplate,
-             chain, requiresApproval, isDestructive, accentColor
+             chain, requiresApproval, isDestructive, accentColor, valueLabel, valueDefault
     }
 
     // Tolerant decode: AI-generated actions may omit icon/description/triggers/flags.
@@ -157,6 +170,8 @@ struct AdapterAction: Identifiable, Codable, Hashable {
             ?? (type.riskLevel == .high)
         isDestructive = try c.decodeIfPresent(Bool.self, forKey: .isDestructive) ?? false
         accentColor = try c.decodeIfPresent(String.self, forKey: .accentColor)
+        valueLabel = try c.decodeIfPresent(String.self, forKey: .valueLabel)
+        valueDefault = try c.decodeIfPresent(String.self, forKey: .valueDefault)
     }
 }
 
