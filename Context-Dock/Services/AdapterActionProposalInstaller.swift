@@ -39,7 +39,11 @@ enum AdapterActionProposalInstaller {
             .sorted()
 
         return AdapterAction(
-            id: stableID(for: proposal.name),
+            // A revision carries the id it replaces. Deriving from the name would be right
+            // for an action this installer created, and wrong for one the "teach it" rung
+            // authored under an id of its own — that one would install a second action
+            // beside the first, which is the failure this whole path exists to prevent.
+            id: proposal.replacesActionId ?? stableID(for: proposal.name),
             name: proposal.name,
             icon: proposal.icon ?? "sparkles",
             description: proposal.description,
@@ -54,6 +58,33 @@ enum AdapterActionProposalInstaller {
             // without a unit is a number nobody can adjust.
             valueLabel: proposal.value.map(\.label).flatMap(nonEmpty),
             valueDefault: proposal.value.flatMap { $0.label.isEmpty ? nil : $0.defaultValue })
+    }
+
+    /// The card a revision is approved on: the Install card, carrying the id it replaces
+    /// and the script it replaces it with. Both surfaces draw it already, so a revision
+    /// needs no second piece of UI.
+    ///
+    /// The existing action's triggers are kept alongside the revision's. Losing them would
+    /// leave the user with an action they can no longer summon the way they always have.
+    @MainActor
+    static func proposalData(
+        for revision: WorkflowAuthor.Proposal, replacing existing: AdapterAction
+    ) -> ExtensionProposalData {
+        ExtensionProposalData(
+            type: "extension_proposal",
+            name: revision.name,
+            description: revision.summary,
+            scriptType: revision.kind == .applescript ? "applescript" : "bash",
+            script: revision.script,
+            layer: "contextdock",
+            triggers: (revision.triggers + existing.triggers)
+                .map { .init(type: "keyword", value: $0) },
+            icon: existing.icon,
+            value: revision.valueLabel.map {
+                .init(label: $0, defaultValue: revision.valueDefault)
+            },
+            replacesActionId: existing.id,
+            previousScript: existing.script)
     }
 
     private static func nonEmpty(_ s: String) -> String? {
@@ -80,10 +111,13 @@ enum AdapterActionProposalInstaller {
     /// and this sentence is the one place the user is certain to read.
     static func confirmation(
         actionName: String, appName: String,
-        valueLabel: String? = nil, valueDefault: String? = nil
+        valueLabel: String? = nil, valueDefault: String? = nil, replaced: Bool = false
     ) -> String {
-        var text = "**\(actionName)** saved to **\(appName)**. Next time, Context Dock will "
-            + "match this app action before asking AI to create another workflow."
+        var text = replaced
+            ? "**\(actionName)** updated in **\(appName)**. The saved action changed — "
+                + "nothing new was added beside it."
+            : "**\(actionName)** saved to **\(appName)**. Next time, Context Dock will "
+                + "match this app action before asking AI to create another workflow."
         if let valueLabel {
             let saved = valueDefault.map { "\($0) \(valueLabel)" } ?? valueLabel
             text += " It runs at \(saved) — say a different number next time and it uses "
@@ -123,7 +157,8 @@ enum AdapterActionProposalInstaller {
             role: .assistant,
             content: confirmation(
                 actionName: proposal.name, appName: resolvedName,
-                valueLabel: action.valueLabel, valueDefault: action.valueDefault))
+                valueLabel: action.valueLabel, valueDefault: action.valueDefault,
+                replaced: proposal.replacesActionId != nil))
         AppChatConversation.shared.messages.append(message)
         return message
     }

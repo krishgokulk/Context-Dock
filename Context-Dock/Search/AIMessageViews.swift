@@ -696,6 +696,11 @@ struct ExtensionProposalData: Codable {
     /// its `{{value}}` slot expects and what runs when the sentence names no number.
     /// Absent on every proposal written before this existed.
     var value: ValueSpec?
+    /// Set when this proposal changes an action the user already has, rather than adding
+    /// one. The id is the existing action's, so approving replaces it; `previousScript` is
+    /// what it does today, shown beside what it would become.
+    var replacesActionId: String?
+    var previousScript: String?
 
     struct TriggerSpec: Codable {
         var type: String
@@ -1800,10 +1805,17 @@ struct ExtensionProposalCard: View {
 
     @State private var expanded = false
 
-    private var scriptPreview: String {
-        let lines = proposal.script.components(separatedBy: "\n")
-        let preview = lines.prefix(12).joined(separator: "\n")
-        return lines.count > 12 ? preview + "\n…" : preview
+    /// A revision changes an action the user already has. Approving it is a different
+    /// decision from approving an addition, so the card says so rather than offering the
+    /// same "Save as Extension" it offers for something new.
+    private var isRevision: Bool { proposal.replacesActionId != nil }
+
+    private var scriptPreview: String { preview(of: proposal.script) }
+
+    private func preview(of script: String) -> String {
+        let lines = script.components(separatedBy: "\n")
+        let head = lines.prefix(12).joined(separator: "\n")
+        return lines.count > 12 ? head + "\n…" : head
     }
 
     var body: some View {
@@ -1838,6 +1850,14 @@ struct ExtensionProposalCard: View {
                             .lineLimit(1)
                     }
                     Spacer()
+                    if isRevision {
+                        Text("Replaces")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.16), in: Capsule())
+                            .help("Changes the saved action instead of adding another")
+                    }
                     // Script type badge
                     Text(proposal.scriptType.lowercased() == "applescript" ? "AppleScript" : "bash")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -1863,11 +1883,28 @@ struct ExtensionProposalCard: View {
                 if expanded {
                     Divider().opacity(0.2)
                     ScrollView(.vertical, showsIndicators: false) {
-                        Text(scriptPreview)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.primary.opacity(0.85))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(10)
+                        VStack(alignment: .leading, spacing: 8) {
+                            // Approving a change means seeing what it was as well as what
+                            // it becomes — the new script alone is not enough to judge it.
+                            if let previous = proposal.previousScript, isRevision {
+                                Text("Now")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Text(preview(of: previous))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.primary.opacity(0.55))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Divider().opacity(0.2)
+                                Text("Becomes")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(.orange)
+                            }
+                            Text(scriptPreview)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.primary.opacity(0.85))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(10)
                     }
                     .frame(maxHeight: 180)
                     .background(Color.black.opacity(0.25))
@@ -1893,8 +1930,9 @@ struct ExtensionProposalCard: View {
                     if let add = onAdd {
                         Button(action: add) {
                             HStack(spacing: 5) {
-                                Image(systemName: "plus.circle.fill")
-                                Text("Save as Extension")
+                                Image(systemName: isRevision
+                                    ? "arrow.triangle.2.circlepath" : "plus.circle.fill")
+                                Text(isRevision ? "Replace Saved Action" : "Save as Extension")
                             }
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.white)
