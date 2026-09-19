@@ -84,6 +84,32 @@ final class DockActionFeedback {
         )
     }
 
+    // MARK: - The two an app surface reports
+
+    /// An app was opened or brought forward. Carries the bundle id so the surface showing
+    /// it can draw the app itself rather than a generic arrow — `ActionFeedbackGlyph` badges
+    /// the icon, and the shell borrows the app's own colour for its tint.
+    static func appOpened(
+        _ name: String, bundleID: String?, id: String = UUID().uuidString
+    ) {
+        showResult(
+            "Opened \(name)", icon: "arrow.up.forward.app", success: true, id: id,
+            subject: name, bundleID: bundleID)
+    }
+
+    /// An app was asked to quit. "Quit" in the title is what makes the result read red
+    /// wherever it lands (`ActionFeedbackTint.isDestructive`), so the wording is part of
+    /// the contract rather than a label.
+    static func appQuit(
+        _ name: String, bundleID: String?, succeeded: Bool = true,
+        id: String = UUID().uuidString
+    ) {
+        showResult(
+            succeeded ? "Quit \(name)" : "Couldn't quit \(name)",
+            icon: "xmark.circle.fill", success: succeeded, id: id,
+            subject: name, bundleID: bundleID)
+    }
+
     static func progress(_ id: String, value: Double) {
         // No-op — AppToast doesn't support progress bars; persistent pill stays visible
     }

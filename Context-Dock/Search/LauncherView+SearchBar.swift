@@ -2552,6 +2552,21 @@ extension LauncherView {
                                     if shouldShowSelectionTrailingButton {
                                         selectionTrailingButton
                                     }
+                                    // The result stands beside the match dock rather than
+                                    // behind it. This was an else-if, so whenever the field
+                                    // had matches to show — which is most of the time an app
+                                    // is being opened or quit — the launch said its piece in
+                                    // ghost text and the trailing icon never appeared at all.
+                                    // The corner draws both in the same row for this reason.
+                                    if let feedback = launcherViewModel.inlineDockFeedback,
+                                        currentDockSurfaceMode != .generalChat
+                                    {
+                                        inlineDockFeedbackActionIcon(feedback)
+                                            .allowsHitTesting(false)
+                                            .transition(
+                                                .scale(scale: 0.88, anchor: .trailing)
+                                                    .combined(with: .opacity))
+                                    }
                                 }
                             } else if let feedback = launcherViewModel.inlineDockFeedback,
                                 currentDockSurfaceMode != .generalChat

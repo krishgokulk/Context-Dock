@@ -5,6 +5,11 @@ import Testing
 @testable import Context_Dock
 
 /// The corner's answer to a finished action: what colour it carries and how long it stays.
+///
+/// Serialized: three of these post `dockInlineFeedbackChanged`, every listening store in
+/// the process hears every post, and `show` replaces whatever was there — so run in
+/// parallel they overwrite each other's result and fail on whichever landed last.
+@Suite("Corner action feedback", .serialized)
 @MainActor
 struct CornerActionFeedbackTests {
     private func result(
@@ -73,12 +78,60 @@ struct CornerActionFeedbackTests {
         DockActionFeedback.showResult(
             "Opened Safari", icon: "arrow.up.forward.app", success: true, id: "nc-test",
             bundleID: "com.apple.Safari")
-        for _ in 0..<40 where store.current == nil {
+        for _ in 0..<40 where store.current?.id != "nc-test" {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         #expect(store.current?.id == "nc-test")
         #expect(store.current?.bundleID == "com.apple.Safari")
         store.dismiss(id: "nc-test")
+    }
+
+    /// Quitting an app from the corner's own strip reported nothing at all: no tint, no
+    /// glyph, the app gone and the corner silent. Both app results now go through one
+    /// pair of calls, and both carry the app so the glyph can draw it and the shell can
+    /// take its colour.
+    ///
+    /// Read off the notification rather than off a listening store: every store in the
+    /// suite hears every post, so a parallel test's result lands in this one's `current`.
+    private func posted(id: String, _ act: () -> Void) async throws -> DockInlineFeedback {
+        var seen: DockInlineFeedback?
+        let token = NotificationCenter.default.addObserver(
+            forName: .dockInlineFeedbackChanged, object: nil, queue: nil
+        ) { note in
+            guard let info = note.userInfo, info["id"] as? String == id,
+                let title = info["title"] as? String, let icon = info["icon"] as? String,
+                let raw = info["phase"] as? String,
+                let phase = DockInlineFeedback.Phase(rawValue: raw)
+            else { return }
+            seen = DockInlineFeedback(
+                id: id, title: title, icon: icon, phase: phase,
+                bundleID: info["bundleID"] as? String)
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        act()
+        for _ in 0..<40 where seen == nil {
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        return try #require(seen)
+    }
+
+    @Test func anAppQuitReachesTheCornerInRedCarryingTheApp() async throws {
+        let result = try await posted(id: "quit-test") {
+            DockActionFeedback.appQuit("Xcode", bundleID: "com.apple.dt.Xcode", id: "quit-test")
+        }
+        #expect(result.bundleID == "com.apple.dt.Xcode")
+        // Red whatever the app's own colour is: this one took something away.
+        #expect(ActionFeedbackTint.color(for: result, appColor: .blue) == .red)
+    }
+
+    @Test func anAppOpenedReachesTheCornerCarryingTheApp() async throws {
+        let result = try await posted(id: "open-test") {
+            DockActionFeedback.appOpened("Safari", bundleID: "com.apple.Safari", id: "open-test")
+        }
+        #expect(result.bundleID == "com.apple.Safari")
+        #expect(!ActionFeedbackTint.isDestructive(result))
+        // The app's own colour is what the shell takes when there is one.
+        #expect(ActionFeedbackTint.color(for: result, appColor: .purple) == .purple)
     }
 
     @Test func dismissingSomethingElseLeavesTheCurrentResultAlone() {

@@ -290,8 +290,13 @@ struct CornerDockStrip: View {
         if slot.isRunning {
             items.append(.separator)
             items.append(.init(title: "Quit \(slot.title)") {
-                NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-                    .forEach { $0.terminate() }
+                let apps = NSRunningApplication.runningApplications(
+                    withBundleIdentifier: bundleID)
+                let quit = apps.reduce(false) { $0 || $1.terminate() }
+                // The corner ran it, so the corner says what came of it — the strip's own
+                // quit was the one app action that reported nothing, which is why the tint
+                // and the glyph showed for some quits and not for others.
+                DockActionFeedback.appQuit(slot.title, bundleID: bundleID, succeeded: quit)
             })
         }
         return items
@@ -378,7 +383,10 @@ struct CornerDockStrip: View {
         {
             NSWorkspace.shared.openApplication(
                 at: url, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            return
         }
+        DockActionFeedback.appOpened(slot.title, bundleID: slot.bundleID)
     }
 
     private func open(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
@@ -388,11 +396,13 @@ struct CornerDockStrip: View {
                 withBundleIdentifier: bundleID
             ).first {
                 running.activate()
+                DockActionFeedback.appOpened(pin.title, bundleID: bundleID)
             } else if let url = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: bundleID)
             {
                 NSWorkspace.shared.openApplication(
                     at: url, configuration: NSWorkspace.OpenConfiguration())
+                DockActionFeedback.appOpened(pin.title, bundleID: bundleID)
             }
         case .file(let path), .folder(let path):
             let url = URL(fileURLWithPath: path)
