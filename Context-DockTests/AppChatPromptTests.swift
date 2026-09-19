@@ -163,6 +163,54 @@ struct AppChatPromptTests {
         #expect(model.phase == .suggesting)
     }
 
+    /// A list opened to pick a row out of what was typed does not outlive the typing.
+    ///
+    /// Taking the row clears the field, and the list is rebuilt for an empty field — which
+    /// is every action the app has. What stood over the field was a 174-row sheet nobody
+    /// had asked for: the sheet the no-launch-sheet rule removed, back through the door
+    /// the arrow keys open.
+    @Test func takingARowClosesTheListRatherThanRefillingItWithEverything() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Photos", bundleID: "com.apple.Photos", summary: "174 actions")
+        model.query = "library"
+        model.rows = [.action(
+            AdapterAction(
+                id: "library", name: "Library", icon: "photo",
+                description: "", triggers: [], type: .menubar))]
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.phase == .suggesting)
+
+        // Enter ran it: the field empties and the menu read refills the list behind it.
+        model.run(model.rows[0])
+        model.rows = (0..<174).map { index in
+            .action(
+                AdapterAction(
+                    id: "a\(index)", name: "Action \(index)", icon: "gear",
+                    description: "", triggers: [], type: .menubar))
+        }
+        model.syncListPhase()
+
+        #expect(model.focusedMenuIndex == nil)
+        #expect(model.phase == .prompt)
+    }
+
+    /// Asking is the same: the question left the list, so the list goes.
+    @Test func askingClosesTheListItWasAskedOver() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Photos", bundleID: "com.apple.Photos", summary: "174 actions")
+        model.query = "library"
+        model.rows = [.action(
+            AdapterAction(
+                id: "library", name: "Library", icon: "photo",
+                description: "", triggers: [], type: .menubar))]
+        #expect(model.moveMenuFocus(by: 1))
+
+        #expect(model.submit())
+
+        #expect(model.focusedMenuIndex == nil)
+        #expect(model.phase == .chat)
+    }
+
     /// Coming back to an untouched prompt gives the field back, the same as it opened —
     /// not a sheet the user did not ask for the first time either.
     @Test func reachingForTheIconWithNothingTypedRestoresThePlainField() {

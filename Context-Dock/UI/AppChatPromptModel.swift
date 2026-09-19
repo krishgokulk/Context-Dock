@@ -464,14 +464,24 @@ final class AppChatPromptModel: ObservableObject {
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
         // A scope stepped into from Global shows only what it found. With nothing found the
-        // field rests alone rather than opening an empty board.
+        // field rests alone rather than opening an empty board. An *app* stepped into from
+        // Global never reaches this line — it answers with its window snapshot above — so
+        // what this governs is Finder and a CLI tool, where the rows are the thing the step
+        // went to fetch: the search results, the tool's subcommands.
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
         // Attaching a file is composing a question about it. A list open over that is
         // answering something the user has already stopped asking.
         if !attachments.isEmpty { return .prompt }
-        // A list the user arrowed open stays open while it still has rows — this is also
-        // asked when a live menu read lands, and that must not close what was just opened.
-        if phase == .suggesting, !rows.isEmpty { return .suggesting }
+        // A list the user arrowed open stays open while they are still standing in it —
+        // this is also asked when a live menu read lands, and that must not close what was
+        // just opened. The focused row is what "still in it" means, and it is why the rule
+        // reads it rather than the phase alone: a list opened to pick "Library" out of what
+        // was typed stayed open after the row ran, and `rows` had meanwhile been rebuilt
+        // for the now-empty field — so what stood over that field was every action the app
+        // has, 174 of them, which is the sheet the owner asked not to see wearing a
+        // different coat. Taking a row or asking a question lets go of the focus, and the
+        // list goes with it.
+        if phase == .suggesting, focusedMenuIndex != nil, !rows.isEmpty { return .suggesting }
         // Nothing else opens the list by itself: not a scope-in, not a cleared field, not
         // a detached file, not the pointer coming back to the badge. Only the arrows.
         return .prompt
@@ -839,6 +849,8 @@ final class AppChatPromptModel: ObservableObject {
         guard !question.isEmpty, !isAnswering else { return false }
         Self.handOff(
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
+        // The question was asked from the list, not into it.
+        focusedMenuIndex = nil
         query = ""
         attachments = []
         hasPresentedConversation = true

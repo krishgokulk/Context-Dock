@@ -877,6 +877,9 @@ extension AppChatPromptModel {
     }
 
     func run(_ row: AppChatRow) {
+        // Taking a row is done with the list: most of these clear the field, and a list
+        // left standing over a cleared field refills with everything the app can do.
+        focusedMenuIndex = nil
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }
