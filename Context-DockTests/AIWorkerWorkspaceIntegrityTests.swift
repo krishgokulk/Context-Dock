@@ -46,10 +46,13 @@ struct AIWorkerWorkspaceIntegrityTests {
         process.currentDirectoryURL = directory
         let pipe = Pipe()
         process.standardOutput = pipe
-        process.standardError = Pipe()
+        // Same two rules the code under test now follows: never inherit the runner's
+        // stdin, never wait on a pipe nobody has drained.
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         try process.run()
-        process.waitUntilExit()
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         return String(data: data, encoding: .utf8) ?? ""
     }
 

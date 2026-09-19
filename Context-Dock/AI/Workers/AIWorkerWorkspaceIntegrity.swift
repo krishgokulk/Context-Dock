@@ -70,16 +70,26 @@ enum AIWorkerWorkspaceIntegrity {
         process.currentDirectoryURL = directory
         let outPipe = Pipe()
         process.standardOutput = outPipe
-        process.standardError = Pipe()
+        // Nothing here is read from, and nothing here is drained: a child with no
+        // `standardInput` inherits the host's, and under the test runner that can be a
+        // terminal this process does not own — the child is then stopped on SIGTTIN and
+        // never returns. An undrained stderr `Pipe()` is the same hazard from the other
+        // end. `PluginScriptRunner` carries both notes; this had neither, and the suite
+        // hung here with `git` idle and the main thread waiting.
+        process.standardInput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
             return nil
         }
+        // Read before waiting. `git status --porcelain` in a tree with a large untracked
+        // pile is more than the 64 KB a pipe buffers, and git then blocks writing while
+        // this blocks waiting.
+        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
-        let data = outPipe.fileHandleForReading.readDataToEndOfFile()
         return String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
