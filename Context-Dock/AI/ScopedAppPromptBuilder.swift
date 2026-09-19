@@ -288,7 +288,10 @@ enum ScopedAppPromptBuilder {
         lines.append(
             "Last rung: operate_app. When no adapter action, MCP tool, API, Shortcut, CLI or "
             + "listed menu command fits, and run_menu_command has already failed or found "
-            + "nothing, call operate_app with the command in the app's own words. It reads the "
+            + "nothing, call operate_app with the command in the app's own words — or, if you "
+            + "were given no tools this turn, reply with ONLY "
+            + "{\"operate_app\": {\"target\": \"Check for Updates\", \"reason\": \"why\"}}. "
+            + "It reads the "
             + "LIVE menu bar — including menus this app builds only when opened, which are "
             + "absent from the list above — and the user approves the exact item before it is "
             + "pressed. Try it before concluding a UI command cannot be reached; never use it "

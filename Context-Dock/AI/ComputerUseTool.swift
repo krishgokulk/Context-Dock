@@ -77,6 +77,27 @@ enum ComputerUseRunner {
                     + "needs a named app. Ask in that app's own chat.",
                 displayCommand: "operate_app(\(target))")
         }
+        return await run(target: target, reason: reason, bundleID: bundleID, scope: scope)
+    }
+
+    /// The same press, entered by bundle id.
+    ///
+    /// The provider the owner actually uses — Claude Code — is run with none of DoraX's tools
+    /// by design: it answers and the app acts, through the prose directive loop in
+    /// `GeneralChatCapabilityHub`. That loop has no `GeneralChatScope`, so a rung reachable
+    /// only through `AgentToolContext` is a rung that provider can never climb, which is
+    /// exactly what happened: Computer Use shipped and the owner's own chat still said "not in
+    /// my menu cache, so I cannot fire it".
+    static func run(
+        target: String, reason: String, bundleID: String, scope: GeneralChatScope? = nil
+    ) async -> AgentToolResult {
+        guard !bundleID.isEmpty else {
+            return AgentToolResult(
+                success: false,
+                output: "This conversation is not scoped to one app, and operating a screen "
+                    + "needs a named app. Ask in that app's own chat.",
+                displayCommand: "operate_app(\(target))")
+        }
 
         let app = NSRunningApplication
             .runningApplications(withBundleIdentifier: bundleID)
@@ -90,22 +111,8 @@ enum ComputerUseRunner {
         }
         let appName = app.localizedName ?? bundleID
 
-        // The kill switch, before anything is read or pressed. It is answered in words rather
-        // than with a card on purpose: a master switch that a chat can talk the user out of in
-        // one tap is not a kill switch, and "off here means off everywhere" is what the setting
-        // promises. The per-app door below is a different question, asked only once the user
-        // has already decided the feature may exist.
         let store = ComputerUseConsentStore.shared
-        guard store.isMasterEnabled else {
-            return AgentToolResult(
-                success: false,
-                output: "Computer Use is switched off on this Mac, so DoraX may not operate "
-                    + "\(appName). Tell the user it is off and where it lives — Settings → AI → "
-                    + "Computer Use — and do not describe the task as impossible; it is "
-                    + "unapproved, which is different.",
-                displayCommand: "operate_app(\(appName): \(target)) · switched off")
-        }
-        let mode = store.mode(for: bundleID)
+        let mode = store.effectiveMode(for: bundleID)
 
         // The live menu bar, with lazy menus opened. This is the whole point: the cached map
         // is what said the item did not exist.
@@ -150,6 +157,13 @@ enum ComputerUseRunner {
         // question than "let DoraX press Code ▸ Check for Updates…", and the vaguer question is
         // the one a user cannot answer well. Approving it grants the cautious tier and carries
         // out this press; it does not then ask again for the same click.
+        //
+        // This card appears when the master switch is off too, and that is the owner's call
+        // (superseding the words-only refusal shipped first): the question a person can answer
+        // is "let me click this for you?", asked at the moment it would help, not a sentence
+        // naming a settings page they have never opened. Declining is the whole other half —
+        // nothing is pressed, nothing is granted, and the turn falls back to telling them how
+        // to do it themselves.
         if !mode.canOperate {
             let approved = await ComputerUseApproval.requestFirstUse(
                 appName: appName, bundleID: bundleID, target: chosen, reason: reason,
@@ -157,8 +171,9 @@ enum ComputerUseRunner {
             guard approved else {
                 return AgentToolResult(
                     success: false,
-                    output: "The user did not allow DoraX to operate \(appName). Say so plainly "
-                        + "and stop — do not look for another way to press the same thing.",
+                    output: "The user did not allow DoraX to operate \(appName). Do not press "
+                        + "anything and do not ask again. Give them the other way instead, in "
+                        + "one line: \(chosen.display), for them to click themselves.",
                     displayCommand: "operate_app(\(appName)) · not allowed")
             }
             store.grantFromChat(for: bundleID)

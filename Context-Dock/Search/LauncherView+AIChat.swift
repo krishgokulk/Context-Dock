@@ -2377,6 +2377,18 @@ extension LauncherView {
             return
         }
 
+        // A card offered by the pre-model resolver is remembered as a candidate, not as a
+        // ChatRoute. Asking only the route store is why "Use Code" answered "That route is
+        // no longer available" for an offer made seconds earlier.
+        if OfferedChoiceOwner.decide(
+            id: id, candidateIDs: pendingActionCandidates.map(\.id),
+            routeIDs: AppScopedChatService.pendingRouteIDs(for: scope)) == .candidate
+        {
+            runPickedActionChoice(
+                ActionChoice(id: id, title: title, routeLabel: "", appName: ""), inDock: true)
+            return
+        }
+
         Task { @MainActor in
             let history: [ChatMessage] = l2.chatMessages.compactMap { message in
                 switch message.role {
@@ -5939,6 +5951,17 @@ extension LauncherView {
                     : (out.isEmpty ? "Couldn't run \(action.name)." : out),
                 [action.name]
             )
+
+        case .operateApp:
+            // The directive arriving as final text rather than mid-loop. Same press, same
+            // approval card; without this case it falls through to `default` and the user
+            // reads a line of JSON where a click should have happened.
+            let target = invocation.arguments["target"] ?? ""
+            guard !target.isEmpty else { return nil }
+            await setL2LoadingStatus("Reading \(scopeName)'s menus…", requestID: requestID)
+            let result = await ComputerUseRunner.run(
+                target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
+            return (result.output, [result.displayCommand])
 
         default:
             return nil

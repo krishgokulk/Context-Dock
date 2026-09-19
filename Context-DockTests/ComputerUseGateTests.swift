@@ -47,6 +47,50 @@ struct ComputerUseGateTests {
         #expect(AgentToolRegistry.shared.tool(named: "operate_app") != nil)
     }
 
+    @Test func aToolLessProviderCanReachTheRungByDirective() {
+        // The provider the owner actually uses is Claude Code, which is run with none of
+        // DoraX's tools by design — it answers and the app acts. Computer Use shipped as a
+        // tool only, so their chat still said "not in my menu cache, so I cannot fire it"
+        // about an item sitting in the live menu bar. This directive is the path.
+        let invocation = AITypedInvocationResolver.invocation(
+            from: #"{"operate_app": {"target": "Check for Updates", "reason": "update VS Code"}}"#)
+        #expect(invocation?.kind == .operateApp)
+        #expect(invocation?.arguments["target"] == "Check for Updates")
+        #expect(invocation?.arguments["reason"] == "update VS Code")
+        #expect(invocation?.requiresApproval == true)
+    }
+
+    @Test func aDirectiveWithNoTargetIsNotADirective() {
+        // Half a directive must not resolve to "press something": an empty target reaching the
+        // resolver would be matched against every menu item in the app.
+        let invocation = AITypedInvocationResolver.invocation(
+            from: #"{"operate_app": {"reason": "update it"}}"#)
+        #expect(invocation?.kind != .operateApp)
+    }
+
+    @Test func theDirectiveCarriesAnAppWhenTheModelNamesOne() {
+        let invocation = AITypedInvocationResolver.invocation(
+            from: #"{"operate_app": {"target": "Check for Updates", "app": "com.microsoft.VSCode"}}"#)
+        #expect(invocation?.arguments["bundleId"] == "com.microsoft.VSCode")
+    }
+
+    @Test func aStepRowNamesTheCommandItIsAboutToRun() {
+        // "11 steps" told the owner nothing about what their Mac was doing. Each row names the
+        // thing — the menu path, the shell command, the item being hunted for — because the
+        // mechanism is not what a person watching is deciding about.
+        let menu = AITypedInvocationResolver.invocation(
+            from: #"{"menu_call": {"path": ["Window", "Minimize"]}}"#)!
+        #expect(AppScopedChatService.runningLabel(for: menu) == "Pressing Window ▸ Minimize…")
+
+        let shell = AITypedInvocationResolver.invocation(
+            from: #"{"terminal_call": {"command": "code --version", "purpose": "read version"}}"#)!
+        #expect(AppScopedChatService.runningLabel(for: shell).contains("code --version"))
+
+        let operate = AITypedInvocationResolver.invocation(
+            from: #"{"operate_app": {"target": "Check for Updates"}}"#)!
+        #expect(AppScopedChatService.runningLabel(for: operate).contains("Check for Updates"))
+    }
+
     @Test func theMasterSwitchIsWhatTheRunnerReads() {
         // The runner refuses outright when the master switch is off and offers the door only
         // when it is on. Both readings come from the store, and they are deliberately

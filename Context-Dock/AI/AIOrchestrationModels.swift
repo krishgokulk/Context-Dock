@@ -39,6 +39,8 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case terminal
     case adapterAction
     case menuAction
+    /// Press what the app's LIVE menu bar has, when the cached map does not have it.
+    case operateApp
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -247,6 +249,32 @@ enum AITypedInvocationResolver {
                     return AITypedInvocation(
                         kind: .menuAction, capabilityID: "app.menu.click",
                         arguments: args, requiresApproval: false)
+                }
+            }
+
+            // The rung below the cached menu: {"operate_app":{"target":"Check for Updates"}}.
+            //
+            // A provider with no tools of its own reaches Computer Use only here. Without this
+            // directive the owner's own chat — Claude Code — could see `Check for Updates…`
+            // was missing from the menu cache and had no way to look at the live menu bar,
+            // which is the one thing that would have found it.
+            if let call = root["operate_app"] as? [String: Any] {
+                let target = ((call["target"] as? String)
+                    ?? (call["item"] as? String)
+                    ?? (call["command"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !target.isEmpty {
+                    var args: [String: String] = ["target": target]
+                    if let reason = call["reason"] as? String, !reason.isEmpty {
+                        args["reason"] = reason
+                    }
+                    if let b = (call["bundleId"] as? String) ?? (call["app"] as? String),
+                        !b.isEmpty {
+                        args["bundleId"] = b
+                    }
+                    return AITypedInvocation(
+                        kind: .operateApp, capabilityID: "computerUse.pressMenuItem",
+                        arguments: args, requiresApproval: true)
                 }
             }
 

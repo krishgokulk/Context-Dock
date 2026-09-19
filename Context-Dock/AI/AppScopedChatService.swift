@@ -119,6 +119,12 @@ enum AppScopedChatService {
             uniqueKeysWithValues: routes.map { ($0.id, $0) })
     }
 
+    /// The ids this thread is currently offering, so a surface can tell a route it holds
+    /// from a candidate another store holds before it tells the user something is gone.
+    static func pendingRouteIDs(for scope: GeneralChatScope) -> [String] {
+        Array(pendingRoutesByScope[scope.storageKey]?.keys ?? [:].keys)
+    }
+
     /// Runs a route the user picked, then has the model phrase the result. The output is
     /// returned verbatim as well, because a receipt the user can read beats a summary they
     /// have to trust.
@@ -554,6 +560,47 @@ enum AppScopedChatService {
             """
     }
 
+    /// What a step row should say *while* a directive runs.
+    ///
+    /// The rows were written after the call returned — "Running X…" appeared once X had
+    /// already run — so a turn that pressed a menu item or ran a shell command showed nothing
+    /// at the moment it mattered, then collapsed into "11 steps". The owner's words: the
+    /// command shows but it did not run, and while running it did not show the command. Half
+    /// of that is this line; the other half is calling it before `execute`.
+    ///
+    /// Names the thing, not the mechanism: a person reading a row wants "Pressing Code ▸ Check
+    /// for Updates…", not "running an operateApp invocation".
+    nonisolated static func runningLabel(for invocation: AITypedInvocation) -> String {
+        switch invocation.kind {
+        case .menuAction:
+            let path = (invocation.arguments["path"] ?? "")
+                .components(separatedBy: "\u{1F}")
+                .filter { !$0.isEmpty }
+                .joined(separator: " ▸ ")
+            return path.isEmpty ? "Pressing a menu item…" : "Pressing \(path)…"
+        case .operateApp:
+            let target = invocation.arguments["target"] ?? ""
+            return target.isEmpty
+                ? "Reading the live menu bar…"
+                : "Looking for “\(target)” in the live menu bar…"
+        case .terminal:
+            // The command itself, because that is the thing the user is deciding about — a
+            // row saying "running a command" is the same as saying nothing.
+            let command = (invocation.arguments["command"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return command.isEmpty ? "Running a command…" : "Running `\(command)`…"
+        case .adapterAction:
+            let action = invocation.arguments["actionId"] ?? ""
+            return action.isEmpty ? "Running an app action…" : "Running \(action)…"
+        case .mcp:
+            return "Running \(invocation.capabilityID)…"
+        case .capability:
+            return "Running \(invocation.capabilityID)…"
+        case .share:
+            return "Sharing…"
+        }
+    }
+
     private static func runToolLessScopedTurn(
         query: String,
         systemPrompt: String,
@@ -606,6 +653,12 @@ enum AppScopedChatService {
                 surfaceScoped: true
             )
 
+            // Say what is about to happen before it happens. The directive is already in the
+            // answer text; reading it here costs nothing and is the difference between a live
+            // row and a receipt.
+            if let announced = AITypedInvocationResolver.invocation(from: raw) {
+                onStatus?(Self.runningLabel(for: announced))
+            }
             let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
             guard call.handled else {
                 let text = ChatAnswerSanitizer.clean(raw)
@@ -620,7 +673,8 @@ enum AppScopedChatService {
 
             executedAnything = true
             toolChips.append(call.label)
-            onStatus?("Running \(call.label)…")
+            // Past tense, because by here it has. The row above it said what was running.
+            onStatus?(call.success ? "Ran \(call.label)" : "\(call.label) did not run")
             loopHistory.append(ChatMessage(role: .user, content: loopQuery))
             loopHistory.append(ChatMessage(role: .assistant, content: raw))
             loopQuery = Self.toolResultFollowUp(
