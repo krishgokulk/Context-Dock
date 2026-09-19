@@ -661,7 +661,21 @@ enum AppScopedChatService {
             }
             let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
             guard call.handled else {
-                let text = ChatAnswerSanitizer.clean(raw)
+                var text = ChatAnswerSanitizer.clean(raw)
+                // The last rung, offered by DoraX rather than asked for by the model. Three
+                // turns in a row ended with the model naming operate_app as the thing it
+                // lacked while the item sat in the live menu bar — noticing you have run out
+                // of routes is this layer's job, not the model's.
+                if ComputerUseFallback.shouldOffer(
+                    intent: taskPlan.intent, ranAnything: executedAnything,
+                    bundleID: routingBundleId ?? ""),
+                    let pressed = await ComputerUseFallback.offer(
+                        query: query, bundleID: routingBundleId ?? "", appName: appName)
+                {
+                    text += ComputerUseFallback.note(for: pressed)
+                    return Answer(
+                        text: text, toolChips: toolChips + [pressed.displayCommand])
+                }
                 // The model cannot know why a request to *do* something failed here — it
                 // was given neither tools nor the reason — unless something in this very
                 // loop already ran.
@@ -1993,8 +2007,23 @@ enum AppScopedChatService {
             }
         }
 
+        // The rung below every offer above, and the last one there is: nothing linked ran, no
+        // worker fits, and the thing the user asked for is sitting in the app's live menu bar
+        // where the cached map could not see it. The card names the exact item, so the user is
+        // answering "press this?" rather than "trust me?".
+        var computerUseChips: [String] = []
+        if ComputerUseFallback.shouldOffer(
+            intent: taskPlan.intent, ranAnything: !chips.isEmpty || !executed.isEmpty,
+            bundleID: routingBundleId ?? ""),
+            let pressed = await ComputerUseFallback.offer(
+                query: query, bundleID: routingBundleId ?? "", appName: appName, scope: scope)
+        {
+            text += ComputerUseFallback.note(for: pressed)
+            computerUseChips = [pressed.displayCommand]
+        }
+
         return Answer(
-            text: text, toolChips: chips,
+            text: text, toolChips: chips + computerUseChips,
             routeChoices: sendChoices,
             evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
             subjectiveEvaluation: outcome.subjectiveEvaluation,

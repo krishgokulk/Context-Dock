@@ -100,6 +100,30 @@ enum ComputerUseTargetResolver {
         // "this app" is how a person refers to the scope, not to a menu item, and left in it
         // matches every item containing the app's own name.
         let noise: Set<String> = ["the", "this", "that", "app", "please", "now", "for", "and"]
-        return Set(words.filter { !noise.contains($0) })
+        return Set(words.filter { !noise.contains($0) }.map(singular))
+    }
+
+    /// "updates" and "update" are the same word here.
+    ///
+    /// Menus are written in the app's voice and requests in the user's: the menu says "Check
+    /// for Updates…" and the person says "update this app". Compared exactly, those two share
+    /// no word at all — which is why the rung built for precisely this case still found
+    /// nothing, and the answer went back to "click it yourself".
+    private static func singular(_ word: String) -> String {
+        // "ss" is not a plural: "address", "class", "pass".
+        guard !word.hasSuffix("ss") else { return word }
+        if word.count > 4, word.hasSuffix("es") {
+            // Only a stem that hisses takes "es" — boxes, dishes, searches. Everything else
+            // is an ordinary "s" on a word that happens to end in "e", and dropping both
+            // letters turns "updates" into "updat", which matches nothing. That is exactly
+            // how this rung stayed silent on the case it was written for.
+            let stem = String(word.dropLast(2))
+            for ending in ["s", "x", "z", "ch", "sh"] where stem.hasSuffix(ending) {
+                return stem
+            }
+            return String(word.dropLast())
+        }
+        if word.count > 3, word.hasSuffix("s") { return String(word.dropLast()) }
+        return word
     }
 }
