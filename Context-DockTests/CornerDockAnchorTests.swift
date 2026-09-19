@@ -102,6 +102,31 @@ struct CornerDockAnchorTests {
         #expect(panel.width > CornerDockLayout.panelSize(for: .right).width)
     }
 
+    /// The Global dock is as wide as its apps, its pins and its plugin tiles — near a
+    /// thousand points — and the edge-anchored window was one card wide, 428. The right
+    /// anchor then placed it at x = -570: half the dock outside the window, and a window
+    /// clips. Every anchor gets a window as wide as the screen it is told about.
+    @Test("A dock strip wider than one card still fits an edge-anchored window")
+    func theStripFitsTheEdgeAnchoredWindow() {
+        let strip = CGSize(width: 970, height: 56)
+        let screen: CGFloat = 1512
+        for anchor in [CornerDockAnchor.left, .right] {
+            let panel = CornerDockLayout.panelSize(for: anchor, panelWidth: screen)
+            #expect(panel.width == screen)
+
+            let slots = CornerDockLayout.slots(prompt: strip, anchor: anchor, panelWidth: screen)
+            let rect = slots.prompt!
+            #expect(rect.minX >= 0)
+            #expect(rect.maxX <= panel.width)
+            // And it still hugs the edge it is anchored to.
+            if anchor == .right {
+                #expect(rect.maxX == screen - CornerDockLayout.pad)
+            } else {
+                #expect(rect.minX == CornerDockLayout.pad)
+            }
+        }
+    }
+
     @Test("Every anchor keeps the whole card inside the panel")
     func nothingHangsOutside() {
         for anchor in CornerDockAnchor.allCases {

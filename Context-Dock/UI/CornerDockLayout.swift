@@ -88,7 +88,13 @@ enum CornerDockLayout {
             + (gap + pillHeight) * 2 + pad * 2
         switch anchor {
         case .left, .right:
-            return CGSize(width: cardWidth + pad * 2, height: height)
+            // One card wide was right while the shell held one card. The Global dock is a
+            // row now — apps, pins, plugin tiles, near a thousand points — and a window
+            // 428 wide drew it at x = -570 and clipped it in half. An edge anchor gets the
+            // same screen-wide window the centre does; `x(for:)` still holds it against
+            // its own edge, and the host view hit-tests only where a card actually is, so
+            // the extra width costs the app underneath nothing.
+            return CGSize(width: max(panelWidth ?? 0, cardWidth + pad * 2), height: height)
         case .center:
             // Three cards abreast at least; the controller widens this to the screen so the
             // clipboard can keep its corner.

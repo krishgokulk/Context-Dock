@@ -291,11 +291,12 @@ final class CornerDockController: NSObject {
         guard let visible = screen?.visibleFrame else { return }
         let pad = CornerDockLayout.pad
         let margin: CGFloat = 20
-        // Centred, the panel spans the screen: the field sits in the middle and the
-        // clipboard keeps the right-hand corner, the same spot the right anchor gives it.
+        // The panel spans the screen at every anchor. Centred, that is what lets the field
+        // sit in the middle while the clipboard keeps the right-hand corner; at an edge it
+        // is what lets the dock strip be as wide as its icons instead of being cut off at
+        // one card. The origin works out the same for all three.
         let wanted = CornerDockLayout.panelSize(
-            for: anchor,
-            panelWidth: anchor == .center ? visible.width - 2 * margin + 2 * pad : nil)
+            for: anchor, panelWidth: visible.width - 2 * margin + 2 * pad)
         if panel.frame.size != wanted {
             panel.setContentSize(wanted)
             hostView?.frame = CGRect(origin: .zero, size: wanted)
