@@ -86,6 +86,22 @@ final class CornerActionFeedback: ObservableObject {
         }
     }
 
+    /// The result to draw as a glyph: a finished one. Something still running says so in
+    /// the field's own words instead (`progressTitle`) — a spinner badged onto an app icon
+    /// for a launch the user is watching happen adds nothing, and it reserved a slot in the
+    /// strip for a badge that had nothing to say.
+    var glyph: DockInlineFeedback? {
+        guard let current, current.phase != .progress else { return nil }
+        return current
+    }
+
+    /// What the field says while something is running: "Opening Messages…", in the place
+    /// the placeholder would be. Nil once it has finished.
+    var progressTitle: String? {
+        guard let current, current.phase == .progress else { return nil }
+        return current.title
+    }
+
     func dismiss(id: String) {
         guard current?.id == id else { return }
         clearTask?.cancel()

@@ -37,7 +37,7 @@ struct CornerDockStrip: View {
             running: model.stripIcons, pins: pins.pins,
             tools: model.dockToolCount(
                 clipboardVisible: clipboard.phase.isVisible,
-                feedbackVisible: feedback.current != nil))
+                feedbackVisible: feedback.glyph != nil))
     }
 
     var body: some View {
@@ -114,7 +114,7 @@ struct CornerDockStrip: View {
                 }
                 // What the last action came to, for a few seconds — the dock's inline
                 // result, in the corner's own idiom: the clipboard's slot and lifetime.
-                if let result = feedback.current {
+                if let result = feedback.glyph {
                     ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
@@ -374,36 +374,13 @@ struct CornerDockStrip: View {
     /// Clicking an app: bring it forward if it is up, launch it if it is not. A pinned app
     /// that has been quit is still a place to go, which is what pinning it was for.
     private func openApp(_ slot: DockAppSlot) {
-        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: slot.bundleID)
-            .first
-        {
-            app.activate()
-        } else if let url = NSWorkspace.shared.urlForApplication(
-            withBundleIdentifier: slot.bundleID)
-        {
-            NSWorkspace.shared.openApplication(
-                at: url, configuration: NSWorkspace.OpenConfiguration())
-        } else {
-            return
-        }
-        DockActionFeedback.appOpened(slot.title, bundleID: slot.bundleID)
+        AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
     }
 
     private func open(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
         switch pin.kind {
         case .app(let bundleID):
-            if let running = NSRunningApplication.runningApplications(
-                withBundleIdentifier: bundleID
-            ).first {
-                running.activate()
-                DockActionFeedback.appOpened(pin.title, bundleID: bundleID)
-            } else if let url = NSWorkspace.shared.urlForApplication(
-                withBundleIdentifier: bundleID)
-            {
-                NSWorkspace.shared.openApplication(
-                    at: url, configuration: NSWorkspace.OpenConfiguration())
-                DockActionFeedback.appOpened(pin.title, bundleID: bundleID)
-            }
+            AppActivation.bringForward(bundleID: bundleID, name: pin.title)
         case .file(let path), .folder(let path):
             let url = URL(fileURLWithPath: path)
             if FileManager.default.fileExists(atPath: path) {

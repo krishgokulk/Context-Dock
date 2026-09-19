@@ -184,7 +184,7 @@ struct AppChatPromptPill: View {
         // running is one icon there, and a pin this build cannot resolve is none.
         let tools = model.dockToolCount(
             clipboardVisible: clipboard.phase.isVisible,
-            feedbackVisible: actionFeedback.current != nil)
+            feedbackVisible: actionFeedback.glyph != nil)
         let composition = DockStripPlan.make(
             running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools
         ).composition
@@ -283,6 +283,7 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(false)
         }
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
+        .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
         .animation(shellMorph, value: model.phase)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
     }
@@ -692,7 +693,7 @@ struct AppChatPromptPill: View {
             // What the last action came to, beside the field for a few seconds — the
             // dock's inline result, carried here so a result reaches the surface the user
             // is on. Same transient lifetime as the clipboard's own icon.
-            if let result = actionFeedback.current {
+            if let result = actionFeedback.glyph {
                 ActionFeedbackGlyph(feedback: result)
                     .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
@@ -928,7 +929,16 @@ struct AppChatPromptPill: View {
 
     @ViewBuilder
     private var placeholder: some View {
-        if model.phase == .suggesting {
+        if let running = actionFeedback.progressTitle {
+            // What is happening, where the prompt would be — the dock says it in its own
+            // field the same way. It leaves when the app is there and the placeholder comes
+            // back, which is the whole of the announcement.
+            Text(running)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.6))
+                .lineLimit(1)
+                .transition(.opacity)
+        } else if model.phase == .suggesting {
             HStack(spacing: 6) {
                 Text(AppChatListCard.placeholder(for: model))
                     .foregroundStyle(.secondary.opacity(0.85))

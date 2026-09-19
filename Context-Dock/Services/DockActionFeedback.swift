@@ -86,15 +86,19 @@ final class DockActionFeedback {
 
     // MARK: - The two an app surface reports
 
-    /// An app was opened or brought forward. Carries the bundle id so the surface showing
-    /// it can draw the app itself rather than a generic arrow — `ActionFeedbackGlyph` badges
-    /// the icon, and the shell borrows the app's own colour for its tint.
-    static func appOpened(
+    /// An app is being opened or brought forward. A launch is watched, not reported: the
+    /// line stands while it happens and leaves when the app is there, so what the user gets
+    /// is "Opening Messages…" and then their app — never a tick for something they watched
+    /// happen. Carries the bundle id, which is what lets the shell take the app's own
+    /// colour. `AppActivation` owns the other end; the id it returns is how it lets go.
+    @discardableResult
+    static func appOpening(
         _ name: String, bundleID: String?, id: String = UUID().uuidString
-    ) {
-        showResult(
-            "Opened \(name)", icon: "arrow.up.forward.app", success: true, id: id,
-            subject: name, bundleID: bundleID)
+    ) -> String {
+        post(
+            id: id, title: "Opening \(name)…", icon: "arrow.up.forward.app",
+            phase: "progress", subject: name, bundleID: bundleID)
+        return id
     }
 
     /// An app was asked to quit. "Quit" in the title is what makes the result read red

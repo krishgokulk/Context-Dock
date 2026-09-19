@@ -95,9 +95,12 @@ enum GlobalContextRow {
     static func run(_ doc: GlobalSearchService.SearchDocument) {
         switch doc.action {
         case .activatePID(let pid, _, let path):
+            // Through `AppActivation`, not `activate()`: the bare call is the weak form and
+            // is what left an app sitting behind the one the user was looking at.
             if let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated {
-                app.activate()
-                report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: app.bundleIdentifier)
+                AppActivation.bringForward(app, name: doc.title)
+            } else if !doc.bundleId.isEmpty {
+                AppActivation.bringForward(bundleID: doc.bundleId, name: doc.title)
             } else if let path {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
                 report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: doc.bundleId)
@@ -108,13 +111,12 @@ enum GlobalContextRow {
             report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: nil)
 
         case .launchBundleId(let bundleId, let path):
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                NSWorkspace.shared.openApplication(
-                    at: url, configuration: NSWorkspace.OpenConfiguration())
+            if NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) != nil {
+                AppActivation.bringForward(bundleID: bundleId, name: doc.title)
             } else {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: bundleId)
             }
-            report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: bundleId)
 
         case .browserURL(let url, let browserBundleId, _, _, _):
             if let browser = NSWorkspace.shared.urlForApplication(

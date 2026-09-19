@@ -115,6 +115,38 @@ struct CornerActionFeedbackTests {
         return try #require(seen)
     }
 
+    /// A launch is watched, not reported: the line stands while it happens, in the field's
+    /// own words, and there is no tick at the end for something the user saw happen.
+    @Test func openingAnAppSpeaksInTheFieldAndLeavesNoTick() async throws {
+        let result = try await posted(id: "opening-test") {
+            DockActionFeedback.appOpening(
+                "Messages", bundleID: "com.apple.MobileSMS", id: "opening-test")
+        }
+        #expect(result.phase == .progress)
+        #expect(result.title == "Opening Messages…")
+        #expect(result.bundleID == "com.apple.MobileSMS")
+
+        let store = CornerActionFeedback()
+        store.show(result)
+        // The field says it; nothing reserves a glyph slot in the strip for it.
+        #expect(store.progressTitle == "Opening Messages…")
+        #expect(store.glyph == nil)
+
+        // And when it finishes, the corner goes quiet rather than wearing a badge.
+        store.dismiss(id: "opening-test")
+        #expect(store.progressTitle == nil)
+        #expect(store.current == nil)
+    }
+
+    /// A finished result is the other way round: a glyph, and nothing in the field.
+    @Test func aFinishedResultIsAGlyphNotALineInTheField() {
+        let store = CornerActionFeedback()
+        store.show(result("Quit Xcode", id: "done"), hold: 5)
+        #expect(store.glyph?.id == "done")
+        #expect(store.progressTitle == nil)
+        store.dismiss(id: "done")
+    }
+
     @Test func anAppQuitReachesTheCornerInRedCarryingTheApp() async throws {
         let result = try await posted(id: "quit-test") {
             DockActionFeedback.appQuit("Xcode", bundleID: "com.apple.dt.Xcode", id: "quit-test")
@@ -126,7 +158,7 @@ struct CornerActionFeedbackTests {
 
     @Test func anAppOpenedReachesTheCornerCarryingTheApp() async throws {
         let result = try await posted(id: "open-test") {
-            DockActionFeedback.appOpened("Safari", bundleID: "com.apple.Safari", id: "open-test")
+            DockActionFeedback.appOpening("Safari", bundleID: "com.apple.Safari", id: "open-test")
         }
         #expect(result.bundleID == "com.apple.Safari")
         #expect(!ActionFeedbackTint.isDestructive(result))
