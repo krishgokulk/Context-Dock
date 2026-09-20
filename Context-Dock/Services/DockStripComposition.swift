@@ -137,7 +137,7 @@ struct DockStripPlan {
     /// launching or quitting shows up within the window instead, which is faster than the
     /// dot could be noticed anyway.
     @MainActor private static var environmentCache: (taken: Date, running: Set<String>,
-        unresolved: Set<String>, widgetSlots: [UUID: Int])?
+        unresolved: Set<String>, widgetSlots: [UUID: Int], screenWidth: CGFloat)?
     @MainActor private static let environmentTTL: TimeInterval = 0.5
 
     /// The search index was rebuilt: what resolved a moment ago is not what resolves now,
@@ -146,11 +146,15 @@ struct DockStripPlan {
 
     @MainActor
     static func make(running: [MatchDockIcon], pins: [DockPin], tools: Int) -> DockStripPlan {
-        let environment: (running: Set<String>, unresolved: Set<String>, widgetSlots: [UUID: Int])
+        let environment: (
+            running: Set<String>, unresolved: Set<String>, widgetSlots: [UUID: Int],
+            screenWidth: CGFloat
+        )
         if let cached = environmentCache,
             Date().timeIntervalSince(cached.taken) < environmentTTL
         {
-            environment = (cached.running, cached.unresolved, cached.widgetSlots)
+            environment = (
+                cached.running, cached.unresolved, cached.widgetSlots, cached.screenWidth)
         } else {
             let runningBundleIDs = Set(
                 NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
@@ -170,13 +174,25 @@ struct DockStripPlan {
                 else { continue }
                 widgetSlots[pin.id] = widget.slots
             }
-            environmentCache = (Date(), runningBundleIDs, unresolved, widgetSlots)
-            environment = (runningBundleIDs, unresolved, widgetSlots)
+            // The screen the pointer is on, which is the one the corner places itself
+            // against — the same choice `CornerDockController.position()` makes.
+            let screen =
+                NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+                ?? NSScreen.main
+            let screenWidth = screen?.visibleFrame.width ?? 0
+            environmentCache = (Date(), runningBundleIDs, unresolved, widgetSlots, screenWidth)
+            environment = (runningBundleIDs, unresolved, widgetSlots, screenWidth)
         }
         return make(
             running: running, pins: pins, runningBundleIDs: environment.running,
             unresolvedDocumentIDs: environment.unresolved, widgetSlots: environment.widgetSlots,
-            tools: tools)
+            tools: tools,
+            // The row grows to the screen it is on, the way the Dock does. Read here rather
+            // than inside the metrics so the arithmetic stays a pure function of what it is
+            // handed (memory `corner-pill-size-must-be-pure`), and cached with the rest of
+            // the environment so a layout pass does not ask the window server per frame.
+            maximumWidth: AppChatPromptMetrics.dockMaximumWidth(
+                onScreenOf: environment.screenWidth))
     }
 
     /// How far from the strip's leading edge the centre of one icon sits, or nil when that
@@ -214,14 +230,16 @@ struct DockStripPlan {
 
     static func make(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
-        unresolvedDocumentIDs: Set<String> = [], widgetSlots: [UUID: Int] = [:], tools: Int
+        unresolvedDocumentIDs: Set<String> = [], widgetSlots: [UUID: Int] = [:], tools: Int,
+        maximumWidth: CGFloat = AppChatPromptMetrics.dockMaximumWidth
     ) -> DockStripPlan {
         let full = DockStripComposition.compose(
             running: running, pins: pins, runningBundleIDs: runningBundleIDs,
             unresolvedDocumentIDs: unresolvedDocumentIDs, widgetSlots: widgetSlots)
         let layout = AppChatPromptMetrics.dockLayout(
             running: full.unpinnedRunningCount, pinnedApps: full.pinnedAppCount,
-            pinned: full.otherPins.count, pinnedExtraWidth: full.widgetExtraWidth, tools: tools)
+            pinned: full.otherPins.count, pinnedExtraWidth: full.widgetExtraWidth, tools: tools,
+            maximumWidth: maximumWidth)
         guard layout.overflow > 0 else { return DockStripPlan(composition: full, layout: layout) }
         return DockStripPlan(
             composition: DockStripComposition.compose(

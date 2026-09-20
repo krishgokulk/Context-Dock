@@ -146,6 +146,9 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalTopMatch: GlobalContextTopMatch?
     @Published private(set) var globalMatchIcons: [MatchDockIcon] = []
     @Published private(set) var globalOverflowCount = 0
+    /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
+    /// list trimmed to what fits beside the field.
+    @Published private(set) var allRunningIcons: [MatchDockIcon] = []
     /// This scope was entered from Global, so leaving it goes back there rather than to the
     /// frontmost app.
     @Published var returnsToGlobalScope = false
@@ -311,10 +314,18 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// Set by `AppChatMenuBrowsing` as the user types in Global Context.
-    func setGlobalTyping(top: GlobalContextTopMatch?, icons: [MatchDockIcon], overflow: Int) {
+    ///
+    /// Takes the running apps whole and cuts them here, because the two surfaces that draw
+    /// them do not want the same number. Beside a 372-point field four icons fit and the
+    /// rest are `+N`; the strip is a dock as wide as the screen, and cutting to four before
+    /// it ever saw the list is why it stopped growing at four apps however much room stood
+    /// empty beside it. `DockStripPlan` does the strip's own cutting, against the width it
+    /// actually has.
+    func setGlobalTyping(top: GlobalContextTopMatch?, running: [MatchDockIcon]) {
         globalTopMatch = top
-        globalMatchIcons = icons
-        globalOverflowCount = overflow
+        allRunningIcons = running
+        globalMatchIcons = Array(running.prefix(Self.matchIconLimit))
+        globalOverflowCount = max(running.count - Self.matchIconLimit, 0)
     }
 
     /// Point the surface at a scope. The scope's identity stays `private(set)` — only the
@@ -735,7 +746,7 @@ final class AppChatPromptModel: ObservableObject {
 
     /// The strip's running section: the dock's own running pills, minus the removed ones.
     var stripIcons: [MatchDockIcon] {
-        globalMatchIcons.filter { icon in
+        allRunningIcons.filter { icon in
             guard let bundleID = icon.bundleID else { return true }
             return !hiddenRunningBundleIDs.contains(bundleID)
         }

@@ -56,8 +56,24 @@ enum AppChatPromptMetrics {
     static let dockMorphDuration: TimeInterval = 0.9
     /// The field, folded: a magnifier as the strip's first item, one icon slot wide.
     static var dockSearchStubSpan: CGFloat { dockIconSize + dockIconGap }
-    /// Wider than the field, never wider than the corner can hold.
+    /// The least room the row is ever given: wider than the field, and what a caller that
+    /// knows nothing about the screen gets. The corner passes the real budget — the screen
+    /// it is on, less the margins the window keeps — so the row grows with what is in it
+    /// the way the Dock does, rather than stopping at a card and a half and spilling into
+    /// `+N` with half the screen empty beside it.
     static var dockMaximumWidth: CGFloat { width * 1.6 }
+
+    /// What the strip may grow to on a screen of this width. The window already spans the
+    /// screen at every anchor, so the only thing that was holding the row in was this
+    /// number. Never below the minimum, so a tiny display still draws a usable row and
+    /// overflows the rest.
+    static func dockMaximumWidth(onScreenOf visibleWidth: CGFloat) -> CGFloat {
+        max(dockMaximumWidth, visibleWidth - 2 * cornerScreenMargin)
+    }
+
+    /// The margin `CornerDockController.position()` keeps between the shell and the edge
+    /// of the screen, named here so the two cannot drift apart.
+    static let cornerScreenMargin: CGFloat = 20
 
     struct DockLayout: Equatable {
         /// Running icons actually drawn; the rest are the `+N` pill.
@@ -89,7 +105,7 @@ enum AppChatPromptMetrics {
     /// for the tile that is drawn, not the icon that is not.
     static func dockLayout(
         running: Int, pinnedApps: Int = 0, pinned: Int, pinnedExtraWidth: CGFloat = 0,
-        tools: Int = 0
+        tools: Int = 0, maximumWidth: CGFloat = dockMaximumWidth
     ) -> DockLayout {
         let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) + pinnedExtraWidth : 0
         let toolsWidth = tools > 0 ? dockDividerSpan + runWidth(tools) : 0
@@ -97,7 +113,7 @@ enum AppChatPromptMetrics {
         // running ones are counted.
         let pinnedAppsWidth = pinnedApps > 0
             ? CGFloat(pinnedApps) * (dockIconSize + dockIconGap) : 0
-        let available = dockMaximumWidth - dockSearchStubSpan - 2 * dockInset - pinsWidth
+        let available = maximumWidth - dockSearchStubSpan - 2 * dockInset - pinsWidth
             - toolsWidth - pinnedAppsWidth
         // How many running icons fit in what is left. At least one slot unless pinned apps
         // are already holding the region, in which case a strip of only pins is honest.

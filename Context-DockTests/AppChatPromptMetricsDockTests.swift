@@ -51,6 +51,28 @@ struct AppChatPromptMetricsDockTests {
         #expect(layout.width >= floor)
     }
 
+    /// The Dock grows with what is in it. This one stopped at 1.6 card widths — a number
+    /// from when the corner's window was one card wide — so four apps beside a plugin tile
+    /// already spilled into `+1` with most of the screen empty beside it.
+    @Test func theRowGrowsToTheWidthItIsGiven() {
+        let cramped = M.dockLayout(running: 12, pinned: 0)
+        let roomy = M.dockLayout(running: 12, pinned: 0, maximumWidth: 1600)
+
+        #expect(cramped.overflow > 0)
+        #expect(roomy.overflow == 0)
+        #expect(roomy.shownRunning == 12)
+        #expect(roomy.width > cramped.width)
+        #expect(roomy.width <= 1600)
+    }
+
+    /// And it still stops somewhere: a screen that cannot hold them all keeps the `+N`.
+    @Test func aRowTooLongForItsScreenStillOverflows() {
+        let layout = M.dockLayout(running: 40, pinned: 0, maximumWidth: 1200)
+        #expect(layout.overflow > 0)
+        #expect(layout.width <= 1200)
+        #expect(layout.shownRunning + layout.overflow == 40)
+    }
+
     @Test func sizeForDockUsesTheLayout() {
         let size = M.size(for: .dock, suggestions: 0, running: 4, pinned: 3)
         #expect(size.height == 68)

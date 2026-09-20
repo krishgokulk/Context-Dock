@@ -250,8 +250,7 @@ extension AppChatPromptModel {
             top: typed.isEmpty
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
-            icons: Array(running.prefix(Self.matchIconLimit)),
-            overflow: max(running.count - Self.matchIconLimit, 0))
+            running: running)
     }
 
     /// The pills: what is running, and the clipboard when it is holding something.
@@ -346,7 +345,8 @@ extension AppChatPromptModel {
             }
     }
 
-    /// How many app icons fit beside a 372-point field before the rest become "+N".
+    /// How many app icons fit beside a 372-point field before the rest become "+N". The
+    /// field's number, not the strip's: the strip is a dock and grows to its screen.
     static let matchIconLimit = 4
 
     /// Tab takes the top match, the way it does in the dock: the fastest path from three
