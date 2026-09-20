@@ -901,10 +901,19 @@ struct AIChatMessageView: View {
                 .foregroundStyle(.secondary)
             ForEach(message.noteResults, id: \.id) { note in
                 HStack(alignment: .top, spacing: 9) {
-                    Image(systemName: "note.text")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundStyle(.yellow)
-                        .frame(width: 20, height: 20)
+                    // Notes' own icon, not a yellow glyph that resembles it. The row is a
+                    // result from an app, and saying which app is most of its meaning.
+                    if let icon = DefaultAppRouter.appIcon(bundleID: "com.apple.Notes") {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Image(systemName: "note.text")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(.yellow)
+                            .frame(width: 20, height: 20)
+                    }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(note.title)
                             .font(.system(size: 13, weight: .semibold))
@@ -1234,10 +1243,20 @@ struct AIChatMessageView: View {
 
             ForEach(message.pageLinks.prefix(30)) { link in
                 HStack(spacing: 9) {
-                    Image(systemName: "link")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.blue)
-                        .frame(width: 22)
+                    // The icon of the app the click will actually open, read from
+                    // LaunchServices. A generic glyph says nothing; Chrome's own icon says
+                    // where this goes before anybody clicks it.
+                    if let icon = URL(string: link.url).flatMap(DefaultAppRouter.icon(for:)) {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                            .frame(width: 22)
+                    } else {
+                        Image(systemName: "link")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.blue)
+                            .frame(width: 22)
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(link.title)
                             .font(.system(size: 12, weight: .medium))
@@ -1256,11 +1275,14 @@ struct AIChatMessageView: View {
                     }
                     .buttonStyle(.bordered).controlSize(.mini).help("Copy link")
                     Button {
-                        SafariTabManager.shared.openURL(link.url)
+                        // The user's own default browser. Naming Safari here overrode a
+                        // choice they had already made in System Settings.
+                        DefaultAppRouter.open(link: link.url)
                     } label: {
                         Image(systemName: "arrow.up.forward")
                     }
-                    .buttonStyle(.bordered).controlSize(.mini).help("Open in Safari")
+                    .buttonStyle(.bordered).controlSize(.mini)
+                    .help(DefaultAppRouter.openLabel(for: link.url))
                 }
                 .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))

@@ -409,7 +409,14 @@ extension LauncherView {
             default:
                 isRunnable = false
             }
-            if isRunnable { runnable.append(option) }
+            // Runnable by route is not the same as runnable at all. A capability whose
+            // required inputs are empty fails the moment it is approved — the owner tapped
+            // "Run it?" and got `Missing capability input: title` — and a create capability
+            // is the wrong kind of thing entirely when the sentence is about a note that
+            // already exists. See ActionReadiness.
+            if isRunnable, ActionReadiness.isOfferable(option, query: query) {
+                runnable.append(option)
+            }
         }
         let best = runnable.min { left, right in
             let leftRank = preference(left)
