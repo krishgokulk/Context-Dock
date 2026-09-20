@@ -2177,6 +2177,8 @@ extension LauncherView {
         aiMode.attachments = []
 
         aiMode.isLoading = true
+        // Cards belong to this turn only. See ChatResultRowCollector.
+        ChatResultRowCollector.shared.begin(scope: .general)
         let turnStartedAt = Date()
         aiMode.loadingStartedAt = turnStartedAt
 
@@ -2252,9 +2254,18 @@ extension LauncherView {
                         // Auto-create: if the AI proposed a runnable extension (no route fit),
                         // tag the message so it shows Run once / Save buttons instead of just
                         // describing a script.
+                        // Whatever this turn's capabilities read, as cards — the same mapper
+                        // the dock's app chat and the chat window use. General Chat answered
+                        // a Notes question in prose while the dock drew rows for it, purely
+                        // because rows were built per surface.
+                        let rows = ChatResultRowMapper.map(
+                            ChatResultRowCollector.shared.take(scope: .general))
                         let baseMsg = AIChatMessage(
-                            role: .assistant, content: cleaned, appLaunches: launches,
-                            recentFiles: recentFiles,
+                            role: .assistant, content: cleaned,
+                            appLaunches: launches + rows.apps,
+                            recentFiles: recentFiles.isEmpty ? rows.files : recentFiles,
+                            noteResults: rows.notes,
+                            pageLinks: rows.links,
                             mcpToolsRan: self.aiMode.pendingToolChips,
                             // A turn that executed something hands over a typed record, and
                             // its receipts are the ones that ran. The loose field still
@@ -5436,6 +5447,12 @@ extension LauncherView {
                     // the same round budget, and the same checks on what the answer claims to
                     // have done. This was ~200 lines of the dock's own copy, and the copy is
                     // why the two surfaces behaved differently for the same question.
+                    // Rows belong to the turn that read them; last turn's are dropped here so
+                    // a stale card can never appear under a new answer.
+                    await MainActor.run {
+                        ChatResultRowCollector.shared.begin(
+                            scope: GeneralChatScope(dockBundleId: scopedBundleId))
+                    }
                     let outcome = try await ScopedTurnRunner.run(
                         query: query,
                         systemPrompt: activeContextPrompt,
@@ -5509,8 +5526,20 @@ extension LauncherView {
                         toolsRan += applied.toolsRan
                     }
                     await MainActor.run {
+                        // The records this turn's capabilities actually read, drawn as cards
+                        // through the same mapper the chat window uses. The dock used to be
+                        // the only surface with note rows, and only inside its own Notes
+                        // branch; now every surface draws whatever any capability read.
+                        let rows = ChatResultRowMapper.map(
+                            ChatResultRowCollector.shared.take(
+                                scope: GeneralChatScope(dockBundleId: scopedBundleId)))
                         var msg = AIChatMessage(
-                            role: .assistant, content: finalResponse, mcpToolsRan: toolsRan,
+                            role: .assistant, content: finalResponse,
+                            appLaunches: rows.apps,
+                            recentFiles: rows.files,
+                            noteResults: rows.notes,
+                            pageLinks: rows.links,
+                            mcpToolsRan: toolsRan,
                             evidenceReceipts: browserPageReceipts
                                 + executed.map(DoraXActionReceipt.init),
                             subjectiveEvaluation: subjectiveEvaluation,

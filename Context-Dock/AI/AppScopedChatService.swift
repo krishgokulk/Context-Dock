@@ -39,6 +39,10 @@ enum AppScopedChatService {
         /// Files the answer named that exist on disk, so the surface can offer them
         /// instead of leaving a path in a paragraph for the user to retype.
         var files: [URL] = []
+        /// Records the capabilities actually read this turn — notes, files, links, apps —
+        /// as rows every surface draws the same way. Produced where the reading happened,
+        /// never parsed back out of the answer's prose.
+        var rows: [ChatResultRow] = []
         /// Typed proof of what ran and what was freshly read back. The Console keeps the
         /// complete log; these receipts make the important outcome visible in the message.
         var evidenceReceipts: [DoraXActionReceipt] = []
@@ -1072,6 +1076,11 @@ enum AppScopedChatService {
 
         log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
 
+        // Rows belong to the turn that read them. Clearing here means last turn's notes can
+        // never appear under this turn's answer, which is worse than showing none — a stale
+        // card looks current.
+        ChatResultRowCollector.shared.begin(scope: scope)
+
         // Local inspection precedes app access and specialist bridges. "Is Claude Code
         // installed?" is not a request for Claude Code to inspect a repository, and "is
         // LLMBrain installed?" is not a request for an LLMBrain app adapter. Classify the
@@ -2022,9 +2031,11 @@ enum AppScopedChatService {
             computerUseChips = [pressed.displayCommand]
         }
 
+        let producedRows = ChatResultRowCollector.shared.take(scope: scope)
         return Answer(
             text: text, toolChips: chips + computerUseChips,
             routeChoices: sendChoices,
+            rows: producedRows,
             evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
             subjectiveEvaluation: outcome.subjectiveEvaluation,
             trace: sourceTrace)

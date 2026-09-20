@@ -340,6 +340,10 @@ final class GeneralChatWindowModel: ObservableObject {
         let named = answer.files.isEmpty
             ? AppScopedChatService.mentionedFiles(in: answer.text)
             : answer.files
+        // Records the capabilities actually read, as cards. One mapping, shared with every
+        // other surface — per-surface row building is how note cards ended up existing in
+        // the dock's Notes branch and nowhere else.
+        let rows = ChatResultRowMapper.map(answer.rows)
         let liveProgress = progressByScopeKey[scope.storageKey] ?? []
         var durableTrace: [String] = []
         for step in liveProgress + answer.trace + ["Task complete"] {
@@ -353,7 +357,11 @@ final class GeneralChatWindowModel: ObservableObject {
             AIChatMessage(
                 role: .assistant, content: answer.text,
                 structuredData: answer.proposalJSON,
-                recentFiles: named.map { RecentFileAction(url: $0) },
+                appLaunches: rows.apps,
+                recentFiles: rows.files.isEmpty
+                    ? named.map { RecentFileAction(url: $0) } : rows.files,
+                noteResults: rows.notes,
+                pageLinks: rows.links,
                 mcpToolsRan: answer.toolChips,
                 evidenceReceipts: answer.evidenceReceipts,
                 subjectiveEvaluation: answer.subjectiveEvaluation,

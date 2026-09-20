@@ -86,6 +86,17 @@ enum AppleNotesMCPCapabilities {
                 if results.isEmpty {
                     return .init(success: true, output: "No notes found matching '\(query)'.")
                 }
+                // The records themselves, for the card. The answer text below is the same
+                // information flattened for a language model; a surface should never have to
+                // parse that back out to draw a row it could have been handed.
+                ChatResultRowCollector.shared.add(
+                    results.map { note in
+                        ChatResultRow(
+                            kind: .note, id: note.id, title: note.title,
+                            subtitle: note.folder, detail: note.snippet,
+                            bundleID: "com.apple.Notes", date: note.modifiedDate)
+                    },
+                    scope: request.chatScope)
                 let dateFormatter = DateFormatter()
                 dateFormatter.dateStyle = .medium
                 dateFormatter.timeStyle = .short
