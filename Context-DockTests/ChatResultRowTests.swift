@@ -104,6 +104,23 @@ struct ChatResultRowTests {
         #expect(mapped.apps.first?.bundleId == "com.apple.Notes")
     }
 
+    @Test func aReminderKeepsTheStateThatColoursIt() {
+        // Overdue is the whole reason the row exists rather than a line of prose with a
+        // warning emoji in it.
+        let mapped = ChatResultRowMapper.map([
+            ChatResultRow(
+                kind: .reminder, id: "r1", title: "Renew visa", subtitle: "Yesterday 09:00",
+                bundleID: "com.apple.reminders", reminderState: .overdue),
+            ChatResultRow(
+                kind: .reminder, id: "r2", title: "Buy milk", subtitle: "Today 18:00",
+                bundleID: "com.apple.reminders", reminderState: .active),
+        ])
+        #expect(mapped.reminders.count == 2)
+        #expect(mapped.reminders.first?.state == .overdue)
+        #expect(mapped.reminders.first?.detail == "Yesterday 09:00")
+        #expect(mapped.reminders.last?.state == .active)
+    }
+
     @Test func aRowWithNowhereToPointIsDropped() {
         // A file or link row without a URL has no action behind it, and a card that does
         // nothing when clicked is worse than no card.

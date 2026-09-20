@@ -30,6 +30,13 @@ struct ChatResultRow: Equatable, Identifiable, Sendable {
         case link
         /// An installed app, adapter app included.
         case app
+        /// A reminder, with the state that decides its colour.
+        case reminder
+    }
+
+    /// Which reminder this is, when `kind` is `.reminder`.
+    enum ReminderState: String, Sendable {
+        case active, overdue, created, completed, deleted
     }
 
     let kind: Kind
@@ -46,6 +53,7 @@ struct ChatResultRow: Equatable, Identifiable, Sendable {
     /// Where the row points: a file on disk, or a link.
     var url: URL? = nil
     var date: Date? = nil
+    var reminderState: ReminderState = .active
 }
 
 /// Rows produced during one conversation's turn.
@@ -119,9 +127,11 @@ enum ChatResultRowMapper {
         var files: [RecentFileAction] = []
         var links: [PageLinkAction] = []
         var apps: [AppLaunchAction] = []
+        var reminders: [ReminderResultAction] = []
 
         var isEmpty: Bool {
             notes.isEmpty && files.isEmpty && links.isEmpty && apps.isEmpty
+                && reminders.isEmpty
         }
     }
 
@@ -144,6 +154,20 @@ enum ChatResultRowMapper {
                         title: row.title.isEmpty ? url.absoluteString : row.title,
                         url: url.absoluteString,
                         pageTitle: row.subtitle))
+            case .reminder:
+                let state: ReminderResultAction.State
+                switch row.reminderState {
+                case .active: state = .active
+                case .overdue: state = .overdue
+                case .created: state = .created
+                case .completed: state = .completed
+                case .deleted: state = .deleted
+                }
+                mapped.reminders.append(
+                    ReminderResultAction(
+                        title: row.title,
+                        detail: row.subtitle.isEmpty ? nil : row.subtitle,
+                        state: state))
             case .app:
                 mapped.apps.append(
                     AppLaunchAction(

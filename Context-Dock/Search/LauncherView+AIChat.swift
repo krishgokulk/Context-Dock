@@ -2265,6 +2265,7 @@ extension LauncherView {
                             appLaunches: launches + rows.apps,
                             recentFiles: recentFiles.isEmpty ? rows.files : recentFiles,
                             noteResults: rows.notes,
+                            reminderResults: rows.reminders,
                             pageLinks: rows.links,
                             mcpToolsRan: self.aiMode.pendingToolChips,
                             // A turn that executed something hands over a typed record, and
@@ -5538,6 +5539,7 @@ extension LauncherView {
                             appLaunches: rows.apps,
                             recentFiles: rows.files,
                             noteResults: rows.notes,
+                            reminderResults: rows.reminders,
                             pageLinks: rows.links,
                             mcpToolsRan: toolsRan,
                             evidenceReceipts: browserPageReceipts

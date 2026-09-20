@@ -361,6 +361,7 @@ final class GeneralChatWindowModel: ObservableObject {
                 recentFiles: rows.files.isEmpty
                     ? named.map { RecentFileAction(url: $0) } : rows.files,
                 noteResults: rows.notes,
+                reminderResults: rows.reminders,
                 pageLinks: rows.links,
                 mcpToolsRan: answer.toolChips,
                 evidenceReceipts: answer.evidenceReceipts,
