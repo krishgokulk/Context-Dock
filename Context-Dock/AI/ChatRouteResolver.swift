@@ -210,7 +210,9 @@ enum ChatRouteResolver {
     /// True when the user asked for something to be *done*. "what page am I on" is a
     /// question about state; offering to run a menu command for it is noise, and the
     /// answer should come from context the app already exposes.
-    static func isActionRequest(_ query: String) -> Bool {
+    /// `nonisolated` because it is pure string work and the task plan — which is not
+    /// main-actor isolated — has to ask the same question this answers.
+    nonisolated static func isActionRequest(_ query: String) -> Bool {
         let lowered = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let questionStarts = [
             "what", "which", "who", "when", "where", "why", "how", "is ", "are ", "do ",

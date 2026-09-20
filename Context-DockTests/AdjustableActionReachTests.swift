@@ -55,6 +55,41 @@ struct AdjustableActionReachTests {
         #expect(!names.contains("run_adapter_action"))
     }
 
+    /// The whole path the dock's app chat takes: the task plan decides the turn's budget,
+    /// the registry renders what the provider is shown. The owner's sentence must arrive at
+    /// the model with the tool that runs a saved action — this is the assertion the
+    /// screenshot disputes, and the model's own account of its tools is not evidence.
+    @MainActor @Test func theOwnersSentenceReachesTheModelWithTheAdapterTool() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "minimise code app after 2min",
+            bundleId: "com.microsoft.VSCode", appName: "Code")
+        #expect(plan.allowedToolNames.contains("run_adapter_action"))
+
+        AgentToolRegistry.shared.prepareTurnBudget(
+            query: "minimise code app after 2min", provider: .anthropic,
+            allowedToolNames: plan.allowedToolNames)
+        let sent = AgentToolRegistry.shared.schemas(format: .anthropic)
+            .map { AIToolBudget.toolName($0) }
+        #expect(sent.contains("run_adapter_action"), "sent: \(sent.sorted())")
+
+        // The registry is a singleton and the budget outlives the turn that set it. Left
+        // in place, this test's plan trimmed the tool list every later test in the process
+        // read — ReadingToolEvalTests then failed for want of read_page, in a run where
+        // nothing about reading had changed.
+        AgentToolRegistry.shared.prepareTurnBudget(
+            query: "", provider: .anthropic, allowedToolNames: nil)
+    }
+
+    /// Asking to minimise is asking the app to DO something. The task plan decides UI
+    /// automation from its own verb list, which has no window verbs in it.
+    @MainActor @Test func minimisingIsAnActionIntent() {
+        let plan = FrontmostAppTaskPlan.make(
+            query: "minimise code app after 2min",
+            bundleId: "com.microsoft.VSCode", appName: "Code")
+        #expect(plan.intent == .act)
+        #expect(plan.permitsUIAutomation)
+    }
+
     // MARK: - 2. The value comes from what the user said
 
     private func minimiseAfterADelay() -> AdapterAction {

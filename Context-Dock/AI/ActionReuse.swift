@@ -111,11 +111,14 @@ enum ActionReuse {
         return words.subtracting(filler)
     }
 
+    /// Folded the way the adapter scorer folds, so "minimise" and "minimize" are one word
+    /// here too. Without it this would decide to author a second action for a request the
+    /// scorer had already matched to an existing one.
     private static func tokens(_ text: String) -> Set<String> {
         Set(
             text.lowercased()
                 .split { !$0.isLetter && !$0.isNumber && $0 != "%" }
-                .map(String.init)
+                .map { AdapterSearchSpelling.fold($0) }
                 .filter { !$0.isEmpty })
     }
 }

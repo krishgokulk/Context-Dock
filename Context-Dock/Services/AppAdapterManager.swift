@@ -1475,6 +1475,7 @@ final class AppAdapterManager: ObservableObject {
         }
         return String(scalars)
             .split(whereSeparator: \.isWhitespace)
+            .map(AdapterSearchSpelling.fold)
             .joined(separator: " ")
     }
 

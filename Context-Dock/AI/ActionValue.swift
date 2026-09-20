@@ -63,7 +63,18 @@ enum ActionValue {
         if t.isEmpty { return false }
         if Double(t) != nil { return true }
         if wordNumbers[t] != nil { return true }
-        return unitWords.contains { $0.0 == t }
+        if unitWords.contains(where: { $0.0 == t }) { return true }
+        // "2min" is one token and one quantity. Reading it here as well as in
+        // `firstQuantity` is what keeps a sentence that says only the number from looking
+        // like a sentence that says something new: without it, "minimise code app after
+        // 2min" had a leftover word and asked to revise an action it should have just run.
+        if let split = t.firstIndex(where: { $0.isLetter }), split != t.startIndex,
+            Double(t[t.startIndex..<split]) != nil,
+            unitWords.contains(where: { $0.0 == String(t[split...]) })
+        {
+            return true
+        }
+        return false
     }
 
     // MARK: - Reading the sentence

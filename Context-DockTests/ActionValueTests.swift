@@ -84,6 +84,17 @@ struct ActionValueTests {
         #expect(ActionValue.extract(from: "set it to 20percent", label: "percent") == "20")
     }
 
+    /// The same joined form has to be recognised when asking what a sentence says
+    /// *besides* its value, or a request that changed only the number looks like a request
+    /// for something new.
+    @Test func aJoinedQuantityIsAValueTokenToo() {
+        #expect(ActionValue.isValueToken("2min"))
+        #expect(ActionValue.isValueToken("90s"))
+        #expect(ActionValue.isValueToken("50%"))
+        #expect(!ActionValue.isValueToken("mute"))
+        #expect(!ActionValue.isValueToken("3rd"))
+    }
+
     /// A word that merely starts with digits is not a quantity — "3rd" and "2nd" are
     /// ordinals, and a version like "2x" names no unit this knows.
     @Test func aNumberJoinedToSomethingElseIsNotOne() {
