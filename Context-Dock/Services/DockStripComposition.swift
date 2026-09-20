@@ -144,18 +144,42 @@ struct DockStripPlan {
     /// and half a second is long enough for a freshly installed pin to draw as nothing.
     @MainActor static func forgetEnvironment() { environmentCache = nil }
 
+    /// What the corner may grow to on the screen it is on. Read through the same cache the
+    /// composition uses, so the strip's width, the shell's width and the field's row of
+    /// running apps are all measured against one number taken once.
+    @MainActor
+    static var screenBudget: CGFloat {
+        AppChatPromptMetrics.dockMaximumWidth(onScreenOf: environment().screenWidth)
+    }
+
     @MainActor
     static func make(running: [MatchDockIcon], pins: [DockPin], tools: Int) -> DockStripPlan {
-        let environment: (
-            running: Set<String>, unresolved: Set<String>, widgetSlots: [UUID: Int],
-            screenWidth: CGFloat
-        )
+        let environment = Self.environment(pins: pins)
+        return make(
+            running: running, pins: pins, runningBundleIDs: environment.running,
+            unresolvedDocumentIDs: environment.unresolved, widgetSlots: environment.widgetSlots,
+            tools: tools,
+            // The row grows to the screen it is on, the way the Dock does. Read here rather
+            // than inside the metrics so the arithmetic stays a pure function of what it is
+            // handed (memory `corner-pill-size-must-be-pure`), and cached with the rest of
+            // the environment so a layout pass does not ask the window server per frame.
+            maximumWidth: AppChatPromptMetrics.dockMaximumWidth(
+                onScreenOf: environment.screenWidth))
+    }
+
+    /// What is running, what resolves, which pins are widgets, and how wide the screen is —
+    /// taken together and kept for `environmentTTL`.
+    @MainActor
+    private static func environment(pins: [DockPin] = []) -> (
+        running: Set<String>, unresolved: Set<String>, widgetSlots: [UUID: Int],
+        screenWidth: CGFloat
+    ) {
         if let cached = environmentCache,
             Date().timeIntervalSince(cached.taken) < environmentTTL
         {
-            environment = (
-                cached.running, cached.unresolved, cached.widgetSlots, cached.screenWidth)
-        } else {
+            return (cached.running, cached.unresolved, cached.widgetSlots, cached.screenWidth)
+        }
+        do {
             let runningBundleIDs = Set(
                 NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
             let unresolved = Set(
@@ -181,18 +205,8 @@ struct DockStripPlan {
                 ?? NSScreen.main
             let screenWidth = screen?.visibleFrame.width ?? 0
             environmentCache = (Date(), runningBundleIDs, unresolved, widgetSlots, screenWidth)
-            environment = (runningBundleIDs, unresolved, widgetSlots, screenWidth)
+            return (runningBundleIDs, unresolved, widgetSlots, screenWidth)
         }
-        return make(
-            running: running, pins: pins, runningBundleIDs: environment.running,
-            unresolvedDocumentIDs: environment.unresolved, widgetSlots: environment.widgetSlots,
-            tools: tools,
-            // The row grows to the screen it is on, the way the Dock does. Read here rather
-            // than inside the metrics so the arithmetic stays a pure function of what it is
-            // handed (memory `corner-pill-size-must-be-pure`), and cached with the rest of
-            // the environment so a layout pass does not ask the window server per frame.
-            maximumWidth: AppChatPromptMetrics.dockMaximumWidth(
-                onScreenOf: environment.screenWidth))
     }
 
     /// How far from the strip's leading edge the centre of one icon sits, or nil when that

@@ -250,7 +250,11 @@ extension AppChatPromptModel {
             top: typed.isEmpty
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
-            running: running)
+            running: running,
+            // As many as the field can grow to hold on this screen. Four was the count
+            // that fits a 372-point field, and the field is no longer fixed at 372.
+            fieldCapacity: AppChatPromptMetrics.matchIconCapacity(
+                maximumWidth: DockStripPlan.screenBudget))
     }
 
     /// The pills: what is running, and the clipboard when it is holding something.
@@ -345,9 +349,10 @@ extension AppChatPromptModel {
             }
     }
 
-    /// How many app icons fit beside a 372-point field before the rest become "+N". The
-    /// field's number, not the strip's: the strip is a dock and grows to its screen.
-    static let matchIconLimit = 4
+    /// Kept for the tests and for any caller with no screen to ask about: the count that
+    /// fits a field at its base width. What the field actually shows is
+    /// `AppChatPromptMetrics.matchIconCapacity(maximumWidth:)`, because the field grows.
+    static let matchIconLimit = AppChatPromptMetrics.matchIconBaseCount
 
     /// Tab takes the top match, the way it does in the dock: the fastest path from three
     /// letters to the thing you meant. Returns false when there is nothing to take, so the

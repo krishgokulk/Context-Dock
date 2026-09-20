@@ -321,11 +321,14 @@ final class AppChatPromptModel: ObservableObject {
     /// it ever saw the list is why it stopped growing at four apps however much room stood
     /// empty beside it. `DockStripPlan` does the strip's own cutting, against the width it
     /// actually has.
-    func setGlobalTyping(top: GlobalContextTopMatch?, running: [MatchDockIcon]) {
+    func setGlobalTyping(
+        top: GlobalContextTopMatch?, running: [MatchDockIcon],
+        fieldCapacity: Int = AppChatPromptMetrics.matchIconBaseCount
+    ) {
         globalTopMatch = top
         allRunningIcons = running
-        globalMatchIcons = Array(running.prefix(Self.matchIconLimit))
-        globalOverflowCount = max(running.count - Self.matchIconLimit, 0)
+        globalMatchIcons = Array(running.prefix(max(1, fieldCapacity)))
+        globalOverflowCount = max(running.count - globalMatchIcons.count, 0)
     }
 
     /// Point the surface at a scope. The scope's identity stays `private(set)` — only the

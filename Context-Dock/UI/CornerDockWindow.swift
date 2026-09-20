@@ -565,7 +565,9 @@ final class CornerDockController: NSObject {
             pinnedApps: composition.pinnedAppCount,
             pinned: composition.otherPins.count,
             pinnedExtraWidth: composition.widgetExtraWidth,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil))
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            promptIcons: prompt.globalMatchIcons.count,
+            maximumWidth: DockStripPlan.screenBudget)
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.

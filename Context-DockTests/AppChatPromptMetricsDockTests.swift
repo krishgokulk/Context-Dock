@@ -73,6 +73,43 @@ struct AppChatPromptMetricsDockTests {
         #expect(layout.shownRunning + layout.overflow == 40)
     }
 
+    /// The shell is drawn at `size(for:)` and the row at `dockLayout`. They were two
+    /// computations of the same number with different budgets — the row grew to the screen
+    /// while the shell stayed at a card and a half — so the row overflowed its own glass
+    /// and the magnifier at the leading edge was the part that got clipped.
+    @Test func theShellIsAsWideAsTheRowItDraws() {
+        let budget: CGFloat = 1600
+        let row = M.dockLayout(running: 9, pinned: 2, tools: 1, maximumWidth: budget)
+        let shell = M.size(
+            for: .dock, suggestions: 0, running: 9, pinned: 2, tools: 1, maximumWidth: budget)
+
+        #expect(shell.width == row.width)
+        // And the default budget really is narrower, so this is threading and not a tie.
+        #expect(M.size(for: .dock, suggestions: 0, running: 9, pinned: 2, tools: 1).width
+            < shell.width)
+    }
+
+    /// The field grows to hold its row of running apps rather than cutting it to "+1": a
+    /// count is not somewhere you can click.
+    @Test func theFieldGrowsToHoldItsPill() {
+        #expect(M.promptWidth(icons: M.matchIconBaseCount) == M.width)
+        #expect(M.promptWidth(icons: 2) == M.width)
+
+        let roomy = M.promptWidth(icons: 9, maximumWidth: 1600)
+        #expect(roomy > M.width)
+        #expect(roomy == M.width + CGFloat(9 - M.matchIconBaseCount) * M.matchPillIconSpan)
+
+        // Never past the screen it is on.
+        #expect(M.promptWidth(icons: 100, maximumWidth: 900) == 900)
+    }
+
+    @Test func theFieldsIconCapacityGrowsWithItsBudget() {
+        #expect(M.matchIconCapacity(maximumWidth: M.width) == M.matchIconBaseCount)
+        #expect(M.matchIconCapacity(maximumWidth: 1600) > M.matchIconCapacity(maximumWidth: 700))
+        // Whatever the budget, the field shows at least the four it always did.
+        #expect(M.matchIconCapacity(maximumWidth: 100) == M.matchIconBaseCount)
+    }
+
     @Test func sizeForDockUsesTheLayout() {
         let size = M.size(for: .dock, suggestions: 0, running: 4, pinned: 3)
         #expect(size.height == 68)

@@ -75,6 +75,29 @@ enum AppChatPromptMetrics {
     /// of the screen, named here so the two cannot drift apart.
     static let cornerScreenMargin: CGFloat = 20
 
+    // MARK: The field's row of running apps
+
+    /// How many icons the 372-point field was built to hold. Past this it grows.
+    static let matchIconBaseCount = 4
+    /// What one more icon costs the field: `ContextMatchDock` draws an 18-point icon with
+    /// 7 points of spacing before it.
+    static let matchPillIconSpan: CGFloat = 25
+
+    /// How wide the field is with `icons` running apps beside it. A "+N" is a number you
+    /// cannot click, so the field grows to hold the row instead of cutting it — up to the
+    /// screen's budget, past which the rest really does become "+N".
+    static func promptWidth(icons: Int, maximumWidth: CGFloat = dockMaximumWidth) -> CGFloat {
+        let extra = CGFloat(max(0, icons - matchIconBaseCount)) * matchPillIconSpan
+        return min(max(width, maximumWidth), width + extra)
+    }
+
+    /// The other side of the same arithmetic: how many icons fit before the field would
+    /// grow past its budget.
+    static func matchIconCapacity(maximumWidth: CGFloat = dockMaximumWidth) -> Int {
+        let room = max(0, maximumWidth - width)
+        return matchIconBaseCount + Int(room / matchPillIconSpan)
+    }
+
     struct DockLayout: Equatable {
         /// Running icons actually drawn; the rest are the `+N` pill.
         let shownRunning: Int
@@ -159,7 +182,13 @@ enum AppChatPromptMetrics {
         pinnedApps: Int = 0,
         pinned: Int = 0,
         pinnedExtraWidth: CGFloat = 0,
-        tools: Int = 0
+        tools: Int = 0,
+        /// Running apps drawn in the field's own pill, which the field grows to hold.
+        promptIcons: Int = 0,
+        /// The width the row was planned against. The shell and the row are two readings
+        /// of one number and must be given the same budget, or the row overflows the glass
+        /// it is drawn in and the leading magnifier is what gets clipped.
+        maximumWidth: CGFloat = dockMaximumWidth
     ) -> CGSize {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
@@ -170,11 +199,15 @@ enum AppChatPromptMetrics {
             return CGSize(
                 width: dockLayout(
                     running: running, pinnedApps: pinnedApps, pinned: pinned,
-                    pinnedExtraWidth: pinnedExtraWidth, tools: tools).width,
+                    pinnedExtraWidth: pinnedExtraWidth, tools: tools,
+                    maximumWidth: maximumWidth).width,
                 height: dockHeight)
         case .prompt, .suggesting:
-            // The list is its own card above this one, so the field stays a field.
-            return CGSize(width: width, height: inputHeight + sheet)
+            // The list is its own card above this one, so the field stays a field — but it
+            // widens for the running-app row it carries.
+            return CGSize(
+                width: promptWidth(icons: promptIcons, maximumWidth: maximumWidth),
+                height: inputHeight + sheet)
         case .chat:
             return CGSize(width: width, height: chatHeight(messages: messages) + sheet)
         }
@@ -201,9 +234,9 @@ struct AppChatPromptPill: View {
         let tools = model.dockToolCount(
             clipboardVisible: clipboard.phase.isVisible,
             feedbackVisible: actionFeedback.glyph != nil)
-        let composition = DockStripPlan.make(
-            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools
-        ).composition
+        let plan = DockStripPlan.make(
+            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools)
+        let composition = plan.composition
         return AppChatPromptMetrics.size(
             for: model.phase,
             suggestions: model.listRowCount,  // list rows live in AppChatListCard now
@@ -215,7 +248,9 @@ struct AppChatPromptPill: View {
             pinnedApps: composition.pinnedAppCount,
             pinned: composition.otherPins.count,
             pinnedExtraWidth: composition.widgetExtraWidth,
-            tools: tools)
+            tools: tools,
+            promptIcons: model.globalMatchIcons.count,
+            maximumWidth: DockStripPlan.screenBudget)
     }
 
     var body: some View {
