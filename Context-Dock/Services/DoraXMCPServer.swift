@@ -33,6 +33,28 @@ import Foundation
 import Network
 import OSLog
 
+/// Somewhere for a turn's live steps to land while it runs.
+///
+/// `onStatus` is called from whichever stage is speaking, on whichever actor it happens to be
+/// on, so the collector locks rather than assuming the main one.
+final class StepCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var collected: [String] = []
+
+    func append(_ step: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !collected.contains(step) else { return }
+        collected.append(step)
+    }
+
+    var steps: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return collected
+    }
+}
+
 @MainActor
 final class DoraXMCPServer: ObservableObject {
     static let shared = DoraXMCPServer()
@@ -393,7 +415,12 @@ final class DoraXMCPServer: ObservableObject {
                 return (.thread(id: "dorax-mcp-eval"), "General Chat")
             }
             // Accept either a bundle id or the name a person would type.
-            let installed = InstalledApplicationsCatalog.cachedInstalledApps()
+            //
+            // Discovery rather than the cache: a cold cache answered "nothing is installed",
+            // the name fell through to the branch below, and the turn ran with
+            // `.app(bundleId: "Safari")` — a display name where every other layer expects an
+            // id. The Safari chat then asked the user to enable Safari.
+            let installed = InstalledApplicationsCatalog.discoverInstalledApps()
             if let match = installed.first(where: {
                 $0.bundleId.caseInsensitiveCompare(app) == .orderedSame
                     || $0.name.caseInsensitiveCompare(app) == .orderedSame
@@ -407,10 +434,17 @@ final class DoraXMCPServer: ObservableObject {
         }
 
         await MainActor.run { AICapabilityApprovalCenter.beginUnattendedRun() }
+        var liveSteps: [String] = []
         let answer: AppScopedChatService.Answer
         do {
+            // The steps the harness narrates as it works. Without this the tool whose whole
+            // purpose is "check what DoraX did" returned an empty `steps` for a turn that had
+            // read a page, listed fifteen tabs and chosen a route.
+            let collected = StepCollector()
             answer = try await AppScopedChatService.send(
-                scope: resolved.scope, appName: resolved.name, query: query, history: [])
+                scope: resolved.scope, appName: resolved.name, query: query, history: [],
+                onStatus: { step in collected.append(step) })
+            liveSteps = collected.steps
         } catch {
             // A turn that threw is a result an eval needs to see, reported in the same shape
             // as any other — not an exception the caller has to guess the meaning of.
@@ -431,7 +465,7 @@ final class DoraXMCPServer: ObservableObject {
         var payload: [String: Any] = [
             "answer": answer.text,
             "scope": resolved.name,
-            "steps": answer.trace,
+            "steps": liveSteps.isEmpty ? answer.trace : liveSteps + answer.trace,
             "toolChips": answer.toolChips,
             "approvalsRequested": approvals,
             "receipts": answer.evidenceReceipts.map { receipt in

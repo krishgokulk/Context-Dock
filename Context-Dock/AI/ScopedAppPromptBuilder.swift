@@ -208,6 +208,18 @@ enum ScopedAppPromptBuilder {
                         .joined(separator: ", ")
                     + ". Report what the check read, not that you did it.")
             }
+            // A declared script is unreachable unless the model is told how to ask for one.
+            // Asked to run `tabs-to-md.sh`, a tool-less provider went hunting the file system
+            // with shell commands instead — the wrong answer by the wrong authority.
+            if let scripts = profile.tools.scripts, !scripts.isEmpty {
+                lines.append(
+                    "Scripts this app carries: " + scripts.joined(separator: ", ")
+                    + ". Run one with the run_app_script tool, or — if you were given no tools "
+                    + "this turn — reply with ONLY "
+                    + "{\"app_script\": {\"name\": \"\(scripts[0])\"}}. Never look for these "
+                    + "files yourself and never run them through the shell: the name is the "
+                    + "whole interface, and the user approves each run.")
+            }
             let declared = profile.tools.allNames
             if !declared.isEmpty {
                 lines.append(

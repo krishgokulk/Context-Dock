@@ -438,9 +438,9 @@ enum AppScopedChatService {
         candidates = candidates.filter { candidate in
             let id = candidate.bundleId.lowercased()
             guard seen.insert(id).inserted else { return false }
-            if let scopeBundleID,
-                candidate.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame
-            { return false }
+            if let scopeBundleID, isSameApp(candidate: candidate, asScope: scopeBundleID) {
+                return false
+            }
             guard !attachedBundleIDs.contains(id) else { return false }
             return !attachedAppNames.contains {
                 $0.caseInsensitiveCompare(candidate.name) == .orderedSame
@@ -454,6 +454,23 @@ enum AppScopedChatService {
             companions: candidates.dropFirst().map {
                 EnableAppRequest.AppRef(name: $0.name, bundleId: $0.bundleId)
             })
+    }
+
+    /// Whether a candidate app *is* the app this chat is already about.
+    ///
+    /// Compared by name as well as by bundle id, because not every caller scopes by id: the
+    /// MCP server falls back to `.app(bundleId: "Safari")` when the installed-apps cache is
+    /// cold, and a gate comparing ids then decided that Safari was a different app from
+    /// Safari — so a Safari chat asked to enable Safari, for a question its own tools answer.
+    private static func isSameApp(
+        candidate: (name: String, bundleId: String), asScope scopeBundleID: String
+    ) -> Bool {
+        if candidate.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame {
+            return true
+        }
+        // A scope id with no dot in it is a display name wearing a bundle id's clothes.
+        guard !scopeBundleID.contains(".") else { return false }
+        return candidate.name.caseInsensitiveCompare(scopeBundleID) == .orderedSame
     }
 
     /// The apps that could answer a question that names none, when the chat has none open.
@@ -610,6 +627,9 @@ enum AppScopedChatService {
             return target.isEmpty
                 ? "Reading the live menu bar…"
                 : "Looking for “\(target)” in the live menu bar…"
+        case .appScript:
+            let name = invocation.arguments["name"] ?? ""
+            return name.isEmpty ? "Running this app's script…" : "Running \(name)…"
         case .terminal:
             // The command itself, because that is the thing the user is deciding about — a
             // row saying "running a command" is the same as saying nothing.
@@ -713,7 +733,11 @@ enum AppScopedChatService {
                 // loop already ran.
                 let notice = executedAnything
                     ? nil
-                    : ProviderActionNotice.note(provider: provider, intent: taskPlan.intent)
+                    : ProviderActionNotice.note(
+                        provider: provider, intent: taskPlan.intent,
+                        // Live app data is evidence too: this turn read the user's real tabs
+                        // and then told them it could not act.
+                        producedEvidence: !toolChips.isEmpty)
                 return Answer(text: text + (notice ?? ""), toolChips: toolChips)
             }
 

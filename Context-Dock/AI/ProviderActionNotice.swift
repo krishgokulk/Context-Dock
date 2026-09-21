@@ -12,9 +12,17 @@ import Foundation
 /// The app knows the reason exactly. Saying it is cheaper than leaving the model to invent it,
 /// and it points at the setting that changes the outcome.
 enum ProviderActionNotice {
-    static func note(provider: AIProvider, intent: FrontmostAppTaskPlan.Intent) -> String? {
+    /// - Parameter producedEvidence: whether this turn already answered from something real —
+    ///   a live reading, a tool result. The notice explains why nothing could run; printed
+    ///   under an answer that just listed fifteen live Safari tabs, it reads as the app
+    ///   disclaiming work it had visibly done.
+    static func note(
+        provider: AIProvider, intent: FrontmostAppTaskPlan.Intent,
+        producedEvidence: Bool = false
+    ) -> String? {
         guard intent == .act || intent == .workflow else { return nil }
         guard !provider.supportsNativeTools else { return nil }
+        guard !producedEvidence else { return nil }
 
         // Claude Code is not a model that cannot act — it is an agent with its own tools,
         // which is why the old wording landed under an answer describing an app it had just

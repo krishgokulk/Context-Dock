@@ -119,6 +119,27 @@ struct AppAgentScriptTests {
     }
 }
 
+// The directive a provider with no tools uses to reach a declared script.
+struct AppAgentScriptDirectiveTests {
+
+    @Test func aScriptIsReachableWithoutNativeTools() {
+        // Claude Code is run with none of DoraX's tools, so `run_app_script` is unreachable
+        // for it. Asked to run a declared script it searched ~/Downloads, ~/Desktop and
+        // mdfind instead — the wrong answer, reached by the wrong authority.
+        let invocation = AITypedInvocationResolver.invocation(
+            from: #"{"app_script": {"name": "tabs-to-md.sh", "reason": "collect tabs"}}"#)
+        #expect(invocation?.kind == .appScript)
+        #expect(invocation?.arguments["name"] == "tabs-to-md.sh")
+        #expect(invocation?.arguments["reason"] == "collect tabs")
+        #expect(invocation?.requiresApproval == true)
+    }
+
+    @Test func aDirectiveWithNoNameIsNotOne() {
+        let invocation = AITypedInvocationResolver.invocation(from: #"{"app_script": {}}"#)
+        #expect(invocation?.kind != .appScript)
+    }
+}
+
 // A profile and its scripts, as one thing to hand over.
 struct AppAgentProfilePackTests {
 

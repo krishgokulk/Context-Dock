@@ -65,3 +65,46 @@ struct MultiAppRequestTests {
         #expect(bundles.contains("com.apple.notes"))
     }
 }
+
+// The gate must never ask for the app the chat is already about.
+@MainActor
+struct ScopedAccessGateTests {
+
+    @Test func aSafariChatIsNotAskedToEnableSafari() {
+        // Asked "list all my open tabs with their URLs" in a Safari-scoped chat, DoraX
+        // answered "That needs Safari, and this chat is scoped to Safari" — an offer to
+        // enable the app whose chat it already was, and a dead end for a question its own
+        // tools can answer.
+        let request = AppScopedChatService.appNeedingAccess(
+            query: "list all my open tabs with their URLs",
+            scope: .app(bundleId: "com.apple.Safari"),
+            attachedAppNames: [])
+        #expect(
+            request == nil,
+            "offered: \(request?.allApps.map(\.bundleId).joined(separator: ", ") ?? "nil")")
+    }
+
+    @Test func aScopeNamedRatherThanIdentifiedIsStillTheSameApp() {
+        // What actually happened: the MCP server's installed-apps cache was cold, the name
+        // fell through to `.app(bundleId: "Safari")`, and a gate comparing bundle ids decided
+        // Safari was a different app from Safari.
+        let request = AppScopedChatService.appNeedingAccess(
+            query: "list all my open tabs with their URLs",
+            scope: .app(bundleId: "Safari"),
+            attachedAppNames: [])
+        #expect(
+            request == nil,
+            "offered: \(request?.allApps.map(\.bundleId).joined(separator: ", ") ?? "nil")")
+    }
+
+    @Test func aSafariChatIsStillAskedAboutNotes() {
+        // The boundary the gate exists for stays: another app is asked about.
+        let request = AppScopedChatService.appNeedingAccess(
+            query: "save this page to my notes",
+            scope: .app(bundleId: "com.apple.Safari"),
+            attachedAppNames: [])
+        let bundles = Set((request?.allApps ?? []).map { $0.bundleId.lowercased() })
+        #expect(bundles.contains("com.apple.notes"))
+        #expect(!bundles.contains("com.apple.safari"))
+    }
+}
