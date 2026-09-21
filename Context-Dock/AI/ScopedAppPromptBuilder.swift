@@ -185,6 +185,38 @@ enum ScopedAppPromptBuilder {
         let shortcuts = actions.filter { $0.type == .shortcut }
         let skillCount = SkillStore.shared.skills(for: bundleId).filter(\.isEnabled).count
 
+        // The app's own profile, when it has one: how this app is meant to be worked with,
+        // written by the user in a file rather than inferred here from verbs and bundle ids.
+        // Placed above the inventory because it says which of those to reach for. Apps with no
+        // profile are unchanged — every branch below is the fallback.
+        if let profile = AppAgentProfileStore.shared.profile(
+            forBundleID: bundleId, appName: appName), !profile.isEmpty
+        {
+            lines.append("")
+            lines.append("## How \(appName) is worked with (this app's profile)")
+            if !profile.summary.isEmpty { lines.append(profile.summary) }
+            if !profile.instructions.isEmpty { lines.append(profile.instructions) }
+            if !profile.never.isEmpty {
+                lines.append("Never, in this app:")
+                lines += profile.never.map { "- \($0)" }
+            }
+            if !profile.verify.isEmpty {
+                lines.append(
+                    "Check your own work with these: "
+                    + profile.verify.keys.sorted()
+                        .map { "\($0) → \(profile.verify[$0] ?? "")" }
+                        .joined(separator: ", ")
+                    + ". Report what the check read, not that you did it.")
+            }
+            let declared = profile.tools.allNames
+            if !declared.isEmpty {
+                lines.append(
+                    "Routes this app declares, in preference order: "
+                    + declared.joined(separator: ", ")
+                    + ". Prefer these over anything else listed below.")
+            }
+        }
+
         lines.append("")
         lines.append("Integrations linked to \(appName) (pick the best fit for each request):")
         if actions.isEmpty {
