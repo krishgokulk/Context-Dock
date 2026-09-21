@@ -88,7 +88,8 @@ struct AppAgentProfile: Equatable {
             tools: Tools(), instructions: "", problems: [])
 
         let (frontMatter, body) = split(text)
-        profile.instructions = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        profile.instructions = stripComments(body)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !frontMatter.isEmpty else { return profile }
 
         // One indent level, which is all a profile needs: `tools:` and `verify:` take a block,
@@ -191,6 +192,28 @@ struct AppAgentProfile: Equatable {
             .filter { !$0.isEmpty }
     }
 
+    /// `<!-- … -->` is a note to whoever edits the file, not a line for the model.
+    ///
+    /// The generated draft used to put its own guidance — "Write how DoraX should work with
+    /// Safari…" — in the body as plain prose, so a profile saved before the user replaced it
+    /// sent the model an instruction addressed to the user. A comment is the right shape for
+    /// something a person reads and a turn never sees.
+    static func stripComments(_ text: String) -> String {
+        var result = ""
+        var rest = Substring(text)
+        while let start = rest.range(of: "<!--") {
+            result += rest[rest.startIndex..<start.lowerBound]
+            guard let end = rest.range(of: "-->", range: start.upperBound..<rest.endIndex) else {
+                // An unclosed comment swallows the rest of the file rather than leaking half
+                // a note into the prompt.
+                return result
+            }
+            rest = rest[end.upperBound...]
+        }
+        result += rest
+        return result
+    }
+
     private static func unquoted(_ value: String) -> String {
         var text = value.trimmingCharacters(in: .whitespaces)
         for quote in ["\"", "'"] where text.hasPrefix(quote) && text.hasSuffix(quote) && text.count > 1 {
@@ -248,6 +271,14 @@ struct AppAgentProfile: Equatable {
 
     private func appendList(_ values: [String]?, key: String, to lines: inout [String]) {
         guard let values else { return }
-        lines.append("  \(key): [\(values.joined(separator: ", "))]")
+        let inline = "  \(key): [\(values.joined(separator: ", "))]"
+        // Short lists read best on one line; a long one becomes a wall nobody can edit — and
+        // "every capability this app can reach" is sixty of them. Both shapes parse.
+        if values.count <= 6, inline.count <= 96 {
+            lines.append(inline)
+            return
+        }
+        lines.append("  \(key):")
+        lines += values.map { "    - \($0)" }
     }
 }

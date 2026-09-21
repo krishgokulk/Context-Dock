@@ -160,9 +160,15 @@ struct AppIntegrationAgentView: View {
                         .controlSize(.small)
                         .disabled(!isDirty)
                     Button(loadedText.isEmpty ? "Start From What's Installed" : "Insert Draft") {
-                        text = profiles.draft(
+                        var draft = profiles.draft(
                             forBundleID: summary.bundleID, appName: summary.appName
                         ).markdown()
+                        // Action ids are what the runtime needs and nobody can read. Their
+                        // names go in beside them, as a comment the model never sees.
+                        if let legend = profiles.actionLegend(forBundleID: summary.bundleID) {
+                            draft += "\n\n" + legend
+                        }
+                        text = draft
                         revalidate()
                     }
                     .controlSize(.small)

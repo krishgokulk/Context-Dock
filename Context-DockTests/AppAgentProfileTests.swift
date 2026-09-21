@@ -136,6 +136,72 @@ struct AppAgentProfileTests {
         #expect(reparsed.problems.isEmpty)
     }
 
+    @Test func anEditorsNoteIsNeverSentToTheModel() {
+        // The generated draft leaves its own guidance in the body. Saved before the user
+        // replaces it, plain prose would hand the model an instruction addressed to the user —
+        // "Write how DoraX should work with Safari…" — so the draft writes a comment and the
+        // parser strips it.
+        let profile = AppAgentProfile.parse("""
+            ---
+            app: Safari
+            ---
+
+            <!--
+            Write how DoraX should work with Safari.
+            -->
+            Prefer the extension's live page read.
+            """)
+        #expect(profile.instructions == "Prefer the extension's live page read.")
+        #expect(!profile.instructions.contains("Write how DoraX"))
+    }
+
+    @Test func anUnclosedNoteTakesTheRestWithIt() {
+        // Better to lose the tail of a file somebody is mid-edit on than to leak half a note
+        // into a prompt as though it were an instruction.
+        let profile = AppAgentProfile.parse("""
+            ---
+            app: Safari
+            ---
+
+            Real instruction.
+            <!-- unfinished note about what to write
+            """)
+        #expect(profile.instructions == "Real instruction.")
+    }
+
+    @Test func aDraftWithOnlyANoteInItIsStillEmpty() {
+        // So an untouched draft does not count as a profile: `isEmpty` is what decides
+        // whether the prompt gets a profile block at all.
+        let draft = AppAgentProfile.parse("""
+            ---
+            app: Safari
+            ---
+
+            <!-- write something here -->
+            """)
+        #expect(draft.instructions.isEmpty)
+    }
+
+    @Test func aLongListIsWrittenSoAPersonCanEditIt() {
+        // "Every capability this app can reach" is around sixty ids. On one line that is a
+        // wall; as a block it is a list. Both shapes parse, so the round trip still holds.
+        var profile = AppAgentProfile.parse("---\napp: Safari\n---\nBody.")
+        profile.tools.capabilities = (1...20).map { "capability.number\($0)" }
+
+        let written = profile.markdown()
+        #expect(written.contains("  capabilities:\n    - capability.number1"))
+
+        let reparsed = AppAgentProfile.parse(written)
+        #expect(reparsed.tools.capabilities?.count == 20)
+        #expect(reparsed.problems.isEmpty)
+    }
+
+    @Test func aShortListStaysOnItsLine() {
+        var profile = AppAgentProfile.parse("---\napp: Safari\n---\nBody.")
+        profile.tools.mcp = ["safari-mcp"]
+        #expect(profile.markdown().contains("  mcp: [safari-mcp]"))
+    }
+
     @Test func anEmptyProfileKnowsItIsEmpty() {
         #expect(AppAgentProfile.parse("").isEmpty)
         #expect(!AppAgentProfile.parse(safari).isEmpty)

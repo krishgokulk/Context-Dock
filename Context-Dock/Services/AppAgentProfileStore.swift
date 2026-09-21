@@ -103,8 +103,16 @@ final class AppAgentProfileStore: ObservableObject {
     func draft(forBundleID bundleID: String, appName: String) -> AppAgentProfile {
         var tools = AppAgentProfile.Tools()
 
-        let capabilities = CapabilityRegistry.shared.all
-            .filter { $0.appBundleID?.caseInsensitiveCompare(bundleID) == .orderedSame }
+        // Everything this app's chat may actually reach, not only what names it.
+        //
+        // Filtering on `appBundleID == bundleID` drafted one line for Safari —
+        // `safari.summarizePage` — while `browser.tabs`, `browser.currentPage`,
+        // `browser.history` and every file, git and clipboard capability were left out,
+        // because those belong to no app and so matched nothing. A tab question then had no
+        // declared route and fell back to inference, which is the behaviour profiles exist to
+        // replace. The same filter a scoped turn uses decides it here.
+        let capabilities = AgentToolRegistry.capabilitiesInScope(
+            CapabilityRegistry.shared.all, scopedBundleID: bundleID)
             .map(\.id)
             .sorted()
         if !capabilities.isEmpty { tools.capabilities = capabilities }
@@ -130,9 +138,38 @@ final class AppAgentProfileStore: ObservableObject {
             never: [],
             verify: [:],
             tools: tools,
-            instructions:
-                "Write how DoraX should work with \(appName): which route to prefer for which "
-                + "kind of request, what to read before acting, and how to check the result.",
+            // A comment, not prose. The draft used to leave its own guidance in the body as
+            // plain text, so a profile saved before the user replaced it handed the model an
+            // instruction addressed to the user — "Write how DoraX should work with Safari…".
+            // Anything inside `<!-- -->` is stripped before the body reaches a prompt.
+            instructions: [
+                "<!--",
+                "Write how DoraX should work with \(appName): which route to prefer for",
+                "which kind of request, what to read before acting, and how to check the",
+                "result. Anything between these markers is for you, never sent to the model.",
+                "",
+                "Two more keys worth adding above:",
+                "  never:",
+                "    - something this app must never be made to do",
+                "  verify:",
+                "    outcome-word: capability.that.reads.it.back",
+                "-->",
+            ].joined(separator: "\n"),
             problems: [])
+    }
+
+    /// The action ids an app declares, with their human names beside them.
+    ///
+    /// `shortcut-89992C66` and `ai.page.dark-mode-9a4861` are what the inventory calls them
+    /// and what the runtime needs — and nobody can edit a list of those. The names go in a
+    /// comment so the file stays readable without the ids turning into prose.
+    func actionLegend(forBundleID bundleID: String) -> String? {
+        guard let adapter = AppAdapterManager.shared.adapter(for: bundleID) else { return nil }
+        let named = adapter.actions
+            .filter { $0.type != .aiPrompt }
+            .sorted { $0.id < $1.id }
+            .map { "  \($0.id) — \($0.name)" }
+        guard !named.isEmpty else { return nil }
+        return "<!-- actions, by name:\n" + named.joined(separator: "\n") + "\n-->"
     }
 }
