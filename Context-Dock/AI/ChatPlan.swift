@@ -131,7 +131,14 @@ enum ChatPlanRunner {
             !rawSteps.isEmpty
         else { return nil }
 
-        let byID = Dictionary(uniqueKeysWithValues: routes.map { ($0.id, $0) })
+        // Keyed by id, keeping the first of any duplicate rather than trapping on it.
+        //
+        // This crashed the app. Routes are resolved per app and concatenated, so the same
+        // route arrives twice whenever an app is in the list twice — which is now ordinary,
+        // because a request naming two apps puts both in the conversation, and a combined
+        // chat can hold an app that is also the thread's own. `uniqueKeysWithValues` treats
+        // that as a programming error and traps; it is data, and the two copies are equal.
+        let byID = Dictionary(routes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var steps: [ChatPlanStep] = []
         for (index, entry) in rawSteps.prefix(ChatPlan.maxSteps).enumerated() {
             guard let id = entry["id"] as? String, let route = byID[id] else {

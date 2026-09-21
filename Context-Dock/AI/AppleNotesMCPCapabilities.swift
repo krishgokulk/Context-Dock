@@ -200,6 +200,18 @@ enum AppleNotesMCPCapabilities {
                 let newID = try await AppleNotesMCPServer.shared.createNote(
                     title: title, body: body, folder: folder, providerName: "local"
                 )
+                // The note that was just made, as a card. A write is a result too: the owner
+                // read "Note created." with nothing to open, while a note found by search —
+                // which changed nothing — came back with a row.
+                ChatResultRowCollector.shared.add(
+                    [
+                        ChatResultRow(
+                            kind: .note, id: newID, title: title,
+                            subtitle: folder ?? "Notes",
+                            detail: String(body.prefix(200)),
+                            bundleID: "com.apple.Notes", date: Date())
+                    ],
+                    scope: request.chatScope)
                 return .init(success: true, output: "Created note '\(title)' with ID: \(newID)")
             }
         )
@@ -229,6 +241,15 @@ enum AppleNotesMCPCapabilities {
                     throw AppleNotesError.notEnabled
                 }
                 try await AppleNotesMCPServer.shared.appendToNote(id: noteID, text: text, providerName: "local")
+                ChatResultRowCollector.shared.add(
+                    [
+                        ChatResultRow(
+                            kind: .note, id: noteID,
+                            title: "Appended to note",
+                            subtitle: "Notes", detail: String(text.prefix(200)),
+                            bundleID: "com.apple.Notes", date: Date())
+                    ],
+                    scope: request.chatScope)
                 return .init(success: true, output: "Appended text to note \(noteID).")
             }
         )
@@ -263,6 +284,15 @@ enum AppleNotesMCPCapabilities {
                 try await AppleNotesMCPServer.shared.updateNote(
                     id: noteID, title: title, body: body, providerName: "local"
                 )
+                ChatResultRowCollector.shared.add(
+                    [
+                        ChatResultRow(
+                            kind: .note, id: noteID,
+                            title: title ?? "Updated note",
+                            subtitle: "Notes", detail: String((body ?? "").prefix(200)),
+                            bundleID: "com.apple.Notes", date: Date())
+                    ],
+                    scope: request.chatScope)
                 return .init(success: true, output: "Updated note \(noteID).")
             }
         )

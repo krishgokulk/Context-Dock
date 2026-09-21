@@ -1210,6 +1210,11 @@ enum AppScopedChatService {
                     .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
                 if let bundleId { scopeApps.append((bundleId, name)) }
             }
+            // One app, once. A combined chat can hold an app that is also the thread's own,
+            // and resolving its routes twice both doubled the catalogue the model orders from
+            // and produced the duplicate ids that crashed the planner.
+            var seenScopeApps = Set<String>()
+            scopeApps = scopeApps.filter { seenScopeApps.insert($0.0.lowercased()).inserted }
 
             // Planning used to require two or more apps in the thread, which meant "find
             // the newest export and open it" — two steps in one app — was answered as a
