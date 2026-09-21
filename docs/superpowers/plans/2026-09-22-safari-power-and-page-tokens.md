@@ -5,6 +5,16 @@ and *"I want full Safari power in the frontmost app chat — MCP, extension, nav
 like, everything except sensitive pages, safety first"*. The second is only affordable if the
 first is solved, so it comes first.
 
+## Before this: what Safari does today
+
+`docs/architecture/SAFARI_TODAY.md` is the audit — four routes (extension, AppleScript,
+capabilities, Apple's MCP server), what each is good at, what was verified by driving the app, and
+what is still wrong. Two facts from it shape everything below:
+
+1. **`safaridriver --mcp` runs on this Mac.** Safari 27.0, and the flag is in `--help`. The MCP
+   route is not a future-version feature here.
+2. **Nothing remembers a page.** Three questions about one page pay three full reads.
+
 ## Where a page's tokens go today
 
 | | Now | Per turn |
