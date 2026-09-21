@@ -505,11 +505,19 @@ final class GeneralChatWindowModel: ObservableObject {
         //
         // Matched case-insensitively against the name the gate reported, so the two sides
         // agree even when the app is not running and the installed-apps cache is cold.
-        let already = currentMembership.contains {
-            $0.caseInsensitiveCompare(request.name) == .orderedSame
+        // Every app the request named, in one step. "Create a note of all the open tabs in
+        // Safari" needs both apps in the conversation before the cross-app planner will even
+        // look at it; enabling one and re-asking produced a list of Notes commands that could
+        // not know what Safari had open.
+        var membership = currentMembership
+        for app in request.allApps
+        where !membership.contains(where: {
+            $0.caseInsensitiveCompare(app.name) == .orderedSame
+        }) {
+            membership.append(app.name)
         }
-        if !already {
-            openCombination(currentMembership + [request.name])
+        if membership.count != currentMembership.count {
+            openCombination(membership)
         }
         // Say what just changed, before the answer arrives.
         //

@@ -1356,7 +1356,10 @@ struct AIChatMessageView: View {
                     } else {
                         Image(systemName: "plus.app")
                     }
-                    Text("Enable \(req.name) for this chat").fontWeight(.semibold)
+                    // Names every app the tap will enable. A button that says "Notes"
+                    // and quietly also enables Safari is a scope change the user did not
+                    // agree to; one that says "Notes and Safari" is the offer they answered.
+                    Text("Enable \(req.appsSentence) for this chat").fontWeight(.semibold)
                 }
                 .font(.system(size: 12))
                 .foregroundStyle(providerColor)

@@ -2092,13 +2092,18 @@ extension LauncherView {
     /// original query now that it's in scope. Keeps the user in control — nothing was read
     /// until they tapped.
     func enableAppForGeneralChat(_ req: EnableAppRequest) {
-        if !chatFocusApps.contains(where: {
-            $0.bundleId.caseInsensitiveCompare(req.bundleId) == .orderedSame
+        // Every app the sentence named, together. One of them is rarely the whole job: a
+        // note made of Safari's open tabs needs Safari in the chat as much as Notes, and the
+        // cross-app planner does not run until both are there.
+        var focus = chatFocusApps
+        for app in req.allApps
+        where !focus.contains(where: {
+            $0.bundleId.caseInsensitiveCompare(app.bundleId) == .orderedSame
         }) {
-            withAnimation(.dockStandard) {
-                switchDockWorkspace(
-                    to: chatFocusApps + [.init(name: req.name, bundleId: req.bundleId)])
-            }
+            focus.append(.init(name: app.name, bundleId: app.bundleId))
+        }
+        if focus.count != chatFocusApps.count {
+            withAnimation(.dockStandard) { switchDockWorkspace(to: focus) }
         }
         aiMode.pendingEnableApp = nil
         guard !aiMode.isLoading, aiMode.streamingId == nil else { return }

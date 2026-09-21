@@ -171,10 +171,35 @@ struct PendingSelectionShare: Equatable {
 }
 
 /// A one-tap offer to scope the chat to an app the user asked about but hasn't selected.
+///
+/// Carries every app the request named, not only the first. "Create a note of all the open
+/// tabs in Safari" is one piece of work across two apps, and enabling one of them leaves the
+/// chat unable to do the job — the cross-app planner needs both in scope before it runs at
+/// all, so a single-app offer turned a workflow into a list of Notes commands.
 struct EnableAppRequest: Equatable {
+    struct AppRef: Equatable {
+        let name: String
+        let bundleId: String
+    }
+
     let name: String
     let bundleId: String
     let query: String
+    /// The other apps the same sentence named, enabled by the same tap.
+    var companions: [AppRef] = []
+
+    /// Every app this offer would enable, the primary first.
+    var allApps: [AppRef] {
+        [AppRef(name: name, bundleId: bundleId)] + companions
+    }
+
+    /// "Notes", or "Notes and Safari", or "Notes, Safari and Mail" — what the button says it
+    /// will do, so a tap that changes the scope of a conversation says so first.
+    var appsSentence: String {
+        let names = allApps.map(\.name)
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+    }
 }
 
 /// One route the user can pick when several fit the request equally well.

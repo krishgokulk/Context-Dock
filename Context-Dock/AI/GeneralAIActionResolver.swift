@@ -607,6 +607,33 @@ final class GeneralAIActionResolver {
         return (target.name, target.bundleId)
     }
 
+    /// Every installed app the sentence names, in the order they appear.
+    ///
+    /// "Create a note of all the open tabs in Safari" names two apps and describes one piece
+    /// of work: read from Safari, write into Notes. Resolving only the winner asked the user
+    /// to enable Notes, left Safari outside the chat, and the cross-app planner — which needs
+    /// two apps in scope to run at all — never saw the request. The answer was a list of three
+    /// Notes commands, none of which could know what was in Safari.
+    func namedInstalledApps(in query: String) -> [(name: String, bundleId: String)] {
+        let lowered = query.lowercased()
+        var found: [(name: String, bundleId: String)] = []
+        var remaining = lowered
+        // Resolve, remove what matched, resolve again. The single-app resolver already ranks
+        // by position and length, so repeating it walks the sentence left to right without
+        // needing a second ranking rule that could disagree with the first.
+        for _ in 0..<4 {
+            guard let target = resolveTargetApp(in: remaining) else { break }
+            if !found.contains(where: {
+                $0.bundleId.caseInsensitiveCompare(target.bundleId) == .orderedSame
+            }) {
+                found.append((target.name, target.bundleId))
+            }
+            guard target.remainingPhrase != remaining else { break }
+            remaining = target.remainingPhrase
+        }
+        return found
+    }
+
     // MARK: - Executable-intent gate
 
     private static let questionStarts = [

@@ -74,6 +74,49 @@ enum ActionReadiness {
         if createsSomethingNew(capabilityID: candidate.capabilityID), namesExistingItem(query) {
             return false
         }
+        if let path = candidate.menuPath, destroysSomething(path: path),
+            !asksToDestroy(query)
+        {
+            return false
+        }
         return true
+    }
+
+    /// The request itself asks for something to be deleted, emptied, removed or sent.
+    ///
+    /// Asked to *create* a note, DoraX offered three ways and the third was
+    /// `Edit ▸ Delete Note`. Ranking words got it there — "note" matched — and nothing
+    /// downstream asked whether a destructive command can be an answer to a constructive
+    /// request. One mis-click on that list loses the user's work, so the list must not carry
+    /// it in the first place.
+    static func asksToDestroy(_ query: String) -> Bool {
+        let words = Set(
+            query.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init))
+        let destructive: Set<String> = [
+            "delete", "remove", "trash", "erase", "empty", "clear", "discard", "destroy",
+            "uninstall", "wipe", "send", "reply", "forward",
+        ]
+        return !words.isDisjoint(with: destructive)
+    }
+
+    /// Whether this menu path is one of the destructive or outbound ones. Reuses the list
+    /// verified menus and Computer Use already share, rather than starting a third.
+    @MainActor
+    static func destroysSomething(path: [String]) -> Bool {
+        AppMenuConsentStore.shared.isDestructive(path: path)
+    }
+
+    /// The same rule for a resolved chat route, which carries its menu path as `payload`.
+    @MainActor
+    static func isOfferable(_ route: ChatRoute, query: String) -> Bool {
+        guard route.kind == .menuCommand else { return true }
+        let path = route.payload
+            .components(separatedBy: CharacterSet(charactersIn: ">›/|\u{1F}"))
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let resolved = path.isEmpty ? [route.title] : path
+        return !destroysSomething(path: resolved) || asksToDestroy(query)
     }
 }

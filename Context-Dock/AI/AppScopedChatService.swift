@@ -411,27 +411,16 @@ enum AppScopedChatService {
         // "do i have any reminder today" names Reminders, but the resolver matches whole
         // words against app names, so the singular missed and the question fell through to
         // a model with no access and no explanation. Try the plural too.
-        let named =
-            GeneralAIActionResolver.shared.namedInstalledApp(in: query)
-            ?? GeneralAIActionResolver.shared.namedInstalledApp(in: pluralised(query))
-        guard let named else { return nil }
-        // The thread's own app is not something to ask permission for.
-        if let scopeBundleID,
-            named.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame
-        {
-            return nil
-        }
-        // A question that names no app at all is handled elsewhere — see
-        // `appSuggestionForUnnamedRequest`. This gate only ever speaks about an app the
-        // user actually mentioned, because offering to enable something they did not ask
-        // for reads as the app deciding what it wants access to.
-        // Match on the name first. Resolving an attached name to a bundle id depends on
-        // the app running or on a warmed installed-apps cache, and when neither held, an
-        // app the user had just enabled looked unattached — so the gate asked again, and
-        // again, with the Enable button doing nothing each time.
-        if attachedAppNames.contains(where: {
-            $0.caseInsensitiveCompare(named.name) == .orderedSame
-        }) { return nil }
+        //
+        // Two sources, because one alone offers half the job: apps the sentence names
+        // outright, and apps it is plainly about. "Create a note all opened tabs in safari"
+        // names Safari and says "a note" — singular, and not an app name at all — so reading
+        // only the names offered Safari, reading only the subjects offered Notes, and the
+        // cross-app planner needs both in scope before it will look at the request.
+        var candidates =
+            GeneralAIActionResolver.shared.namedInstalledApps(in: query)
+            + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query))
+            + subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
 
         let attachedBundleIDs = Set(
             attachedAppNames.compactMap { name -> String? in
@@ -440,8 +429,31 @@ enum AppScopedChatService {
                     ?? InstalledApplicationsCatalog.cachedInstalledApps()
                     .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
             }.map { $0.lowercased() })
-        guard !attachedBundleIDs.contains(named.bundleId.lowercased()) else { return nil }
-        return EnableAppRequest(name: named.name, bundleId: named.bundleId, query: query)
+
+        // Anything already in the conversation, and the thread's own app, are not things to
+        // ask permission for. Matched on the name as well as the bundle id: resolving an
+        // attached name to an id needs the app running or a warm catalogue, and when neither
+        // held the gate asked again and again with the button doing nothing each time.
+        var seen = Set<String>()
+        candidates = candidates.filter { candidate in
+            let id = candidate.bundleId.lowercased()
+            guard seen.insert(id).inserted else { return false }
+            if let scopeBundleID,
+                candidate.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame
+            { return false }
+            guard !attachedBundleIDs.contains(id) else { return false }
+            return !attachedAppNames.contains {
+                $0.caseInsensitiveCompare(candidate.name) == .orderedSame
+            }
+        }
+        // An app already attached must not silence the offer for the one that is not: with
+        // Safari in the chat, "create a note of its tabs" still needs Notes.
+        guard let primary = candidates.first else { return nil }
+        return EnableAppRequest(
+            name: primary.name, bundleId: primary.bundleId, query: query,
+            companions: candidates.dropFirst().map {
+                EnableAppRequest.AppRef(name: $0.name, bundleId: $0.bundleId)
+            })
     }
 
     /// The apps that could answer a question that names none, when the chat has none open.
@@ -462,6 +474,18 @@ enum AppScopedChatService {
         guard GeneralAIActionResolver.shared.namedInstalledApp(in: query) == nil else {
             return []
         }
+        return Array(subjectApps(in: query).prefix(3))
+            .map { EnableAppRequest(name: $0.name, bundleId: $0.bundleId, query: query) }
+    }
+
+    /// Apps a sentence is *about* without naming them: "a note" means Notes, "tabs" means
+    /// Safari, "reminder" means Reminders.
+    ///
+    /// Split out because the same knowledge answers two questions. It was reachable only
+    /// when a request named no app at all, so "create a note of all the open tabs in Safari"
+    /// — which names Safari and only implies Notes — could offer one of the two apps it
+    /// needed and never the pair.
+    static func subjectApps(in query: String) -> [(bundleId: String, name: String)] {
         let lowered = query.lowercased()
         // Subjects, not verbs: the word that says what the question is about.
         let subjects: [(markers: [String], bundleId: String, name: String)] = [
@@ -475,17 +499,16 @@ enum AppScopedChatService {
             (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
             (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
         ]
-        var found: [EnableAppRequest] = []
+        var found: [(bundleId: String, name: String)] = []
         for subject in subjects where subject.markers.contains(where: lowered.contains) {
             // Only apps that are actually here. Offering to enable something not installed
             // is a dead end dressed as an option.
             guard NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: subject.bundleId) != nil
             else { continue }
-            found.append(
-                EnableAppRequest(name: subject.name, bundleId: subject.bundleId, query: query))
+            found.append((subject.bundleId, subject.name))
         }
-        return Array(found.prefix(3))
+        return found
     }
 
     /// Runs `operation` on a detached task and gives up on it after `seconds`.
@@ -1264,9 +1287,13 @@ enum AppScopedChatService {
                 for: query, bundleId: bundleId, appName: routingAppName)
             // Questions may use genuine read-only data integrations, but never screen-driving
             // menu commands or writes. A menu click is not a way to find out what a menu lists.
-            let routes = GeneralAIActionResolver.shared.asksOnly(query)
+            let permitted = GeneralAIActionResolver.shared.asksOnly(query)
                 ? resolvedRoutes.filter { $0.isReadOnly && !$0.kind.takesTheScreen }
                 : resolvedRoutes
+            // A destructive command is not an answer to a constructive request. Asked to
+            // create a note, this list offered `Edit ▸ Delete Note` third — word overlap put
+            // it there, and one mis-click loses the user's work.
+            let routes = permitted.filter { ActionReadiness.isOfferable($0, query: query) }
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")

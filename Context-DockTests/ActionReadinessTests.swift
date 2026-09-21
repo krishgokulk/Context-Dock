@@ -99,6 +99,48 @@ struct ActionReadinessTests {
         #expect(!ActionReadiness.createsSomethingNew(capabilityID: nil))
     }
 
+    @MainActor
+    @Test func aDestructiveCommandIsNotAnAnswerToAConstructiveRequest() {
+        // Asked to create a note, the offer list's third row was `Edit ▸ Delete Note`. Word
+        // overlap put it there — "note" matched — and one mis-click loses the user's work.
+        var candidate = candidate(capabilityID: nil)
+        candidate.menuPath = ["Edit", "Delete Note"]
+        #expect(!ActionReadiness.isOfferable(candidate, query: "create a note of my open tabs"))
+    }
+
+    @MainActor
+    @Test func askingToDeleteStillOffersDelete() {
+        // The rule is about mismatched intent, not about hiding destructive commands from
+        // someone who asked for one.
+        var candidate = candidate(capabilityID: nil)
+        candidate.menuPath = ["Edit", "Delete Note"]
+        #expect(ActionReadiness.isOfferable(candidate, query: "delete this note"))
+    }
+
+    @Test func destructiveIntentIsReadFromTheRequestsOwnWords() {
+        for request in ["delete this note", "empty the trash", "remove that file", "send it"] {
+            #expect(ActionReadiness.asksToDestroy(request), "\"\(request)\"")
+        }
+        for request in ["create a note of my open tabs", "summarise this page", "open safari"] {
+            #expect(!ActionReadiness.asksToDestroy(request), "\"\(request)\"")
+        }
+    }
+
+    @Test func anOfferNamesEveryAppItWouldEnable() {
+        // A button saying "Notes" that quietly also enables Safari is a scope change the
+        // user did not agree to.
+        let request = EnableAppRequest(
+            name: "Notes", bundleId: "com.apple.Notes",
+            query: "create a note of all open tabs in safari",
+            companions: [.init(name: "Safari", bundleId: "com.apple.Safari")])
+        #expect(request.appsSentence == "Notes and Safari")
+        #expect(request.allApps.count == 2)
+
+        let single = EnableAppRequest(
+            name: "Notes", bundleId: "com.apple.Notes", query: "notes about the release")
+        #expect(single.appsSentence == "Notes")
+    }
+
     @Test func theReportedOfferIsRefusedOnBothCounts() {
         let create = candidate(capabilityID: "notes.create", required: ["title", "body"])
         #expect(!ActionReadiness.isOfferable(create, query: "rewrite current note"))
