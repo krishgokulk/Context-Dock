@@ -16,6 +16,16 @@ enum ProviderActionNotice {
         guard intent == .act || intent == .workflow else { return nil }
         guard !provider.supportsNativeTools else { return nil }
 
+        // Claude Code is not a model that cannot act — it is an agent with its own tools,
+        // which is why the old wording landed under an answer describing an app it had just
+        // upgraded. What is actually missing is *this chat's* app actions, and saying that
+        // is both true and useful; saying "cannot act" is neither.
+        if provider == .claudeCode {
+            return "\n\n---\n**Claude Code worked with its own tools here.** DoraX's app "
+                + "actions for this chat — menu commands, adapter actions, linked tools — are "
+                + "not available to it, so anything that needs one of those will not run from "
+                + "this chat. Pick a provider that carries them in Settings → AI Providers."
+        }
         return "\n\n---\n**\(name(for: provider)) can answer here, but not act.** It runs with "
             + "its own toolset, so this chat's app actions — menu commands, adapter actions, "
             + "linked tools — are not available to it. Pick a provider that carries them in "

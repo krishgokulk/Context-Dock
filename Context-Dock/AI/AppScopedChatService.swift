@@ -677,7 +677,12 @@ enum AppScopedChatService {
                 // This surface supplies its own capability catalogue; letting the provider
                 // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
                 // nothing here executes, and the directive ends up printed at the user.
-                surfaceScoped: true
+                surfaceScoped: true,
+                // A CLI provider's own steps belong in the same live list DoraX fills for
+                // its own work, rather than in a transcript nobody has open.
+                onStatus: onStatus.map { report in { step in
+                    Task { @MainActor in report(step) }
+                } }
             )
 
             // Say what is about to happen before it happens. The directive is already in the
@@ -1180,6 +1185,10 @@ enum AppScopedChatService {
             let result = await ClaudeCodeBridge.shared.ask(
                 query: query, scope: scope, attachments: attachments,
                 onProgress: { activity in
+                    // Into the step rows, not only the console. The owner watched their app
+                    // be upgraded and could not tell how: the bridge was reporting every
+                    // tool call, to a panel nobody had open.
+                    onStatus?(activity)
                     ChatConsoleLog.shared.append(
                         .note, title: "claude code", output: activity, success: true,
                         scope: scope)
