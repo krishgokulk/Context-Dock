@@ -174,7 +174,15 @@ enum AppleNotesMCPCapabilities {
                 appBundleID: "com.apple.Notes",
                 inputSchema: .init(fields: [
                     .init(name: "title", description: "Note title", required: true),
-                    .init(name: "body", description: "Note body content", required: true),
+                    // Says what the formatting actually does, because a model that believes
+                    // newlines are lost writes one long paragraph to be safe — and a list of
+                    // fourteen links in one paragraph is what the owner got.
+                    .init(
+                        name: "body",
+                        description: "Note body as plain text. Line breaks are kept — put one "
+                            + "item per line. Lines starting \"1. \" become a numbered list, "
+                            + "\"- \" a bulleted one, and bare http(s) URLs become links.",
+                        required: true),
                     .init(name: "folder", description: "Target folder name (optional)", required: false),
                 ]),
                 riskLevel: .medium  // AIExecutionEngine shows preview + approval before calling executor

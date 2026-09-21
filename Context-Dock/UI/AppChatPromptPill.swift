@@ -165,7 +165,7 @@ enum AppChatPromptMetrics {
         -> CGFloat
     {
         var result: CGFloat = 0
-        if hasApproval { result += ApprovalCard.height + 1 }
+        if hasApproval { result += ApprovalCard.reservedHeight(for: .dock) + 1 }
         if attachments > 0 { result += attachmentRowHeight }
         if hasSelectionRow { result += attachmentRowHeight }
         return result
@@ -444,7 +444,7 @@ struct AppChatPromptPill: View {
             // rather than inside a transcript the user can scroll away from.
             if let request = approvals.pending(for: .corner) {
                 ApprovalCard(request: request)
-                    .frame(height: ApprovalCard.height)
+                    .frame(height: ApprovalCard.height(for: request))
                 Divider().opacity(0.18)
             }
             if !model.pendingChoices.isEmpty {
