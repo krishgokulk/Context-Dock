@@ -1003,6 +1003,8 @@ final class AgentToolRegistry {
         // The rung below a verified menu, off unless the user turned it on for that app.
         // See ComputerUseTool.swift.
         registerComputerUseTool()
+        // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
+        registerAppAgentScriptTool()
 
         register(AgentTool(
             name: "read_tool_result",

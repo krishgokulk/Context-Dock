@@ -24,7 +24,9 @@ final class AppAgentProfileStore: ObservableObject {
 
     private var cache: [String: (modified: Date, profile: AppAgentProfile)] = [:]
 
-    private let root: URL
+    /// Where profiles live. Exposed so a pack can be written from or installed into the same
+    /// place a turn reads, rather than each side deriving the path and eventually disagreeing.
+    let root: URL
 
     init(root: URL? = nil) {
         if let root {
@@ -73,6 +75,13 @@ final class AppAgentProfileStore: ObservableObject {
         try profile.markdown().write(to: url, atomically: true, encoding: .utf8)
         cache[bundleID.lowercased()] = nil
         return url
+    }
+
+    /// Forget what was cached for one app, after its file was written by someone else — the
+    /// editor writes the user's text verbatim rather than re-serialising it, so the store has
+    /// to be told rather than inferring from its own save.
+    func invalidate(bundleID: String) {
+        cache[bundleID.lowercased()] = nil
     }
 
     /// Apps that have written one, for the Integrations list.
