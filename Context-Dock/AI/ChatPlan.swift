@@ -172,8 +172,14 @@ enum ChatPlanRunner {
     ///   authorized when it was recorded, and the thread replaying it may be a different
     ///   one. The chat path always passes a set, because that is where a plan is composed
     ///   fresh from a model's ordering.
+    /// - Parameter onStep: called as each step starts and finishes, in the words a person
+    ///   reading along needs: which step of how many, what it runs, in which app, and what
+    ///   came back. Without it a multi-step plan is a spinner followed by a paragraph, and
+    ///   the owner's report was exactly that — "no intelligently shows … how it works every
+    ///   step while it is thinking". The steps were always there; nothing published them.
     static func run(
-        _ plan: ChatPlan, query: String, authorizedBundleIds: Set<String>? = nil
+        _ plan: ChatPlan, query: String, authorizedBundleIds: Set<String>? = nil,
+        onStep: ((String) -> Void)? = nil
     ) async -> [ChatPlanStepResult] {
         var completed: [Int: ChatPlanStepResult] = [:]
         var order: [Int] = []
@@ -204,6 +210,7 @@ enum ChatPlanRunner {
             var waveResults: [(index: Int, result: ChatPlanStepResult)] = []
             if wave.count == 1 {
                 let index = wave[0]
+                onStep?(startLine(at: index, in: plan))
                 waveResults.append(
                     (index,
                      await runStep(
@@ -214,6 +221,7 @@ enum ChatPlanRunner {
                     of: (Int, ChatPlanStepResult).self
                 ) { group in
                     for index in wave {
+                        onStep?(startLine(at: index, in: plan))
                         let snapshot = completed
                         group.addTask { @MainActor in
                             (index,
@@ -231,11 +239,48 @@ enum ChatPlanRunner {
             for (index, result) in waveResults {
                 completed[index] = result
                 order.append(index)
+                onStep?(finishLine(at: index, in: plan, result: result))
                 if !result.success { stopped = true }
             }
         }
 
+        // Steps the plan never reached, said plainly rather than left as a silence the user
+        // has to infer from a missing result.
+        for index in plan.steps.indices where completed[index] == nil {
+            onStep?("Skipped step \(index + 1) — \(plan.steps[index].route.title)")
+        }
         return order.compactMap { completed[$0] }
+    }
+
+    /// "Step 1/2 · Reading open tab titles and URLs — Safari · App data".
+    ///
+    /// Names the app and the kind of route, because "which app is this touching" and "does a
+    /// window open" are the two things a person watching actually wants to know.
+    private static func startLine(at index: Int, in plan: ChatPlan) -> String {
+        let step = plan.steps[index]
+        let what = step.purpose.isEmpty ? step.route.title : step.purpose
+        return "Step \(index + 1)/\(plan.steps.count) · \(what) — "
+            + "\(step.route.appName) · \(step.route.kind.routeLabel)"
+    }
+
+    /// What that step actually produced, in one line. The read-back when there is one, the
+    /// first line of output otherwise — never "done", which is the claim rather than the
+    /// evidence.
+    private static func finishLine(
+        at index: Int, in plan: ChatPlan, result: ChatPlanStepResult
+    ) -> String {
+        let step = plan.steps[index]
+        let outcome = result.verification
+            ?? result.output
+                .split(separator: "\n")
+                .first
+                .map(String.init)
+                .map { $0.count > 120 ? String($0.prefix(120)) + "…" : $0 }
+            ?? ""
+        let mark = result.success ? "Ran" : "Failed"
+        let detail = outcome.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(mark) step \(index + 1) · \(step.route.title)"
+            + (detail.isEmpty ? "" : " — \(detail)")
     }
 
     /// Runs one step: authorization, the route, and the read-back that decides whether it

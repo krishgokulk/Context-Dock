@@ -1236,9 +1236,20 @@ enum AppScopedChatService {
                     // The thread's own apps, and only those. Routes were resolved from this
                     // set, so a step outside it means the plan drifted from what was
                     // offered — checked per step rather than trusted once.
+                    // The plan itself, before anything runs. A person watching should see
+                    // what DoraX intends to do while it is doing it — the owner's report was
+                    // a spinner, then a paragraph claiming an app could not be launched
+                    // while that app sat open on screen.
+                    onStatus?("Planned \(plan.steps.count) steps · \(plan.summary)")
+                    for (index, step) in plan.steps.enumerated() {
+                        onStatus?(
+                            "  \(index + 1). \(step.purpose.isEmpty ? step.route.title : step.purpose)"
+                            + " — \(step.route.appName) · \(step.route.kind.routeLabel)")
+                    }
                     let results = await ChatPlanRunner.run(
                         plan, query: query,
-                        authorizedBundleIds: Set(scopeApps.map { $0.0.lowercased() }))
+                        authorizedBundleIds: Set(scopeApps.map { $0.0.lowercased() }),
+                        onStep: { line in onStatus?(line) })
                     let receipt = ChatPlanRunner.receipt(plan, results: results)
                     let allSucceeded = ChatPlanRunner.fullyConfirmed(plan, results: results)
                     // Only a plan that ran end to end is offerable as a recipe. Keeping a
