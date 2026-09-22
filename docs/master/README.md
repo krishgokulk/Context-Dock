@@ -35,4 +35,6 @@ top-level index.
 
 ## Master index
 
-- [`01-GLOBAL-CONTEXT.md`](01-GLOBAL-CONTEXT.md)
+- [`01-GLOBAL-CONTEXT.md`](01-GLOBAL-CONTEXT.md) ✅ draft
+- `02-CONTEXT-DOCK.md` — frontmost-app command layer (pending)
+- [`03-APP-SCOPED-CHAT.md`](03-APP-SCOPED-CHAT.md) ✅ draft — frontmost-app / Context Dock Chat Mode
