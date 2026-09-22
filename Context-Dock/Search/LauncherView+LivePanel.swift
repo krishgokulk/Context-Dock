@@ -126,86 +126,9 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// The live panel's results. The drawing lives in `LivePanelResultsView`.
     func livePanelResultsView(items: [LivePanelMode.ResultEntry]) -> some View {
-        if items.isEmpty {
-            VStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 32, weight: .thin))
-                    .foregroundStyle(.secondary.opacity(0.4))
-                Text("Ask the AI to show results")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                Text("e.g. \"list all PDFs here\" or \"find large files\"")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 20)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(items) { item in
-                        Button {
-                            if !item.path.isEmpty {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
-                            }
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: item.icon)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(Color.accentColor)
-                                    .frame(width: 20)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.name)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .lineLimit(1)
-                                        .foregroundStyle(.primary)
-                                    if !item.subtitle.isEmpty {
-                                        Text(item.subtitle)
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(.tertiary)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                Spacer()
-                                if !item.path.isEmpty {
-                                    Menu {
-                                        Button("Open") {
-                                            NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
-                                        }
-                                        Button("Reveal in Finder") {
-                                            NSWorkspace.shared.activateFileViewerSelecting([
-                                                URL(fileURLWithPath: item.path)
-                                            ])
-                                        }
-                                        Button("Copy Path") {
-                                            NSPasteboard.general.clearContents()
-                                            NSPasteboard.general.setString(
-                                                item.path, forType: .string)
-                                        }
-                                    } label: {
-                                        Image(systemName: "ellipsis")
-                                            .font(.system(size: 10))
-                                            .foregroundStyle(.secondary)
-                                            .padding(4)
-                                    }
-                                    .menuStyle(.borderlessButton)
-                                    .frame(width: 20)
-                                }
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .background(Color.primary.opacity(0.0))
-                        Divider().padding(.leading, 42).opacity(0.4)
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        LivePanelResultsView(items: items)
     }
 
     @ViewBuilder
@@ -557,252 +480,25 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// The live panel's terminal. The drawing lives in `LivePanelTerminalView`.
     var livePanelTerminalView: some View {
-        VStack(spacing: 0) {
-            // Terminal header
-            HStack(spacing: 8) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.green)
-                Text("Terminal")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                // Active workers indicator
-                let active = workerPool.workers.values.filter { $0.status.isActive }
-                if !active.isEmpty {
-                    HStack(spacing: 4) {
-                        Circle().fill(Color.green).frame(width: 5, height: 5)
-                            .opacity(0.8)
-                        Text("\(active.count) running")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                Button {
-                    panelTerminalHost?.sendCommand("clear")
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.black.opacity(0.4))
-
-            // SwiftTerm embedded view
-            if let host = panelTerminalHost {
-                TerminalNSViewRepresentable(terminalController: host)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                VStack(spacing: 12) {
-                    ProgressView().scaleEffect(0.8)
-                    Text("Starting terminal…")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onAppear {
-                    panelTerminalHost = TerminalHostController()
-                }
-            }
-        }
-        .background(Color.black.opacity(0.55))
-        .onAppear {
-            if panelTerminalHost == nil {
-                panelTerminalHost = TerminalHostController()
-            }
-        }
+        LivePanelTerminalView(terminalHost: $panelTerminalHost, workerPool: workerPool)
     }
 
     @ViewBuilder
+    /// The live panel's now-playing pane. The drawing lives in `LivePanelNowPlayingView`.
     var livePanelNowPlayingView: some View {
-        VStack(spacing: 0) {
-            // Album art placeholder + info
-            VStack(spacing: 0) {
-                // Large album art area
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.accentColor.opacity(0.3), Color.purple.opacity(0.2),
-                                ],
-                                startPoint: .topLeading, endPoint: .bottomTrailing))
-                    Image(systemName: "music.note")
-                        .font(.system(size: 40, weight: .thin))
-                        .foregroundStyle(.white.opacity(0.4))
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 120)
-                .padding(.horizontal, 16)
-                .padding(.top, 16)
-
-                // Track info
-                VStack(spacing: 4) {
-                    Text(mediaDockEngine.title.isEmpty ? "Nothing Playing" : mediaDockEngine.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    Text(mediaDockEngine.artist.isEmpty ? "—" : mediaDockEngine.artist)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if !mediaDockEngine.album.isEmpty {
-                        Text(mediaDockEngine.album)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-                // Now playing source badge
-                if let info = miniPlayer.playerInfo {
-                    HStack(spacing: 4) {
-                        Circle().fill(Color.green).frame(width: 5, height: 5)
-                        Text("via \(info.toolName)")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.bottom, 4)
-                }
-
-                Divider().padding(.horizontal, 16).padding(.vertical, 6)
-
-                // Playback controls
-                HStack(spacing: 0) {
-                    Spacer()
-                    Button {
-                        mediaDockEngine.previous()
-                    } label: {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                    Button {
-                        mediaDockEngine.togglePlayPause()
-                    } label: {
-                        Image(
-                            systemName: mediaDockEngine.isPlaying
-                                ? "pause.circle.fill" : "play.circle.fill"
-                        )
-                        .font(.system(size: 36))
-                        .foregroundStyle(Color.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                    Button {
-                        mediaDockEngine.next()
-                    } label: {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 18))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-
-                Button {
-                    mediaDockEngine.stop()
-                } label: {
-                    Label("Stop Playback", systemImage: "stop.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .padding(.bottom, 12)
-            }
-            .frame(maxWidth: .infinity)
-
-            Spacer()
-        }
-        .onAppear {
-            mediaDockEngine.startAutoRefresh()
-        }
-        .onDisappear {
-            mediaDockEngine.stopAutoRefresh()
-        }
+        LivePanelNowPlayingView(miniPlayer: miniPlayer, mediaDockEngine: mediaDockEngine)
     }
 
     // MARK: - Live Panel: File Preview (inline QL preview for AI-created files)
     @ViewBuilder
+    /// The live panel's file preview. The drawing lives in `LivePanelFilePreviewView`.
     func livePanelFilePreviewView(url: URL) -> some View {
-        VStack(spacing: 0) {
-            GeometryReader { geo in
-                ZStack {
-                    InlineQLPreview(
-                        url: url,
-                        onRightClick: { pos in
-                            withAnimation(.spring(response: 0.18, dampingFraction: 0.78)) {
-                                qlRightClickPos = pos
-                            }
-                        }
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if let pos = qlRightClickPos {
-                        PillContextMenuPopup(
-                            items: qlContextMenuItems(for: url),
-                            position: pos,
-                            containerSize: geo.size,
-                            onDismiss: {
-                                withAnimation(.spring(response: 0.18, dampingFraction: 0.78)) {
-                                    qlRightClickPos = nil
-                                }
-                            }
-                        )
-                        .transition(.opacity.combined(with: .scale(scale: 0.90)))
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            Divider()
-
-            // Bottom action bar
-            HStack(spacing: 12) {
-                Button {
-                    NSWorkspace.shared.open(url)
-                } label: {
-                    Label("Open", systemImage: "arrow.up.right.square")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
-                } label: {
-                    Label("Reveal", systemImage: "folder")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.bordered).controlSize(.small)
-
-                Spacer()
-
-                Button {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.path, forType: .string)
-                } label: {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Copy path")
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial)
-        }
+        LivePanelFilePreviewView(
+            url: url,
+            rightClickPosition: $qlRightClickPos,
+            contextMenuItems: { qlContextMenuItems(for: $0) })
     }
 
     func qlContextMenuItems(for url: URL) -> [PillContextMenuAction] {
@@ -1721,27 +1417,7 @@ extension LauncherView {
                                 if hasChatHistory {
                                     ScrollViewReader { proxy in
                                         ScrollView {
-                                            VStack(alignment: .leading, spacing: 8) {
-                                                ForEach(remPanelChatMessages) { msg in
-                                                    if let tool = appCLIConsentTool(for: msg) {
-                                                        AppCLIAgentConsentCard(tool: tool).id(msg.id)
-                                                    } else {
-                                                        remChatBubble(msg).id(msg.id)
-                                                    }
-                                                }
-                                                if remPanelIsProcessing {
-                                                    HStack(spacing: 6) {
-                                                        ProgressView().scaleEffect(0.6)
-                                                        Text("Thinking…")
-                                                            .font(.system(size: 11))
-                                                            .foregroundStyle(.secondary)
-                                                    }
-                                                    .padding(.horizontal, 10)
-                                                    .padding(.vertical, 4)
-                                                    .id("typing")
-                                                }
-                                            }
-                                            .padding(10)
+                                            remPanelChatList
                                         }
                                         .onChange(of: remPanelChatMessages.count) { _, _ in
                                             if let last = remPanelChatMessages.last {
@@ -1816,53 +1492,16 @@ extension LauncherView {
 
     /// Context-aware welcome card shown when no chat history exists yet.
     @ViewBuilder
+    /// The app panel's welcome state. The drawing lives in `PanelWelcomeView`.
     func panelWelcomeView(
-        ctx: SearchContextApp?,
-        meta: (icon: String, label: String, appPath: String),
-        key: String
+        ctx: SearchContextApp?, meta: (icon: String, label: String, appPath: String), key: String
     ) -> some View {
         let (greeting, subtext) = panelWelcomeText(ctx: ctx, key: key)
-
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                // ── Greeting card ──────────────────────────────────────
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 8) {
-                        // Context icon
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.12))
-                                .frame(width: 36, height: 36)
-                            if let icon = ctx?.icon {
-                                Image(nsImage: icon)
-                                    .resizable().aspectRatio(contentMode: .fit)
-                                    .frame(width: 22, height: 22)
-                            } else {
-                                Image(systemName: meta.icon)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(greeting)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.primary)
-                            Text(subtext)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.top, 16)
-                .padding(.bottom, 12)
-
-                Spacer()
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        return PanelWelcomeView(
+            greeting: greeting,
+            subtext: subtext,
+            contextIcon: ctx?.icon,
+            fallbackIcon: meta.icon)
     }
 
     /// Contextual greeting + subtext for the welcome card.
@@ -2125,6 +1764,36 @@ extension LauncherView {
 
     /// Extract only genuine assistant clarifications, such as “1. Scan first” /
     /// “2. Clean immediately”. Ordinary numbered output remains plain text.
+
+    /// The app panel's message list, split out of `appPanelView` because the type-checker
+    /// could not finish that expression once its neighbours became nominal views:
+    /// "unable to type-check this expression in reasonable time". A `@ViewBuilder` member
+    /// breaks the inference chain, and this is a coherent piece on its own.
+    @ViewBuilder
+    var remPanelChatList: some View {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(remPanelChatMessages) { msg in
+                        if let tool = appCLIConsentTool(for: msg) {
+                            AppCLIAgentConsentCard(tool: tool).id(msg.id)
+                        } else {
+                            remChatBubble(msg).id(msg.id)
+                        }
+                    }
+                    if remPanelIsProcessing {
+                        HStack(spacing: 6) {
+                            ProgressView().scaleEffect(0.6)
+                            Text("Thinking…")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .id("typing")
+                    }
+                }
+                .padding(10)
+    }
+
     func appPanelChoiceOptions(in text: String) -> [String] {
         let prompt = text.lowercased()
         let hasQuestion = prompt.contains("do you want")

@@ -45,25 +45,54 @@ def members():
     return found
 
 
+def reachable_from_body(found, uses_of):
+    """Members LauncherView.body can actually reach.
+
+    Only these contribute to body's opaque type. Extracting a member nothing reaches
+    changes nothing — measured: appPillButton and globalInlineScopeChip together are 309
+    lines and moved the count by 8, where 341 reachable lines had moved it by 768.
+    """
+    seen, stack = set(), ["body"]
+    while stack:
+        name = stack.pop()
+        if name in seen or name not in found:
+            continue
+        seen.add(name)
+        stack.extend(uses_of[name])
+    return seen
+
+
 def main():
     found = members()
     names = set(found)
+    uses_of = {}
+    for name, (path, line, body) in found.items():
+        uses_of[name] = (set(WORD.findall(body)) & names) - {name}
+
+    live = reachable_from_body(found, uses_of)
     rows = []
     for name, (path, line, body) in found.items():
-        uses = (set(WORD.findall(body)) & names) - {name}
-        rows.append((len(body.split("\n")), name, path.split("/")[-1], line, sorted(uses)))
+        rows.append((len(body.split("\n")), name, path.split("/")[-1], line,
+                     sorted(uses_of[name]), name in live))
 
     show_all = "--all" in sys.argv
     rows.sort(reverse=True)
     leaves = [r for r in rows if not r[4]]
+    live_leaves = [r for r in leaves if r[5]]
 
-    print(f"view members {len(found)}   true leaves {len(leaves)}   leaf lines {sum(r[0] for r in leaves)}")
+    print(f"view members {len(found)}   reachable from body {len(live)}")
+    print(f"true leaves {len(leaves)}   of those reachable {len(live_leaves)}   "
+          f"reachable leaf lines {sum(r[0] for r in live_leaves)}")
     print()
-    for n, name, f, line, uses in (rows if show_all else leaves):
-        if show_all and uses:
-            print(f"{n:5d}  {name}  ({f}:{line})  uses: {', '.join(uses[:4])}{'…' if len(uses) > 4 else ''}")
-        else:
-            print(f"{n:5d}  {name}  ({f}:{line})")
+    print("-- extract these: leaves body can actually reach --")
+    for n, name, f, line, uses, _ in live_leaves:
+        print(f"{n:5d}  {name}  ({f}:{line})")
+    if show_all:
+        print()
+        print("-- leaves nothing reaches from body (extracting these changes nothing) --")
+        for n, name, f, line, uses, islive in leaves:
+            if not islive:
+                print(f"{n:5d}  {name}  ({f}:{line})")
 
 
 if __name__ == "__main__":
