@@ -1,0 +1,23 @@
+flowchart TD
+    U([User asks in an app-scoped chat]) --> G[Build grounding<br/>ScopedAppPromptBuilder.appIdentityBlock]
+    G --> G1[Inject app facts:<br/>adapter actions · verified menus · MCP · API · Shortcuts · skills · CLI<br/>+ live window / browser page · date-time · selection · untrusted-content rule]
+    G1 --> B[prepareTurnBudget<br/>tool budget · allowedToolNames · refusesChanges]
+    B --> M[Send to model<br/>chosen provider]
+
+    M --> D{Model wants<br/>a tool?}
+    D -- No --> V
+    D -- Yes --> RES[reserveToolCall<br/>budget check]
+    RES -- budget spent --> M
+    RES -- ok --> ROUTE[Pick route by tool-choice order:<br/>1 adapter action · 2 verified menu · 3 MCP/API read<br/>· 4 Shortcut · 5 CLI fallback · 6 answer from context]
+    ROUTE --> ACC{Access level OK<br/>+ approval needed?}
+    ACC -- blocked / denied --> M
+    ACC -- needs approval --> APV[ApprovalCenter<br/>user approves or denies]
+    APV -- denied --> M
+    APV -- approved --> EXE[Execute route]
+    ACC -- allowed --> EXE
+    EXE --> REC[(Durable receipt<br/>TaskRunStore)]
+    REC --> FEED[Feed result back] --> M
+
+    V{Verify the answer:<br/>AgentAnswerVerifier · CommandOutcomeVerifier}
+    V -- claim not supported by a real tool run --> M
+    V -- ok --> OUT([Answer + tool receipts shown to user])
