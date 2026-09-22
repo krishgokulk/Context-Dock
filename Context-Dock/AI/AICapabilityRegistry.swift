@@ -2,14 +2,24 @@ import AppKit
 import Combine
 import Foundation
 
-enum AICapabilityRiskLevel: String, Codable {
+enum AICapabilityRiskLevel: String, Codable, CaseIterable {
     case low
     case medium
     case high
     case critical
 
+    /// The one question every approval path asks — six call sites decide by it, including the
+    /// executor's own gate.
+    ///
+    /// Written as an exhaustive switch rather than a list of the levels that need asking. As a
+    /// list it read `self == .medium || self == .high`, which left `.critical` — the level
+    /// reserved for the most dangerous capabilities — as the only one above `.low` that ran
+    /// unasked (#29). A switch cannot be extended without answering for the new case.
     var requiresApproval: Bool {
-        self == .medium || self == .high
+        switch self {
+        case .low: return false
+        case .medium, .high, .critical: return true
+        }
     }
 }
 
