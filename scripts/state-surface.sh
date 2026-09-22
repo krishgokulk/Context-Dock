@@ -21,14 +21,17 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 # The property body, from its declaration to the closing brace at the same indentation.
+# Matches a property or a function: most of LauncherView's view members are functions,
+# and the leaf set is mostly functions, so a var-only pattern silently finds nothing.
 awk -v prop="$PROP" '
   $0 ~ "^    (private )?(@ViewBuilder )?var " prop ": some View \\{" { inside = 1 }
+  $0 ~ "^    (private )?(@ViewBuilder )?func " prop "\\(" { inside = 1 }
   inside { print }
   inside && /^    \}$/ { exit }
 ' "$FILE" > "$TMP/prop.txt"
 
 if [ ! -s "$TMP/prop.txt" ]; then
-  echo "did not find '$PROP' in $FILE — check the name and that it returns 'some View'" >&2
+  echo "did not find '$PROP' in $FILE — check the name, and that it is a var returning 'some View' or a func" >&2
   exit 1
 fi
 
