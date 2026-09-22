@@ -26,8 +26,12 @@ def members():
             m = DECL.match(line)
             if not m:
                 continue
+            # No arbitrary cap. appPillButton's parameter list runs fourteen lines before
+            # its "-> some View", and a twelve-line limit silently classified it as not a
+            # view — which then made pinnedAndRecentAppsRow look like a leaf. Scan to the
+            # brace that actually opens the body.
             sig, j = line, i
-            while "{" not in sig and j + 1 < len(lines) and j - i < 12:
+            while "{" not in sig and j + 1 < len(lines):
                 j += 1
                 sig += " " + lines[j].strip()
             if "some View" not in sig:
