@@ -57,4 +57,63 @@ struct MenuPickRuleTests {
         #expect(MenuPickRule.candidateIndex(index: -1, certainty: "certain", candidateCount: 5) == nil)
         #expect(MenuPickRule.candidateIndex(index: 1, certainty: "certain", candidateCount: 0) == nil)
     }
+
+    // MARK: - Reading a cloud provider's reply
+
+    /// The cloud fallback is reached whenever the on-device model is not available to ask, so
+    /// these are the answers a real provider gives when it is the one deciding.
+    @Test func readsTheTwoFieldsOutOfPlainJSON() throws {
+        let pick = try #require(
+            MenuPickRule.parse(reply: #"{"index": 3, "certainty": "certain"}"#))
+        #expect(pick.index == 3)
+        #expect(pick.certainty == "certain")
+    }
+
+    @Test func readsThemThroughACodeFenceOrAnExplanation() throws {
+        let fenced = try #require(
+            MenuPickRule.parse(
+                reply: "```json\n{\"index\": 2, \"certainty\": \"likely\"}\n```"))
+        #expect(fenced.index == 2)
+        #expect(fenced.certainty == "likely")
+
+        let explained = try #require(
+            MenuPickRule.parse(
+                reply: #"Looking at the list, {"index": 1, "certainty": "unsure"} is closest."#))
+        #expect(explained.index == 1)
+        #expect(explained.certainty == "unsure")
+    }
+
+    /// A model that ignores the format has still answered. The older picker threw these away.
+    @Test func aBareNumberIsStillAnAnswer() throws {
+        let bare = try #require(MenuPickRule.parse(reply: "3"))
+        #expect(bare.index == 3)
+        #expect(bare.certainty == "")
+        #expect(try #require(MenuPickRule.parse(reply: "2.")).index == 2)
+    }
+
+    @Test func noneAndNonsenseBothMeanNoPick() {
+        #expect(MenuPickRule.parse(reply: "none") == nil)
+        #expect(MenuPickRule.parse(reply: "NONE") == nil)
+        #expect(MenuPickRule.parse(reply: "") == nil)
+        #expect(MenuPickRule.parse(reply: "   ") == nil)
+        #expect(MenuPickRule.parse(reply: "I could not tell") == nil)
+    }
+
+    /// The point of the whole change: the cloud path and the on-device path are gated by the
+    /// same rule, so a guess is dropped in both.
+    @Test func aCloudGuessIsDroppedJustAsAnOnDeviceGuessIs() throws {
+        let pick = try #require(
+            MenuPickRule.parse(reply: #"{"index": 4, "certainty": "unsure"}"#))
+        #expect(
+            MenuPickRule.candidateIndex(
+                index: pick.index, certainty: pick.certainty, candidateCount: 10) == nil)
+    }
+
+    @Test func aCloudIndexOutsideTheListIsRefusedNotClamped() throws {
+        let pick = try #require(
+            MenuPickRule.parse(reply: #"{"index": 11, "certainty": "certain"}"#))
+        #expect(
+            MenuPickRule.candidateIndex(
+                index: pick.index, certainty: pick.certainty, candidateCount: 10) == nil)
+    }
 }

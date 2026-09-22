@@ -71,6 +71,63 @@ enum MenuPickRule {
         guard !lowConfidenceWords.contains(word) else { return nil }
         return index - 1
     }
+
+    /// What a cloud provider said, read as the same two fields the on-device model fills in.
+    ///
+    /// The on-device path gets its shape for free from `@Generable`. A cloud provider returns a
+    /// `String`, so the fields have to be recovered from it — which is the parsing this change
+    /// removes everywhere it can, kept here only because `AIProviderRouter.send(_:)` has no
+    /// typed seam to use instead.
+    ///
+    /// Tolerant on purpose. A model that wraps its JSON in a code fence, or writes a sentence
+    /// around it, has still answered; the older picker threw all three away. A bare number is
+    /// read as a pick with no stated certainty, which the rule above then treats as any other
+    /// unrecognised word: offered, because the user still has to press the pill.
+    static func parse(reply: String) -> (index: Int, certainty: String)? {
+        let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let object = firstJSONObject(in: trimmed),
+            let data = object.data(using: .utf8),
+            let decoded = try? JSONDecoder().decode(ReplyShape.self, from: data)
+        {
+            return (decoded.index, decoded.certainty ?? "")
+        }
+
+        // No JSON. "none" is a real answer — nothing here fits — and so is a bare number from a
+        // model that ignored the format.
+        let firstWord =
+            trimmed
+            .components(separatedBy: CharacterSet.whitespacesAndNewlines)
+            .first ?? ""
+        guard firstWord.lowercased() != "none",
+            let number = Int(firstWord.trimmingCharacters(in: CharacterSet(charactersIn: ".,:")))
+        else { return nil }
+        return (number, "")
+    }
+
+    private struct ReplyShape: Decodable {
+        var index: Int
+        var certainty: String?
+    }
+
+    /// The first `{…}` in a string, brace-balanced, so a fenced or explained answer still
+    /// yields its object.
+    private static func firstJSONObject(in text: String) -> String? {
+        guard let start = text.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var index = start
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "{" { depth += 1 }
+            if character == "}" {
+                depth -= 1
+                if depth == 0 { return String(text[start...index]) }
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
 }
 
 
@@ -227,8 +284,15 @@ final class MenuIntentRouter {
     }
 #endif
 
-    // MARK: - Cloud AI fallback (text parse)
+    // MARK: - Cloud AI fallback
 
+    /// Reached when the on-device model is not there to ask — Apple Intelligence off or
+    /// unavailable makes `respond` throw — so this is live on real machines, not dead code for
+    /// an OS below the deployment target.
+    ///
+    /// It asks for the same two fields as the on-device path and runs the answer through the
+    /// same `MenuPickRule`. One rule, two callers: a guess was being offered here after it
+    /// stopped being offered there, which is the sort of difference nobody finds by reading.
     private func askCloudAI(query: String, candidates: [AXMenuItem]) async -> AXMenuItem? {
         let list = candidates.enumerated()
             .map { "\($0.offset + 1). \($0.element.pathString)" }
@@ -236,9 +300,13 @@ final class MenuIntentRouter {
 
         let prompt = """
         The user of a macOS app said: "\(query)"
-        Pick the best matching menu action. Reply with ONLY the number (1, 2, 3…) or "none".
+
+        Which of these menu items does what they asked?
 
         \(list)
+
+        Reply with JSON and nothing else:
+        {"index": <the item's number, or 0 if none of them do>, "certainty": "certain" | "likely" | "unsure"}
         """
 
         let selection = AIProviderSelectionResolver.current()
@@ -248,14 +316,14 @@ final class MenuIntentRouter {
             source: .contextDock,
             providerSelection: selection
         )
-        guard let response = try? await AIProviderRouter.shared.send(request) else { return nil }
-        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.lowercased() != "none",
-              let number = trimmed.components(separatedBy: .whitespaces).first,
-              let index = Int(number),
-              index >= 1, index <= candidates.count
+        guard let response = try? await AIProviderRouter.shared.send(request),
+            let pick = MenuPickRule.parse(reply: response),
+            let index = MenuPickRule.candidateIndex(
+                index: pick.index,
+                certainty: pick.certainty,
+                candidateCount: candidates.count)
         else { return nil }
-        return candidates[index - 1]
+        return candidates[index]
     }
 
     // MARK: - Click
