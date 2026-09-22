@@ -10,7 +10,7 @@
 
 **Spec:** Issue **#25** and its 2026-09-22 comments carry the measurements this plan argues from. Decision `5077f556` is unrelated background. The owner chose decomposition over the `SWIFT_COMPILATION_MODE = incremental` workaround on 2026-09-22, accepting that `ship.sh` stays broken until this lands.
 
-**Tooling this plan adds:** `scripts/state-surface.sh <property> <file>` prints exactly the inputs a view property needs before it can become a type of its own. Every extraction task starts by running it.
+**Tooling this plan adds:** `scripts/state-surface.sh <property> <file>` prints exactly the inputs a view property needs before it can become a type of its own — every extraction task starts by running it. `scripts/release-type-size.sh` builds Release and reports the size of `body`'s opaque type — every task ends by running it.
 
 ## Global Constraints
 
@@ -34,46 +34,28 @@ No task in this plan may be called done on "it builds in Debug" — Debug has al
 **Interfaces:**
 - Produces: `opaque_type` count for the current HEAD, recorded on #25 as the running baseline.
 
-- [ ] **Step 1: Check nothing else is building**
-
-```bash
-pgrep -fl xcodebuild || echo "clear"
-```
-
-- [ ] **Step 2: Build Release and keep the whole log**
+- [ ] **Step 1: Measure**
 
 ```bash
 cd /Users/gokulakannan/Developer/Context-Dock
-rm -rf .build/XcodeReleaseDerivedData
-LOG=/tmp/rel-$(git rev-parse --short HEAD).log
-xcodebuild -project Context-Dock.xcodeproj -scheme Context-Dock \
-  -configuration Release -derivedDataPath .build/XcodeReleaseDerivedData \
-  -jobs 1 build > "$LOG" 2>&1
-echo "exit=$?"
+./scripts/release-type-size.sh
 ```
 
-Expect `exit=65` until the final task. A clean `** BUILD SUCCEEDED **` means this plan is finished early — stop and verify with Task 9's checks.
+It refuses if another `xcodebuild` is running, builds Release (~12 minutes), and prints the commit, the opaque-type count, the `ModifiedContent` count and the first few decls of the type — which name the current worst offender. That last list is how the previous two rounds were targeted, and it worked: after the subscriptions were collapsed the top changed from `SubscriptionView<Published.Publisher<…>>` to nested `onKeyPress`, and after those were collapsed `onKeyPress` appears **zero** times.
 
-- [ ] **Step 3: Count the type**
+To re-measure a log you already have, pass its path.
 
-```bash
-awk '/Substituted type:/,/Please submit a bug/' "$LOG" > /tmp/subst.txt
-echo "opaque types: $(grep -c opaque_type /tmp/subst.txt)"
-echo "ModifiedContent: $(grep -c ModifiedContent /tmp/subst.txt)"
-wc -l /tmp/subst.txt
-```
+- [ ] **Step 2: Compare against the baseline**
 
-Baseline at `fa65dd1`: **3,811 opaque types**, 24,713 `ModifiedContent`, 142,845 lines.
+Baseline at `eea4c7f`: **3,811 opaque types**, 24,713 `ModifiedContent`, 142,793 dump lines.
 
-- [ ] **Step 4: See what is at the top of the type**
+**Do not hand-roll this count.** The compiler emits the substituted type twice — once plainly and once prefixed with `| ` inside the stack dump — while `Please submit a bug` appears only at the very end. A range between those two markers spans both copies and reports exactly double, which reads as a catastrophic regression and is not. That mistake was made on this plan's own first run; the script reads the first copy only.
 
-```bash
-sed -n '/Substituted type:/,+20p' /tmp/subst.txt
-```
+- [ ] **Step 3: If it says BUILD SUCCEEDED**
 
-The first few nested decls name the current worst offender. This is how the previous two rounds were targeted, and it works: after the subscriptions were collapsed the top changed from `SubscriptionView<Published.Publisher<…>>` to nested `onKeyPress`, and after those were collapsed `onKeyPress` appears **zero** times.
+Then this plan is finished early. Stop and verify with Task 9 rather than continuing to extract.
 
-- [ ] **Step 5: Record the number**
+- [ ] **Step 4: Record the number**
 
 Add a one-line comment to #25 with the commit and the count. A task that does not lower this number was the wrong task, and is reverted rather than kept.
 
@@ -138,7 +120,7 @@ git add Context-Dock/Search/LauncherView+ContextActionsUI.swift Context-Dock/Sea
 git commit -m "refactor(launcher): delete two view properties nothing references"
 ```
 
-- [ ] **Step 7: Re-measure** — run Task 0 steps 2-5.
+- [ ] **Step 7: Re-measure** — run `./scripts/release-type-size.sh`.
 
 ---
 
@@ -207,7 +189,7 @@ git add Context-Dock/Search/LauncherLifecycleHandlers.swift Context-Dock/Search/
 git commit -m "refactor(launcher): the content chain's handlers are modifiers"
 ```
 
-Then Task 0 steps 2-5. **Expected reduction is modest** — the previous round removed 17 layers against 3,811 and moved the number very little. If the count drops by roughly the number of modifiers collapsed and no more, that is the correct result, and it confirms the content, not the chain, is the problem. Record it and continue to Task 3, which is where the size actually is.
+Then re-measure with `./scripts/release-type-size.sh`. **Expected reduction is modest** — the previous round removed 17 layers against 3,811 and moved the number very little. If the count drops by roughly the number of modifiers collapsed and no more, that is the correct result, and it confirms the content, not the chain, is the problem. Record it and continue to Task 3, which is where the size actually is.
 
 ---
 
@@ -287,7 +269,7 @@ git add Context-Dock/Search/AppLivePanel.swift Context-Dock/Search/LauncherView+
 git commit -m "refactor(launcher): the live app panel is a view of its own"
 ```
 
-Then Task 0 steps 2-5. **This is the task that tells you whether the plan works.** A 264-line subtree leaving `body`'s type should move the opaque count visibly. If it moves by single digits, stop and report before doing Tasks 4-8 — the model of the problem is wrong and grinding through seven more extractions will not fix it.
+Then re-measure with `./scripts/release-type-size.sh`. **This is the task that tells you whether the plan works.** A 264-line subtree leaving `body`'s type should move the opaque count visibly. If it moves by single digits, stop and report before doing Tasks 4-8 — the model of the problem is wrong and grinding through seven more extractions will not fix it.
 
 ---
 
