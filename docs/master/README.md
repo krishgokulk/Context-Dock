@@ -40,3 +40,4 @@ top-level index.
 - [`03-APP-SCOPED-CHAT.md`](03-APP-SCOPED-CHAT.md) ✅ draft — frontmost-app / Context Dock Chat Mode
   - [`diagrams/03-app-scoped-chat-flow.md`](diagrams/03-app-scoped-chat-flow.md) — flow diagram
 - [`04-GENERAL-AI-CHAT.md`](04-GENERAL-AI-CHAT.md) ✅ draft — AI Assistant Mode (`.general` scope)
+- [`08-AI-ENGINE.md`](08-AI-ENGINE.md) ✅ draft — shared engine: providers, loops, tools, verify, safety, cost
