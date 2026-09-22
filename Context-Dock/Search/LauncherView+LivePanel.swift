@@ -2104,192 +2104,23 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// One chat message in the app panel. The drawing lives in `RemChatBubble`; this keeps
+    /// the name the call site already used and supplies what that view needs.
     func remChatBubble(_ msg: AIChatMessage) -> some View {
-        switch msg.role {
-        case .tool:
-            // Terminal command chip — shown inline while command runs
-            HStack(spacing: 6) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.green.opacity(0.8))
-                Text(msg.content)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.green.opacity(0.9))
-                    .lineLimit(2)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.green.opacity(0.25), lineWidth: 0.5)
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-        case .approval:
-            // Inline approval card — like Claude Code's "run this command?" prompt
-            let parts = (msg.structuredData ?? "").components(separatedBy: "|||/")
-            let purpose = parts.first ?? ""
-            let risk = parts.count > 1 ? parts[1] : "Unknown"
-            let isHighRisk =
-                risk.lowercased().contains("high") || risk.lowercased().contains("critical")
-            // A global terminal bridge can only wait for one command. Match the
-            // command itself so an old card cannot approve a later command.
-            let isPending = terminalBridge.pendingApproval?.command == msg.content
-
-            VStack(alignment: .leading, spacing: 8) {
-                // Header
-                HStack(spacing: 6) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(isHighRisk ? Color.orange : Color.accentColor)
-                    Text("Run command?")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.primary)
-                    Spacer()
-                    if isHighRisk {
-                        Text(risk)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.15), in: Capsule())
-                    }
+        RemChatBubble(
+            message: msg,
+            terminalBridge: terminalBridge,
+            brewInstalls: { extractBrewInstalls(from: $0) },
+            choiceOptions: { appPanelChoiceOptions(in: $0) },
+            onBrewToolInstalled: {
+                // Auto-retry the last user query now that the tool is installed
+                if let lastQuery = remPanelChatMessages.last(where: { $0.role == .user })?.content
+                {
+                    searchState.query = lastQuery
+                    handleRemPanelQuery()
                 }
-                // Purpose
-                if !purpose.isEmpty {
-                    Text(purpose)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                // Command
-                Text(msg.content)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 8).padding(.vertical, 5)
-                    .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 5))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                // Buttons
-                HStack(spacing: 8) {
-                    Button("Deny") {
-                        TerminalAIBridge.shared.denyCommand()
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                    .disabled(!isPending)
-
-                    Button {
-                        TerminalAIBridge.shared.approveCommand(msg.content)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "play.fill").font(.system(size: 9))
-                            Text("Approve & Run")
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(
-                        isHighRisk ? Color.orange : Color.accentColor,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                    .disabled(!isPending)
-                }
-            }
-            .padding(10)
-            .background(
-                Color.primary.opacity(0.06),
-                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        isHighRisk ? Color.orange.opacity(0.35) : Color.accentColor.opacity(0.25),
-                        lineWidth: 0.75)
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .opacity(isPending ? 1 : 0.5)
-
-        case .user:
-            HStack(alignment: .top, spacing: 0) {
-                Spacer(minLength: 24)
-                Text(msg.content)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
-                    .background(
-                        Color.accentColor,
-                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    )
-                    .frame(maxWidth: 180, alignment: .trailing)
-            }
-        case .assistant:
-            let brewTools = extractBrewInstalls(from: msg.content)
-            let choices = appPanelChoiceOptions(in: msg.content)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .top, spacing: 0) {
-                    Text(msg.content)
-                        .font(.system(size: 12))
-                        .foregroundStyle(msg.isError ? .red : .primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(
-                            msg.isError
-                                ? AnyShapeStyle(Color.red.opacity(0.1))
-                                : AnyShapeStyle(Color.primary.opacity(0.08)),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        )
-                        .frame(maxWidth: 180, alignment: .leading)
-                    Spacer(minLength: 24)
-                }
-                // Inline install buttons — appear whenever AI says "brew install X"
-                if !brewTools.isEmpty {
-                    HStack(spacing: 6) {
-                        ForEach(brewTools, id: \.self) { tool in
-                            BrewInstallButton(toolName: tool) {
-                                // Auto-retry the last user query now that the tool is installed
-                                if let lastQuery = remPanelChatMessages.last(where: {
-                                    $0.role == .user
-                                })?.content {
-                                    searchState.query = lastQuery
-                                    handleRemPanelQuery()
-                                }
-                            }
-                        }
-                    }
-                    .padding(.leading, 4)
-                }
-                // A clarification should be an interaction, not a request for the
-                // user to type an arbitrary list number. Keep this deliberately
-                // narrow: only short, explicit numbered questions become actions.
-                if !choices.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(choices, id: \.self) { choice in
-                            Button {
-                                submitAppPanelChoice(choice)
-                            } label: {
-                                Text(choice)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(Color.accentColor.opacity(0.14), in: Capsule())
-                                    .overlay(Capsule().strokeBorder(Color.accentColor.opacity(0.32)))
-                            }
-                            .buttonStyle(.plain)
-                            .help("Choose \(choice)")
-                        }
-                    }
-                    .padding(.leading, 4)
-                }
-            }
-        }
+            },
+            submitChoice: { submitAppPanelChoice($0) })
     }
 
     /// Extract only genuine assistant clarifications, such as “1. Scan first” /
