@@ -154,15 +154,34 @@ enum PluginEssentials {
     /// is already on disk — an edited one stays edited, and a deleted one stays deleted until
     /// the app is reinstalled.
     static func seed(into root: URL) throws {
-        let folder = root.appendingPathComponent(packID, isDirectory: true)
-        let pluginsDir = folder.appendingPathComponent("plugins", isDirectory: true)
-        let missing = all.filter { manifest in
-            !FileManager.default.fileExists(
-                atPath: pluginsDir
-                    .appendingPathComponent("\(manifest.id)/manifest.json").path)
+        let pluginsDir = root
+            .appendingPathComponent(packID, isDirectory: true)
+            .appendingPathComponent("plugins", isDirectory: true)
+
+        let toWrite = all.filter { shipped in
+            let url = pluginsDir.appendingPathComponent("\(shipped.id)/manifest.json")
+            guard let data = try? Data(contentsOf: url),
+                let installed = try? JSONDecoder().decode(PluginManifest.self, from: data)
+            else {
+                return true  // absent, or unreadable — write the shipped one
+            }
+            // Untouched since the app wrote it: safe to replace, which is how a fixed script
+            // or a better icon ever reaches a machine that already has the old one.
+            // Edited: left exactly as the person left it, and Settings offers a reset.
+            guard PluginShipped.isUntouched(installed) else { return false }
+            return PluginShipped.stamp(of: installed) != PluginShipped.stamp(for: shipped)
         }
-        guard !missing.isEmpty else { return }
-        try PluginInstaller.install(missing, into: root, packID: packID, packName: packName)
+        guard !toWrite.isEmpty else { return }
+        try PluginInstaller.install(
+            toWrite.map(PluginShipped.stamping), into: root, packID: packID, packName: packName)
+    }
+
+    /// Put a shipped plugin back to what this build ships. The only way an edit is ever lost:
+    /// by being asked for.
+    static func reset(pluginID: String, in root: URL) throws {
+        guard let shipped = all.first(where: { $0.id == pluginID }) else { return }
+        try PluginInstaller.install(
+            [PluginShipped.stamping(shipped)], into: root, packID: packID, packName: packName)
     }
 
     @MainActor

@@ -76,6 +76,15 @@ struct PluginsSettingsPage: View {
                                 .font(.caption2).foregroundStyle(.secondary)
                                 .help("In the corner dock")
                         }
+                        if editedShipped.contains(plugin.id) {
+                            // Edited built-ins are never overwritten by a new build, so this
+                            // is the only way the newer shipped version ever arrives — by
+                            // being asked for.
+                            Image(systemName: "pencil.circle")
+                                .font(.caption2).foregroundStyle(.orange)
+                                .help("You edited this built-in — a newer version ships with "
+                                    + "the app. Reset from the ••• menu to take it.")
+                        }
                         Toggle("", isOn: Binding(
                             get: { plugin.isEnabled },
                             set: { registry.setEnabled($0, pluginID: plugin.id) }))
@@ -93,6 +102,10 @@ struct PluginsSettingsPage: View {
                                 Button("Unpin from Dock") { setPinned(plugin, false) }
                             } else {
                                 Button("Pin to Dock") { setPinned(plugin, true) }
+                            }
+                            if editedShipped.contains(plugin.id) {
+                                Divider()
+                                Button("Reset to the built-in version") { reset(plugin) }
                             }
                             Divider()
                             Button("Remove…", role: .destructive) { remove(plugin) }
@@ -222,6 +235,22 @@ struct PluginsSettingsPage: View {
                 documentID: "plugin:\(plugin.id)")
         } else {
             for pin in pins.pins where pin.kind.pluginID == plugin.id { pins.unpin(pin.id) }
+        }
+    }
+
+    /// Built-in plugins the person has edited. Seeding leaves these alone, so the badge and
+    /// the reset are how a newer shipped version ever reaches them.
+    private var editedShipped: [String] {
+        PluginShipped.editedShippedPlugins(installedIn: PluginInstaller.userRoot)
+    }
+
+    private func reset(_ plugin: InstalledPlugin) {
+        do {
+            try PluginEssentials.reset(pluginID: plugin.id, in: PluginInstaller.userRoot)
+            registry.reload()
+            removeMessage = "\(plugin.manifest.name) is back to the version that ships with the app."
+        } catch {
+            removeMessage = "Could not reset \(plugin.manifest.name): \(error)"
         }
     }
 
