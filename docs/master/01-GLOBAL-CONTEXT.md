@@ -1,7 +1,10 @@
 # 01 — Global Context
 
-> **Status: DRAFT / under review.** Not merged into `docs/architecture/` yet.
+> **Status: DRAFT / under review — verified against code (audit pass 2).** Not merged yet.
 > Tags: `[code]` verified in source · `[owner]` owner's stated knowledge · `[?]` needs confirmation.
+> Audit confirmed §4's categories and that there is **no** calculator/clipboard/unit-conversion
+> in Global Context search. Added §4b (surface interactions: submenu drill-down, find mode,
+> Finder desktop mode, context attachment) that the first draft missed.
 
 ---
 
@@ -69,6 +72,25 @@ Grounded in `Search/SearchResult.swift` (`ResultType`) and `Search/LauncherView+
 choice is part of finding the app's goal.
 
 ---
+
+## 4b. Surface interactions (added in audit)
+
+Beyond typing a query, the Global Context surface (`Search/GlobalContextSurface.swift`) exposes:
+`[code]`
+
+- **Submenu drill-down** (`submenuContent`) — navigate into an app's menu *hierarchy* from
+  the surface, not just flat leaf commands.
+- **Find mode / find-token** (`findTokenContent`) — a distinct "find" affordance in the input.
+- **Finder desktop-only mode** (`isFinderDesktopOnlyMode` / `onFinderDesktopModeChange`) — scope
+  Finder results to the desktop.
+- **Context attachment to a conversation** (`LauncherView+FinderAttachment.swift`) — attach the
+  current Finder folder (`addCurrentFinderFolderToConversation`) or Mail context
+  (`toggleMailContextAttachment`) to a chat. This is the **bridge** from search into a scoped
+  chat — the handoff point where Global Context stops and chat begins.
+- Swipe up/down gestures (`onSwipeUp` / `onSwipeDown`).
+
+> The attachment affordance is worth a design note: it's the seam between the search layer and
+> the chat layers. Keep it explicit so the two don't blur (the recurring risk in this app).
 
 ## 5. The top-match icon row (running + installed apps)
 

@@ -9,7 +9,11 @@ flowchart TD
     U([User asks in an app-scoped chat]) --> G[Build grounding<br/>ScopedAppPromptBuilder.appIdentityBlock]
     G --> G1[Inject app facts:<br/>adapter actions · verified menus · MCP · API · Shortcuts · skills · CLI<br/>+ live window / browser page · date-time · selection · untrusted-content rule]
     G1 --> B[prepareTurnBudget<br/>tool budget · allowedToolNames · refusesChanges]
-    B --> M[Send to model<br/>chosen provider]
+    B --> CL{Multi-step?<br/>AIRequestClassifier.requiresPlanning<br/>or 2+ apps}
+    CL -- Yes --> PLAN[Plan a DAG of routes<br/>ChatPlanRunner.plan<br/>model orders pre-resolved route ids only]
+    PLAN --> PRUN[Run steps in order<br/>per-step authorization] --> V
+    CL -- No / native tools --> M[Send to model<br/>chosen provider]
+    CL -. no function-calling<br/>Apple / Claude Code .-> TL[Tool-less prose loop<br/>runToolLessScopedTurn] --> V
 
     M --> D{Model wants<br/>a tool?}
     D -- No --> V

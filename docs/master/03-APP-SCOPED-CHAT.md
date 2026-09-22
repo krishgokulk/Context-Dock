@@ -1,7 +1,9 @@
 # 03 — App-Scoped Chat (Context Dock Chat Mode)
 
-> **Status: DRAFT / under review.** Not merged into `docs/architecture/` yet.
+> **Status: DRAFT / under review — verified against code (audit pass 2).** Not merged yet.
 > Tags: `[code]` verified in source · `[owner]` owner's stated knowledge · `[?]` needs confirmation.
+> Audit added: the planner (§7b), the tool-less engine (§7c), read tools (§8), vision +
+> streaming (§12). No false claims were found in the first draft; these were omissions.
 >
 > **Names for the same thing:** "frontmost app chat", "Context Dock Chat Mode",
 > "app-scoped chat", the `.app(bundleId)` scope. This doc uses **App-Scoped Chat**.
@@ -142,6 +144,37 @@ feed result back → repeat up to maxIterations → final answer
 
 ---
 
+## 7b. Two loops, not one — reactive loop **+** planner
+
+The §7 loop is the **reactive** loop: the model asks for one tool at a time. On top of it sits
+a **plan-and-execute** loop for multi-step requests. `[code — AppScopedChatService.swift:1114–1140, ChatPlan.swift]`
+
+- **When it engages:** `AIRequestClassifier.classify(query).requiresPlanning` is true, **or** the
+  thread has ≥2 apps. (It used to require 2+ apps, so "find the newest export and open it" —
+  two steps in one app — quietly did half the job. Now "several steps" is judged from the
+  request itself.)
+- **How:** routes are resolved per app (`ChatRouteResolver.routes`) into a **catalogue**;
+  `ChatPlanRunner.plan` asks the model to order them into a **DAG** — each step lists the
+  earlier steps whose *results* it needs (`after`). The model may only choose from the given
+  route ids, so **a hallucinated step becomes a rejected id, not an attempted action.** Cap:
+  `ChatPlan.maxSteps`.
+- **Execution:** `ChatPlanRunner.run` runs the DAG with **per-step authorization**
+  (`authorizedBundleIds`) — a step outside the thread's apps is refused, checked per step, not
+  trusted once.
+- **Recipes:** a plan that runs end-to-end can be saved as a `WorkflowRecipe` and replayed. A
+  *partial* plan is never saveable (it would preserve a sequence that never worked under a
+  name implying it did).
+
+## 7c. Tool-less engine (Apple Intelligence, Claude Code)
+
+Providers without native function-calling (`supportsNativeTools == false`) do **not** use the
+tool loop. `runToolLessScopedTurn` gives them a **prose "ask → run → re-ask" loop** over the
+same capability catalogue and executor, so on-device Apple and the Claude Code CLI get
+one-hop-of-evidence behaviour instead of a single dead-end turn. `[code — AppScopedChatService.swift:552, 1626]`
+
+So App-Scoped Chat has **three execution paths**: reactive tool loop (native-tool providers),
+plan-and-execute DAG (multi-step), and the tool-less prose loop (Apple / Claude Code).
+
 ## 8. Per-app tools / "plugins" (what a route actually is)
 
 `[code]` The named tools the model can call in an app scope:
@@ -152,6 +185,7 @@ feed result back → repeat up to maxIterations → final answer
 | `run_menu_command` | fire an app menu item by full path | AX menu cache |
 | `run_mcp_tool` | read app data via a linked MCP server | MCPServerManager |
 | `terminal_call` (typed JSON) | run a CLI command (fallback) | TerminalPackageManager + approval |
+| **read tools** (`registerReadingTools`) | let the model go *look* mid-turn — read a web page / file it wasn't handed in the snapshot | `ReadingTools` |
 | macOS Shortcuts | run a linked Shortcut | Shortcuts |
 | Skills | inject app-specific instructions | SkillStore |
 | API connections | **mention-only**, not callable | (config) |
@@ -221,9 +255,18 @@ Missing:
 ## 12. Providers
 
 Same loop, many models. `[code]` API providers (OpenAI/Anthropic/Gemini/Ollama/compatible/
-Kimi/bridges) run `sendWithTools`; on-device Apple runs `OnDeviceToolSession`; `claudeCode`
-CLI answers tool-less. Anthropic requests use `AnthropicPromptCache` (prefix-caches tools +
-system across the loop's 2–16 calls). Token cost is recorded in `AITokenLedger`.
+Kimi/bridges) run `sendWithTools`; on-device Apple runs `OnDeviceToolSession`; providers with
+no function-calling take the tool-less path (§7c). Anthropic requests use `AnthropicPromptCache`
+(prefix-caches tools + system across the loop's 2–16 calls). Token cost is recorded in
+`AITokenLedger`.
+
+Also true of every provider path:
+- **Vision** — selected images are passed so the model actually *sees* them
+  (`selectedImages` → `visionAttachments`), not just OCR'd. `[code — AppScopedChatService.swift:1664]`
+- **Streaming** — the answer streams as it's written when the provider supports it
+  (`onStream`). `[code]`
+- **Shared execution stage** — dock and window both run `ScopedTurnRunner.run`: same executor,
+  same round budget, same answer-claim checks. Only the prompt above is per-surface. `[code]`
 
 ---
 
@@ -232,6 +275,11 @@ system across the loop's 2–16 calls). Token cost is recorded in `AITokenLedger
 | Concern | File |
 |---|---|
 | Scoped-chat orchestration | `AI/AppScopedChatService.swift` |
+| Planner (plan-and-execute DAG) | `AI/ChatPlan.swift` (`ChatPlanRunner`), `AI/WorkflowRecipe.swift` |
+| Plan/intent gate | `AI/AIRequestClassifier` (`requiresPlanning`), `AI/ChatRouteResolver` |
+| Tool-less prose loop | `AI/AppScopedChatService.swift` (`runToolLessScopedTurn`) |
+| Shared execution stage | `ScopedTurnRunner.run` |
+| Read-on-demand tools | `AI/ReadingTools.swift` |
 | Per-app grounding / tool-choice order | `AI/ScopedAppPromptBuilder.swift` |
 | Capability index & ranking | `AI/CapabilityIndex.swift`, `AI/AppAdapterCapabilityCatalog.swift` |
 | Access levels / authority | `AI/AppAccessLevel.swift` |
