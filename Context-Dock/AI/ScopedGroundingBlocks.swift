@@ -163,9 +163,27 @@ enum ScopedGroundingBlocks {
         // documents get. Re-fetching the URL would be slower, could see a different
         // signed-out page, and would discard the user's live selection.
         if !pageText.isEmpty {
-            pageText = MarkItDownService.compact(pageText, for: query, limit: 5_000)
+            // Read once per version. The same page asked about three times used to be
+            // extracted, compacted and sent three times — the page had not changed, only the
+            // question had. After the first turn this sends the stored summary plus the
+            // passages this question matches, which is both cheaper and more to the point than
+            // the opening paragraphs a plain truncation keeps.
+            let cache = BrowserPageCache.shared
+            if cache.cached(url: pageURL, freshText: pageText) == nil {
+                cache.store(url: pageURL, title: pageTitle, text: pageText)
+            }
+            let asked = query ?? ""
+            pageText = cache.groundingText(url: pageURL, query: asked, limit: 5_000)
+                ?? MarkItDownService.compact(pageText, for: asked, limit: 5_000)
+            // What was read, for what — never what it said. See BrowsedPageIndex.
+            BrowsedPageIndex.shared.record(
+                url: pageURL, title: pageTitle, question: asked)
         }
+        // Pages read earlier for this kind of question. Cheap, and it is what makes the second
+        // day of work on a subject better than the first rather than identical to it.
+        let priorReads = BrowsedPageIndex.shared.groundingLine(for: query ?? "")
 
+        let priorSection = priorReads.map { "\n\($0)" } ?? ""
         let selectedSection = selected.isEmpty
             ? "" : "\nSELECTED TEXT:\n\(String(selected.prefix(1500)))"
         // Where the page can take the user. Page text drops every href, so a download or
@@ -187,7 +205,7 @@ enum ScopedGroundingBlocks {
         // below it would be counted as characters the page does not have.
         return """
             CURRENT PAGE TITLE: \(pageTitle.isEmpty ? "(unknown)" : pageTitle)
-            CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(selectedSection)\(tabsSection)
+            CURRENT PAGE URL: \(pageURL.isEmpty ? "(unknown)" : pageURL)\(priorSection)\(selectedSection)\(tabsSection)
             \(pageText.isEmpty
                 ? "PAGE TEXT: (unavailable — could not read the page)"
                 : "PAGE TEXT EXCERPT:\n\(String(pageText.prefix(5000)))")\(linkSection)

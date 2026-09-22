@@ -945,6 +945,34 @@ final class AICapabilityApprovalCenter: ObservableObject {
         }
     }
 
+    /// One browser action, on the same card everything else uses.
+    ///
+    /// A separate approval path for browsing would have to re-earn the inline drawing, the
+    /// floating fallback, the expiry and the unattended refusal — and the copy that drifts is
+    /// always the one guarding the newer, less-watched thing.
+    func requestApprovalForBrowserAction(
+        what: String, detail: String, tool: String, bundleId: String
+    ) async -> Bool {
+        await requestApproval(
+            plan: AIActionPlan(
+                capability: "browser.\(tool)",
+                input: ["what": what, "detail": detail],
+                explanation: what + ". This page can ask for things on its own — check the "
+                    + "detail below is what you meant."),
+            capability: AICapability(
+                id: "browser.\(tool)",
+                title: what,
+                appBundleID: bundleId,
+                inputSchema: .init(fields: []),
+                riskLevel: .high,
+                runsWithoutAdapter: true,
+                executor: { _ in
+                    throw AICapabilityError.blocked(
+                        "Browser actions run through MCPRuntime, not the capability registry.")
+                }),
+            context: .appFocused(name: "Safari", bundleID: bundleId))
+    }
+
     func approve() { resolve(true) }
 
     func deny() { resolve(false) }
