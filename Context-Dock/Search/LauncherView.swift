@@ -1406,25 +1406,16 @@ struct LauncherView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
 
-            // AI Extension Suggestions Overlay
+            // AI Extension Suggestions Overlay.
+            //
+            // A type of its own, not an inline ZStack: inline, its `.transition` on
+            // `AIModeView` is what made SILGen abort on the Release build. See
+            // `AIExtensionSuggestionsOverlay`.
             if showAIExtensionSuggestions {
-                ZStack {
-                    // Dim background
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showAIExtensionSuggestions = false
-                            }
-                        }
-
-                    // AI Suggestions View
-                    AIModeView(
-                        currentContext: currentContextBinding,
-                        isVisible: showAIExtensionSuggestionsBinding
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
+                AIExtensionSuggestionsOverlay(
+                    currentContext: currentContextBinding,
+                    isVisible: showAIExtensionSuggestionsBinding
+                )
             }
 
         }
