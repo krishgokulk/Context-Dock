@@ -61,6 +61,25 @@ enum CapabilityDecision: Equatable {
     /// Nobody wants six options. Past three, a question stops being a choice.
     private static let maximumOptions = 3
 
+    /// How close a cheaper capability has to be before cost decides instead of score.
+    ///
+    /// Wider than the tie margins on purpose, and this is the number that separates the two
+    /// cases this rule exists for:
+    ///
+    /// *Finder, "empty the trash".* `finder.emptyTrash` names the request outright and scores
+    /// far above the generic menu item. Nothing else is within the band, so cost never comes
+    /// up and it simply runs. Three able paths must not become a question.
+    ///
+    /// *Claude, "new chat".* The linked `claude` CLI and `File ▸ New Chat` both land in the
+    /// band. They differ in surface, so the user is asked — which is the whole report this
+    /// came from, where DoraX picked silently and picked wrong.
+    ///
+    /// The honest justification for asking rather than taking the cheaper one: those two do
+    /// not produce the same outcome. A CLI session and a desktop chat window are different
+    /// things, and DoraX cannot tell which was meant. Where the outcomes really are the same,
+    /// the scores separate and the band never triggers.
+    private static let surfaceBand = 3.0
+
     static func make(from hits: [CapabilityIndex.Hit]) -> CapabilityDecision {
         guard let top = hits.first else { return .answer }
         // Most of the sentence has to be accounted for. Scoring well on one word out of
@@ -70,6 +89,23 @@ enum CapabilityDecision: Equatable {
             return .suggest(Array(hits.prefix(maximumOptions)))
         }
         guard let second = hits.dropFirst().first else { return .act(top) }
+
+        // Cost, before score. Everything close enough to the leader to be a real alternative
+        // is compared on what it costs the user, not on how well it matched — two paths that
+        // both do the job and differ in whether the screen is taken is a choice the user
+        // makes, not one DoraX makes for them.
+        let band = hits.filter { top.score - $0.score <= surfaceBand }
+        let surfaces = Set(band.map(\.record.surface))
+        if surfaces.count > 1 {
+            // Never take an expensive surface while a cheaper one is right there. Ask, with
+            // the cheapest first so the default reading is the cheap one.
+            let byCost = band.sorted {
+                $0.record.surface == $1.record.surface
+                    ? $0.score > $1.score
+                    : $0.record.surface < $1.record.surface
+            }
+            return .ask(Array(byCost.prefix(maximumOptions)))
+        }
 
         let margin = top.record.isWrite ? writeMargin : readMargin
         guard top.score - second.score > margin else {
@@ -88,7 +124,10 @@ enum CapabilityDecision: Equatable {
             return "act \(hit.record.id) score \(String(format: "%.2f", hit.score)) "
                 + "on [\(hit.matched.joined(separator: " "))]"
         case .ask(let hits):
-            return "ask between " + hits.map(\.record.id).joined(separator: ", ")
+            // The surfaces are the reason for most asks now, so the line says them.
+            return "ask between "
+                + hits.map { "\($0.record.id) (\($0.record.surface.costLabel))" }
+                    .joined(separator: ", ")
         case .suggest(let hits):
             return "suggest near misses " + hits.map(\.record.id).joined(separator: ", ")
         case .answer:
