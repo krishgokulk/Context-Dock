@@ -123,7 +123,9 @@ Two sources feed the "extension" results the owner calls "global extension": `[c
 
 `Services/GlobalSearchService.swift`. `[code]`
 
-- Candidate matching is **n-gram based** (`grams(_:)`), scored per document (`matchScore`).
+- Candidate matching is **n-gram based** (`grams(_:)`), scored per document by the **tiered
+  `matchScore`** (`:339` — exact > word-exact > all-words > prefix > substring). See the work
+  folder `01-global-context/routing.md` for the tier breakdown and improvement plan.
 - A **learned-usage boost** (`learnedUsageBoost`) raises the rank of apps/actions the user
   runs often — the surface adapts to the individual over time.
 - Installed and recently used apps rank high by rule
@@ -190,8 +192,11 @@ broken.
 2. **Is web search (cat. 9) still wanted**, or does it dilute a focused launcher? `[owner decision]`
 3. **Apple-app content results (cat. 8)** overlap with dedicated Apple-app flows elsewhere —
    is Global Context the right home, or should it only *launch into* those? `[owner decision]`
-4. **No automated tests found** specific to Global Context ranking/search. Ranking quality
-   (does the right result come first?) is currently unverified. `[gap]`
+4. **Tests exist, but not at tier level (CORRECTED).** `LauncherQueryShapeTests`,
+   `GlobalIntegrationSearchTests`, `CornerScopeWalkTests`, `DockPinStoreTests`,
+   `CornerCLIScopeTests` cover query shapes + integration. Missing: a test pinning
+   `matchScore`'s tier precedence, and an aggregate ranking metric. (An earlier draft wrongly
+   said no tests exist.) `[gap, smaller than first stated]`
 5. **Learned-usage boost** has no visible user control (no "forget this" / reset). `[possible feature]`
 6. **Success metric undefined.** There is no measure of "did the user find/launch what they
    meant on the first result?" — the one number that would tell you if this surface works. `[gap]`
