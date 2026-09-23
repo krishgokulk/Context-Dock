@@ -121,18 +121,11 @@ App/  ──environmentObject──►  Search/LauncherView
 
 ### NotificationCenter — what still uses it
 
-NC is reserved for **UI-scope coordination** only (hotkey changes, window open/close signals). All cross-layer context data now flows through `ContextDockEnvironment`. Notification names are declared in scattered `extension Notification.Name` blocks — they live in the file that first needs them, not a central registry:
+NC is reserved for **UI-scope coordination** only (hotkey changes, window open/close signals). All cross-layer context data now flows through `ContextDockEnvironment`.
 
-| Name | Declared in |
-|---|---|
-| `launcherWindowOpened`, `folderPreviewShouldClose`, `userContextDetected`*, `frontmostAppDetected`* | `Search/ContentView.swift` |
-| `escapePressed`, `focusSearchField`, `activateGlobalContext`, `activateClipboardScope`, `launcherBackspacePressed`, `toggleAIExtensions` | `Search/ContentView.swift` |
-| `hotkeyChanged`, `chatHistoryCleared`, `activateContextDock`, `switchToL1`, `menuBarIconVisibilityChanged` | `UI/SettingsView.swift` |
-| `servicesOpenWithFiles`, `servicesOpenWithText` | `App/ILauncherServicesProvider.swift` |
-| `settingsImported` | `Services/SettingsBackupManager.swift` |
-| `appPanelToolRemoved`, `newBinaryDiscovered` | `Services/BinaryWatcherService.swift` / `Search/ContentView.swift` |
+**Notification names are centralised now.** `App/NotificationNames.swift` holds 27 of them in one `extension Notification.Name`. Look there first. A handful of surface-local names still live beside the code that owns them — `UI/AppChatPromptModel.swift`, `UI/Settings/SettingsView.swift`, `UI/Settings/AdvancedSettingsPage.swift`, `Search/ClipboardPanelWindow.swift`, `Automation/AutomationSettingsView.swift`, `Services/DockActionFeedback.swift`, `Services/MinimizedPanelRegistry.swift` — so if a name is not in the registry, grep for the string literal.
 
-\* `userContextDetected` and `frontmostAppDetected` exist as NC names but are **no longer posted** — AppDelegate now calls `ContextDockEnvironment.shared` directly.
+`userContextDetected` and `frontmostAppDetected` exist as NC names but are **no longer posted** — AppDelegate calls `ContextDockEnvironment.shared` directly.
 
 ### AXEventBus — accessibility events
 
@@ -140,7 +133,11 @@ NC is reserved for **UI-scope coordination** only (hotkey changes, window open/c
 
 ### LauncherView state
 
-`Search/ContentView.swift` declares the `LauncherView` struct with 420+ `@State` vars. `Search/LauncherView+Search.swift` is a Swift extension on the same struct that adds the entire search engine (`performSearch`, `detectSmartQuery`, `handleSmartQueryResult`, `findApplications`, `SmartQueryType`). Extensions on a struct have full access to `@State` vars — this is the intended pattern for splitting the file.
+`Search/LauncherView.swift` declares the `LauncherView` struct — 3,899 lines, **105 stored properties** (74 `@State`, 14 `@ObservedObject`, 9 `@StateObject`, 4 `@Environment`, 2 `@EnvironmentObject`, 1 `@AppStorage`, 1 `@FocusState`). `Search/ContentView.swift` is a 14-line stub that renders `LauncherShell()` and declares none of this.
+
+`Search/LauncherView+Search.swift` is a Swift extension on the same struct that adds the entire search engine (`performSearch`, `detectSmartQuery`, `handleSmartQueryResult`, `findApplications`, `SmartQueryType`). Extensions on a struct have full access to `@State` vars — this is the intended pattern for splitting the file.
+
+**Adding to `body` has a ceiling.** Release aborted in SILGen for two months (#25) because `LauncherView.body`'s opaque type grew past what the compiler can finish substituting — a computed property returning `some View` is not a boundary, only a nominal type is. It builds again because eight view members became `struct`s. Two scripts exist so the next person does not rediscover this: `scripts/view-leaves.py` lists view members safe to extract (a leaf reachable from `body`), and `scripts/release-type-size.sh` measures the type. Prefer a `struct` over another `some View` property when adding UI here.
 
 ### Extension system layers
 
@@ -190,7 +187,6 @@ These skills are installed and activate automatically based on your request:
 | Run or debug tests | testing |
 | AppKit bridges (NSWindow, responder chain) | appkit-interop |
 | Window size, placement, toolbar, materials | window-customization |
-| Refactor large views (LauncherView, ContentView) | view-refactor |
 | Codesign / entitlement / sandbox errors | codesigning |
 | Notarization / App Store distribution | distribution-signing |
 | OSLog instrumentation | app-telemetry |
@@ -229,7 +225,7 @@ Always fetch current Apple docs before using any API, especially macOS 26 Tahoe 
 ## Large Files
 
 These files are very large - read only the relevant range:
-- Search/ContentView.swift - 420+ @State vars; use awk NR>=X and NR<=Y
+- Search/LauncherView.swift - 3,899 lines, 105 stored properties; use awk NR>=X and NR<=Y
 - Search/LauncherView+ContextualActions.swift - use same awk pattern
 
 ## Diagnosing an AI turn

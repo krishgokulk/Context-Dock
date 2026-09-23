@@ -1,5 +1,27 @@
 # LauncherView.body Decomposition Implementation Plan
 
+> **DONE — 2026-09-22.** Release builds at `6484913` with no build-setting override: zero
+> aborts, a signed app, suite 1851 / 0. Full account on issue **#25**.
+>
+> **Read this before reusing the plan below, because its task order was wrong.** Three things
+> it got wrong, all found by executing it:
+>
+> 1. **Target reachable leaves, not big members.** Only view members `body` can transitively
+>    reach contribute to its opaque type. 309 lines of genuine leaf that `body` cannot reach
+>    moved the count by **8**; 341 reachable lines moved it by **768**. `scripts/view-leaves.py`
+>    computes the closure and ranks by it — use its output, not a size ranking.
+> 2. **A leaf is a member that calls no other view member.** A view taking opaque children as
+>    `@ViewBuilder` parameters becomes generic over their types and substitution recurses back
+>    in. Tasks 3-8 below name `appPanelView`, `searchBarWithPinnedApps` and friends, all of
+>    which compose other members and would have bought nothing.
+> 3. **Count view *functions*, not just properties**, and read wrapped signatures to the brace.
+>    `appPillButton` declares `-> some View` fourteen lines below its name.
+>
+> What actually worked: eight extractions and one `@ViewBuilder` split took 3,811 opaque types
+> to under the threshold. Tasks 0, 1, 9 and 10 ran as written; 2-8 were replaced by leaf
+> extraction. 44 reachable leaves (~1,500 lines) remain and are optional — the build passes —
+> but each still shrinks the type.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `xcodebuild -configuration Release` complete, by reducing `LauncherView.body`'s opaque type until SILGen can finish substituting it.
