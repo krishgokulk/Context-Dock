@@ -130,8 +130,41 @@ enum ComputerUseRunner {
                 displayCommand: "operate_app(\(appName))")
         }
 
-        guard let chosen = ComputerUseTargetResolver.best(matching: target, among: candidates)
-        else {
+        // A refusal that says which kind of refusal it is. "Not found", "greyed out" and
+        // "two things match equally" are three different facts about the app, and reporting
+        // all of them as absence is how an assistant looks like it understood nothing.
+        let resolution = ComputerUseTargetResolver.resolve(phrase: target, among: candidates)
+        let chosen: ComputerUseTarget
+        switch resolution {
+        case .resolved(let target):
+            chosen = target
+
+        case .ambiguous(let options):
+            let named = options.prefix(4).map(\.display).joined(separator: ", ")
+            return AgentToolResult(
+                success: false,
+                output: "\"\(target)\" describes more than one thing in \(appName) equally "
+                    + "well: \(named). Ask which one — pressing either is guessing with extra "
+                    + "steps.",
+                displayCommand: "operate_app(\(appName): \(target)) · ambiguous")
+
+        case .disabled(let item):
+            return AgentToolResult(
+                success: false,
+                output: "\(appName) has \(item.display), but it is greyed out right now, so "
+                    + "the app will not accept it in this state. Say that — it is a fact about "
+                    + "the app, not a missing feature.",
+                displayCommand: "operate_app(\(appName): \(target)) · disabled")
+
+        case .forbidden(let item):
+            return AgentToolResult(
+                success: false,
+                output: "\(item.display) is on the destructive-and-outbound denylist and is "
+                    + "never pressed from here. If the user wants it, it goes through the "
+                    + "approval path for that kind of action, not through operate_app.",
+                displayCommand: "operate_app(\(appName): \(target)) · forbidden")
+
+        case .noMatch:
             // The refusal the owner called perfect, kept — now with the live list behind it
             // rather than a stale one, so "it is not there" means it is really not there.
             let nearby = candidates
@@ -142,9 +175,9 @@ enum ComputerUseRunner {
             return AgentToolResult(
                 success: false,
                 output: "No enabled menu command in \(appName) matches \"\(target)\" — read "
-                    + "live, not from a cache, so it is genuinely absent or greyed out right "
-                    + "now. Nearby items: \(nearby). Do not press something else; say what is "
-                    + "there and let the user choose.",
+                    + "live, not from a cache, so it is genuinely absent right now. Nearby "
+                    + "items: \(nearby). Do not press something else; say what is there and "
+                    + "let the user choose.",
                 displayCommand: "operate_app(\(appName): \(target)) · no match")
         }
 
@@ -164,7 +197,11 @@ enum ComputerUseRunner {
         // naming a settings page they have never opened. Declining is the whole other half —
         // nothing is pressed, nothing is granted, and the turn falls back to telling them how
         // to do it themselves.
-        if !mode.canOperate {
+        // A single press the user already allowed, spent here. Checked before the standing
+        // grant so that "allow once" never quietly becomes "allow always".
+        let hadOneShot = store.consumeOneShotGrant(for: bundleID)
+
+        if !mode.canOperate && !hadOneShot {
             let approved = await ComputerUseApproval.requestFirstUse(
                 appName: appName, bundleID: bundleID, target: chosen, reason: reason,
                 before: before, chatScope: scope)

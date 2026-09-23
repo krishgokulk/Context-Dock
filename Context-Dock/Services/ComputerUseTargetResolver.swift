@@ -53,19 +53,39 @@ enum ComputerUseTargetResolver {
     /// "Hide Visual Studio Code" and "Quit" has no answer, and inventing one is the failure
     /// this whole rung exists beneath.
     @MainActor
-    static func best(matching phrase: String, among candidates: [ComputerUseTarget])
-        -> ComputerUseTarget?
-    {
-        let wanted = tokens(phrase)
-        guard !wanted.isEmpty else { return nil }
+    /// Why a phrase did not become a press.
+    ///
+    /// `best` used to return an optional, and nil meant four different things: the phrase was
+    /// empty, nothing in the live UI matched it, everything that matched was greyed out or on
+    /// the denylist, or two items described it equally well. Its own comment said "the caller
+    /// asks the user instead" — which the caller could not do, because nil does not say which.
+    ///
+    /// An ambiguity is a question. A greyed-out item is a fact about the app's state worth
+    /// telling the user. Neither is "not found", and reporting them as such is how an
+    /// assistant looks like it has understood nothing.
+    enum Resolution: Equatable {
+        case resolved(ComputerUseTarget)
+        /// Several items the phrase describes equally well. Picking one is guessing with
+        /// extra steps.
+        case ambiguous([ComputerUseTarget])
+        /// The best match exists but the app will not accept it in this state.
+        case disabled(ComputerUseTarget)
+        /// The best match is on the destructive/outbound denylist. Never pressed from here,
+        /// whatever the user asked — it goes through the consent path or not at all.
+        case forbidden(ComputerUseTarget)
+        /// The phrase named nothing in the live UI.
+        case noMatch
+    }
 
+    /// The typed resolution. `best` is kept as the thin wrapper below.
+    static func resolve(phrase: String, among candidates: [ComputerUseTarget]) -> Resolution {
+        let wanted = tokens(phrase)
+        guard !wanted.isEmpty else { return .noMatch }
+
+        // Everything is scored, including items that cannot be pressed, so the answer can say
+        // *why* rather than reporting a greyed-out match as an absent one.
         var scored: [(score: Double, target: ComputerUseTarget)] = []
         for candidate in candidates {
-            // Greyed out means the app will not accept it in this state. Pressing anyway is a
-            // click that does nothing followed by a report that it worked.
-            guard candidate.isEnabled else { continue }
-            guard !isForbidden(path: candidate.path) else { continue }
-
             let itemTokens = tokens(candidate.title)
             guard !itemTokens.isEmpty else { continue }
             let shared = wanted.intersection(itemTokens)
@@ -81,11 +101,30 @@ enum ComputerUseTargetResolver {
         }
 
         let ranked = scored.sorted { $0.score > $1.score }
-        guard let first = ranked.first else { return nil }
-        // Two items the phrase describes equally well is an ambiguity, and picking one is
-        // guessing with extra steps. The caller asks the user instead.
-        if ranked.count > 1, abs(ranked[1].score - first.score) < 0.01 { return nil }
-        return first.target
+        guard let first = ranked.first else { return .noMatch }
+
+        // Denylist first: a forbidden item is forbidden whether or not anything ties with it.
+        if isForbidden(path: first.target.path) { return .forbidden(first.target) }
+
+        let tied = ranked.filter { abs($0.score - first.score) < 0.01 }
+        if tied.count > 1 { return .ambiguous(tied.map(\.target)) }
+
+        // Greyed out means the app will not accept it in this state. Pressing anyway is a
+        // click that does nothing followed by a report that it worked.
+        guard first.target.isEnabled else { return .disabled(first.target) }
+        return .resolved(first.target)
+    }
+
+    /// The one enabled, permitted, unambiguous match — or nil. Unchanged behaviour for
+    /// callers that only need a target; `resolve` is what a caller uses when it can act on
+    /// the difference between "not there" and "greyed out".
+    static func best(matching phrase: String, among candidates: [ComputerUseTarget])
+        -> ComputerUseTarget?
+    {
+        if case .resolved(let target) = resolve(phrase: phrase, among: candidates) {
+            return target
+        }
+        return nil
     }
 
     /// Words that carry intent. Menu punctuation is the app's, not the user's: a model writes

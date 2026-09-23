@@ -47,7 +47,10 @@ struct ChatPlanStep: Identifiable, Equatable {
         guard route.isReadOnly else { return false }
         switch route.kind {
         case .cli, .mcpTool, .model: return true
-        case .menuCommand, .adapterAction, .skill: return false
+        // Computer Use is the least safe of all to overlap: it is the one route that reads
+        // the screen to decide where to click, so another step moving focus underneath it
+        // does not just lose a race — it presses the wrong thing in the wrong app.
+        case .menuCommand, .adapterAction, .skill, .computerUse: return false
         }
     }
 }

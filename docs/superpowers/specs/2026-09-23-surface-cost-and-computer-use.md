@@ -143,6 +143,12 @@ actually built, because a traversal optimisation for a thing that does not exist
 
 ## 6. The plan
 
+> **Status (2026-09-23):** Steps 1, 3, 4, 5, 6 and 7 are built. Step 2 has the route kind and
+> the surface projection; wiring the offer into `AppScopedChatService` and retiring
+> `ComputerUseFallback` is what remains. Nothing is wired to `CapabilityIndex` yet — it still
+> runs in shadow beside the live routers, by its own design note.
+
+
 Ordered so that each step is worth shipping alone, and so that the first two are correctness
 rather than product.
 

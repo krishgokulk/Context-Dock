@@ -121,11 +121,41 @@ final class ComputerUseConsentStore: ObservableObject {
         setMode(.askEachStep, for: bundleID)
     }
 
+    /// One press, granted in the moment and not remembered.
+    ///
+    /// "Allow once" and "allow always" are different decisions and the store could only
+    /// express the second: `grantFromChat` persists `askEachStep`, which is a standing grant
+    /// with a prompt attached. Someone who wanted a single button pressed should not find out
+    /// later that the app is permanently operable — the fact that they were asked each time
+    /// does not make the grant temporary.
+    ///
+    /// Deliberately in memory only. A grant that survives a relaunch is not "once", and
+    /// writing it to disk is how it would quietly become one. It also does not touch the
+    /// master switch: a single press is not a decision about every app.
+    func grantOnce(for bundleID: String) {
+        oneShot.insert(key(bundleID))
+    }
+
+    /// Takes the one-shot grant if there is one. Consuming is the point — calling it twice
+    /// for two presses is exactly the thing "once" refuses.
+    func consumeOneShotGrant(for bundleID: String) -> Bool {
+        oneShot.remove(key(bundleID)) != nil
+    }
+
+    /// True while a one-shot grant is outstanding, without spending it. For drawing state,
+    /// never for deciding whether to press.
+    func hasOneShotGrant(for bundleID: String) -> Bool {
+        oneShot.contains(key(bundleID))
+    }
+
     /// Apps the user has granted, for the Settings summary — a permission nobody can review is
     /// not a permission model.
     func grantedBundleIDs() -> [String] {
         modes.filter { $0.value.canOperate }.keys.sorted()
     }
+
+    /// Apps with an unspent single press. Not persisted, by design — see `grantOnce`.
+    private var oneShot: Set<String> = []
 
     private func key(_ bundleID: String) -> String {
         bundleID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

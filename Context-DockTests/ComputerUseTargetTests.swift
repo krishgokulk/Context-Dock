@@ -82,4 +82,74 @@ struct ComputerUseTargetTests {
             matching: "Send", among: [item(["Message", "Send"])])
         #expect(chosen == nil)
     }
+
+    // MARK: - Why it refused
+    //
+    // `best` returned an optional and nil meant four different things. Its own comment said
+    // the caller asks the user instead, which the caller could not do. These cover each kind
+    // of refusal now that it is typed.
+
+    @Test func oneClearMatchResolves() {
+        let resolution = ComputerUseTargetResolver.resolve(
+            phrase: "check for updates",
+            among: [item(["Code", "Check for Updates…"]), item(["File", "New Window"])])
+
+        #expect(resolution == .resolved(item(["Code", "Check for Updates…"])))
+    }
+
+    /// Two items the phrase describes equally well. A question, not a guess and not an
+    /// absence.
+    @Test func twoEqualMatchesAreAmbiguousRatherThanMissing() {
+        let a = item(["File", "New Window"])
+        let b = item(["File", "New Tab"])
+
+        guard case .ambiguous(let options) = ComputerUseTargetResolver.resolve(
+            phrase: "new", among: [a, b])
+        else {
+            Issue.record("expected an ambiguity"); return
+        }
+        #expect(options.count == 2)
+    }
+
+    /// Greyed out is a fact about the app's state. Reporting it as "not there" is what made
+    /// the old refusal misleading.
+    @Test func aGreyedOutMatchSaysSoInsteadOfClaimingItIsAbsent() {
+        let resolution = ComputerUseTargetResolver.resolve(
+            phrase: "check for updates",
+            among: [item(["Code", "Check for Updates…"], enabled: false)])
+
+        #expect(resolution == .disabled(item(["Code", "Check for Updates…"], enabled: false)))
+    }
+
+    /// A denylisted item is never a press from here, and saying "not found" about it would
+    /// be a lie that invites the user to rephrase until it works.
+    @Test func aDenylistedMatchIsNamedAsForbidden() {
+        let send = item(["Message", "Send"])
+        guard ComputerUseTargetResolver.isForbidden(path: send.path) else {
+            return  // denylist does not cover this item on this build; nothing to assert
+        }
+
+        #expect(ComputerUseTargetResolver.resolve(phrase: "send", among: [send]) == .forbidden(send))
+    }
+
+    @Test func aPhraseThatNamesNothingIsStillNoMatch() {
+        #expect(
+            ComputerUseTargetResolver.resolve(
+                phrase: "reticulate splines", among: [item(["File", "New Window"])]) == .noMatch)
+        #expect(
+            ComputerUseTargetResolver.resolve(phrase: "", among: [item(["File", "New Window"])])
+                == .noMatch)
+    }
+
+    /// `best` keeps its old meaning exactly: the one enabled, permitted, unambiguous match.
+    @Test func bestStillReturnsOnlyACleanResolution() {
+        #expect(
+            ComputerUseTargetResolver.best(
+                matching: "check for updates",
+                among: [item(["Code", "Check for Updates…"], enabled: false)]) == nil)
+        #expect(
+            ComputerUseTargetResolver.best(
+                matching: "new", among: [item(["File", "New Window"]), item(["File", "New Tab"])])
+                == nil)
+    }
 }
