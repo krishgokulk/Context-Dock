@@ -1,0 +1,40 @@
+flowchart TB
+    U([User on macOS]) --> SURF
+
+    subgraph SURF[Six product surfaces · one job each]
+      direction LR
+      S1[01 Global Context<br/>search & launch]
+      S2[02 Context Dock<br/>frontmost commands]
+      S3[03 App-Scoped Chat<br/>this app]
+      S4[04 General Chat<br/>whole Mac]
+      S5[05 Selection + Clipboard<br/>act on selection]
+      S6[06 Media Dock<br/>media control]
+    end
+
+    S3 --> ENG
+    S4 --> ENG
+    S2 -.menus/actions.-> EXEC
+    S1 -.launch/execute.-> EXEC
+    S5 -.actions.-> EXEC
+
+    subgraph ENG[08 AI Engine · shared]
+      direction TB
+      E1[router → grounding → classify]
+      E2[3 loops: reactive · plan-DAG · tool-less]
+      E3[tools · budget · verify · approval]
+      E1 --> E2 --> E3
+    end
+
+    ENG --> EXEC[Capability layer<br/>GeneralAIActionExecutor · MenuExecution]
+    EXT[07 Extensions L1/L2/L3<br/>+ App Adapters] --> ENG
+    EXEC --> APPS([Other macOS apps<br/>menus · MCP · Shortcuts · CLI])
+
+    ENG --> MEM
+    SURF --> MEM
+    subgraph MEM[09 Second Brain · memory]
+      M1[(markdown vault)]
+      M2[dashboard + knowledge graph]
+    end
+
+    XC[[10 Cross-cutting:<br/>evaluation · safety · performance · security]] -.governs.- ENG
+    XC -.governs.- SURF

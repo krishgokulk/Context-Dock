@@ -1,0 +1,10 @@
+flowchart TD
+    SYS[(macOS MediaRemote<br/>private framework)] <-->|dlopen · never linked| BRIDGE[MediaRemoteBridge<br/>MRCommand: play·pause·next·prev·seek]
+
+    BRIDGE --> OBS[MediaPlayerObserver /<br/>MediaInfoProvider]
+    OBS --> ENGINE[MediaDockEngine<br/>title · artist · album · isPlaying<br/>timer refresh]
+    ENGINE --> UI[Media Dock row<br/>state + transport controls]
+    UI --> CMD{User taps control} --> BRIDGE
+
+    ENGINE -.also exposed as capability.-> MCP[AppleMusicMCPCapabilities]
+    MCP -.reachable from chat.-> ENG08[AI Engine · 08]

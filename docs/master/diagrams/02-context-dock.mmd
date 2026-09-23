@@ -1,0 +1,16 @@
+flowchart TD
+    OPEN([Dock opens]) --> FM[Detect frontmost app<br/>AppDelegate.previousFrontmostApp]
+    FM --> SRC{Gather this app's commands}
+    SRC --> C1[Verified menu commands<br/>AppMenuCapabilityCache]
+    SRC --> C2[App adapter actions]
+    SRC --> C3[App extensions]
+
+    C1 & C2 & C3 --> PILL[ContextDockPillCoordinator<br/>merge cached + preview pills<br/>under debounce]
+    PILL --> SHEET[Stable result sheet<br/>never rebuilt per keystroke]
+
+    TYPE([User types]) --> FILTER[Filter existing rows inline]
+    FILTER --> SHEET
+    SHEET --> PICK{User selects a pill}
+    PICK --> EXE[MenuExecutionCoordinator<br/>run the command in the app]
+
+    AX[AX pipeline<br/>AXObserver · AXEventBus · CrossAppRouter] -.keeps scope current.-> FM

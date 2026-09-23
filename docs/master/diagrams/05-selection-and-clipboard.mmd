@@ -1,0 +1,23 @@
+flowchart TD
+    subgraph SEL[Selection Shortcut Sheet]
+      direction TB
+      H([Long-press Command]) --> READ[Read selection ONCE<br/>while source app still frontmost]
+      READ --> IN[Inputs: text·file·image·url·<br/>clipboard·frontmost app·window title]
+      IN --> MATCH[Match triggers]
+      MATCH --> ACT{Action sources}
+      ACT --> B1[Built-in selection ext]
+      ACT --> B2[User extensions]
+      ACT --> B3[App menu actions / adapters]
+      ACT --> B4[macOS Shortcuts]
+      ACT --> B5[AI actions]
+      B1 & B2 & B3 & B4 & B5 --> RUN[Run chosen action]
+    end
+
+    subgraph CLIP[Clipboard scope · ambient]
+      direction TB
+      COPY([Any copy]) --> PILL[Pill slides into corner<br/>independent of dock state]
+      PILL --> CARD[Grows to card of recent clips<br/>under pointer · smooth morph]
+      CARD --> USE[Pick a clip → paste or feed to action]
+    end
+
+    CARD -.clipboard is also an input.-> IN

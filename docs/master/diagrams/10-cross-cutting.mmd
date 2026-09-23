@@ -1,0 +1,24 @@
+flowchart TD
+    REQ([Request]) --> PERF
+
+    subgraph PERF[PERFORMANCE · typing feel]
+      PF[sync input · debounce heavy work<br/>cancellable · cache-first · no AX while typing]
+    end
+    PERF --> SAFE
+
+    subgraph SAFE[SAFETY · control plane]
+      SF[risk level: critical hard-denied<br/>AppAccessLevel per route<br/>CapabilityScopeGuard · ApprovalCenter<br/>untrusted-content rule]
+    end
+    SAFE --> EXEC[Execute]
+    EXEC --> EVAL
+
+    subgraph EVAL[EVALUATION]
+      EV1[Runtime: AgentAnswerVerifier ·<br/>CommandOutcomeVerifier · verify_outcome]
+      EV2[Offline: ~135 eval tests<br/>route·scope·ranking per case]
+      EV3[GAP: no aggregate pass-rate ·<br/>no memory-retrieval eval]
+    end
+    EVAL --> ANS([Answer])
+
+    SECURITY[[SECURITY spans all:<br/>sandbox · entitlements · dlopen private frameworks<br/>keys-not-prompts · elevated tools = review target<br/>clipboard / Safari-data privacy]] -.- PERF
+    SECURITY -.- SAFE
+    SECURITY -.- EXEC

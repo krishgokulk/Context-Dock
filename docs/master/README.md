@@ -48,4 +48,10 @@ top-level index.
 - [`10-CROSS-CUTTING.md`](10-CROSS-CUTTING.md) ✅ draft — evaluation · safety · performance · security
 
 **All 10 surface/cross-cutting drafts complete.** Next: confirm & merge into
-`docs/architecture/`, then build the evaluation harness (see `10` §5.1).
+`docs/architecture/`.
+
+## Diagrams
+
+One diagram per document + a whole-app overview, all in
+[`diagrams/DIAGRAMS.md`](diagrams/DIAGRAMS.md) (renders on GitHub). Sources are the `.mmd`
+files in `diagrams/`.

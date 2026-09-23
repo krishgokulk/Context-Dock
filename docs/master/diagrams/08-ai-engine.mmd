@@ -1,0 +1,27 @@
+flowchart TD
+    REQ([Request: surface · scope · provider · attachments]) --> ROUTER[AIProviderRouter<br/>mode: answer·plan·execute·explain]
+    ROUTER --> GROUND[Grounding<br/>ScopedAppPromptBuilder / General front-end]
+    GROUND --> CLASS{Classify<br/>requiresPlanning? · native tools?}
+
+    CLASS -->|multi-step| PLAN[Plan DAG · ChatPlanRunner<br/>order pre-resolved route ids]
+    CLASS -->|native tools| LOOP[Reactive tool loop<br/>sendWithTools]
+    CLASS -->|no function-calling<br/>Apple / Claude Code| TL[Tool-less prose loop<br/>runToolLessScopedTurn]
+
+    PLAN --> TOOLS
+    LOOP --> TOOLS
+    TL --> TOOLS
+
+    subgraph TOOLS[Tool registry · AgentToolRegistry]
+      T1[run_capability · run_menu_command<br/>run_adapter_action · run_mcp_tool<br/>run_command · send_keys · spawn_worker<br/>read/verify tools]
+    end
+
+    TOOLS --> BUDGET[Budget + durable receipts<br/>TaskRunStore · reserveToolCall]
+    BUDGET --> AUTH{Authority + access<br/>allowedToolNames · refusesChanges<br/>AppAccessLevel · risk level}
+    AUTH -->|critical| DENY[Hard-denied before approval]
+    AUTH -->|needs approval| APPROVE[ApprovalCenter]
+    AUTH -->|allowed| RUN[Execute route]
+    APPROVE -->|approved| RUN
+    RUN --> VERIFY{Verify<br/>AgentAnswerVerifier · CommandOutcomeVerifier}
+    VERIFY -->|contradicted / unproven| LOOP
+    VERIFY -->|ok| ANS([Answer + receipts])
+    ANS --> LEDGER[(AITokenLedger · AnthropicPromptCache)]

@@ -1,0 +1,21 @@
+flowchart TD
+    Q([User asks · scope = .general<br/>no app in front]) --> FRONT
+
+    subgraph FRONT[General-Chat front-end · figure out the request]
+      direction TB
+      F1[Scope resolution<br/>which apps does this touch?]
+      F2[Cross-app clarifier<br/>ask if operation/app is unclear]
+      F3[Action resolution<br/>executable? routes across all sources]
+      F4[Capability hub<br/>expose enabled apps' MCP + histories]
+      F5[Local evidence<br/>what's actually on THIS Mac]
+      F1 --> F2 --> F3 --> F4 --> F5
+    end
+
+    FRONT --> GATE{App needed but<br/>not granted?}
+    GATE -->|yes| ENABLE[Enable app for this chat<br/>one-tap grant → re-ask]
+    ENABLE --> FRONT
+    GATE -->|no| ENG[Shared engine → see 08<br/>same AppScopedChatService.send]
+
+    ENG --> GAP{Capability gap?<br/>right app, nothing can answer}
+    GAP -->|yes| SAY[Say what IS possible · honest]
+    GAP -->|no| ANS([Answer + receipts])

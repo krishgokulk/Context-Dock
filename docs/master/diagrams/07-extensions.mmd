@@ -1,0 +1,20 @@
+flowchart TD
+    subgraph L1[L1 · keyword quick actions]
+      L1a[Built-in extensions<br/>copy·summarize·revealInFinder·…]
+      L1b[User global extensions<br/>userext:// · searchTerms]
+    end
+    subgraph L2[L2 · context actions + tools]
+      L2a[Custom terminal tools<br/>folder: extension.json + script<br/>callable as AI tools]
+      L2b[CLI / TUI tools<br/>TerminalPackageManager]
+      L2c[The AI assistant itself]
+    end
+    subgraph L3[L3 · browser / web]
+      L3a[Safari Web Extension target]
+      L3b[AX web readers<br/>AXWebReader · SafariTabManager]
+    end
+
+    L1 --> SURF1[Global Context · Selection Sheet]
+    L2a & L2b --> REG[CapabilityRegistry<br/>AppWorkflowToolCatalog registers<br/>adapters · MCP · API · packs]
+    ADAPT[App Adapters<br/>actions + linked MCP/Shortcuts/CLI/skills] --> REG
+    REG --> ENG[AI Engine · 08<br/>find_capability / run_capability]
+    L3 --> ENG

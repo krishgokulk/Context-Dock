@@ -1,0 +1,19 @@
+flowchart TD
+    subgraph PERCEIVE[Live perception · the surfaces]
+      P1[frontmost app · selection · menus]
+      P2[Quick Note captures]
+      P3[chat conversations]
+      P4[task-run receipts]
+    end
+
+    P2 --> W1[QuickNoteMemoryMirror]
+    P3 --> W2[ConversationDistiller<br/>copies user's own sentences · no model]
+    P4 --> W3[DailyBrief · BrainMaintenance<br/>date-check, not 07:00 timer]
+
+    W1 & W2 & W3 --> VAULT[(Markdown vault · MarkdownMemoryStore<br/>MEMORY·profile·people·projects·tasks<br/>observed·notes/·daily/·apps/·cache/)]
+
+    VAULT --> RET[Retrieval<br/>whole-word · ranked sections · recency]
+    RET --> TURN[Injected into an AI turn → 08<br/>profile ungated · facts gated as evidence]
+
+    VAULT --> DASH[DashboardMetrics<br/>read-back · no invented numbers]
+    DASH --> GRAPH[KnowledgeGraphView<br/>edges = real scope links, not inference]

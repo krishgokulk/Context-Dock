@@ -1,0 +1,22 @@
+flowchart TD
+    Q([User types a query]) --> IDX[Search the cache-first index<br/>no AX / menu scan while typing]
+
+    IDX --> SRC{Match across sources}
+    SRC --> A1[Installed + running apps]
+    SRC --> A2[App menu commands<br/>AppMenuCapabilityCache]
+    SRC --> A3[Global / universal commands]
+    SRC --> A4[Extensions L1<br/>built-in + user global]
+    SRC --> A5[CLI / TUI tools]
+    SRC --> A6[Files / folders / docs]
+    SRC --> A7[Apple-app content<br/>contacts·mail·notes·…]
+    SRC --> A8[Web search]
+
+    A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 --> RANK[Rank: n-gram score<br/>+ learned-usage boost]
+    RANK --> ROW[Top-match icon row<br/>installed·running·command·cachedMenu]
+    RANK --> LIST[Results list]
+
+    ROW --> SEL{User picks one}
+    LIST --> SEL
+    SEL -->|app| LAUNCH[Launch / expand]
+    SEL -->|menu command| EXE[MenuExecutionCoordinator<br/>fire menu path in that app]
+    SEL -->|attach folder/mail| BRIDGE[Attach to a chat scope → 03/04]
