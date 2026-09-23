@@ -150,9 +150,10 @@ where the user most visibly chooses the model). `AITokenLedger` records cost;
 2. **Scope inference is unmeasured.** `GeneralChatScopeResolver` guesses which apps a request
    touches — a wrong guess sends the whole turn at the wrong app. No eval covers this, and it
    is the single most General-Chat-specific failure mode. `[gap]`
-3. **Same missing pieces as `03`:** no capability *graph* (flat route lookup) and no offline
-   **eval** for route/scope/answer quality. General Chat's extra inference stages make the
-   eval gap *worse*, not better. `[gap]`
+3. **Same as `03`:** no capability *graph* (flat route lookup). Offline eval **does exist** and
+   is large (~135 eval tests incl. `GeneralChatScopeFlowEvalTests`, `AgentRoutingEvalTests`);
+   what's thin is an *aggregate pass-rate* metric, especially for scope inference (#2). (Earlier
+   draft wrongly said eval was absent — corrected.) `[code]/[gap]`
 4. **Capability-hub cache correctness.** 300 s TTL keyed by "what it was built from"; a stale
    or mis-keyed block can tell the model an app has no tools when it does. Correctness under
    fast app-enable/disable is `[?]`.

@@ -143,10 +143,13 @@ Runtime (all in the loop):
 - **`verify_outcome` tool** — the model itself can verify an action mid-turn.
 - **`FreshResultEvaluator`** — result freshness/relevance.
 
-Missing — the single biggest engine gap:
-- **No offline eval / benchmark harness.** Nothing measures route-selection accuracy,
-  scope-inference accuracy (04), plan quality, or answer correctness across a fixed test set.
-  Every "make it smarter" change is currently unfalsifiable. `[gap]`
+Offline eval (CORRECTION — an earlier draft wrongly said this was absent):
+- **A large offline eval suite exists** — ~135 eval `@Test`s (of 1,167 total across 148 files):
+  `AgentRoutingEvalTests` (38), `CapabilityIndexTests` (15), `RoutePreferenceEvalTests`,
+  `CapabilityMatchEvalTests`, per-adapter `*AdapterEvalTests`, `PromptAssemblyEvalTests`,
+  `ReadingToolEvalTests`. Route/scope/ranking are measured **per case**, offline. `[code]`
+- **Thinner:** no **dataset-driven aggregate pass-rate** tracked release-over-release, and no
+  memory-retrieval eval (`09` §7 #5). That aggregate metric is the real (smaller) gap. `[gap]`
 
 ---
 
@@ -221,8 +224,10 @@ not finished — so treat the tool as present but the surrounding contract as ma
 
 ## 14. Known gaps / open questions (engine-wide)
 
-1. **No evaluation harness.** The engine's single biggest weakness. Route/scope/plan/answer
-   quality is unmeasured; improvements are unfalsifiable. **Highest-leverage next build.** `[gap]`
+1. **Eval: large per-case suite exists; no aggregate metric.** ~135 offline eval tests cover
+   route/scope/ranking per case. Missing is a dataset-driven *pass-rate* tracked over releases
+   (+ memory-retrieval eval). A refinement, not a missing foundation. (Earlier draft wrongly
+   called eval absent — corrected.) `[gap]`
 2. **No capability graph.** Routing is flat index + ranking; the planner orders a flat list.
    Graph reasoning is net-new work, not polish. `[gap]`
 3. **Two intent brains** — `GeneralAIActionResolver` vs `L2UnifiedAssistant` (04 §10 #1). `[?]`

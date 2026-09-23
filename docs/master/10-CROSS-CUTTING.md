@@ -19,15 +19,32 @@
   `[code — CONTROL_PLANE_AUDIT.md]`
 - `FreshResultEvaluator` — result freshness/relevance.
 
-### What does NOT exist — the app's #1 gap `[gap]`
-**There is no offline evaluation harness anywhere.** Nothing measures, across a fixed test set:
-route-selection accuracy (`03`), scope inference (`04`), plan quality (`08`), answer
-correctness, or memory retrieval (`09`). Every "make it smarter" change is currently
-**unfalsifiable** — you cannot prove an improvement or catch a regression. This is why it is
-the recommended next build.
+### What exists (offline eval suite) — CORRECTION `[code]`
+**An earlier draft of these docs claimed "no offline evaluation harness exists." That was
+wrong.** The suite is large and eval-driven: **~135 `@Test`s in `*Eval*` files** (and **1,167
+tests across 148 files** total), covering the deterministic layers this project cares about:
+- Capability ranking — `CapabilityIndexTests` (15), `CapabilityMatchEvalTests`,
+  `CapabilityRankedAppMatchTests`, `ContactSearchRankingTests`.
+- Chat-turn routing/scoping — `AgentRoutingEvalTests` (38), `RoutePreferenceEvalTests`,
+  `GeneralChatScopeFlowEvalTests`, `GlobalCommandRoutingTests`.
+- Per-adapter behavior — Finder/Mail/Notes/Reminders/Safari/Messages `*AdapterEvalTests`.
+- Prompt assembly, reading tools, app-reference discovery — `PromptAssemblyEvalTests`,
+  `ReadingToolEvalTests`, `AppReferenceDiscoveryEvalTests`.
 
-**Accuracy verdict:** the app is honest *within a turn* (strong verifiers) but *unmeasured
-across turns* (no eval). Those are different guarantees; don't confuse them.
+Most read "this was a real bug; here is the assertion that locks the fix" — eval-driven
+development in practice. `[code]`
+
+### What is thinner (the honest, smaller gap) `[gap]`
+The existing tests are **per-case regression assertions** ("does this specific sentence route
+right?"). What is not evident is a **dataset-driven aggregate metric** — a labeled corpus of N
+route/scope cases run as a set to produce a **pass-rate you track release-over-release**, so a
+change that fixes 3 cases and breaks 5 is visible as a *number*, not just red/green per case.
+Also genuinely absent: **memory-retrieval eval** (author's own note, `09` §7 #5) and any
+answer-quality/perf metric that needs a live model or Mac.
+
+**Accuracy verdict:** honest *within a turn* (strong verifiers) AND well-covered *per-case
+offline* (large eval suite). The refinement worth considering is an *aggregate scored corpus*,
+not a foundation that's missing.
 
 ---
 
@@ -102,8 +119,10 @@ Raycast-feel is a stopwatch question on a real Mac — **unmeasured here** (no p
 
 Ranked by leverage:
 
-1. **Evaluation harness** — the one gap that blocks improving everything else. Buildable
-   without a Mac (data + runner). **Recommended next build.** `[gap]`
+1. **Aggregate eval metric** — a large per-case eval suite already exists (~135 eval tests).
+   What's thin is a *dataset-driven pass-rate* tracked over releases + memory-retrieval eval.
+   This is a **refinement**, not a missing foundation. (Earlier drafts wrongly called eval
+   absent — corrected.) `[gap, smaller than first stated]`
 2. **Capability graph** — routing/planning is flat index + ranking; graph reasoning is net-new
    (`08` §14 #2). `[gap]`
 3. **Two intent brains** — `GeneralAIActionResolver` vs `L2UnifiedAssistant`; resolve which is
@@ -121,7 +140,8 @@ Ranked by leverage:
 
 - **Fast?** Rules say yes; unmeasured. `[?]`
 - **Accurate within a turn?** Yes — strong verifiers. `[code]`
-- **Accurate across turns?** Unknown — no eval. `[gap]`
+- **Accurate across turns?** Well-covered per-case by a large offline eval suite (~135 eval
+  tests); no *aggregate* pass-rate metric yet. `[code]/[gap]`
 - **Safe?** The control plane is a real strength; the risk lives in the elevated tools behind
   approval. `[code]`
 - **Secure?** Reasonable for a beta; private-framework use and clipboard/Safari privacy are the

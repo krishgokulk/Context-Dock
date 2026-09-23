@@ -225,12 +225,12 @@ Runtime guards:
   (exit-zero ≠ worked).
 - **`FreshResultEvaluator`** — evaluates result freshness/relevance.
 
-Missing:
-- **No eval/benchmark suite** for answer quality, route-selection accuracy, or regressions.
-  Nothing measures "did the chat pick the right route / give the right answer" across a fixed
-  test set. `[gap]`
-- The offline test suite (`Context-DockTests/`) covers some tool-less paths but not
-  end-to-end route quality. `[gap]`
+Offline eval (CORRECTION — an earlier draft wrongly said this was absent):
+- A **large offline eval suite exists** — `AgentRoutingEvalTests` (38), `RoutePreferenceEvalTests`,
+  `CapabilityIndexTests` (15), `CapabilityMatchEvalTests`, per-adapter `*AdapterEvalTests`, and
+  more (~135 eval `@Test`s; 1,167 total). These assert route/scope/ranking behavior offline. `[code]`
+- **Thinner:** these are per-case regression assertions, not a **dataset-driven aggregate
+  pass-rate** tracked over releases. That aggregate metric is the real (smaller) gap. `[gap]`
 
 ---
 
@@ -296,9 +296,9 @@ Also true of every provider path:
 
 1. **No capability graph.** Route selection is flat token-overlap ranking, not graph
    reasoning. Decide: is graph reasoning a real goal, or is a better ranker enough? `[gap]`
-2. **No evaluation suite.** Route-selection and answer quality are unmeasured — you cannot
-   tell if a change made the chat smarter or dumber. This is the highest-leverage missing
-   piece for "make it stronger, intelligent later." `[gap]`
+2. **Eval: strong per-case, no aggregate metric.** ~135 offline eval tests already cover
+   route/scope/ranking per case (`AgentRoutingEvalTests`, etc.). Missing is a dataset-driven
+   *pass-rate* tracked over releases. (Earlier draft wrongly called eval absent — corrected.) `[gap]`
 3. **API connections are mention-only** — configured but not callable from chat. Intended, or
    an unfinished feature? `[?]`
 4. **Verb-synonym list is hand-written** (`append → add put…`). It fails for words nobody
