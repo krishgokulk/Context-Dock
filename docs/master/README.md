@@ -35,9 +35,17 @@ top-level index.
 
 ## Master index
 
-- [`01-GLOBAL-CONTEXT.md`](01-GLOBAL-CONTEXT.md) ✅ draft
-- `02-CONTEXT-DOCK.md` — frontmost-app command layer (pending)
+- [`01-GLOBAL-CONTEXT.md`](01-GLOBAL-CONTEXT.md) ✅ draft — universal search & launch
+- [`02-CONTEXT-DOCK.md`](02-CONTEXT-DOCK.md) ✅ draft — frontmost-app command layer
 - [`03-APP-SCOPED-CHAT.md`](03-APP-SCOPED-CHAT.md) ✅ draft — frontmost-app / Context Dock Chat Mode
   - [`diagrams/03-app-scoped-chat-flow.md`](diagrams/03-app-scoped-chat-flow.md) — flow diagram
 - [`04-GENERAL-AI-CHAT.md`](04-GENERAL-AI-CHAT.md) ✅ draft — AI Assistant Mode (`.general` scope)
+- [`05-SELECTION-AND-CLIPBOARD.md`](05-SELECTION-AND-CLIPBOARD.md) ✅ draft — Selection Shortcut Sheet + clipboard
+- [`06-MEDIA-DOCK.md`](06-MEDIA-DOCK.md) ✅ draft — media state & controls
+- [`07-EXTENSIONS.md`](07-EXTENSIONS.md) ✅ draft — L1/L2/L3 + global extension system
 - [`08-AI-ENGINE.md`](08-AI-ENGINE.md) ✅ draft — shared engine: providers, loops, tools, verify, safety, cost
+- [`09-SECOND-BRAIN-AND-DASHBOARD.md`](09-SECOND-BRAIN-AND-DASHBOARD.md) ✅ draft — memory layer + dashboard/graph
+- [`10-CROSS-CUTTING.md`](10-CROSS-CUTTING.md) ✅ draft — evaluation · safety · performance · security
+
+**All 10 surface/cross-cutting drafts complete.** Next: confirm & merge into
+`docs/architecture/`, then build the evaluation harness (see `10` §5.1).
