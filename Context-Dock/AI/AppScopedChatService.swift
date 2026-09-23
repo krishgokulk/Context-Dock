@@ -2077,19 +2077,19 @@ enum AppScopedChatService {
         // Nothing linked could carry this out, and it is work rather than a question: offer a
         // specialist instead of ending at what cannot be done. Offered, never taken — the
         // buttons are the whole point, and a worker costs minutes where a route costs none.
-        if sendChoices.isEmpty,
-            let task = AIWorkerTask.bounded(
-                goal: sendIntent,
-                scope: scope,
-                appName: appName,
-                workspace: ChatWorkingDirectory.resolve(for: nil))
+        let workerTask = AIWorkerTask.bounded(
+            goal: sendIntent,
+            scope: scope,
+            appName: appName,
+            workspace: ChatWorkingDirectory.resolve(for: nil))
+        let installedWorkers = AIWorkerRegistry.shared.installed
+        if AIWorkerOffer.shouldOffer(
+            hasLinkedRoute: !sendChoices.isEmpty, task: workerTask, workers: installedWorkers),
+            let workerTask
         {
-            let workers = AIWorkerRegistry.shared.installed
-            let offers = AIWorkerOffer.choices(for: task, workers: workers)
-            if !offers.isEmpty {
-                sendChoices = offers
-                text += "\n\n---\n" + AIWorkerOffer.explanation(for: task, workers: workers)
-            }
+            sendChoices = AIWorkerOffer.choices(for: workerTask, workers: installedWorkers)
+            text += "\n\n---\n"
+                + AIWorkerOffer.explanation(for: workerTask, workers: installedWorkers)
         }
 
         // The rung below every offer above, and the last one there is: nothing linked ran, no
