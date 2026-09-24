@@ -137,35 +137,37 @@ actor PluginScriptRunner {
         // Read both pipes BEFORE waiting. A pipe buffer is 64 KB; a script that prints more
         // than that blocks on write while we block on wait, and neither side ever moves — a
         // few hundred list rows is enough to reach it.
-        async let stdoutData = Self.read(out)
-        async let stderrData = Self.read(err)
+        //
+        // The two reads and the wait each block a thread, and they get threads of their own —
+        // never DispatchQueue.global. The global pool has a thread cap, and the app parks
+        // blocking work on it from dozens of places (waitUntilExit on osascript, AX calls).
+        // In the test host on CI those wait on an Automation prompt nobody answers, the pool
+        // runs dry, and blocks queued here never start: `echo ok` with a 30 s timeout sat for
+        // the suite's full 120 s limit, because the timeout could only fire the kill — the
+        // group still waited on a wait that had never begun.
+        let outcome = ProcessOutcome()
+        outcome.start(process: process, stdout: out, stderr: err)
 
-        // The wait is a blocking `waitUntilExit` on a GCD thread and cannot be cancelled, so
-        // the group must not be left holding it: on timeout the process is made to exit —
-        // SIGTERM first, SIGKILL if it is still there a moment later, since an interactive
-        // shell ignores the first — and only then does the group return.
-        // Whether the clock ran out is decided by the clock, not by which task reports
-        // first: a process killed by the timeout exits, and its wait can win the race.
-        let deadline = TimeoutFlag()
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask {
-                await Self.wait(for: process)
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                guard process.isRunning else { return }
-                deadline.set()
+        // Whether the clock ran out is decided by the clock, not by which side reports first:
+        // a process killed by the timeout exits, and its wait can win the race.
+        let deadline = ContinuousClock.now + .seconds(timeout)
+        var timedOut = false
+        if await outcome.settled(before: deadline) == false {
+            if process.isRunning {
+                timedOut = true
+                // SIGTERM first, SIGKILL if it is still there a moment later — an
+                // interactive shell ignores the first.
                 process.terminate()
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             }
-            await group.next()
-            group.cancelAll()
+            // A moment to drain what the pipes still hold. A process that has exited but
+            // left a child holding its stdout never sends EOF; that is not worth waiting on.
+            _ = await outcome.settled(before: .now + .seconds(1))
         }
-        let timedOut = deadline.isSet
 
-        let stdout = String(data: await stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: await stderrData, encoding: .utf8) ?? ""
+        let stdout = String(data: outcome.stdout, encoding: .utf8) ?? ""
+        let stderr = String(data: outcome.stderr, encoding: .utf8) ?? ""
 
         if timedOut {
             return .failure(PluginRunFailure(
@@ -184,27 +186,76 @@ actor PluginScriptRunner {
             exitCode: process.terminationStatus))
     }
 
-    /// One bit shared by the two racing tasks, set by the one that owns the clock.
-    private final class TimeoutFlag: @unchecked Sendable {
+    /// The process's output and exit, collected on three threads of its own. `settled` is
+    /// true once both pipes reached EOF and the process exited.
+    private final class ProcessOutcome: @unchecked Sendable {
         private let lock = NSLock()
-        private var value = false
-        func set() { lock.lock(); value = true; lock.unlock() }
-        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
-    }
+        private var out = Data()
+        private var err = Data()
+        private var pending = 3
+        private var waiter: CheckedContinuation<Bool, Never>?
+        private var clock: Task<Void, Never>?
 
-    private static func read(_ pipe: Pipe) async -> Data {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                continuation.resume(returning: pipe.fileHandleForReading.readDataToEndOfFile())
+        var stdout: Data { lock.lock(); defer { lock.unlock() }; return out }
+        var stderr: Data { lock.lock(); defer { lock.unlock() }; return err }
+
+        func start(process: Process, stdout: Pipe, stderr: Pipe) {
+            drain(stdout.fileHandleForReading) { self.out.append($0) }
+            drain(stderr.fileHandleForReading) { self.err.append($0) }
+            Thread.detachNewThread {
+                process.waitUntilExit()
+                self.finishOne()
             }
         }
-    }
 
-    private static func wait(for process: Process) async {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
-                process.waitUntilExit()
-                continuation.resume()
+        /// Chunk by chunk rather than readDataToEndOfFile, so what arrived before a drain was
+        /// abandoned is still there to report.
+        private func drain(_ handle: FileHandle, into append: @escaping (Data) -> Void) {
+            Thread.detachNewThread {
+                while true {
+                    let chunk = handle.availableData
+                    if chunk.isEmpty { break }
+                    self.lock.lock(); append(chunk); self.lock.unlock()
+                }
+                self.finishOne()
+            }
+        }
+
+        private func finishOne() {
+            lock.lock()
+            pending -= 1
+            let done = pending == 0 ? takeWaiter() : nil
+            lock.unlock()
+            done?.resume(returning: true)
+        }
+
+        /// Called with the lock held.
+        private func takeWaiter() -> CheckedContinuation<Bool, Never>? {
+            let w = waiter
+            waiter = nil
+            clock?.cancel()
+            clock = nil
+            return w
+        }
+
+        /// Waits until everything is in or `deadline` passes; true if everything is in.
+        /// The clock is a Swift task, not a GCD timer — the global pool may be the thing that
+        /// is stuck.
+        func settled(before deadline: ContinuousClock.Instant) async -> Bool {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if pending == 0 {
+                    lock.unlock()
+                    continuation.resume(returning: true)
+                    return
+                }
+                waiter = continuation
+                clock = Task {
+                    try? await Task.sleep(until: deadline, clock: .continuous)
+                    guard !Task.isCancelled else { return }
+                    self.lock.withLock { self.takeWaiter() }?.resume(returning: false)
+                }
+                lock.unlock()
             }
         }
     }
