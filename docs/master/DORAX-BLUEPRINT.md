@@ -16,6 +16,7 @@
 | **First users** | Mac developers who already use Claude Code or Codex. |
 | **Why it wins** | Raycast and Alfred need someone to write an extension per app. DoraX reads any app's live menus and verifies every action. `[code]` |
 | **What the user sees** | Three verbs: **Find** (⌘⌘ double-press Command) · **Ask** (App Chat / Chat Window hotkeys, set by the user) · **Act on this** (selection auto-scopes on launch, or the Selection Scope hotkey) — see [Hotkeys as built](00-COMPLETE-APP-PLAN.md#hotkeys-as-built-code) |
+| **Names (owner decision 2026-09-24)** | The system-wide chat is **General Chat** — never "AI Assistant", "AI Assistant Mode" or "DoraX Action Chat". The chat scoped to one app is **App Chat**. Still wrong in the app `[code]`: `GeneralSettingsPage.swift:104` "AI Assistant Mode", `DataStorageSettingsPage.swift:69` "AI Assistant History", `HotkeysSettingsPage.swift:291` Navigation chip, `LauncherView+LivePanel.swift:1400` and `:1546`, `LegacySettingsContent.swift:439`; and in `docs/architecture/` PRODUCT_LAYERS, UI_RULES, UNIFIED_DOCK_SURFACE |
 | **v1 includes** | Launcher basics (apps, files, calculator, conversions, quicklinks, clipboard, windows, hotkeys, ⌘K actions) + app-scoped and cross-app AI with verified actions + onboarding + signed install |
 | **Later (Labs)** | Memory vault, dashboard, coding-agent workers, media dock, drop shelf |
 | **Never** | Visual workflow editor, own extension store (MCP is the store), acting without asking |

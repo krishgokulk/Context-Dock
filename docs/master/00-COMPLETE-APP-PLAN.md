@@ -135,10 +135,10 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 | ↩ | Run the focused result or pill |
 | Esc | Close — clear focus / dismiss the dock |
 | ↑ / ↓ | Move Global Context ↔ Context Dock ↔ Media Dock |
-| ← / → | Move Context Dock ↔ AI Assistant |
+| ← / → | Move Context Dock ↔ General Chat |
 
-Settings calls the chat surface "AI Assistant" here and "General Chat" under Chat Window —
-one name should be picked (see Part 7 of the blueprint on naming).
+**Name: "General Chat" everywhere** (owner decision, 2026-09-24). The app still shows
+"AI Assistant" in six places — see the blueprint's naming rule for the list.
 
 The old "long-press ⌘ opens the Selection Shortcut Sheet" was **removed**; ⌘ only tap-toggles
 scope now (`Search/LauncherView+KeyboardNavigation.swift`, around line 1303).
