@@ -59,12 +59,7 @@ extension LauncherView {
             .onGeometryChange(for: CGRect.self) { proxy in
                 proxy.frame(in: .global)
             } action: { frame in
-                // The rect, not just the height: the card is pinned to the bottom in dock
-                // mode, so a height alone described the wrong strip of the window and ate
-                // every click above it.
-                let window = AppDelegate.shared?.launcherWindow as? KeyableWindow
-                window?.dockCardRect = frame
-                window?.dockCardHeight = frame.height
+                handleLauncherCardFrameChange(frame)
             }
             .background(
                 backgroundView
@@ -83,31 +78,13 @@ extension LauncherView {
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
             .onAppear {
-                connectCornerGlobalResults()
-                if renderedDockHeight == nil {
-                    renderedDockHeight = calculatedHeight
-                }
+                handleContentAppear()
             }
             .onChange(of: searchState.results.isEmpty) { _, isEmpty in
-                if isEmpty {
-                    l1ResultsReservedHeight = 0
-                }
-                requestWindowSizeUpdate(
-                    reason: .resultsChanged,
-                    animated: false,
-                    debounceNanoseconds: 0
-                )
+                handleSearchResultsEmptyChange(isEmpty)
             }
             .onChange(of: searchState.results.count) { _, newCount in
-                guard !showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
-                if newCount > 0 {
-                    l1ResultsReservedHeight = DockHeightResolver.l1ResultsHeight(for: newCount)
-                    requestWindowSizeUpdate(
-                        reason: .resultsChanged,
-                        animated: false,
-                        debounceNanoseconds: 0
-                    )
-                }
+                handleSearchResultsCountChange(newCount)
             }
             .onChange(of: listViewResizeToken) { _, _ in
                 // Global Context owns a fixed-height result sheet: dismiss it as soon as
@@ -119,22 +96,8 @@ extension LauncherView {
                     debounceNanoseconds: isGlobalContextActive ? 0 : 260_000_000
                 )
             }
-            .onReceive(FaviconStore.shared.$revision.dropFirst()) { (_: Int) in
-                // A page favicon finished loading — repaint EVERY view that shows web-link rows, not
-                // just Safari global context. Without rebuilding, the favicon sits in the cache but
-                // the already-built pills keep their generic icon (menuItemImage was nil at build).
-                // Typed parameter and Bool locals: inferred inside this modifier chain, Xcode 26's
-                // type checker gives up on the closure.
-                if shouldShowSafariTabStrip {
-                    syncSafariTabStrip()
-                }
-                refreshVisibleGlobalContextAfterMenuCacheUpdate()
-                let dockShowsContext: Bool = showContextInDock
-                let globalContextActive: Bool = isGlobalContextActive
-                if dockShowsContext && !globalContextActive {
-                    scheduleDockPillRebuild(
-                        query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
-                }
+            .onReceive(FaviconStore.shared.$revision.dropFirst()) { _ in
+                handleFaviconRevision()
             }
             .onReceive(NotificationCenter.default.publisher(for: .dockInlineFeedbackChanged)) { note in
                 handleDockInlineFeedback(note)
@@ -155,15 +118,7 @@ extension LauncherView {
                 requestWindowSizeUpdate(reason: .rowLayoutChanged)
             }
             .onChange(of: usesVerticalListDockLayout) { _, active in
-                if active {
-                    collapseTimer?.cancel()
-                    isSearchBarExpanded = true
-                    // reclaimSearchInputFocus() intentionally removed: it was only needed to
-                    // recover focus after the old structural identity switch (dockBaseView ↔
-                    // unifiedListDockCard). The NSTextField now always lives in the same view
-                    // hierarchy, so calling it here would select-all the already-typed text.
-                }
-                requestWindowSizeUpdate(reason: .rowLayoutChanged)
+                handleVerticalListDockLayoutChange(active)
             }
             .onChange(of: l2.chatMessages.count) { _, _ in
                 requestWindowSizeUpdate(reason: .chatChanged)
@@ -2665,5 +2620,76 @@ extension LauncherView {
             }
         }
         requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    /// `.onGeometryChange(for: CGRect.self)` action.
+    func handleLauncherCardFrameChange(_ frame: CGRect) {
+        // The rect, not just the height: the card is pinned to the bottom in dock
+        // mode, so a height alone described the wrong strip of the window and ate
+        // every click above it.
+        let window = AppDelegate.shared?.launcherWindow as? KeyableWindow
+        window?.dockCardRect = frame
+        window?.dockCardHeight = frame.height
+    }
+
+    /// `.onAppear`.
+    func handleContentAppear() {
+        connectCornerGlobalResults()
+        if renderedDockHeight == nil {
+            renderedDockHeight = calculatedHeight
+        }
+    }
+
+    /// `.onChange(of: searchState.results.isEmpty)`.
+    func handleSearchResultsEmptyChange(_ isEmpty: Bool) {
+        if isEmpty {
+            l1ResultsReservedHeight = 0
+        }
+        requestWindowSizeUpdate(
+            reason: .resultsChanged,
+            animated: false,
+            debounceNanoseconds: 0
+        )
+    }
+
+    /// `.onChange(of: searchState.results.count)`.
+    func handleSearchResultsCountChange(_ newCount: Int) {
+        guard !showContextInDock, !showMediaLayer, !aiMode.isActive else { return }
+        if newCount > 0 {
+            l1ResultsReservedHeight = DockHeightResolver.l1ResultsHeight(for: newCount)
+            requestWindowSizeUpdate(
+                reason: .resultsChanged,
+                animated: false,
+                debounceNanoseconds: 0
+            )
+        }
+    }
+
+    /// `.onReceive(FaviconStore.shared.$revision)`.
+    func handleFaviconRevision() {
+        // A page favicon finished loading — repaint EVERY view that shows web-link rows, not
+        // just Safari global context. Without rebuilding, the favicon sits in the cache but
+        // the already-built pills keep their generic icon (menuItemImage was nil at build).
+        if shouldShowSafariTabStrip {
+            syncSafariTabStrip()
+        }
+        refreshVisibleGlobalContextAfterMenuCacheUpdate()
+        if showContextInDock && !isGlobalContextActive {
+            scheduleDockPillRebuild(
+                query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
+        }
+    }
+
+    /// `.onChange(of: usesVerticalListDockLayout)`.
+    func handleVerticalListDockLayoutChange(_ active: Bool) {
+        if active {
+            collapseTimer?.cancel()
+            isSearchBarExpanded = true
+            // reclaimSearchInputFocus() intentionally removed: it was only needed to
+            // recover focus after the old structural identity switch (dockBaseView ↔
+            // unifiedListDockCard). The NSTextField now always lives in the same view
+            // hierarchy, so calling it here would select-all the already-typed text.
+        }
+        requestWindowSizeUpdate(reason: .rowLayoutChanged)
     }
 }
