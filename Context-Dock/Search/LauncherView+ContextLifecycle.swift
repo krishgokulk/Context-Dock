@@ -2658,6 +2658,7 @@ extension LauncherView {
     /// `.onAppear`.
     func handleContentAppear() {
         connectCornerGlobalResults()
+        connectCornerSelectionActions()
         if renderedDockHeight == nil {
             renderedDockHeight = calculatedHeight
         }

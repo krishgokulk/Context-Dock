@@ -21,7 +21,7 @@ struct SelectionScopeModelTests {
 
     @Test("Selected text raises the card and is described by length")
     func textSelectionOpens() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
 
         #expect(model.summon(from: context(text: "let x = 1")))
         #expect(model.phase == .showing)
@@ -31,7 +31,7 @@ struct SelectionScopeModelTests {
 
     @Test("Nothing selected raises nothing — an empty card is worse than no card")
     func emptySelectionDoesNotOpen() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
 
         #expect(model.summon(from: context(text: "   ")) == false)
         #expect(model.phase == .hidden)
@@ -39,7 +39,7 @@ struct SelectionScopeModelTests {
 
     @Test("Selected files are named, not counted at the user")
     func filePreviewNamesTheFiles() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
         model.summon(from: context(files: ["/tmp/notes.md", "/tmp/plan.txt"]))
 
         #expect(model.scope?.kind == .files(count: 2))
@@ -48,7 +48,7 @@ struct SelectionScopeModelTests {
 
     @Test("The hotkey toggles: a second press puts it away")
     func toggleClosesWhatItOpened() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
         model.toggle(from: context(text: "hello"))
         #expect(model.phase == .showing)
 
@@ -58,7 +58,7 @@ struct SelectionScopeModelTests {
 
     @Test("An empty question is not a turn")
     func emptyQuestionDoesNotSubmit() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
         model.summon(from: context(text: "hello"))
         model.query = "   "
 
@@ -72,7 +72,7 @@ struct SelectionScopeModelTests {
     /// selection the answer is about, so it stays while the turn runs.
     @Test("Asking sends the turn and keeps the card up")
     func submitKeepsTheCardUp() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
         model.summon(from: context(text: "hello"))
         model.query = "translate this"
 
@@ -83,7 +83,7 @@ struct SelectionScopeModelTests {
 
     @Test("Pinning stops the clock; unpinning starts it again")
     func pinningHoldsTheCard() {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
         model.summon(from: context(text: "hello"))
 
         model.togglePin()

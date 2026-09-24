@@ -83,6 +83,30 @@ extension LauncherView {
             }
     }
 
+    // MARK: - The corner's selection card
+
+    /// Lend this Dock's Selection Scope to the corner's selection card: the card's selection
+    /// becomes the frozen payload, the card lists the rows the sheet would render for its
+    /// query, and a row it runs goes through `executeDockPill` like a click here. One pipeline,
+    /// so the two surfaces cannot disagree about what a selection can do.
+    func connectCornerSelectionActions() {
+        let source = SelectionActionSource.shared
+        source.adopt = { activation in
+            selectionScopePayload = activation
+        }
+        source.actions = { query in
+            guard hasSelectionScopeSurface else { return [] }
+            let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return selectionScopedDockPills(buildDockPills(query: normalized)).filter { pill in
+                guard !pill.isSeparator, pill.isEnabled else { return false }
+                return pill.rankingKind != "selectionAI" && pill.id != "selection-ask-ai"
+            }
+        }
+        source.run = { pill in
+            executeDockPill(pill)
+        }
+    }
+
     func selectionRouteIdentifier(for pill: DockPill) -> String {
         pill.trackingIdentifier.isEmpty ? pill.id : pill.trackingIdentifier
     }
