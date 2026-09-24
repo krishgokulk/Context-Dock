@@ -39,7 +39,7 @@ enum AppActivation {
         if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .first(where: { !$0.isTerminated })
         {
-            raise(running)
+            raise(running, restoringWindows: true)
             settle(feedbackID, app: running)
             return
         }
@@ -72,16 +72,40 @@ enum AppActivation {
     static func bringForward(_ app: NSRunningApplication, name: String) {
         let feedbackID = DockActionFeedback.appOpening(
             name, bundleID: app.bundleIdentifier)
-        raise(app)
+        raise(app, restoringWindows: true)
         settle(feedbackID, app: app)
     }
 
+    /// What bringing a running app forward takes, in order. Activating is not enough on its
+    /// own: `activate` never takes a window out of the Dock, so an app whose only window was
+    /// minimised became active with nothing on screen — clicking it in the corner looked
+    /// like the click had missed. The Dock's own path (`activateRunningAppFromGlobalContext`)
+    /// has always restored minimised windows; this is the same rule, in one place.
+    enum RaiseStep: Equatable { case unhide, activate, restoreMinimisedWindows }
+
+    nonisolated static func raiseSteps(isHidden: Bool, restoringWindows: Bool) -> [RaiseStep] {
+        (isHidden ? [.unhide] : []) + [.activate]
+            + (restoringWindows ? [.restoreMinimisedWindows] : [])
+    }
+
     /// The raise itself. Yield, then activate every window rather than only the front one:
-    /// an app whose windows are minimised or behind others is not "brought forward" by
-    /// raising one of them.
-    static func raise(_ app: NSRunningApplication) {
-        NSApp.yieldActivation(to: app)
-        app.activate(options: [.activateAllWindows])
+    /// an app whose windows are behind others is not "brought forward" by raising one of
+    /// them. `restoringWindows` is for the first raise only — the restore polls for the
+    /// genie animation on its own, and the retries in `settle` need not start it again.
+    static func raise(_ app: NSRunningApplication, restoringWindows: Bool = false) {
+        for step in raiseSteps(isHidden: app.isHidden, restoringWindows: restoringWindows) {
+            switch step {
+            case .unhide:
+                app.unhide()
+            case .activate:
+                NSApp.yieldActivation(to: app)
+                app.activate(options: [.activateAllWindows])
+            case .restoreMinimisedWindows:
+                // Un-minimises and raises, never moves or resizes — the window comes back
+                // where the user left it, as the Dock does.
+                WindowManagementService.shared.restoreAfterActivate(app)
+            }
+        }
     }
 
     /// Wait for the app to actually be in front, retrying once for the launch that was not

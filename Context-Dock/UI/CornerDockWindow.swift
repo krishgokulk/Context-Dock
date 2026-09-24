@@ -65,6 +65,9 @@ final class CornerDockController: NSObject {
     private var pendingCommandSwitch: DispatchWorkItem?
     private var accumulatedChatSwipeX: CGFloat = 0
     private var accumulatedChatSwipeY: CGFloat = 0
+    /// One action per swipe: set once a gesture has acted, so its momentum ending does not
+    /// act again.
+    private var didActInCurrentSwipe = false
     private var sinks: Set<AnyCancellable> = []
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
@@ -509,7 +512,7 @@ final class CornerDockController: NSObject {
         let preview =
             DockPinPreviewService.shared.preview(for: pin)
             ?? .missing(name: pin.title, reason: "")
-        return DockPinPreviewMetrics.size(for: preview)
+        return DockPinPreviewMetrics.size(for: preview, expanded: prompt.pinPreviewExpanded)
     }
 
     /// The app's commands, or what it can do — a card of its own above the field, and only
@@ -567,6 +570,7 @@ final class CornerDockController: NSObject {
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
             promptIcons: prompt.globalMatchIcons.count,
+            stripBesideField: prompt.isGlobalScope,
             maximumWidth: DockStripPlan.screenBudget)
     }
 
@@ -803,7 +807,11 @@ final class CornerDockController: NSObject {
                 return chatPresentation.handleRightArrow(draft: "") ? nil : event
             case 123:  // ←
                 return chatPresentation.handleLeftArrow(draft: "") ? nil : event
-            case 125, 126, 48, 36, 76, 51, 117:  // ↓ ↑ Tab Return Enter Backspace Delete
+            case 126:  // ↑ — the layer above, as the Dock's key does at rest
+                return chatPresentation.handleLayerKey(up: true) ? nil : event
+            case 125:  // ↓ — the layer below
+                return chatPresentation.handleLayerKey(up: false) ? nil : event
+            case 48, 36, 76, 51, 117:  // Tab Return Enter Backspace Delete
                 return event
             default:
                 guard let text = event.characters, !text.isEmpty,
@@ -865,25 +873,45 @@ final class CornerDockController: NSObject {
         if event.phase == .began {
             accumulatedChatSwipeX = 0
             accumulatedChatSwipeY = 0
+            didActInCurrentSwipe = false
         }
+        // Through the fingers AND the momentum: a fast flick lands most of its travel after
+        // the lift (§4b W2).
         if event.phase == .began || event.phase == .changed
             || event.momentumPhase == .began || event.momentumPhase == .changed
         {
             accumulatedChatSwipeX += event.scrollingDeltaX
             accumulatedChatSwipeY += event.scrollingDeltaY
         }
+        // Decided when the fingers lift, and again when the momentum ends — a flick that
+        // was short at the lift still counts once its momentum lands. Never twice.
         guard event.phase == .ended || event.momentumPhase == .ended else { return event }
-        defer {
-            accumulatedChatSwipeX = 0
-            accumulatedChatSwipeY = 0
-        }
-        guard abs(accumulatedChatSwipeX) > abs(accumulatedChatSwipeY) * 1.8 else {
+        if didActInCurrentSwipe {
+            if event.momentumPhase == .ended {
+                accumulatedChatSwipeX = 0
+                accumulatedChatSwipeY = 0
+            }
             return event
         }
-        let draft = chatPresentation.mode == .general
-            ? chatPresentation.generalChat.input : prompt.query
-        return chatPresentation.handleHorizontalSwipe(
-            deltaX: accumulatedChatSwipeX, draft: draft) ? nil : event
+        guard let move = CornerSwipe.classify(dx: accumulatedChatSwipeX, dy: accumulatedChatSwipeY)
+        else { return event }
+        accumulatedChatSwipeX = 0
+        accumulatedChatSwipeY = 0
+        let sideways: Bool
+        if case .swipeSideways = move { sideways = true } else { sideways = false }
+
+        // Scoped into something from Global Context: that scope owns the surface until it
+        // is left. A sideways swipe is swallowed; a vertical one is left to scroll (§4b W8).
+        if chatPresentation.mode != .general, prompt.returnsToGlobalScope {
+            didActInCurrentSwipe = true
+            return sideways ? nil : event
+        }
+        // Over a conversation, vertical travel is the transcript scrolling, not a request
+        // to change layer.
+        if !sideways, chatPresentation.isShowingConversation { return event }
+        guard chatPresentation.handleSwipe(move) else { return event }
+        didActInCurrentSwipe = true
+        return nil
     }
 
     private func stopHoverWatch() {
