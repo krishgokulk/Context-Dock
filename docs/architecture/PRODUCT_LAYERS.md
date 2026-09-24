@@ -10,7 +10,7 @@ Never merge product layers.
 
 - Global Context is not Chat Mode.
 - Context Dock is not Global Context.
-- Context Dock Chat Mode is not AI Assistant Mode.
+- Context Dock Chat Mode is not General Chat.
 - Selection Shortcut Sheet is not a launcher.
 - Media Dock is not a chat surface.
 
@@ -54,9 +54,9 @@ Rules:
 - Live menu state may update, but UI must not recreate sheet per keypress.
 - App command execution must feel native and instant.
 
-## AI Assistant Mode
+## General Chat
 
-AI Assistant Mode = System-wide AI Workflow Layer.
+General Chat = System-wide AI Workflow Layer.
 
 Job:
 - System-wide questions, app discovery, and cross-app workflows.
@@ -82,7 +82,7 @@ Job:
 - Use app-scoped tools/actions when approved.
 
 Rules:
-- Not AI Assistant Mode.
+- Not General Chat.
 - Not Global Context.
 - Must show current app/tool scope.
 

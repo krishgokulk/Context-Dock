@@ -288,7 +288,7 @@ struct HotkeysSettingsPage: View {
 private struct DockNavigationDiagram: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
-            modeChip("sparkles", "AI Assistant", "Ask or do anything…", .purple)
+            modeChip("sparkles", "General Chat", "Ask or do anything…", .purple)
 
             VStack(spacing: 2) {
                 Image(systemName: "arrow.left.arrow.right")

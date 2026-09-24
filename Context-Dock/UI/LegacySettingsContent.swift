@@ -436,10 +436,10 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "AI Assistant", systemImage: "brain.head.profile") {
+            CardSection(title: "General Chat", systemImage: "brain.head.profile") {
                 SettingsRow {
-                    GeneralToggleLabel("Enable AI Assistant Mode",
-                        caption: "Swipe left/right — or press Tab — to open AI Assistant from any layer.")
+                    GeneralToggleLabel("Enable General Chat",
+                        caption: "Swipe left/right — or press Tab — to open General Chat from any layer.")
                     Toggle("", isOn: $settings.enableAIMode).labelsHidden()
                 }
             }
@@ -7716,7 +7716,7 @@ struct PermissionsSettingsView: View {
                         .font(.title3.bold())
                     statusPill(hasAccessibilityPermission ? "Authorized" : "Action required", color: hasAccessibilityPermission ? .green : .orange)
                 }
-                Text("Context-Dock is more than a launcher. It reads frontmost-app context, menu caches, selected text/files, app data, and safe automation routes so AI Assistant, Context Dock Chat, and Selection Scope can act with the correct boundary.")
+                Text("Context-Dock is more than a launcher. It reads frontmost-app context, menu caches, selected text/files, app data, and safe automation routes so General Chat, App Chat, and Selection Scope can act with the correct boundary.")
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

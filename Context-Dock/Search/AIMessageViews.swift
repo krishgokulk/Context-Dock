@@ -2973,7 +2973,7 @@ struct CodeBlockView: View {
         Task { @MainActor in
             let result = await TerminalCommandExecutor.shared.run(
                 command,
-                purpose: "Run code suggested by the AI Assistant"
+                purpose: "Run code suggested by General Chat"
             )
             runSucceeded = result.success
             runOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
