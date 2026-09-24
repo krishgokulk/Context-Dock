@@ -123,6 +123,22 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 | Clipboard Scope | unset | Hotkeys → Custom Shortcuts |
 | Quick Note | unset | Hotkeys → Custom Shortcuts |
 | Capture Text / Capture Area / Screenshot | unset | Hotkeys → Custom Shortcuts |
+| Developer Inspector | ⌥⌘I (fixed, registered in `App/ILauncherApp.swift`) | — |
+
+**Inside the dock** (only while it is open, shown under Hotkeys → Context Dock / Dock Key Map / Navigation):
+
+| Key | Does |
+|---|---|
+| ⌘R | Refresh Context — re-scan the frontmost app's live menus |
+| ⌘ (tap) | Switch between Global Context and Context Dock |
+| → | Autocomplete to scope the highlighted app |
+| ↩ | Run the focused result or pill |
+| Esc | Close — clear focus / dismiss the dock |
+| ↑ / ↓ | Move Global Context ↔ Context Dock ↔ Media Dock |
+| ← / → | Move Context Dock ↔ AI Assistant |
+
+Settings calls the chat surface "AI Assistant" here and "General Chat" under Chat Window —
+one name should be picked (see Part 7 of the blueprint on naming).
 
 The old "long-press ⌘ opens the Selection Shortcut Sheet" was **removed**; ⌘ only tap-toggles
 scope now (`Search/LauncherView+KeyboardNavigation.swift`, around line 1303).
