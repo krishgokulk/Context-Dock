@@ -50,6 +50,13 @@ top-level index.
 **All 10 surface/cross-cutting drafts complete.** Next: confirm & merge into
 `docs/architecture/`.
 
+## Per-document work folders (deep-dive: fixes · routing · intelligence · engineering)
+
+Grounded improvement plans, one subfolder per document, built one at a time:
+- [`01-global-context/`](01-global-context/) ✅
+- [`02-context-dock/`](02-context-dock/) ✅
+- (03–10 pending)
+
 ## Diagrams
 
 One diagram per document + a whole-app overview, all in

@@ -86,12 +86,18 @@ menu action directly. `[code]`
 
 ## 8. Known gaps / open questions
 
-1. **Menu-cache freshness** — a stale cache can offer a command that no longer exists; live
-   verification before execution mitigates, but the timing window is `[?]`.
-2. **Overlap with Global Context** — both show/execute app menu commands (`01` cat. 3). What
-   makes this the *frontmost* command layer vs Global Context's cross-app menu search is the
-   fixed scope; keep that boundary explicit or the two blur. `[owner decision]`
-3. **No tests** on pill assembly/ranking or execution correctness. `[gap]`
+1. **Menu-cache freshness — handled (CORRECTED).** Execution live-verifies before running
+   (`MenuExecutionCoordinator.waitForExecutableMenuItem` → `guard liveMatch.isEnabled`,
+   `:160–178`), and `AppMenuCapabilityCache` re-scans to mirror the live menu and is
+   version+locale-aware (`bundleVersion`/`localeIdentifier`). Not an open risk. See
+   `02-context-dock/fixes.md` F1.
+2. **Overlap with Global Context** — both surface/execute app menu commands. Distinction is
+   scope (frontmost vs cross-app), and they currently use **separate matchers** — reconcile or
+   document (`02-context-dock/engineering.md` E1). `[owner decision]`
+3. **Tests exist (CORRECTED).** `FrontmostMenuMatcherTests` (~15 cases pinning the matcher),
+   `CornerFrontmostAppPillsTests`, `IrreversibleMenuConsentTests`, `CornerDock*`, `AXMenuReaderTests`.
+   Missing: named ranking tiers and the aggregate metric. (Earlier draft wrongly said no tests.)
+   `[gap, smaller than first stated]`
 
 ---
 
