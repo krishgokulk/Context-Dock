@@ -1342,7 +1342,7 @@ struct AutomationSettingsView: View {
         case .workflows:
             return "Context rules and multi-step automation."
         case .shortcutSheetWorkflows:
-            return "Selection-aware actions for the long-press Command shortcut sheet."
+            return "Selection-aware actions for the selected text, file or URL."
         case .advanced:
             return "Developer-facing cache and diagnostics."
         default:

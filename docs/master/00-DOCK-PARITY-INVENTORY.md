@@ -1,0 +1,141 @@
+# 00 — Dock → Corner parity inventory
+
+> **Goal (owner, 2026-09-24):** move the ⌥⌥ Dock into the Corner with **exactly** the same
+> behaviour, functions and navigation. The Dock retires only when every row here is ✅ or has an
+> owner decision next to it.
+> **Built 2026-09-24 from the code** on `claude/jev-popularity-comparison-t530yd`.
+> Dock side read from `Search/LauncherView+KeyboardNavigation.swift`,
+> `Search/LauncherView+InteractionLifecycle.swift`, the Hotkeys page and the surface files.
+> Corner side read from `UI/AppChat*`, `UI/Corner*`, `UI/SelectionScope*`, `UI/GlobalContextRow.swift`
+> and the Corner test files.
+
+## How to read this
+
+| Mark | Meaning |
+|---|---|
+| ✅ | Corner does it — a **test** named in the Evidence column proves it |
+| 🟡 | Corner does part of it, or the code has it but no test pins it |
+| ❌ | Corner does not do it |
+| ❓ | Not verified from the cloud — **the Mac session must check it** |
+| — | Not a parity item (owner decision / Dock-only by design) |
+
+**Rules for whoever works a row:** reuse the Dock's code (extract it from `LauncherView` if needed),
+add a swift-testing test, change the row to ✅ with the test's name, one PR per group.
+The Mac agent must also correct any row it finds wrong — this list is a starting point, not gospel.
+
+---
+
+## A. Opening, closing, position
+
+| # | Dock behaviour | Corner | Evidence / note |
+|---|---|---|---|
+| A1 | ⌥⌥ opens the launcher | — | End state decision open (`00-DOCK-AND-CORNER.md` §5): what ⌥⌥ opens after the Dock retires |
+| A2 | ⌘⌘ opens Global Context | ✅ | Opens in the Corner (Hotkeys page); `CornerGlobalContextParityTests` |
+| A3 | Hotkey toggles: pressing again puts it away / brings it back | ✅ | `theHotkeyPutsAnOpenCornerAway`, `theHotkeyBringsBackAShrunkenCorner` |
+| A4 | Esc closes / steps back one layer | 🟡 | Corner General Chat: `CornerGeneralChatView.handleEscape` ("one layer per press"); other Corner phases ❓ |
+| A5 | Idle collapse timer when nothing typed | ✅ | Corner idle shrink: `generalChatShrinksThenHidesAndHoverRestoresIt`, `pinAndComposerFocusProtectGeneralChatFromIdleShrink` |
+| A6 | Position | — | Dock = centre; Corner = Left / Centre / Right (`CornerDockAnchorTests`) — Corner is richer by design |
+| A7 | Dock height presets (`LauncherView+DockHeight`) | — | Corner sizes itself to content (`AppChatPromptMetrics…Tests`); not a parity item |
+
+## B. The input field
+
+| # | Dock behaviour | Corner | Evidence / note |
+|---|---|---|---|
+| B1 | Ghost-text completion; **Tab** / **→** accepts | ✅ | "The focused row is what Tab and the right arrow take" |
+| B2 | Pills are atomic text: Backspace at a pill's right edge turns it back into text; ←/→ jump over a pill in one press | ❓ | Dock `KeyboardNavigation` ~l.374–400 |
+| B3 | Backspace on empty field steps out of the current scope (folder → Finder search, app chat → app menus, Global inline scope pops) | ❓ | Dock ~l.414–490; several distinct rules — check each |
+| B4 | Backspace on empty field in Selection Scope leaves the scope **and** closes | ❓ | Dock ~l.229 |
+| B5 | Typing a printable key while at rest expands and seeds the field | ✅ | `aPrintableCharacterExpandsAndSeeds` |
+| B6 | Draft kept when switching scope / app | ✅ | `switchingModesPreservesIndependentDrafts`, `comingBackToTheSameAppKeepsWhatWasTyped` |
+| B7 | "quit <app>" + ↩ quits the app the icon previews (before the list builds) | 🟡 | `AppChatMenuBrowsing.localGlobalQuitRows` exists; no test found |
+
+## C. Results and keys
+
+| # | Dock behaviour | Corner | Evidence / note |
+|---|---|---|---|
+| C1 | **↓** first press expands the result sheet, then moves down | ❓ | Dock ~l.782 |
+| C2 | **↑ / ↓** move through grouped app/menu rows | 🟡 | Corner lists rows above the field; key handling not pinned by a test |
+| C3 | **↩** runs the focused row, or the top row if none is focused | 🟡 | `tabRunsTheDockActionAndDisabledRowsDoNotRun` covers Tab; ↩ ❓ |
+| C4 | **←** leaves result focus back to the field | ❓ | Dock ~l.795 |
+| C5 | **Esc** collapses the sheet to compact typing, keeps the query | ❓ | Dock ~l.804 |
+| C6 | **Backspace** on a focused row clears focus only (never quits an app) | ❓ | Dock ~l.828 / 991 — safety rule, must hold in the Corner |
+| C7 | **Tab** enters / leaves app-pill navigation (and blocks macOS Full Keyboard Navigation) | ❓ | Dock ~l.877, 1015 |
+| C8 | **→** on an app row scopes that app into a pill | ✅ | `rightArrowFromDockScopesLikeAnEmptyPromptDoes`, `steppingIntoAnotherAppTakesYouToThatAppsChat` |
+| C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ❓ | Dock ~l.1021–1060 |
+| C10 | **Space** = Quick Look on the focused file/row (only while navigating, never while typing) | 🟡 | `AppChatMenuBrowsing` toggles `FileQuickLookPanel`; Space binding not verified |
+| C11 | **→** on a folder row enters the folder | ❓ | Dock ~l.203 |
+| C12 | **⌘R** refreshes the front app's live menus | ❓ | Hotkeys page lists it for the Dock only |
+
+## D. Scopes (what you can step into)
+
+| # | Dock behaviour | Corner | Evidence / note |
+|---|---|---|---|
+| D1 | Global Context search (apps, menus, files, commands, extensions, plugins, browser URLs) | ✅ | `CornerGlobalContextParityTests` (5 tests: same index, result kinds, row filtering) |
+| D2 | Frontmost-app scope: its menus + actions | 🟡 | `CornerFrontmostAppPillsTests`; plan 2026-09-08 phases — see `00-DOCK-AND-CORNER.md` §4 |
+| D3 | CLI tool scope | ✅ | `CornerCLIScopeTests` (7) |
+| D4 | System command scope | ❓ | `GlobalContextRow` knows the kind; step-in not verified |
+| D5 | Global Extension opens its own board | 🟡 | `GlobalContextRow.run`: "in the corner the extension opens in the board" — no test named |
+| D6 | Plugin: panel or one-shot run | 🟡 | Same file: Corner opens the panel inline; no Corner test named |
+| D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ❓ | `AppChatPromptModel` has Finder search; browse & attach not verified |
+| D8 | Clipboard as a scope | ✅ | Separate Corner pill + card (`CornerDockLayoutTests`, `CornerKeyboardOwnerTests`) |
+| D9 | Notifications compact scope | ❌ | No Corner code found |
+| D10 | Selection Scope with actions | 🟡 | Card + ask only — `00-DOCK-AND-CORNER.md` §4a; being fixed in task `corner-parity` |
+| D11 | Quick Note split editor (list + editor, ⌘N new note, ↩ asks AI into the note) | ❌ | Dock-only (`NotepadScopeView`); the Quick Note hotkey opens a separate floating note |
+| D12 | Mail find actions | ❌ | No Corner code found |
+| D13 | Safari page actions | ❓ | A few Corner mentions; not verified |
+| D14 | Share actions | ❓ | Not verified |
+
+## E. Chat
+
+| # | Dock behaviour | Corner | Evidence / note |
+|---|---|---|---|
+| E1 | General Chat: ↩ sends, whoever holds focus; never sends twice | ✅ | `CornerGeneralChatTests` (12) |
+| E2 | "/app" + ↩ picks the app without sending text | ✅ | `pickingSlashAppScopesWithoutSendingText`, `slashMatchesReserveOneRowEach` |
+| E3 | Provider picker menu | ❓ | Dock ~l.249–271 (AppKit menu focus quirk) |
+| E4 | Frontmost-app chat: Backspace on empty saves, hides chat, returns to the app's menu search | ❓ | Dock ~l.425 |
+| E5 | Attachments (file, image, Finder folder, Mail context) | 🟡 | `anAttachmentAddsItsRowAndNothingElse`; Finder-folder & Mail attach ❓ |
+| E6 | Approvals shown in the composer | ✅ | `anApprovalIsReservedInTheComposerNotTheBoard` |
+| E7 | Live progress / result feedback | ✅ | `CornerActionFeedbackTests` (11) |
+
+## F. Layers and gestures
+
+| # | Dock behaviour | Corner | Evidence / note |
+|---|---|---|---|
+| F1 | Trackpad swipes — all rows W1–W10 | 🟡 | Spec: `00-DOCK-AND-CORNER.md` §4b; horizontal partly (`horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp`), vertical ❌ |
+| F2 | ↑/↓ keys switch Global ↔ Context ↔ Media when not in a list | ❓ | Dock ~l.937–950; must agree with F1 |
+| F3 | Media Dock layer | — | Labs; appears only if Settings' Media layer is on (same gate in the Corner — §4b W6) |
+| F4 | Pinned results | ✅ | Corner dock strip pins (`DockPinStoreTests`, `pinsAreNeverOverflowed`) |
+| F5 | Running apps shown and switchable | ✅ | `removedRunningAppsLeaveTheStrip`, `runningOverflowsIntoAPlusPill` |
+
+---
+
+## Summary (2026-09-24)
+
+| | ✅ | 🟡 | ❌ | ❓ | — |
+|---|---:|---:|---:|---:|---:|
+| Rows (52) | 16 | 11 | 3 | 18 | 4 |
+
+**What this says:** the Corner already matches the Dock on the *big* things — Global Context, CLI
+scope, General Chat, clipboard, pins, feedback — and each is pinned by tests. The gaps are in the
+**small keyboard rules** (Backspace, Esc, Tab, ↑/↓ in lists) and a few **scopes** (Notifications,
+Quick Note editor, Mail, Selection actions). The 18 ❓ rows are the biggest risk: nobody has proved
+them either way.
+
+## Order of work (proposal)
+
+1. **Verify the ❓ rows on the Mac** — one pass, no code: run the app, try each key in the Corner,
+   mark ✅ / 🟡 / ❌. Half a day; it turns guesses into a real gap list.
+2. **Task `corner-parity`** (already queued): Selection actions (D10) + swipes (F1, F2).
+3. **Keyboard rules** B2–B4, C1–C12, E4 — extract the Dock's key handling into a shared, tested
+   type so both shells read the same rules.
+4. **Remaining scopes** D4–D7, D13–D14.
+5. **Owner decisions:** D9 Notifications, D11 Quick Note editor, D12 Mail — move, or drop from v1?
+6. When every row is ✅ / — : decide A1 (what ⌥⌥ opens) and retire the Dock paths.
+
+## Paste this into your Mac (step 1)
+
+```
+Verify docs/master/00-DOCK-PARITY-INVENTORY.md on the real app. No code changes.
+For every ❓ and 🟡 row: open the Corner, try the behaviour exactly as the Dock does it (run the Dock with ⌥⌥ side by side), and set the Corner column to ✅ / 🟡 / ❌. Put a one-line note of what you saw. If a ✅ row is wrong, correct it too.
+Update the Summary counts. Commit only that file, push, add one line to MEMORY.md.
+```

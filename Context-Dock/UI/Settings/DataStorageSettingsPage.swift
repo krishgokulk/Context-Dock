@@ -66,7 +66,7 @@ struct DataStorageSettingsPage: View {
                         CacheRow(
                             icon: "brain.head.profile",
                             iconColor: .purple,
-                            title: "AI Assistant History",
+                            title: "General Chat History",
                             subtitle: "Stored AI conversation context.",
                             size: aiHistorySize
                         ) {

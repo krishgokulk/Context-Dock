@@ -402,6 +402,13 @@ struct ILauncherApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// True when this process is the host XCTest loaded the test bundle into, not the app a
+    /// person launched.
+    static let isHostingTests: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil
+    }()
+
     /// Pointer monitors that keep the transparent part of the launcher click-through.
     private var pointerTransparencyGlobalMonitor: Any?
     private var pointerTransparencyLocalMonitor: Any?
@@ -593,6 +600,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // Before anything else can send one: in the test host every Apple Event fails fast
+        // instead of waiting 120 s for an Automation prompt nobody answers.
+        if Self.isHostingTests { TestHostAppleEventBlocker.install() }
         // The agent-facing server, only if the user turned it on. Started here rather than
         // lazily: an agent's first tool call must not be the thing that starts the server,
         // or that call fails and the agent concludes the capability does not exist.
@@ -627,11 +637,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // before establishing connection". That is why this project believed it could not
         // have automated tests: it could, the host was quitting before they started.
         let bundleID = Bundle.main.bundleIdentifier ?? ""
-        let underTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty, !underTest {
+        if !others.isEmpty, !Self.isHostingTests {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)

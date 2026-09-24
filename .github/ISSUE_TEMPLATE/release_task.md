@@ -23,7 +23,7 @@ assignees: ""
 - [ ] Code/docs changed
 - [ ] Build passed
 - [ ] Manual QA completed if user-facing
-- [ ] `docs/ENGINEERING_TODO.md` updated
+- [ ] The GitHub issue for this work is closed or updated (milestone `1.0` is the queue)
 - [ ] `CHANGELOG.md` updated if user-facing
 
 ## Notes

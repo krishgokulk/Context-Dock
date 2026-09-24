@@ -70,20 +70,22 @@ TEST_DEFAULTS_SUITE="com.krishgokul.ContextDock.tests"
 defaults delete "$TEST_DEFAULTS_SUITE" >/dev/null 2>&1 || true
 export TEST_RUNNER_CONTEXT_DOCK_DEFAULTS_SUITE="$TEST_DEFAULTS_SUITE"
 
+set +e
 xcodebuild test \
   -project "$ROOT_DIR/Context-Dock.xcodeproj" \
   -scheme Context-Dock \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA_DIR" \
   ENABLE_DEBUG_DYLIB=NO \
-  "$@" 2>&1 | tee "$DERIVED_DATA_DIR/last-test-run.log" | grep -E \
-  "Test Suite|Test Case|error:|warning: .*test|✔|✘|TEST (SUCCEEDED|FAILED)" || true
-
-# The exit code is xcodebuild's, not the grep's. `set -o pipefail` alone is not enough: the
-# `|| true` above swallows it, so the status is taken from PIPESTATUS before that runs. Without
-# this the script exited 0 on a red suite, and anything reading the exit code — an agent, a
-# hook, CI — read a failure as a pass.
+  "$@" 2>&1 | tee "$DERIVED_DATA_DIR/last-test-run.log" | grep --line-buffered -E \
+  "Test Suite|Test Case|error:|warning: .*test|✔|✘|TEST (SUCCEEDED|FAILED)"
+# The exit code is xcodebuild's, not the grep's, and it must be read on the very next line.
+# This used to end the pipeline with `|| true` and read PIPESTATUS after it — but under
+# pipefail a failing xcodebuild makes the pipeline fail, `true` runs, and PIPESTATUS is then
+# `true`'s own 0. The script exited 0 on a red suite (llmbrain issue #11); CI went green on a build that did
+# not compile. `set +e` lets the pipeline fail without ending the script.
 XCODEBUILD_STATUS=${PIPESTATUS[0]}
+set -e
 
 RESULT_BUNDLE="$(ls -td "$DERIVED_DATA_DIR"/Logs/Test/*.xcresult 2>/dev/null | head -1 || true)"
 if [ -n "$RESULT_BUNDLE" ]; then
@@ -105,6 +107,12 @@ if [ -n "$RESULT_BUNDLE" ]; then
     echo
     echo "error: nothing passed and something failed with no named test — the runner died" >&2
     echo "       before running the suite. Quit any running Context-Dock and retry. Issue #7." >&2
+    XCODEBUILD_STATUS=1
+  fi
+  # Nothing ran at all — a build that never compiled can still leave a summary behind.
+  if [ "${PASSED:-1}" = "0" ] && [ "${FAILED:-0}" = "0" ]; then
+    echo
+    echo "error: the run passed no tests at all — treat it as a failure, not a green suite." >&2
     XCODEBUILD_STATUS=1
   fi
 fi

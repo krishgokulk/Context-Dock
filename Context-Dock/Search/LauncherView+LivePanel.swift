@@ -1397,7 +1397,7 @@ extension LauncherView {
                                     Image(systemName: "sparkles")
                                         .font(.system(size: 10, weight: .semibold))
                                         .foregroundStyle(Color.accentColor)
-                                    Text("AI Assistant")
+                                    Text("General Chat")
                                         .font(.system(size: 10, weight: .semibold))
                                         .foregroundStyle(.secondary)
                                         .textCase(.uppercase)
@@ -1543,7 +1543,7 @@ extension LauncherView {
                     "I know this tool's commands and flags. Ask me to run it, explain options, or chain operations."
                 )
             default:
-                return ("AI Assistant", "Ask me anything about \(ctx.name).")
+                return ("General Chat", "Ask me anything about \(ctx.name).")
             }
         }
         switch key {

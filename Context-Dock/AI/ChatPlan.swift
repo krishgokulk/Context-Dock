@@ -126,7 +126,12 @@ enum ChatPlanRunner {
             prompt, context: .none, provider: provider, apiKey: apiKey,
             conversationHistory: [], surfaceScoped: true)
         guard let raw else { return nil }
+        return plan(fromReply: raw, routes: routes)
+    }
 
+    /// The model's reply, read against the routes it was offered. Separate from `plan` so the
+    /// reading can be tested without asking a model.
+    static func plan(fromReply raw: String, routes: [ChatRoute]) -> ChatPlan? {
         guard let range = raw.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression),
             let data = String(raw[range]).data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -280,13 +285,15 @@ enum ChatPlanRunner {
         at index: Int, in plan: ChatPlan, result: ChatPlanStepResult
     ) -> String {
         let step = plan.steps[index]
-        let outcome = result.verification
-            ?? result.output
-                .split(separator: "\n")
-                .first
-                .map(String.init)
-                .map { $0.count > 120 ? String($0.prefix(120)) + "…" : $0 }
-            ?? ""
+        // Split into typed steps: as one chained expression Xcode 26's type checker gives up on it.
+        let firstLine: String? = result.output
+            .split(separator: "\n")
+            .first
+            .map(String.init)
+        let clipped: String? = firstLine.map { line -> String in
+            line.count > 120 ? String(line.prefix(120)) + "…" : line
+        }
+        let outcome: String = result.verification ?? clipped ?? ""
         let mark = result.success ? "Ran" : "Failed"
         let detail = outcome.trimmingCharacters(in: .whitespacesAndNewlines)
         return "\(mark) step \(index + 1) · \(step.route.title)"

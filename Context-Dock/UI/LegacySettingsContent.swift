@@ -436,10 +436,10 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            CardSection(title: "AI Assistant", systemImage: "brain.head.profile") {
+            CardSection(title: "General Chat", systemImage: "brain.head.profile") {
                 SettingsRow {
-                    GeneralToggleLabel("Enable AI Assistant Mode",
-                        caption: "Swipe left/right — or press Tab — to open AI Assistant from any layer.")
+                    GeneralToggleLabel("Enable General Chat",
+                        caption: "Swipe left/right — or press Tab — to open General Chat from any layer.")
                     Toggle("", isOn: $settings.enableAIMode).labelsHidden()
                 }
             }
@@ -4502,11 +4502,15 @@ private struct HotkeyRecorderRow: View {
             if event.modifierFlags.contains(.option)  { carbon |= UInt32(optionKey) }
             if event.modifierFlags.contains(.control) { carbon |= UInt32(controlKey) }
             if event.modifierFlags.contains(.shift)   { carbon |= UInt32(shiftKey) }
-            if carbon != 0 {
-                self.apply(UInt32(event.keyCode), carbon)
-                self.stopRecording()
-                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+            guard carbon != 0 else { return nil }
+            // Same rule as HotkeysSettingsPage: Shift alone is typing, not a shortcut.
+            guard HotkeyModifierRule.accepts(carbonModifiers: carbon) else {
+                NSSound.beep()
+                return nil
             }
+            self.apply(UInt32(event.keyCode), carbon)
+            self.stopRecording()
+            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
             return nil
         }
     }
@@ -7716,7 +7720,7 @@ struct PermissionsSettingsView: View {
                         .font(.title3.bold())
                     statusPill(hasAccessibilityPermission ? "Authorized" : "Action required", color: hasAccessibilityPermission ? .green : .orange)
                 }
-                Text("Context-Dock is more than a launcher. It reads frontmost-app context, menu caches, selected text/files, app data, and safe automation routes so AI Assistant, Context Dock Chat, and Selection Scope can act with the correct boundary.")
+                Text("Context-Dock is more than a launcher. It reads frontmost-app context, menu caches, selected text/files, app data, and safe automation routes so General Chat, App Chat, and Selection Scope can act with the correct boundary.")
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

@@ -12,8 +12,8 @@ import SwiftUI
 struct ClaudeSubscriptionConfigView: View {
     @ObservedObject private var settings = AppSettings.shared
 
-    @State private var state: State = .checking
-    @State private var probeMessage: String?
+    @SwiftUI.State private var state: State = .checking
+    @SwiftUI.State private var probeMessage: String?
 
     enum State: Equatable {
         case checking
