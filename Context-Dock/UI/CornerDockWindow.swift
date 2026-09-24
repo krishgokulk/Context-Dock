@@ -487,7 +487,8 @@ final class CornerDockController: NSObject {
         guard let target else { return nil }
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: DockPinStore.shared.pins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil)
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
     }
 
@@ -566,7 +567,8 @@ final class CornerDockController: NSObject {
             pinned: composition.otherPins.count,
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
-            promptIcons: prompt.globalMatchIcons.count,
+            promptIcons: prompt.promptIconCount,
+            fieldHeight: AppChatPromptMetrics.fieldHeight(global: prompt.isGlobalScope),
             maximumWidth: DockStripPlan.screenBudget)
     }
 

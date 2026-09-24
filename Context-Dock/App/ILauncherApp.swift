@@ -1532,10 +1532,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Only keep an ALREADY-visible dock on top. Never resurrect a dock the
         // user hid — otherwise switching/activating apps re-opens it. Manual
         // show/hide only. (Bottom dock is exempt; it's meant to be persistent.)
-        guard window.isVisible || settings.effectiveDockAtBottom else { return }
+        // `isVisible` alone is not "shown": the window is ordered in at alpha 0 from launch,
+        // and forcing alpha to 1 here is what made the hidden dock appear whenever any app
+        // quit, launched or activated. A dock the user can see already has its alpha.
+        guard (window.isVisible && window.alphaValue > 0.01) || settings.effectiveDockAtBottom
+        else { return }
         applyPersistentDockBehavior()
         suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
-        window.alphaValue = 1
         window.orderFrontRegardless()
         if activate {
             window.makeKeyAndOrderFront(nil)

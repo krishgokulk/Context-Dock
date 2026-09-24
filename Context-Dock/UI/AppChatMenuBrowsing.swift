@@ -246,6 +246,13 @@ extension AppChatPromptModel {
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
         let running = Self.pillIcons(excluding: appBundleID)
+        // The strip's pins stay at the field's trailing end, each a full dock icon — about
+        // two small pills' room apiece, plus the divider.
+        let otherPins = DockPinStore.shared.pins.filter {
+            if case .app = $0.kind { return false }
+            return true
+        }
+        let pinSlots = otherPins.isEmpty ? 0 : otherPins.count * 2 + 1
         setGlobalTyping(
             top: typed.isEmpty
                 ? nil
@@ -253,8 +260,9 @@ extension AppChatPromptModel {
             running: running,
             // As many as the field can grow to hold on this screen. Four was the count
             // that fits a 372-point field, and the field is no longer fixed at 372.
+            // The pins take their room first; they are never the ones cut.
             fieldCapacity: AppChatPromptMetrics.matchIconCapacity(
-                maximumWidth: DockStripPlan.screenBudget))
+                maximumWidth: DockStripPlan.screenBudget) - pinSlots)
     }
 
     /// The pills: what is running, and the clipboard when it is holding something.

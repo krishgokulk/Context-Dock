@@ -146,6 +146,9 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalTopMatch: GlobalContextTopMatch?
     @Published private(set) var globalMatchIcons: [MatchDockIcon] = []
     @Published private(set) var globalOverflowCount = 0
+    /// What the field widens for: its running-app pills. The pins are not in the field —
+    /// they are the strip's trailing region, which stays on screen while the field is up.
+    var promptIconCount: Int { globalMatchIcons.count }
     /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
     /// list trimmed to what fits beside the field.
     @Published private(set) var allRunningIcons: [MatchDockIcon] = []
@@ -215,6 +218,7 @@ final class AppChatPromptModel: ObservableObject {
     private var globalResultsObservation: AnyCancellable?
     private var runningAppsObservation: AnyCancellable?
     private var clipboardPillObservation: AnyCancellable?
+    private var pinPillObservation: AnyCancellable?
     /// Guards against the reconfirming read below feeding straight back into the sink
     /// that triggered it — `refreshSelectionForCurrentScope` publishes through the same
     /// reader this observation reads, so calling it from inside the sink without this
@@ -305,6 +309,12 @@ final class AppChatPromptModel: ObservableObject {
         // Same staleness, one copy away: the clipboard pill leads this row precisely
         // because copying is the thing that just happened, but nothing here noticed a
         // copy until the next keystroke recomputed the row anyway.
+        pinPillObservation = DockPinStore.shared.$pins
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateGlobalTyping(for: self.query)
+            }
         clipboardPillObservation = ClipboardPanelController.shared.model.$entries
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
@@ -788,6 +798,15 @@ final class AppChatPromptModel: ObservableObject {
         pluginCardPinID = nil
         windowRowTask?.cancel()
         dockPreviewTarget = nil
+    }
+
+    /// Puts away the card above the strip — windows, pin preview — and leaves the strip up.
+    /// An app quit from its window row takes the row with it; the dock stays where it was.
+    func dismissDockPreview() {
+        windowRowTask?.cancel()
+        hoveredStripTarget = nil
+        dockPreviewTarget = nil
+        pointerInWindowRow = false
     }
 
     func windowRowHovered(_ inside: Bool) {

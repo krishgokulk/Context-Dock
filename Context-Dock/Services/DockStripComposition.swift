@@ -149,11 +149,17 @@ struct DockStripPlan {
     /// running apps are all measured against one number taken once.
     @MainActor
     static var screenBudget: CGFloat {
-        AppChatPromptMetrics.dockMaximumWidth(onScreenOf: environment().screenWidth)
+        // The real pins, not none: this shares the cache with `make`, and an empty list
+        // cached here read as "no pin is a widget" for the next half second — the strip
+        // drew a bar plugin as its icon or its tile depending on who asked first.
+        AppChatPromptMetrics.dockMaximumWidth(
+            onScreenOf: environment(pins: DockPinStore.shared.pins).screenWidth)
     }
 
     @MainActor
-    static func make(running: [MatchDockIcon], pins: [DockPin], tools: Int) -> DockStripPlan {
+    static func make(
+        running: [MatchDockIcon], pins: [DockPin], tools: Int, fieldIcons: Int? = nil
+    ) -> DockStripPlan {
         let environment = Self.environment(pins: pins)
         return make(
             running: running, pins: pins, runningBundleIDs: environment.running,
@@ -164,7 +170,8 @@ struct DockStripPlan {
             // handed (memory `corner-pill-size-must-be-pure`), and cached with the rest of
             // the environment so a layout pass does not ask the window server per frame.
             maximumWidth: AppChatPromptMetrics.dockMaximumWidth(
-                onScreenOf: environment.screenWidth))
+                onScreenOf: environment.screenWidth),
+            fieldIcons: fieldIcons)
     }
 
     /// What is running, what resolves, which pins are widgets, and how wide the screen is —
@@ -192,7 +199,8 @@ struct DockStripPlan {
             // A pinned plugin with a bar widget draws as that widget, `slots` icons wide.
             var widgetSlots: [UUID: Int] = [:]
             for pin in pins {
-                guard let pluginID = pin.kind.pluginID,
+                guard pin.showsAsIcon != true,
+                    let pluginID = pin.kind.pluginID,
                     let widget = PluginRegistry.shared.plugin(id: pluginID)?.manifest.views.widget,
                     widget.family == .bar
                 else { continue }
@@ -218,10 +226,10 @@ struct DockStripPlan {
     /// is to count the same elements the HStack does.
     func iconCenterOffset(for target: DockHoverTarget) -> CGFloat? {
         typealias M = AppChatPromptMetrics
-        var cursor = M.dockInset
+        var cursor = layout.leadingInset
         func advance(_ width: CGFloat) { cursor += width + M.dockIconGap }
 
-        advance(M.dockIconSize)  // the folded field
+        advance(M.dockIconSize + layout.stubExtra)  // the folded field, and the room after it
         for slot in composition.apps {
             if case .app(let bundleID) = target, slot.bundleID == bundleID {
                 return cursor + M.dockIconSize / 2
@@ -245,7 +253,7 @@ struct DockStripPlan {
     static func make(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
         unresolvedDocumentIDs: Set<String> = [], widgetSlots: [UUID: Int] = [:], tools: Int,
-        maximumWidth: CGFloat = AppChatPromptMetrics.dockMaximumWidth
+        maximumWidth: CGFloat = AppChatPromptMetrics.dockMaximumWidth, fieldIcons: Int? = nil
     ) -> DockStripPlan {
         let full = DockStripComposition.compose(
             running: running, pins: pins, runningBundleIDs: runningBundleIDs,
@@ -253,7 +261,7 @@ struct DockStripPlan {
         let layout = AppChatPromptMetrics.dockLayout(
             running: full.unpinnedRunningCount, pinnedApps: full.pinnedAppCount,
             pinned: full.otherPins.count, pinnedExtraWidth: full.widgetExtraWidth, tools: tools,
-            maximumWidth: maximumWidth)
+            maximumWidth: maximumWidth, fieldIcons: fieldIcons)
         guard layout.overflow > 0 else { return DockStripPlan(composition: full, layout: layout) }
         return DockStripPlan(
             composition: DockStripComposition.compose(

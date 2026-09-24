@@ -22,6 +22,9 @@ struct CornerDockStrip: View {
     /// The icon whose Dock-style menu is up — a popover over the icon, arrow down, the
     /// way the Dock does it, rather than a menu at the pointer.
     @State private var menuID: String?
+    /// A bar-widget plugin drawn as its icon, showing its tile because the pointer is on it.
+    @State private var widgetPeekID: UUID?
+    @State private var widgetPeekClose: Task<Void, Never>?
 
     private typealias M = AppChatPromptMetrics
 
@@ -30,6 +33,37 @@ struct CornerDockStrip: View {
     /// the magnifier open the field too, and they are the same motion.
     private var gathered: Bool { condensing || model.phase != .dock }
 
+    private var isDock: Bool { model.phase == .dock }
+
+    /// What gathers into the field fades late on the way in — after it has flown to the
+    /// pill — and at once on the way back, so it is seen leaving the pill.
+    private var movingFade: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return isDock
+            ? .easeOut(duration: full * 0.2)
+            : .easeIn(duration: full * 0.3).delay(full * 0.5)
+    }
+
+    /// How far app `index` travels to reach its slot in the field's pill — found by bundle
+    /// id, since the pill leads with Finder and the strip with its pinned apps. Anything
+    /// the pill does not show lands on the pill's end, where its `+N` is.
+    private func gatherOffset(index: Int, bundleID: String?, plan: DockStripPlan) -> CGFloat {
+        let layout = plan.layout
+        let pills = model.globalMatchIcons
+        let pillEnd = layout.width - layout.leadingInset - layout.trailingRegion
+        let pillStart = pillEnd - (CGFloat(pills.count) * M.matchPillIconSpan + 9)
+        let from = layout.leadingInset + M.dockSearchStubSpan + layout.stubExtra
+            + CGFloat(index) * (M.dockIconSize + M.dockIconGap) + M.dockIconSize / 2
+        let to: CGFloat
+        if let bundleID, let slot = pills.firstIndex(where: { $0.bundleID == bundleID }) {
+            // 8 of capsule padding, then half an 18-point icon; 25 per icon after that.
+            to = pillStart + 17 + CGFloat(slot) * M.matchPillIconSpan
+        } else {
+            to = pillEnd - 9
+        }
+        return to - from
+    }
+
     /// The row and its geometry, made together: an app appears once, whether it is pinned,
     /// running or both.
     private var plan: DockStripPlan {
@@ -37,7 +71,8 @@ struct CornerDockStrip: View {
             running: model.stripIcons, pins: pins.pins,
             tools: model.dockToolCount(
                 clipboardVisible: clipboard.phase.isVisible,
-                feedbackVisible: feedback.glyph != nil))
+                feedbackVisible: feedback.glyph != nil),
+            fieldIcons: model.promptIconCount)
     }
 
     var body: some View {
@@ -47,24 +82,41 @@ struct CornerDockStrip: View {
             toolIcon("magnifyingglass", title: "Search") { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
-            // Everything but the magnifier condenses toward it while the field comes back:
-            // each icon shrinks in place and fades, so the capsule reads as gathering itself
-            // into the field rather than being replaced by it. Sizes are untouched — the
-            // strip's own layout stays exactly as wide as the metrics say (memory
-            // `corner-pill-size-must-be-pure`); only what is drawn inside it moves.
-            Group {
+                // The field's own magnifier opens on this exact spot; this one hands over.
+                .opacity(isDock ? 1 : 0)
+                .animation(movingFade, value: isDock)
+                .allowsHitTesting(isDock)
+                // The room the field needs beyond the row, kept after the magnifier where
+                // the text opens — outside the hover, so resting on it expands nothing.
+                .padding(.trailing, self.plan.layout.stubExtra)
             // One region for apps: the pinned ones first, in the order the user placed
             // them, then whatever else is running. Composed once for the whole pass —
             // `scale(for:)` runs per icon per hover frame and must not compose again.
             let plan = self.plan
             let ids = plan.composition.apps.map(\.id)
                 + plan.composition.otherPins.map(\.id.uuidString)
-            ForEach(plan.composition.apps) { slot in
-                appIcon(slot, ids: ids)
+            // Each app flies to its own slot in the field's small pill and shrinks to its
+            // size — drawn there, not laid out there, so the row's geometry never moves
+            // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
+            Group {
+                ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
+                    appIcon(slot, ids: ids)
+                        .scaleEffect(gathered ? M.pillIconScale : 1)
+                        .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
+                }
+                if plan.layout.overflow > 0 {
+                    overflowPill(plan.layout.overflow)
+                        .scaleEffect(gathered ? M.pillIconScale : 1)
+                        .offset(
+                            x: gathered
+                                ? gatherOffset(
+                                    index: plan.composition.apps.count, bundleID: nil, plan: plan)
+                                : 0)
+                }
             }
-            if plan.layout.overflow > 0 {
-                overflowPill(plan.layout.overflow)
-            }
+            .opacity(isDock ? 1 : 0)
+            .animation(movingFade, value: isDock)
+            .allowsHitTesting(isDock)
             if !plan.composition.otherPins.isEmpty {
                 // The HStack's own gap on each side of this hairline is the 17-point
                 // `dockDividerSpan` the metrics count.
@@ -119,25 +171,17 @@ struct CornerDockStrip: View {
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
-            }
-            // Gathering toward the trailing edge, which is where the field's own small
-            // pill of running apps lands: the big icons are seen to collapse into that
-            // pill rather than dissolving while something else appears somewhere else.
-            // A scaleEffect draws smaller without laying out smaller, which is what keeps
-            // this off the focus machinery's books.
-            .scaleEffect(gathered ? 0.38 : 1, anchor: .trailing)
-            .blur(radius: gathered ? 1.2 : 0)
         }
-        // The same curve and length as the shell's morph: the icons are still collapsing
-        // while the field opens, which is the whole point of the flow. Fading is the
-        // shell's job — this layer only shrinks, so the two are never fighting over how
-        // visible the row is.
+        // The same curve and length as the shell's morph: the icons are still travelling
+        // into the pill while the field opens, which is the whole point of the flow.
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
-        .padding(.horizontal, M.dockInset)
+        .padding(.horizontal, plan.layout.leadingInset)
         .frame(height: M.dockHeight)
-        .contentShape(Rectangle())
+        // The whole strip catches the pointer only while it is the dock. Over the field it
+        // is drawn on top, and an empty stretch of it must not swallow a click on the text.
+        .contentShape(StripHitShape(active: isDock))
         .onDrop(of: [.fileURL, .plainText], isTargeted: $isDropTarget) { providers in
             acceptDrop(providers)
         }
@@ -228,6 +272,12 @@ struct CornerDockStrip: View {
         .onHover { inside in
             let id = pin.id.uuidString
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
+            // A widget the user folded to its icon answers the pointer with the widget
+            // itself, not the command preview card.
+            if barWidgetManifest(pin) != nil {
+                peekWidget(pin.id, inside)
+                return
+            }
             // The same dwell the apps use, so a pinned file answers the pointer the way a
             // running app does.
             model.hoveredStripTarget = inside ? .pin(id: pin.id) : nil
@@ -237,6 +287,16 @@ struct CornerDockStrip: View {
         .overlay(RightClickReporter { menuID = pin.id.uuidString })
         .popover(isPresented: menuBinding(pin.id.uuidString), arrowEdge: .top) {
             DockIconMenu(items: pinnedMenuItems(pin))
+        }
+        // On a background so it does not share the view with the menu's popover.
+        .background {
+            Color.clear.popover(isPresented: widgetPeekBinding(pin.id), arrowEdge: .top) {
+                if let manifest = barWidgetManifest(pin) {
+                    PluginStripTile(pin: pin, manifest: manifest, model: model)
+                        .padding(10)
+                        .onHover { inside in peekWidget(pin.id, inside) }
+                }
+            }
         }
         .accessibilityLabel(pin.title)
         .accessibilityAddTraits(.isButton)
@@ -257,6 +317,37 @@ struct CornerDockStrip: View {
     }
 
     // MARK: Menus
+
+    /// The plugin's manifest when it has a bar widget — the one kind of pin that can be
+    /// drawn either as its tile or as its icon.
+    private func barWidgetManifest(_ pin: DockPin) -> PluginManifest? {
+        guard let pluginID = pin.kind.pluginID,
+            let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest,
+            manifest.views.widget?.family == .bar
+        else { return nil }
+        return manifest
+    }
+
+    /// Opens at once; closes a beat after the pointer leaves both the icon and the tile,
+    /// so crossing the gap between them does not put it away.
+    private func peekWidget(_ id: UUID, _ inside: Bool) {
+        widgetPeekClose?.cancel()
+        if inside {
+            widgetPeekID = id
+            return
+        }
+        widgetPeekClose = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled, widgetPeekID == id else { return }
+            widgetPeekID = nil
+        }
+    }
+
+    private func widgetPeekBinding(_ id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { widgetPeekID == id && menuID == nil },
+            set: { if !$0, widgetPeekID == id { widgetPeekID = nil } })
+    }
 
     private func menuBinding(_ id: String) -> Binding<Bool> {
         Binding(get: { menuID == id }, set: { if !$0, menuID == id { menuID = nil } })
@@ -303,7 +394,19 @@ struct CornerDockStrip: View {
     }
 
     private func pinnedMenuItems(_ pin: DockPin) -> [DockIconMenu.Item] {
-        var items: [DockIconMenu.Item] = [.init(title: "Unpin") { pins.unpin(pin.id) }]
+        var items: [DockIconMenu.Item] = []
+        if barWidgetManifest(pin) != nil {
+            let asIcon = pin.showsAsIcon == true
+            items.append(.init(title: asIcon ? "Show as Widget" : "Show as Icon") {
+                pins.setShowsAsIcon(pin.id, !asIcon)
+                // The strip's width is planned from a cached read of which pins are
+                // widgets; this pin just changed which it is.
+                DockStripPlan.forgetEnvironment()
+                widgetPeekID = nil
+            })
+            items.append(.separator)
+        }
+        items.append(.init(title: "Unpin") { pins.unpin(pin.id) })
         switch pin.kind {
         case .file(let path), .folder(let path):
             items.append(.init(title: "Show in Finder") {
@@ -609,4 +712,11 @@ struct RightClickReporter: NSViewRepresentable {
             if event.modifierFlags.contains(.control) { onRightClick?() } else { super.mouseDown(with: event) }
         }
     }
+}
+
+/// The strip's hit area: all of it while it is the dock, none of it while the field is up —
+/// then only the pins and tools, which carry their own shapes, answer the pointer.
+private struct StripHitShape: Shape {
+    let active: Bool
+    func path(in rect: CGRect) -> Path { active ? Path(rect) : Path() }
 }
