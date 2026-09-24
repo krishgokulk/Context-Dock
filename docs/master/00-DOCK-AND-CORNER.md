@@ -83,6 +83,35 @@ boxes.
 
 ---
 
+## 4a. Selection in the Corner — only half moved (owner report, 2026-09-24)
+
+**Correction to §4:** the Selection row says "Moved". It is **partial** `[owner]` `[code]`.
+
+| | Dock (before) | Corner card today (`UI/SelectionScopeCard.swift`, 137 lines) |
+|---|---|---|
+| Shows the selection + source app | ✅ | ✅ "1 char · TextEdit" |
+| Ask about the selection | ✅ | ✅ field at the bottom |
+| **Actions for the selection** — app menu commands, extensions, Shortcuts, AI presets (the Selection Shortcut Sheet's job, doc `05`) | ✅ filtered live as you type | ❌ none — the card has only the text, a pin and the field |
+| **Close** | Esc | Esc only (`onKeyPress(.escape)`); **no visible close button**. Auto-hides after 8 s idle unless pinned (`SelectionScopeModel.idleDwell`) |
+
+Why it feels incomplete: the Corner took over *showing* the selection but not *acting on* it, so the
+surface lost its one job ("selection-aware action engine", `docs/architecture/SELECTION_SHORTCUT_SHEET.md`).
+
+**Done when** (acceptance for moving Selection):
+1. Typing in the card's field filters the same actions the Dock showed — menu commands of the source
+   app, selection extensions (`Services/SelectionScopeExtensionPolicy.swift`,
+   `Search/SystemExtensionActionSource.swift`), Shortcuts, AI presets — above the field, the way the
+   clipboard preview sits above its input.
+2. ↑/↓ moves through them, ↩ runs one, the field stays where it is (same keys as the Dock, §3 rule 2).
+3. An empty field + ↩ asks the question, as today.
+4. A visible ✕ closes the card; Esc still does too.
+5. Reuse the Dock's action source — do not write a second ranking (§3 rule 1). If it is locked inside
+   `LauncherView`, extract it first, as the 2026-09-08 plan did for menu matching.
+
+**Related bug found while testing:** the Selection Scope hotkey was recorded as **⇧S**. A Shift-only
+global hotkey captures every capital S typed anywhere, so typing "S" in TextEdit opened this card.
+Fix: the recorder must require ⌘, ⌥ or ⌃ (`UI/Settings/HotkeysSettingsPage.swift`, `startRecording()`).
+
 ## 5. The end state (owner decisions still open)
 
 When every Dock job has a Corner home:
