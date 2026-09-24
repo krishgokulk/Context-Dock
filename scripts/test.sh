@@ -82,7 +82,7 @@ xcodebuild test \
 # The exit code is xcodebuild's, not the grep's, and it must be read on the very next line.
 # This used to end the pipeline with `|| true` and read PIPESTATUS after it — but under
 # pipefail a failing xcodebuild makes the pipeline fail, `true` runs, and PIPESTATUS is then
-# `true`'s own 0. The script exited 0 on a red suite (#11); CI went green on a build that did
+# `true`'s own 0. The script exited 0 on a red suite (llmbrain issue #11); CI went green on a build that did
 # not compile. `set +e` lets the pipeline fail without ending the script.
 XCODEBUILD_STATUS=${PIPESTATUS[0]}
 set -e

@@ -280,13 +280,15 @@ enum ChatPlanRunner {
         at index: Int, in plan: ChatPlan, result: ChatPlanStepResult
     ) -> String {
         let step = plan.steps[index]
-        let outcome = result.verification
-            ?? result.output
-                .split(separator: "\n")
-                .first
-                .map(String.init)
-                .map { $0.count > 120 ? String($0.prefix(120)) + "…" : $0 }
-            ?? ""
+        // Split into typed steps: as one chained expression Xcode 26's type checker gives up on it.
+        let firstLine: String? = result.output
+            .split(separator: "\n")
+            .first
+            .map(String.init)
+        let clipped: String? = firstLine.map { line -> String in
+            line.count > 120 ? String(line.prefix(120)) + "…" : line
+        }
+        let outcome: String = result.verification ?? clipped ?? ""
         let mark = result.success ? "Ran" : "Failed"
         let detail = outcome.trimmingCharacters(in: .whitespacesAndNewlines)
         return "\(mark) step \(index + 1) · \(step.route.title)"
