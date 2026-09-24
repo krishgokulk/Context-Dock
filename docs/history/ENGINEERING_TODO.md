@@ -1,5 +1,7 @@
 # Engineering TODO
 
+> **Retired 2026-09-24.** Every open item moved to GitHub Issues #69–#74 (one issue per section), when GitHub Issues became the one queue (`docs/master/DORAX-BLUEPRINT.md` Part 7, decision 7). Kept here read-only for history; do not add to it.
+
 Track release work here. Keep each item small enough for one pull request.
 
 ## Done

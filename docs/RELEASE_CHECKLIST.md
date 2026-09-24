@@ -59,6 +59,6 @@ Use this checklist before every public or shared build.
 ## Release Notes
 
 - [ ] `CHANGELOG.md` updated.
-- [ ] `docs/ENGINEERING_TODO.md` updated.
+- [ ] The GitHub issues in this release are closed or moved to the next milestone.
 - [ ] New decisions added to `docs/DECISIONS.md`.
 - [ ] GitHub issue/PR linked to commit.
