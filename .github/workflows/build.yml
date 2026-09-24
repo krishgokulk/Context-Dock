@@ -40,10 +40,13 @@ jobs:
 
       - name: Test (Debug, ad-hoc signed)
         # No Apple Development certificate on the runner: sign ad-hoc so the test host can
-        # launch on Apple Silicon, with no team and no provisioning.
+        # launch on Apple Silicon, with no team and no provisioning. One test host only: a
+        # parallel clone is a second copy of the app contending for its port and store, and on
+        # the runner it timed out while preparing (1889 passed, the clone counted as 1 failed).
         run: |
           ./scripts/test.sh \
             -skipPackagePluginValidation \
+            -parallel-testing-enabled NO \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM= \
