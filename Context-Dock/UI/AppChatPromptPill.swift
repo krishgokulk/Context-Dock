@@ -545,7 +545,12 @@ struct AppChatPromptPill: View {
         // dock — the morph needs it laid out and still. A mounted field must not be
         // focusable when it is not the thing on screen, or the dock's own keys go into an
         // invisible text field instead of bringing it back.
-        fieldFocused = keyboardState.owner == .chat && model.phase.showsInput
+        let focus = keyboardState.owner == .chat && model.phase.showsInput
+        let gaining = focus && !fieldFocused
+        fieldFocused = focus
+        // Focus selects the field's text, so the letter that brought the field back was
+        // selected and the next one replaced it ("sleep" → "leep"). Same fix as the Dock's.
+        if gaining { FieldCaret.collapseSelectionToEndAfterFocus() }
     }
 
     // MARK: - Input
