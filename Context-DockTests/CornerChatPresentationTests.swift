@@ -72,12 +72,11 @@ struct CornerChatPresentationTests {
 
         subject.cycle(target: code)
         app.query = "app draft"
-        // App → Global → General, one step per swipe.
+        // App → General, one swipe right.
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.mode == .general)
         general.input = "general draft"
         // Swiping back, not the hotkey: the hotkey puts the corner away now.
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
 
         #expect(subject.mode == .frontmostApp)
@@ -256,7 +255,7 @@ struct CornerChatPresentationTests {
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
+        #expect(subject.mode == .general)
 
         subject.standDown()
         #expect(subject.generalPhase == .mini)
