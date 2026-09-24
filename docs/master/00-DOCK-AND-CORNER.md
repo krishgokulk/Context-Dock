@@ -65,11 +65,11 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | Global Context at rest as a dock strip (running apps + pins) | — | ✅ | **Corner-only**, built through Task 5 | `[plan]` spec 2026-09-15 "as built" note |
 | App Chat (ask the frontmost app) | ✅ | ✅ | **Moved** | `[code]` App Chat hotkey |
 | General Chat | ✅ | ✅ | **Moved** — parity tasks 1, 2, 3, 6, 8 done | `[code]` CLAUDE.md current sequence |
-| Frontmost app's menu commands + actions | ✅ | 🟡 | **In progress** — plan 2026-09-08 Phases 1–4; Phase 3 retires the Dock's copy | `[plan]` `[?]` which phase is done |
-| Clipboard | ✅ | ✅ | **Moved** — ambient pill + card | `[code]` `ClipboardPanelWindow` |
-| Selection | ✅ | ✅ | **Moved** — selection card; auto-scopes on launch when no hotkey is set | `[code]` |
+| Frontmost app's menu commands + actions | ✅ | 🟡 | **In progress** — plan 2026-09-08 Phases 1–2 done (ranking extracted to `FrontmostMenuMatcher`; actions and menus ranked together by `AppChatRowRanker`). Phase 3 (retire the Dock's copy) and Phase 4 (scope pills) not started: the Dock still builds its own `contextMenuPills` | `[code]` checked 2026-09-24 |
+| Clipboard | ✅ | ✅ | **Moved** — ambient pill + card. The Dock still keeps its own copy of the pasteboard rules (`LauncherView+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardPreviewCard` |
+| Selection | ✅ | 🟡 | **Partial — see §4a** | `[code]` `SelectionScopeCard` |
 | Drop shelf | — | ✅ | **Corner-only** | `[code]` `DropShelfWindow` |
-| Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[plan]` 2026-09-10 scope stack, "plan only" |
+| Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[code]` corner rows run the Dock's `executeGlobalAppSearchResult` → `activateGlobalInlineScope`; `[plan]` 2026-09-10 scope stack, "plan only" |
 | CLI tools as a scope (+ terminal) | ✅ | ❌ | **Not moved** — same hand-off | `[plan]` 2026-09-10 Phases 3–4 |
 | Media Dock | ✅ | ❌ | **Not moved** — and Labs in v1 | `[code]` `MediaDockSurface` |
 | Full-window chat | Chat Window (separate) | — | Stays a separate window by design | `[code]` Chat Window hotkey |
