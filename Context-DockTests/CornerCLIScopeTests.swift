@@ -30,7 +30,7 @@ struct CornerCLIScopeTests {
         return model
     }
 
-    @Test("The focused row is what Tab and the right arrow take")
+    @Test("The focused row is what Tab takes")
     func enteringTakesTheFocusedRow() {
         let model = globalModel()
         model.rows = [.global(cliDocument("tailscale"))]

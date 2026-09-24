@@ -891,6 +891,61 @@ extension AppChatPromptModel {
         return true
     }
 
+    /// → on a focused row: step into it, never run it. The Dock's → is a way *in* — an app,
+    /// a tool, a command's panel — and a caret key that could fire a one-shot row is how
+    /// "Sleep" put the Mac to sleep from the corner (parity inventory D4). A row with nothing
+    /// to step into leaves → to the field: ghost text, the caret, the scopes.
+    @discardableResult
+    func stepIntoFocusedRow() -> Bool {
+        guard let row = focusedRow else { return false }
+        switch row {
+        case .cliSuggestion:
+            // Fills the field, which is stepping into the subcommand, not running it.
+            run(row)
+            return true
+        case .global(let doc):
+            if Self.rightArrowStepsInto(doc.action) {
+                run(row)
+                return true
+            }
+            if let app = Self.appToStepInto(doc) {
+                focusedMenuIndex = nil
+                scopeIntoApp(name: app.name, bundleID: app.bundleID)
+                return true
+            }
+            return false
+        case .dock, .command, .action, .file:
+            return false
+        }
+    }
+
+    /// Pure: whether ↑/↓ try the layer before the list — an empty field with nothing
+    /// highlighted.
+    nonisolated static func layerKeyComesFirst(query: String, hasFocusedRow: Bool) -> Bool {
+        query.isEmpty && !hasFocusedRow
+    }
+
+    /// Pure: the Global results → steps into by running — the ones whose "run" is opening
+    /// a scope, not doing something.
+    nonisolated static func rightArrowStepsInto(_ action: GlobalSearchService.ActionSpec) -> Bool {
+        switch action {
+        case .systemCommandScope, .userExtension, .cliScope: return true
+        default: return false
+        }
+    }
+
+    /// Pure: an app result, which → scopes into rather than launches.
+    nonisolated static func appToStepInto(
+        _ doc: GlobalSearchService.SearchDocument
+    ) -> (name: String, bundleID: String)? {
+        switch doc.action {
+        case .launchBundleId(let bundleID, _), .activatePID(_, let bundleID, _):
+            return bundleID.isEmpty ? nil : (doc.title, bundleID)
+        default:
+            return nil
+        }
+    }
+
     /// Runs whichever row the keyboard is on. Returns false when there is none, so Enter
     /// falls through to asking the question the user typed.
     @discardableResult
