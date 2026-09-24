@@ -254,6 +254,10 @@ users · crash-free % · first-result accuracy in Find · AI corpus pass-rate ·
 | 10 | License | Decide open vs closed (README and update notes disagree today) |
 | 11 | Release rhythm | Beta every 2 weeks, stable monthly |
 
+**Owner's answers (2026-09-24):** all eleven recommendations accepted as written. #8 — yes,
+bought later (Phase 3). The ~15-week plan in Part 6 stands, with no fixed launch deadline
+(1.0 around early January 2027).
+
 ---
 
 *This file replaces reading five plans. When you have answered Part 7, it becomes
