@@ -30,7 +30,6 @@ __pycache__/
 # Node
 node_modules/
 package-lock.json
-AppIcon.icon/
 
 # Google Drive upload temp
 .tmp.driveupload/
