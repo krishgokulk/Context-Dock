@@ -410,10 +410,15 @@ private struct ClipboardHotkeyRecorderRow: View {
             if event.modifierFlags.contains(.option) { carbon |= UInt32(optionKey) }
             if event.modifierFlags.contains(.control) { carbon |= UInt32(controlKey) }
             if event.modifierFlags.contains(.shift) { carbon |= UInt32(shiftKey) }
-            if carbon != 0 {
-                self.apply(UInt32(event.keyCode), carbon)
-                self.stopRecording()
+            guard carbon != 0 else { return nil }
+            guard HotkeyModifierRule.accepts(carbonModifiers: carbon) else {
+                // Shift alone is typing: ⇧S as a global hotkey swallowed every capital S.
+                // Keep listening so the next press can be a real shortcut.
+                NSSound.beep()
+                return nil
             }
+            self.apply(UInt32(event.keyCode), carbon)
+            self.stopRecording()
             return nil
         }
     }
@@ -421,6 +426,15 @@ private struct ClipboardHotkeyRecorderRow: View {
     private func stopRecording() {
         isRecording = false
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
+
+/// Which modifier sets a global hotkey may use. A shortcut needs ⌘, ⌥ or ⌃: with Shift alone
+/// (or nothing) it is a character somebody types — ⇧S recorded as Selection Scope made it
+/// impossible to type a capital S anywhere on the Mac.
+enum HotkeyModifierRule {
+    static func accepts(carbonModifiers: UInt32) -> Bool {
+        carbonModifiers & UInt32(cmdKey | optionKey | controlKey) != 0
     }
 }
 

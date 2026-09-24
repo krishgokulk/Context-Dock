@@ -4502,11 +4502,15 @@ private struct HotkeyRecorderRow: View {
             if event.modifierFlags.contains(.option)  { carbon |= UInt32(optionKey) }
             if event.modifierFlags.contains(.control) { carbon |= UInt32(controlKey) }
             if event.modifierFlags.contains(.shift)   { carbon |= UInt32(shiftKey) }
-            if carbon != 0 {
-                self.apply(UInt32(event.keyCode), carbon)
-                self.stopRecording()
-                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+            guard carbon != 0 else { return nil }
+            // Same rule as HotkeysSettingsPage: Shift alone is typing, not a shortcut.
+            guard HotkeyModifierRule.accepts(carbonModifiers: carbon) else {
+                NSSound.beep()
+                return nil
             }
+            self.apply(UInt32(event.keyCode), carbon)
+            self.stopRecording()
+            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
             return nil
         }
     }
