@@ -28,6 +28,11 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
 
+      - name: Keep compiling after the first error
+        # Otherwise a failing run names one file, and every other broken file waits for the
+        # next run.
+        run: defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
+
       - name: Install Metal toolchain
         # The project ships .metal shaders; the runner's Xcode doesn't bundle the
         # Metal toolchain by default ("cannot execute tool 'metal'").

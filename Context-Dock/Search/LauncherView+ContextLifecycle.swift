@@ -119,15 +119,19 @@ extension LauncherView {
                     debounceNanoseconds: isGlobalContextActive ? 0 : 260_000_000
                 )
             }
-            .onReceive(FaviconStore.shared.$revision.dropFirst()) { _ in
+            .onReceive(FaviconStore.shared.$revision.dropFirst()) { (_: Int) in
                 // A page favicon finished loading — repaint EVERY view that shows web-link rows, not
                 // just Safari global context. Without rebuilding, the favicon sits in the cache but
                 // the already-built pills keep their generic icon (menuItemImage was nil at build).
+                // Typed parameter and Bool locals: inferred inside this modifier chain, Xcode 26's
+                // type checker gives up on the closure.
                 if shouldShowSafariTabStrip {
                     syncSafariTabStrip()
                 }
                 refreshVisibleGlobalContextAfterMenuCacheUpdate()
-                if showContextInDock && !isGlobalContextActive {
+                let dockShowsContext: Bool = showContextInDock
+                let globalContextActive: Bool = isGlobalContextActive
+                if dockShowsContext && !globalContextActive {
                     scheduleDockPillRebuild(
                         query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
                 }
