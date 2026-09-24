@@ -207,14 +207,14 @@ These skills are installed and activate automatically based on your request:
 
 Note: `swiftui-pro` overlaps with `swiftui-patterns` (the former is a deep API/hygiene review skill; the latter covers app architecture/scene structure) — use whichever matches the task. Similarly, `appkit-accessibility-auditor` overlaps with `appkit-interop` (accessibility audit vs. general AppKit bridging).
 
-Vendored (not plugin-installed) skills above live in `Context-Dock/skills/<name>/SKILL.md`, copied directly from their upstream repos:
+Vendored (not plugin-installed) skills above live in `.claude/skills/<name>/SKILL.md`, copied directly from their upstream repos, so Claude Code auto-discovers them:
 - swiftui-pro ← https://github.com/twostraws/SwiftUI-Agent-Skill
 - swift-concurrency-pro ← https://github.com/twostraws/Swift-Concurrency-Agent-Skill
 - app-intents ← https://github.com/n0an/App-Intents-Agent-Skill
 - core-data-expert ← https://github.com/AvdLee/Core-Data-Agent-Skill
-- swiftui-accessibility-auditor, uikit-accessibility-auditor, appkit-accessibility-auditor ← https://github.com/rgmez/apple-accessibility-skills (shared docs in `skills/apple-accessibility-shared/`)
+- swiftui-accessibility-auditor, uikit-accessibility-auditor, appkit-accessibility-auditor ← https://github.com/rgmez/apple-accessibility-skills (shared docs in `.claude/skills/apple-accessibility-shared/`)
 
-These are plain files, not yet under `.claude/skills/`, so they won't auto-trigger via the skill-discovery mechanism the plugin-installed skills above use. Move them into `.claude/skills/` (e.g. `mv skills .claude/skills`) if you want Claude Code to auto-discover them the same way.
+Before finishing a turn that touched Swift, run `./scripts/check.sh` (Debug build + oversized-file warning; `--full` adds the test suite). Cross-session progress goes in `MEMORY.md` at the repo root — append-only, one dated line per session.
 
 ## Apple Documentation
 
