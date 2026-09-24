@@ -56,9 +56,6 @@ XCTest. The app's single-instance guard stands down under XCTest (`ILauncherApp.
 what lets the test host start while the developer's copy is running. Anything needing a live model
 is NOT in this suite — provider behaviour is verified by hand against the running app.
 
-A new worktree fails its first build in `actool` until `Context-Dock/AppIcon.icon` (git-ignored) is
-copied in from the main checkout.
-
 Releases: only when the owner says **"ship it"** — see `docs/runbooks/ship-a-release.md`. Agents
 never run `ship.sh` on their own.
 
