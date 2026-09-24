@@ -124,9 +124,25 @@ struct AppChatPromptMetricsDockTests {
         #expect(withTools.tools == 2)
     }
 
-    @Test func otherPhasesIgnoreTheStripCounts() {
-        let a = M.size(for: .prompt, suggestions: 0)
-        let b = M.size(for: .prompt, suggestions: 0, running: 9, pinned: 9)
-        #expect(a == b)
+    /// The field and the strip it opens from are one width, so opening the magnifier moves
+    /// nothing but what is drawn in the shell.
+    @Test func theFieldAndTheStripShareOneWidth() {
+        for (running, pinned, icons) in [(1, 0, 1), (4, 1, 7), (9, 9, 4)] {
+            let dock = M.size(
+                for: .dock, suggestions: 0, running: running, pinned: pinned, promptIcons: icons)
+            let field = M.size(
+                for: .prompt, suggestions: 0, running: running, pinned: pinned, promptIcons: icons)
+            #expect(dock.width == field.width)
+        }
+    }
+
+    /// Held wider than its icons for the field, the strip keeps its magnifier on the edge
+    /// and shares the room out over the gap before each app.
+    @Test func aStripHeldWideSpreadsTheRoomOverItsGaps() {
+        let natural = M.dockLayout(running: 3, pinned: 0)
+        let held = M.dockLayout(running: 3, pinned: 0, fieldIcons: 9)
+        #expect(held.width == M.fieldMinimumWidth(icons: 9))
+        #expect(held.leadingInset == M.dockInset)
+        #expect(abs(held.appSpread * 3 - (held.width - natural.width)) < 0.001)
     }
 }

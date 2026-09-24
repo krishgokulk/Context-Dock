@@ -82,6 +82,17 @@ enum AppChatPromptMetrics {
     /// What one more icon costs the field: `ContextMatchDock` draws an 18-point icon with
     /// 7 points of spacing before it.
     static let matchPillIconSpan: CGFloat = 25
+    /// A dock icon drawn at the pill's 18 points.
+    static var pillIconScale: CGFloat { 18 / dockIconSize }
+
+    /// `ContextMatchDock`'s capsule, measured: 18-point icons 7 apart, a 24-point `+N`, and
+    /// 8 of padding each side. The Global field keeps this room and the strip's own icons
+    /// shrink into it, so both have to agree on the number.
+    static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
+        let items = icons + (overflow ? 1 : 0)
+        guard items > 0 else { return 0 }
+        return CGFloat(icons) * 18 + (overflow ? 24 : 0) + CGFloat(items - 1) * 7 + 16
+    }
 
     /// How wide the field is with `icons` running apps beside it. A "+N" is a number you
     /// cannot click, so the field grows to hold the row instead of cutting it — up to the
@@ -98,34 +109,6 @@ enum AppChatPromptMetrics {
         return matchIconBaseCount + Int(room / matchPillIconSpan)
     }
 
-    // MARK: The strip beside the open field
-
-    /// Opening the field used to take the whole strip away, and with it everything that is
-    /// not an app — pinned folders, plugin tiles — so the things the user had chosen to keep
-    /// at hand vanished the moment they started typing. The strip's pins region now stays
-    /// beside the field, drawn at the field's height. (Its apps do not: the field's own pill
-    /// already shows them.)
-    static let fieldStripScale: CGFloat = inputHeight / dockHeight
-
-    /// How much of the strip, unscaled, shows beside the open field: the pins region with
-    /// its leading hairline, and a margin after it. Nothing when nothing is pinned.
-    static func pinsBesideFieldSpan(
-        pinned: Int, pinnedExtraWidth: CGFloat = 0, tools: Int = 0
-    ) -> CGFloat {
-        guard pinned > 0 else { return 0 }
-        let pins = dockDividerSpan + runWidth(pinned) + pinnedExtraWidth
-        // With tools after the pins, the margin is the gap before their hairline, so the
-        // clip falls exactly on that hairline; without them it is the strip's own inset.
-        return pins + (tools > 0 ? dockIconGap : dockInset)
-    }
-
-    /// How far the strip is pushed trailing, unscaled, so that its tools — which the field
-    /// carries itself — fall outside the shell rather than showing twice.
-    static func toolsBesideFieldOffset(pinned: Int, tools: Int) -> CGFloat {
-        guard pinned > 0, tools > 0 else { return 0 }
-        return dockDividerSpan + runWidth(tools) + dockInset - dockIconGap
-    }
-
     struct DockLayout: Equatable {
         /// Running icons actually drawn; the rest are the `+N` pill.
         let shownRunning: Int
@@ -133,7 +116,40 @@ enum AppChatPromptMetrics {
         /// Clipboard / selection affordances drawn after the pins.
         let tools: Int
         let width: CGFloat
+        /// The strip's inset at both ends. The magnifier and the pins sit on the edges.
+        var leadingInset: CGFloat = AppChatPromptMetrics.dockInset
+        /// Room the shell holds beyond what the row needs, for the field it opens into,
+        /// shared out as extra gap before each app. Kept as edge margin it pushed the
+        /// magnifier in from the corner; kept in one piece after the magnifier it read as a
+        /// hole. Spread over every gap it is a few points each.
+        var appSpread: CGFloat = 0
+        /// The pins and the corner's tools, from the last app to the trailing inset. This
+        /// region stays put when the field opens — only what is before it morphs.
+        var trailingRegion: CGFloat = 0
     }
+
+    /// The least text the field keeps room for beside its pills.
+    static let fieldTextMinimum: CGFloat = 120
+
+    /// What the open field needs before the strip's trailing region: the inset that puts
+    /// its magnifier where the strip's is, the magnifier, room for the placeholder, and a
+    /// capsule of `icons` small pills.
+    static func fieldMinimumWidth(icons: Int) -> CGFloat {
+        let chrome: CGFloat = fieldLeadingPadding(stripInset: dockInset) + 22 + 10
+            + fieldTextMinimum + 10 + dockInset
+        guard icons > 0 else { return chrome }
+        // 10 of spacing, then the capsule: 8 of padding each side, 7 between icons.
+        return chrome + 10 + 9 + CGFloat(icons) * matchPillIconSpan
+    }
+
+    /// Puts the field's 22-point magnifier on the centre of the strip's folded-field slot,
+    /// so the icon the pointer rested on is the one the field opens from.
+    static func fieldLeadingPadding(stripInset: CGFloat) -> CGFloat {
+        stripInset + dockIconSize / 2 - 11
+    }
+
+    /// The Global field is the strip's height, so the pins at its trailing end sit still.
+    static func fieldHeight(global: Bool) -> CGFloat { global ? dockHeight : inputHeight }
 
     private static func runWidth(_ count: Int) -> CGFloat {
         guard count > 0 else { return 0 }
@@ -156,7 +172,11 @@ enum AppChatPromptMetrics {
     /// for the tile that is drawn, not the icon that is not.
     static func dockLayout(
         running: Int, pinnedApps: Int = 0, pinned: Int, pinnedExtraWidth: CGFloat = 0,
-        tools: Int = 0, maximumWidth: CGFloat = dockMaximumWidth
+        tools: Int = 0, maximumWidth: CGFloat = dockMaximumWidth,
+        /// The field this strip opens into, by its pill count. Given, the strip and the
+        /// field are one width — the shell does not change size when the magnifier opens,
+        /// only what is drawn in it.
+        fieldIcons: Int? = nil
     ) -> DockLayout {
         let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) + pinnedExtraWidth : 0
         let toolsWidth = tools > 0 ? dockDividerSpan + runWidth(tools) : 0
@@ -180,10 +200,19 @@ enum AppChatPromptMetrics {
             overflow = running - shownRunning
         }
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
-        let width = dockSearchStubSpan + 2 * dockInset
+        let natural = dockSearchStubSpan + 2 * dockInset
             + runWidth(max(1, pinnedApps + runningSlots)) + pinsWidth + toolsWidth
+        guard let fieldIcons else {
+            return DockLayout(
+                shownRunning: shownRunning, overflow: overflow, tools: tools, width: natural)
+        }
+        let trailingRegion = pinsWidth + toolsWidth
+        let width = max(
+            natural, min(fieldMinimumWidth(icons: fieldIcons) + trailingRegion, maximumWidth))
         return DockLayout(
-            shownRunning: shownRunning, overflow: overflow, tools: tools, width: width)
+            shownRunning: shownRunning, overflow: overflow, tools: tools, width: width,
+            appSpread: (width - natural) / CGFloat(max(1, pinnedApps + runningSlots)),
+            trailingRegion: trailingRegion)
     }
 
     /// What sits over the field — an approval waiting on a yes, attached files — is part
@@ -213,8 +242,8 @@ enum AppChatPromptMetrics {
         tools: Int = 0,
         /// Running apps drawn in the field's own pill, which the field grows to hold.
         promptIcons: Int = 0,
-        /// Global Context's field, which keeps the strip's pins beside it.
-        stripBesideField: Bool = false,
+        /// The Global field's height — the strip's — or the composer's own.
+        fieldHeight: CGFloat = inputHeight,
         /// The width the row was planned against. The shell and the row are two readings
         /// of one number and must be given the same budget, or the row overflows the glass
         /// it is drawn in and the leading magnifier is what gets clipped.
@@ -225,23 +254,18 @@ enum AppChatPromptMetrics {
         switch phase {
         case .hidden, .mini:
             return miniSize
-        case .dock:
-            return CGSize(
-                width: dockLayout(
-                    running: running, pinnedApps: pinnedApps, pinned: pinned,
-                    pinnedExtraWidth: pinnedExtraWidth, tools: tools,
-                    maximumWidth: maximumWidth).width,
-                height: dockHeight)
-        case .prompt, .suggesting:
-            // The list is its own card above this one, so the field stays a field — but it
-            // widens for the running-app row it carries.
-            let beside = stripBesideField
-                ? fieldStripScale * pinsBesideFieldSpan(
-                    pinned: pinned, pinnedExtraWidth: pinnedExtraWidth, tools: tools)
-                : 0
-            return CGSize(
-                width: promptWidth(icons: promptIcons, maximumWidth: maximumWidth) + beside,
-                height: inputHeight + sheet)
+        case .dock, .prompt, .suggesting:
+            // One width for the strip and the field it opens into, so the magnifier opening
+            // is the only thing that moves: the wider of the row's own width and what the
+            // field needs for its pills.
+            let width = dockLayout(
+                running: running, pinnedApps: pinnedApps, pinned: pinned,
+                pinnedExtraWidth: pinnedExtraWidth, tools: tools,
+                maximumWidth: maximumWidth, fieldIcons: promptIcons
+            ).width
+            return phase == .dock
+                ? CGSize(width: width, height: dockHeight)
+                : CGSize(width: width, height: fieldHeight + sheet)
         case .chat:
             return CGSize(width: width, height: chatHeight(messages: messages) + sheet)
         }
@@ -262,7 +286,29 @@ struct AppChatPromptPill: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
 
-    private var size: CGSize {
+    private var size: CGSize { size(for: model.phase) }
+
+    /// The strip the Global field opens from, for lining the two up: its inset puts the
+    /// field's magnifier on the strip's, and its trailing region is kept clear. Nil outside
+    /// Global and in chat, where the field is the composer and nothing is shared.
+    private var globalStrip: AppChatPromptMetrics.DockLayout? {
+        guard model.isGlobalScope, model.phase != .chat else { return nil }
+        return stripPlan.layout
+    }
+
+    private var stripPlan: DockStripPlan {
+        DockStripPlan.make(
+            running: model.stripIcons, pins: DockPinStore.shared.pins,
+            tools: stripToolCount, fieldIcons: model.promptIconCount)
+    }
+
+    private var stripToolCount: Int {
+        model.dockToolCount(
+            clipboardVisible: clipboard.phase.isVisible,
+            feedbackVisible: actionFeedback.glyph != nil)
+    }
+
+    private func size(for phase: AppChatPromptPhase) -> CGSize {
         // The strip's own composition, not the raw counts: an app that is pinned and
         // running is one icon there, and a pin this build cannot resolve is none.
         let tools = model.dockToolCount(
@@ -272,7 +318,7 @@ struct AppChatPromptPill: View {
             running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools)
         let composition = plan.composition
         return AppChatPromptMetrics.size(
-            for: model.phase,
+            for: phase,
             suggestions: model.listRowCount,  // list rows live in AppChatListCard now
             messages: model.messages.count,
             hasApproval: approvals.pending(for: .corner) != nil,
@@ -283,8 +329,8 @@ struct AppChatPromptPill: View {
             pinned: composition.otherPins.count,
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: tools,
-            promptIcons: model.globalMatchIcons.count,
-            stripBesideField: model.isGlobalScope,
+            promptIcons: model.promptIconCount,
+            fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.isGlobalScope),
             maximumWidth: DockStripPlan.screenBudget)
     }
 
@@ -294,26 +340,6 @@ struct AppChatPromptPill: View {
         guard model.query.isEmpty, model.phase != .chat else { return .ignored }
         return CornerDockController.shared.chatPresentation.handleLayerKey(up: up)
             ? .handled : .ignored
-    }
-
-    /// The strip's pins stay beside Global Context's open field (see
-    /// `AppChatPromptMetrics.pinsBesideFieldSpan`). The width they take, scaled, and how far
-    /// the strip is pushed so only they show.
-    private var stripBesideField: (width: CGFloat, offset: CGFloat)? {
-        guard model.phase == .prompt || model.phase == .suggesting else { return nil }
-        let tools = model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
-            feedbackVisible: actionFeedback.glyph != nil)
-        let composition = DockStripPlan.make(
-            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools
-        ).composition
-        let pinned = composition.otherPins.count
-        guard pinned > 0 else { return nil }
-        let k = AppChatPromptMetrics.fieldStripScale
-        return (
-            k * AppChatPromptMetrics.pinsBesideFieldSpan(
-                pinned: pinned, pinnedExtraWidth: composition.widgetExtraWidth, tools: tools),
-            k * AppChatPromptMetrics.toolsBesideFieldOffset(pinned: pinned, tools: tools))
     }
 
     var body: some View {
@@ -358,31 +384,34 @@ struct AppChatPromptPill: View {
     /// changes: `inputStack` is laid out at its full width from the first frame and the
     /// shell simply reveals more of it. Layout stays still; only the shell and opacity move.
     /// This is the shape `legacyBody` has always used, for the same reason.
+    private var globalInputWidth: CGFloat {
+        guard model.phase != .chat else { return AppChatPromptMetrics.width }
+        // The shell's own width in the field phase — which is the strip's width too.
+        return size(for: .prompt).width
+    }
+
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
-        let isDock = model.phase == .dock
-        let beside = stripBesideField
+        let stripShown = [.dock, .prompt, .suggesting].contains(model.phase)
         return ZStack(alignment: .bottomTrailing) {
-            // Under the field, so the part of it the field covers never takes a click.
-            // Beside the open field only its pins show: scaled to the field's height from
-            // the trailing corner, and pushed so its tools fall outside the glass. Scale and
-            // offset draw without laying out, so the field's focused subtree never moves.
-            CornerDockStrip(model: model, besideField: beside != nil)
-                .scaleEffect(
-                    beside != nil ? AppChatPromptMetrics.fieldStripScale : 1,
-                    anchor: .bottomTrailing)
-                .offset(x: beside?.offset ?? 0)
-                .opacity(isDock || beside != nil ? 1 : 0)
-                .allowsHitTesting(isDock || beside != nil)
-                .animation(stripFade, value: model.phase)
-
+            // Laid out at the width the field is given with its running-app row, not the
+            // 372-point base: the shell widens for each icon past four, and a base-width
+            // stack pinned to the trailing edge left that growth as blank glass before the
+            // magnifier while the placeholder truncated. Phase does not enter this number,
+            // so the morph still moves no inner width.
             inputStack
-                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
-                // The field keeps its place at the leading edge; the pins sit after it.
-                .offset(x: -(beside?.width ?? 0))
+                .frame(width: globalInputWidth, alignment: .bottomLeading)
                 .opacity(showsInput ? 1 : 0)
                 .allowsHitTesting(showsInput)
                 .animation(fieldFade, value: model.phase)
+
+            // Up while the dock or its field is: the strip fades its own apps and magnifier
+            // as they gather into the field, and keeps its pins and tools — still, and
+            // clickable — at the trailing end of both.
+            CornerDockStrip(model: model)
+                .opacity(stripShown ? 1 : 0)
+                .allowsHitTesting(stripShown)
+                .animation(stripFade, value: stripShown)
 
             miniContent
                 .opacity(model.phase == .mini ? 1 : 0)
@@ -422,7 +451,10 @@ struct AppChatPromptPill: View {
     /// A capsule while it rests as a dock, a card once the field is open. Animated as one
     /// number, so the corner never looks like two shapes changing at once.
     private var shellRadius: CGFloat {
-        model.phase == .dock ? AppChatPromptMetrics.dockHeight / 2 : 22
+        // The dock and its field are one bar of one height, so one capsule: a radius that
+        // changed with the phase is what made opening the field read as a different shape.
+        [.dock, .prompt, .suggesting].contains(model.phase)
+            ? AppChatPromptMetrics.dockHeight / 2 : 22
     }
 
     /// The whole morph, one curve. `dockMorphDuration` is the single number to turn when
@@ -535,7 +567,9 @@ struct AppChatPromptPill: View {
             if !model.attachments.isEmpty { attachmentRow }
             inputRow
         }
-        .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
+        // Fills what the body gives it: 372 points in the legacy shell, the field's
+        // widened prompt width in Global.
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .animation(.easeOut(duration: 0.16), value: model.isShowingSelectionScope)
         .animation(.easeOut(duration: 0.16), value: model.selectionContent)
     }
@@ -636,7 +670,9 @@ struct AppChatPromptPill: View {
         HStack(spacing: 10) {
             if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
+                    // The strip's own size in Global: the field opens on the icon the
+                    // pointer rested on, and a smaller one there read as a swap.
+                    .font(.system(size: model.isGlobalScope ? 20 : 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 22)
             } else if model.isGlobalScope {
@@ -785,42 +821,57 @@ struct AppChatPromptPill: View {
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                ContextMatchDock(
-                    phase: .idle,
-                    icons: model.globalMatchIcons,
-                    overflowCount: model.globalOverflowCount,
-                    isSearching: false,
-                    onSelect: { icon in model.openGlobalMatchIcon(icon) })
-                    // Opacity only, for the same reason as the field above: this pill is a
-                    // sibling of the TextField inside the focused subtree, and a geometry
-                    // transition here moves the field's own layout while focus is claimed.
-                    .transition(.opacity)
-                    // Resting the pointer on the small pills asks for the big ones: the
-                    // field folds into the dock at once rather than waiting out the dwell.
-                    .onHover { inside in if inside { model.foldToDock() } }
+                if model.isGlobalScope {
+                    // The strip's own icons shrink into this spot and are the pill, so the
+                    // field only keeps the room — drawing a second set here is what showed
+                    // every app twice while the first set was still travelling.
+                    Color.clear
+                        .frame(
+                            width: AppChatPromptMetrics.pillWidth(
+                                icons: model.globalMatchIcons.count,
+                                overflow: model.globalOverflowCount > 0),
+                            height: 30)
+                        .allowsHitTesting(false)
+                } else {
+                    ContextMatchDock(
+                        phase: .idle,
+                        icons: model.globalMatchIcons,
+                        overflowCount: model.globalOverflowCount,
+                        isSearching: false,
+                        onSelect: { icon in model.openGlobalMatchIcon(icon) })
+                        // Opacity only, for the same reason as the field above: this pill is
+                        // a sibling of the TextField inside the focused subtree, and a
+                        // geometry transition here moves the field's own layout while focus
+                        // is claimed.
+                        .transition(.opacity)
+                        // Resting the pointer on the small pills asks for the big ones: the
+                        // field folds into the dock at once rather than waiting out the dwell.
+                        .onHover { inside in if inside { model.foldToDock() } }
+                }
                 // Beside the running-app capsule, not inside it: the clipboard used to
                 // lead that list as one of its icons, which put a permanent member in a
                 // row meant to be "what's running" and made a stale old copy look as
                 // current as a fresh one. Same transient signal as the composer's own.
-                if clipboard.phase.isVisible {
+                // In Global the strip's own clipboard icon stays on screen in its trailing
+                // region, so the field does not draw a second one beside it.
+                if clipboard.phase.isVisible, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
-
             // The dock shows this in Global Context too, independent of whether the
             // running-apps row has anything in it — a selection is worth carrying into a
             // question whether or not the field is also offering somewhere else to go.
             // This lived only in the composer's own branch below, so Global Context and
             // the scopes reached from it never had a way to see or reach the selection at
             // all, whatever the frontmost app's AX tree actually reported.
-            if model.isSearchField, model.selection != nil {
+            if model.isSearchField, model.selection != nil, !model.isGlobalScope {
                 selectionScopeButton
             }
 
             // What the last action came to, beside the field for a few seconds — the
             // dock's inline result, carried here so a result reaches the surface the user
             // is on. Same transient lifetime as the clipboard's own icon.
-            if let result = actionFeedback.glyph {
+            if let result = actionFeedback.glyph, !model.isGlobalScope {
                 ActionFeedbackGlyph(feedback: result)
                     .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
@@ -915,9 +966,18 @@ struct AppChatPromptPill: View {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
+            // Room for the strip's pins and tools, which stay on screen over this end of
+            // the field: the strip draws them, still and clickable, in both phases.
+            if let strip = globalStrip {
+                Color.clear
+                    .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
+                    .allowsHitTesting(false)
+            }
         }
-        .padding(.horizontal, 14)
-        .frame(height: AppChatPromptMetrics.inputHeight)
+        .padding(.leading, globalStrip.map {
+            AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
+        .padding(.trailing, globalStrip == nil ? 14 : 0)
+        .frame(height: AppChatPromptMetrics.fieldHeight(global: model.isGlobalScope))
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
