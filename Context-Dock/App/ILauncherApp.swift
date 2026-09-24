@@ -600,6 +600,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // Before anything else can send one: in the test host every Apple Event fails fast
+        // instead of waiting 120 s for an Automation prompt nobody answers.
+        if Self.isHostingTests { TestHostAppleEventBlocker.install() }
         // The agent-facing server, only if the user turned it on. Started here rather than
         // lazily: an agent's first tool call must not be the thing that starts the server,
         // or that call fails and the agent concludes the capability does not exist.
