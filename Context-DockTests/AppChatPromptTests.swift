@@ -214,7 +214,9 @@ struct AppChatPromptTests {
     /// Coming back to an untouched prompt gives the field back, the same as it opened —
     /// not a sheet the user did not ask for the first time either.
     @Test func reachingForTheIconWithNothingTypedRestoresThePlainField() {
-        let model = AppChatPromptModel()
+        // A private conversation: `.shared` is also the live dock's, and a turn another test
+        // submitted there can still be loading — a loading conversation holds the prompt up.
+        let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
@@ -230,7 +232,9 @@ struct AppChatPromptTests {
     }
 
     @Test func theIconEventuallyGoesToo() {
-        let model = AppChatPromptModel()
+        // A private conversation: `.shared` is also the live dock's, and a turn another test
+        // submitted there can still be loading — a loading conversation holds the prompt up.
+        let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Safari")
         model.standDown()
 

@@ -126,7 +126,12 @@ enum ChatPlanRunner {
             prompt, context: .none, provider: provider, apiKey: apiKey,
             conversationHistory: [], surfaceScoped: true)
         guard let raw else { return nil }
+        return plan(fromReply: raw, routes: routes)
+    }
 
+    /// The model's reply, read against the routes it was offered. Separate from `plan` so the
+    /// reading can be tested without asking a model.
+    static func plan(fromReply raw: String, routes: [ChatRoute]) -> ChatPlan? {
         guard let range = raw.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression),
             let data = String(raw[range]).data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
