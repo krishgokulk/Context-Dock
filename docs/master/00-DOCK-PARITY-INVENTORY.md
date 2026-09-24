@@ -63,7 +63,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | C8 | **→** on an app row scopes that app into a pill | ✅ | `rightArrowFromDockScopesLikeAnEmptyPromptDoes`, `steppingIntoAnotherAppTakesYouToThatAppsChat` |
 | C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ❓ | Dock ~l.1021–1060 |
 | C10 | **Space** = Quick Look on the focused file/row (only while navigating, never while typing) | 🟡 | `AppChatMenuBrowsing` toggles `FileQuickLookPanel`; Space binding not verified |
-| C11 | **→** on a folder row enters the folder | ❓ | Dock ~l.203 |
+| C11 | **→** on a folder row enters the folder | 🟡 | → on an app row scopes into the app instead of launching it (checked on the app 2026-09-25); folder rows not tried |
 | C12 | **⌘R** refreshes the front app's live menus | ❓ | Hotkeys page lists it for the Dock only |
 
 ## D. Scopes (what you can step into)
@@ -73,7 +73,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D1 | Global Context search (apps, menus, files, commands, extensions, plugins, browser URLs) | ✅ | `CornerGlobalContextParityTests` (5 tests: same index, result kinds, row filtering) |
 | D2 | Frontmost-app scope: its menus + actions | 🟡 | `CornerFrontmostAppPillsTests`; plan 2026-09-08 phases — see `00-DOCK-AND-CORNER.md` §4 |
 | D3 | CLI tool scope | ✅ | `CornerCLIScopeTests` (7) |
-| D4 | System command scope | ❓ | `GlobalContextRow` knows the kind; step-in not verified |
+| D4 | System command scope | 🟡 | → no longer runs a command row (checked on the app 2026-09-25: → on "Sleep" does nothing; `CornerRightArrowTests`). Stepping into a system command's panel not yet verified |
 | D5 | Global Extension opens its own board | 🟡 | `GlobalContextRow.run`: "in the corner the extension opens in the board" — no test named |
 | D6 | Plugin: panel or one-shot run | 🟡 | Same file: Corner opens the panel inline; no Corner test named |
 | D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ❓ | `AppChatPromptModel` has Finder search; browse & attach not verified |
@@ -102,7 +102,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | # | Dock behaviour | Corner | Evidence / note |
 |---|---|---|---|
 | F1 | Trackpad swipes — all rows W1–W10 | 🟡 | Spec: `00-DOCK-AND-CORNER.md` §4b; horizontal partly (`horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp`), vertical ❌ |
-| F2 | ↑/↓ keys switch Global ↔ Context ↔ Media when not in a list | ❓ | Dock ~l.937–950; must agree with F1 |
+| F2 | ↑/↓ keys switch Global ↔ Context ↔ Media when not in a list | ✅ | ↓ Global → app and ↑ back, checked on the app 2026-09-25 (`CornerRightArrowTests`, `theLayerKeysMoveBetweenGlobalAndTheApp`) |
 | F3 | Media Dock layer | — | Labs; appears only if Settings' Media layer is on (same gate in the Corner — §4b W6) |
 | F4 | Pinned results | ✅ | Corner dock strip pins (`DockPinStoreTests`, `pinsAreNeverOverflowed`) |
 | F5 | Running apps shown and switchable | ✅ | `removedRunningAppsLeaveTheStrip`, `runningOverflowsIntoAPlusPill` |
