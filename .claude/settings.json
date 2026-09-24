@@ -15,7 +15,9 @@
       "Bash(./scripts/ship.sh)",
       "Bash(./scripts/ship.sh *)",
       "Bash(scripts/ship.sh*)",
-      "Bash(bash scripts/ship.sh*)"
+      "Bash(bash scripts/ship.sh*)",
+      "Bash(./scripts/release-prep.sh*)",
+      "Bash(scripts/release-prep.sh*)"
     ],
     "deny": [
       "Bash(git stash*)",

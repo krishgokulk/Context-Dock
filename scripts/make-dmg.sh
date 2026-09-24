@@ -4,10 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="Context-Dock"
 VERSION="$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$ROOT_DIR/Context-Dock/Info.plist")"
-DERIVED_DATA_DIR="$ROOT_DIR/.build/XcodeDerivedData"
-APP_BUNDLE="$DERIVED_DATA_DIR/Build/Products/Release/$APP_NAME.app"
+# ship.sh passes APP_BUNDLE, DMG_PATH and CHANNEL; the defaults keep a bare run working.
+CHANNEL="${CHANNEL:-beta}"
+SUFFIX=""; [ "$CHANNEL" = "beta" ] && SUFFIX="-beta"
+APP_BUNDLE="${APP_BUNDLE:-$ROOT_DIR/.build/XcodeDerivedData/Build/Products/Release/$APP_NAME.app}"
 STAGE_DIR="$ROOT_DIR/.build/dmg-stage"
-DMG_PATH="$ROOT_DIR/$APP_NAME-$VERSION-beta.dmg"
+DMG_PATH="${DMG_PATH:-$ROOT_DIR/.build/release/$APP_NAME-$VERSION$SUFFIX.dmg}"
+/bin/mkdir -p "$(dirname "$DMG_PATH")"
 
 if [[ ! -d "$APP_BUNDLE" ]]; then
   echo "Missing Release app: $APP_BUNDLE" >&2
@@ -21,7 +24,7 @@ fi
 /bin/ln -s /Applications "$STAGE_DIR/Applications"
 
 /usr/bin/hdiutil create \
-  -volname "$APP_NAME $VERSION beta" \
+  -volname "$APP_NAME $VERSION${SUFFIX:+ beta}" \
   -srcfolder "$STAGE_DIR" \
   -ov \
   -format UDZO \
