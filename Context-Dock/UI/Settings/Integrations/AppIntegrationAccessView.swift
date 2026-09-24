@@ -9,12 +9,14 @@ struct AppIntegrationAccessView: View {
 
     @ObservedObject private var consentStore = AdapterActionConsentStore.shared
     @ObservedObject private var apiStore = APIConnectionStore.shared
+    @ObservedObject private var computerUse = ComputerUseConsentStore.shared
     @State private var showRemoveConfirmation = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 automationPermission
+                computerUsePermission
                 standingConsent
                 credentials
                 declaredScope
@@ -74,6 +76,59 @@ struct AppIntegrationAccessView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Automation permission")
             .accessibilityValue(authorized ? "Granted" : "Not granted")
+        }
+    }
+
+    /// Whether DoraX may drive this app's menu bar, and how closely the user watches.
+    ///
+    /// Shown here rather than as a global list because the decision is per app: allowing Code to
+    /// check for updates says nothing about Mail. The chosen tier stays visible while the master
+    /// switch is off — greyed, not reset — so turning the switch back on restores what the user
+    /// picked instead of quietly dropping it.
+    private var computerUsePermission: some View {
+        let master = computerUse.isMasterEnabled
+        let selected = computerUse.mode(for: summary.bundleID)
+        return section(
+            title: "Computer Use",
+            caption: master
+                ? "Operating \(summary.appName) the way you would, when nothing it publishes can do the job."
+                : "Turned off for every app in Settings → AI → Computer Use."
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker(
+                    "",
+                    selection: Binding(
+                        get: { selected },
+                        set: { computerUse.setMode($0, for: summary.bundleID) })
+                ) {
+                    ForEach(ComputerUseMode.allCases, id: \.self) { mode in
+                        Text(mode.title).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(!master)
+                .accessibilityLabel("Computer Use for \(summary.appName)")
+
+                Text(selected.explanation)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                if selected.canOperate {
+                    Text(
+                        "Sending, replying, forwarding and deleting are never pressed this way, "
+                        + "and DoraX refuses when the words do not name one command exactly."
+                    )
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(NSColor.controlBackgroundColor)))
+            .opacity(master ? 1 : 0.55)
         }
     }
 

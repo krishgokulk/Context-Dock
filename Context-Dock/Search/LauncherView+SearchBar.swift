@@ -2552,6 +2552,21 @@ extension LauncherView {
                                     if shouldShowSelectionTrailingButton {
                                         selectionTrailingButton
                                     }
+                                    // The result stands beside the match dock rather than
+                                    // behind it. This was an else-if, so whenever the field
+                                    // had matches to show — which is most of the time an app
+                                    // is being opened or quit — the launch said its piece in
+                                    // ghost text and the trailing icon never appeared at all.
+                                    // The corner draws both in the same row for this reason.
+                                    if let feedback = launcherViewModel.inlineDockFeedback,
+                                        currentDockSurfaceMode != .generalChat
+                                    {
+                                        inlineDockFeedbackActionIcon(feedback)
+                                            .allowsHitTesting(false)
+                                            .transition(
+                                                .scale(scale: 0.88, anchor: .trailing)
+                                                    .combined(with: .opacity))
+                                    }
                                 }
                             } else if let feedback = launcherViewModel.inlineDockFeedback,
                                 currentDockSurfaceMode != .generalChat
@@ -3284,123 +3299,28 @@ extension LauncherView {
             && FileManager.default.isExecutableFile(atPath: appPath)
     }
 
+    /// One inline scope chip. The drawing lives in `GlobalInlineScopeChip`; this resolves the
+    /// launcher state and supplies what a click does.
     func globalInlineScopeChip(_ scope: GlobalInlineAppScope) -> some View {
-        let isHovered = hoveredGlobalInlineScopeBundleId == scope.bundleId
-        let icon: NSImage = {
-            if scope.bundleId.hasPrefix("syscmd://") {
-                let id = String(scope.bundleId.dropFirst("syscmd://".count))
-                if let uuid = UUID(uuidString: id),
-                    let command = SystemCommandsRegistry.shared.commands.first(where: { $0.id == uuid }),
-                    let image = NSImage(systemSymbolName: command.icon, accessibilityDescription: command.name)
-                {
-                    return image
+        GlobalInlineScopeChip(
+            scope: scope,
+            isHovered: hoveredGlobalInlineScopeBundleId == scope.bundleId,
+            isDark: systemColorScheme == .dark,
+            isCLIToolScope: {
+                isCLIToolScopeChip(
+                    bundleId: $0.bundleId, appName: $0.appName, appPath: $0.appPath)
+            },
+            onRemove: {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    removeGlobalInlineAppScopeFromBackspace(scope)
                 }
-            }
-            if isCLIToolScopeChip(bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath),
-                let image = NSImage(systemSymbolName: "terminal.fill", accessibilityDescription: scope.appName)
-            {
-                return image
-            }
-            return FileManager.default.fileExists(atPath: scope.appPath)
-                ? NSWorkspace.shared.icon(forFile: scope.appPath)
-                : NSWorkspace.shared.icon(
-                    forFile: NSWorkspace.shared.urlForApplication(
-                        withBundleIdentifier: scope.bundleId)?.path ?? "")
-        }()
-        let accent = icon.dominantSwiftUIColor
-        let hoverAccent = SwiftUI.Color.red
-        let activeAccent = isHovered ? hoverAccent : accent
-        let labelColor: SwiftUI.Color =
-            systemColorScheme == .dark
-            ? .white.opacity(0.96)
-            : .black.opacity(0.88)
-
-        return HStack(spacing: 5) {
-            Image(nsImage: icon)
-                .resizable()
-                .renderingMode(.original)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 16, height: 16)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-            Text(scope.matchedAlias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? scope.appName
-                : scope.matchedAlias)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(labelColor)
-                .shadow(color: .black.opacity(systemColorScheme == .dark ? 0.35 : 0.08), radius: 1, y: 0.5)
-        }
-            .padding(.leading, 7)
-            .padding(.trailing, 8)
-            .padding(.vertical, 3)
-            .background(.ultraThinMaterial, in: Capsule(style: .continuous))
-            .background(
-                activeAccent.opacity(
-                    isHovered
-                    ? (systemColorScheme == .dark ? 0.34 : 0.24)
-                    : (systemColorScheme == .dark ? 0.26 : 0.16)
-                ),
-                in: Capsule(style: .continuous)
-            )
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(isHovered ? 0.58 : 0.50),
-                                activeAccent.opacity(
-                                    isHovered
-                                    ? (systemColorScheme == .dark ? 0.72 : 0.48)
-                                    : (systemColorScheme == .dark ? 0.38 : 0.24)
-                                ),
-                                Color.white.opacity(0.10),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 0.9
-                            )
-            )
-            .shadow(
-                color: activeAccent.opacity(
-                    isHovered
-                    ? (systemColorScheme == .dark ? 0.42 : 0.28)
-                    : 0.0
-                ),
-                radius: isHovered ? 9 : 0,
-                x: 0,
-                y: 0
-            )
-            .shadow(color: .black.opacity(isHovered ? 0.18 : 0.20), radius: 6, x: 0, y: 2)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .onTapGesture {
-                if isHovered {
-                    var transaction = Transaction()
-                    transaction.disablesAnimations = true
-                    withTransaction(transaction) {
-                        removeGlobalInlineAppScopeFromBackspace(scope)
-                    }
-                    hoveredGlobalInlineScopeBundleId = nil
-                    DispatchQueue.main.async { reclaimSearchInputFocus() }
-                } else {
-                    reclaimSearchInputFocus()
-                }
-            }
-            .zIndex(isHovered ? 10 : 0)
-            // Small margin so the chip stays separated from adjacent query text at the
-            // tighter inline spacing (without leaving a stray gap before the caret).
-            .padding(.horizontal, 3)
-            .transition(
-                .asymmetric(
-                    insertion: .scale(scale: 0.82, anchor: .leading).combined(with: .opacity),
-                    removal: .opacity
-                )
-            )
-            .focusable(false)
-            .focusEffectDisabled()
-            .help(isHovered ? "Click to remove \(scope.appName) scope" : "\(scope.appName) scope")
-            .contentShape(Rectangle())
-            .onHover { hovering in
+                hoveredGlobalInlineScopeBundleId = nil
+                DispatchQueue.main.async { reclaimSearchInputFocus() }
+            },
+            onTapWhileNotHovered: { reclaimSearchInputFocus() },
+            onHoverChanged: { hovering in
                 withAnimation(.spring(response: 0.18, dampingFraction: 0.82)) {
                     if hovering {
                         hoveredGlobalInlineScopeBundleId = scope.bundleId
@@ -3408,7 +3328,7 @@ extension LauncherView {
                         hoveredGlobalInlineScopeBundleId = nil
                     }
                 }
-            }
+            })
     }
 
     /// The scoped-menu row the user is looking at while a running-app menu scope is active:

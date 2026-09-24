@@ -268,7 +268,8 @@ extension LauncherView {
               "script": "<complete, runnable script — NO placeholders, NO TODOs>",
               "layer": "contextDock",
               "triggers": [{"type": "appContext", "value": "\(appName)"}],
-              "icon": "<SF Symbol name>"
+              "icon": "<SF Symbol name>",
+              "value": {"label": "<unit>", "default": "<the number in this request>"}
             }
             <<END_PROPOSAL>>
 
@@ -280,6 +281,14 @@ extension LauncherView {
               state at run time (for example `git log -1`) instead of hardcoding today's content.
               A fixed destination such as a person/email may stay fixed when that is the workflow's
               purpose; changing content, files, branch, selection, and URL must stay dynamic.
+            - If the request names a quantity that will change next time — a delay, a count, a
+              percentage, a size — do not bake it in. Put {{value}} where it goes (works in bash
+              and AppleScript) and declare it in "value": "label" is the unit the script needs
+              there ("seconds", "minutes", "percent", "count"); "default" is the number from this
+              request in that unit. "minimise after 5 min" → `sleep {{value}}` with
+              {"label": "seconds", "default": "300"}, so "after 10 min" runs the SAME saved
+              action with 600 instead of a new script. One value per action. Omit "value" when
+              nothing varies.
             - For reusable email actions, extract an email address from $CD_QUERY when one is
               present and use the address from the original request only as the fallback. This
               lets one saved action draft to different people without generating another script.
@@ -684,6 +693,8 @@ extension LauncherView {
     }
 
     private func installContextDockAdapterAction(_ proposal: ExtensionProposalData) {
+        // The install itself lives in AdapterActionProposalInstaller so the corner can call
+        // it too; the dock's only contribution is which app it is scoped to.
         let bundleId = [
             l2.chatDraftBundleId,
             l2.targetApp?.bundleId ?? "",
@@ -696,49 +707,10 @@ extension LauncherView {
             frontmost.name,
         ].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? "This App"
-        guard !bundleId.isEmpty else {
-            l2.chatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content: "I couldn't save this action because the scoped app is no longer available.",
-                    isError: true))
-            return
-        }
-
-        let actionType: AdapterActionType = {
-            switch proposal.scriptType.lowercased() {
-            case "applescript": return .applescript
-            case "jxa": return .jxa
-            default: return .shell
-            }
-        }()
-        let triggerWords = proposal.triggers.map(\.value)
-            + proposal.name.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
-        let stableId = "ai." + proposal.name.lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        let action = AdapterAction(
-            id: stableId,
-            name: proposal.name,
-            icon: proposal.icon ?? "sparkles",
-            description: proposal.description,
-            triggers: Array(Set(triggerWords.map { $0.lowercased() })).sorted(),
-            category: "AI Workflows",
-            type: actionType,
-            script: proposal.script,
-            requiresApproval: true
-        )
 
         Task { @MainActor in
-            if AppAdapterManager.shared.adapter(for: bundleId) == nil {
-                await AppAdapterManager.shared.createAdapter(
-                    appName: appName, bundleId: bundleId, icon: "app.fill")
-            }
-            await AppAdapterManager.shared.appendAction(action, to: bundleId)
-            l2.chatMessages.append(
-                AIChatMessage(
-                    role: .assistant,
-                    content: "**\(proposal.name)** saved to **\(appName)**. Next time, Context Dock will match this app action before asking AI to create another workflow."))
+            await AdapterActionProposalInstaller.install(
+                proposal, bundleId: bundleId, appName: appName)
             persistActiveL2DockSession()
             requestWindowSizeUpdate(reason: .chatChanged)
         }

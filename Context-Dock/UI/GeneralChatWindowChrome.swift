@@ -22,6 +22,9 @@ enum GeneralChatWindowMode: String, CaseIterable, Identifiable {
     /// Reading mode: what the local stores already know, drawn back. It shares this shell
     /// rather than opening a window of its own — one surface, several modes.
     case dashboard
+    /// Writing mode: a plugin's manifest as text, beside what it draws. Same reason it lives
+    /// here rather than in its own window — the Creator is a mode, not a second app.
+    case creator
 
     var id: String { rawValue }
 
@@ -30,6 +33,7 @@ enum GeneralChatWindowMode: String, CaseIterable, Identifiable {
         case .chat: return "Chat"
         case .work: return "Work"
         case .dashboard: return "Dashboard"
+        case .creator: return "Plugin Creator"
         }
     }
 }
@@ -39,6 +43,9 @@ final class GeneralChatWindowChromeState: ObservableObject {
     static let shared = GeneralChatWindowChromeState()
 
     @Published var mode: GeneralChatWindowMode = .chat
+    /// A manifest the Creator was asked to open on — Edit from Settings, an example to try.
+    /// The pane takes it and clears it; a stale request must not reopen on the next visit.
+    @Published var creatorOpens: PluginManifest?
     @Published var sidebarVisible: Bool = true
     @Published var bottomPanelVisible: Bool = false
     @Published var sidePanelVisible: Bool = false

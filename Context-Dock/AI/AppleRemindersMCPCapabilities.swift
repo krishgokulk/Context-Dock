@@ -228,7 +228,7 @@ enum AppleRemindersMCPCapabilities {
                 appBundleID: "com.apple.reminders",
                 inputSchema: .init(fields: []),
                 riskLevel: .low
-            ) { _ in
+            ) { request in
                 guard AppSettings.shared.remindersMCPEnabled else {
                     throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
                 }
@@ -251,6 +251,21 @@ enum AppleRemindersMCPCapabilities {
                         title: title, due: due.map { df.string(from: $0) },
                         priority: r["priority"] as? Int ?? 0)
                 }
+                // The same reminders as rows, so the card carries the state rather than an
+                // emoji in a sentence.
+                ChatResultRowCollector.shared.add(
+                    items.prefix(30).map { r in
+                        ChatResultRow(
+                            kind: .reminder,
+                            id: (r["id"] as? String) ?? (r["title"] as? String) ?? UUID().uuidString,
+                            title: r["title"] as? String ?? "Untitled",
+                            subtitle: (r["dueDate"] as? String)
+                                .flatMap { ISO8601DateFormatter().date(from: $0) }
+                                .map { df.string(from: $0) } ?? "",
+                            bundleID: "com.apple.reminders",
+                            reminderState: .overdue)
+                    },
+                    scope: request.chatScope)
                 return .init(
                     success: true,
                     output: "Overdue reminders (\(items.count)):\n\(lines.joined(separator: "\n"))")
@@ -268,7 +283,7 @@ enum AppleRemindersMCPCapabilities {
                 appBundleID: "com.apple.reminders",
                 inputSchema: .init(fields: []),
                 riskLevel: .low
-            ) { _ in
+            ) { request in
                 guard AppSettings.shared.remindersMCPEnabled else {
                     throw AICapabilityError.blocked("Reminders access is disabled in Settings.")
                 }
@@ -303,6 +318,19 @@ enum AppleRemindersMCPCapabilities {
                     guard let dueDate, dueDate < now else { return line }
                     return line + " ⚠️ overdue"
                 }
+                ChatResultRowCollector.shared.add(
+                    todayAndOverdue.prefix(30).map { r in
+                        let due = (r["dueDate"] as? String)
+                            .flatMap { ISO8601DateFormatter().date(from: $0) }
+                        return ChatResultRow(
+                            kind: .reminder,
+                            id: (r["id"] as? String) ?? (r["title"] as? String) ?? UUID().uuidString,
+                            title: r["title"] as? String ?? "Untitled",
+                            subtitle: due.map { df.string(from: $0) } ?? "",
+                            bundleID: "com.apple.reminders",
+                            reminderState: (due.map { $0 < now } ?? false) ? .overdue : .active)
+                    },
+                    scope: request.chatScope)
                 return .init(success: true, output: "Due today/overdue (\(todayAndOverdue.count)):\n\(lines.joined(separator: "\n"))")
             }
         )
@@ -345,6 +373,19 @@ enum AppleRemindersMCPCapabilities {
                     // "the low-priority ones" had nothing to match on.
                     return describe(title: title, due: due, priority: r["priority"] as? Int ?? 0)
                 }
+                ChatResultRowCollector.shared.add(
+                    reminders.prefix(30).map { r in
+                        ChatResultRow(
+                            kind: .reminder,
+                            id: (r["id"] as? String) ?? (r["title"] as? String) ?? UUID().uuidString,
+                            title: r["title"] as? String ?? "Untitled",
+                            subtitle: (r["dueDate"] as? String)
+                                .flatMap { ISO8601DateFormatter().date(from: $0) }
+                                .map { df.string(from: $0) } ?? "",
+                            bundleID: "com.apple.reminders",
+                            reminderState: .active)
+                    },
+                    scope: request.chatScope)
                 return .init(success: true, output: "Active reminders (\(reminders.count)):\n\(lines.joined(separator: "\n"))")
             }
         )

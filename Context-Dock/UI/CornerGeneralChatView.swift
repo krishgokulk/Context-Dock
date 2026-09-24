@@ -54,7 +54,9 @@ enum CornerGeneralChatMetrics {
         hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false
     ) -> CGFloat {
         var result = compactHeight
-        if hasApproval { result += ApprovalCard.height + dividerHeight }
+        if hasApproval {
+            result += ApprovalCard.reservedHeight(for: .corner) + dividerHeight
+        }
         if slashMatchCount > 0 {
             result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
         }
@@ -441,6 +443,7 @@ struct CornerGeneralChatView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             AIChatMessageView(
                                 message: message,
+                                onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: message.id == model.messages.last?.id
@@ -557,7 +560,7 @@ struct CornerGeneralChatView: View {
             // the turn is waiting on.
             if let request = approvals.pending(for: .corner) {
                 ApprovalCard(request: request)
-                    .frame(height: ApprovalCard.height)
+                    .frame(height: ApprovalCard.height(for: request))
                     .padding(.horizontal, 12)
                 Divider().opacity(0.18)
             }

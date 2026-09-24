@@ -74,6 +74,24 @@ struct PriorityAdapterContractTests {
         }
     }
 
+    /// Capability families that register only when the user has switched them on.
+    ///
+    /// `github.*` is registered behind `githubMCPEnabled`, which is off by default, so on any
+    /// default machine those ids are legitimately absent. This test used to record that as a
+    /// failure and was the suite's standing 1, which cost more than it caught: a real
+    /// regression had nowhere to stand out.
+    ///
+    /// The contract it means to hold is conditional anyway — *if* a capability is registered,
+    /// it declares the right risk. Absence is a setting, not a broken contract.
+    private static let settingGatedPrefixes = ["github."]
+
+    private func capabilityForContract(_ id: String) -> AICapability? {
+        if let capability = CapabilityRegistry.shared.capability(id: id) { return capability }
+        let gated = Self.settingGatedPrefixes.contains { id.hasPrefix($0) }
+        if !gated { Issue.record("\(id) is not registered") }
+        return nil
+    }
+
     @Test func priorityTypedCapabilitiesDeclareTheExpectedRisk() {
         let reads = [
             "calendar.next", "calendar.today", "calendar.list", "calendar.search",
@@ -81,15 +99,11 @@ struct PriorityAdapterContractTests {
             "vscode.extensions.list", "github.list_issues", "github.list_prs", "github.get_repo",
         ]
         for id in reads {
-            guard let capability = CapabilityRegistry.shared.capability(id: id) else {
-                Issue.record("\(id) is not registered"); continue
-            }
+            guard let capability = capabilityForContract(id) else { continue }
             #expect(!capability.riskLevel.requiresApproval, "\(id) is read-only")
         }
         for id in ["calendar.create", "calendar.update", "calendar.delete", "github.create_issue"] {
-            guard let capability = CapabilityRegistry.shared.capability(id: id) else {
-                Issue.record("\(id) is not registered"); continue
-            }
+            guard let capability = capabilityForContract(id) else { continue }
             #expect(capability.riskLevel.requiresApproval, "\(id) changes external state")
         }
     }

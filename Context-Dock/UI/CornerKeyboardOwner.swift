@@ -15,6 +15,9 @@
 import Foundation
 
 enum CornerKeyboardClaimant: Equatable {
+    /// A field inside a plugin's tile or card that the user clicked into. Loudest of all:
+    /// the caret is visibly there, and nothing else in the corner should hear the keys.
+    case plugin
     case clipboard
     case selection
     case chat
@@ -37,8 +40,10 @@ enum CornerKeyboardOwner {
     static func owner(
         clipboardArmed: Bool,
         selectionWantsKeyboard: Bool,
-        chatShowsInput: Bool
+        chatShowsInput: Bool,
+        pluginEditing: Bool = false
     ) -> CornerKeyboardClaimant {
+        if pluginEditing { return .plugin }
         if clipboardArmed { return .clipboard }
         if selectionWantsKeyboard { return .selection }
         if chatShowsInput { return .chat }
@@ -55,12 +60,14 @@ enum CornerKeyboardOwner {
     static func panelHoldsKeyboard(
         clipboardArmed: Bool,
         selectionWantsKeyboard: Bool,
-        chatShowsInput: Bool
+        chatShowsInput: Bool,
+        pluginEditing: Bool = false
     ) -> Bool {
         owner(
             clipboardArmed: clipboardArmed,
             selectionWantsKeyboard: selectionWantsKeyboard,
-            chatShowsInput: chatShowsInput) != .none
+            chatShowsInput: chatShowsInput,
+            pluginEditing: pluginEditing) != .none
     }
 
     /// Should the App Chat field hold the caret right now?

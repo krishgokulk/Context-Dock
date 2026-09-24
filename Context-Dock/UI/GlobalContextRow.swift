@@ -51,6 +51,7 @@ enum GlobalContextRow {
             return ([appName] + path.dropLast()).joined(separator: " › ")
         case .adapterAction(_, let appName, _): return "\(appName) · App action"
         case .userExtension: return "Global Extension"
+        case .plugin: return "Plugin"
         case .browserURL(_, let browserName, _, _, let domain):
             return domain.isEmpty ? browserName : "\(domain) · \(browserName)"
         }
@@ -65,6 +66,7 @@ enum GlobalContextRow {
         case .cachedMenu: return "command"
         case .adapterAction: return "bolt.fill"
         case .userExtension: return "puzzlepiece.extension"
+        case .plugin: return "puzzlepiece.extension.fill"
         case .browserURL: return "safari"
         }
     }
@@ -79,25 +81,41 @@ enum GlobalContextRow {
     /// A CLI tool and a system command are *scopes* rather than one-shot actions: choosing
     /// one means "now work inside it", which is the dock's job and not something to fake
     /// here. Those hand over to the dock rather than half-running in the corner.
+    /// What came of the row, said where the user is. Launches and activations posted nothing
+    /// before — only a quit did — so the surface that ran them had no result to show.
+    @MainActor
+    private static func report(
+        _ title: String, icon: String, bundleID: String?, success: Bool = true
+    ) {
+        DockActionFeedback.showResult(
+            title, icon: icon, success: success, bundleID: bundleID)
+    }
+
     @MainActor
     static func run(_ doc: GlobalSearchService.SearchDocument) {
         switch doc.action {
         case .activatePID(let pid, _, let path):
+            // Through `AppActivation`, not `activate()`: the bare call is the weak form and
+            // is what left an app sitting behind the one the user was looking at.
             if let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated {
-                app.activate()
+                AppActivation.bringForward(app, name: doc.title)
+            } else if !doc.bundleId.isEmpty {
+                AppActivation.bringForward(bundleID: doc.bundleId, name: doc.title)
             } else if let path {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: doc.bundleId)
             }
 
         case .launchPath(let path):
             NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: nil)
 
         case .launchBundleId(let bundleId, let path):
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-                NSWorkspace.shared.openApplication(
-                    at: url, configuration: NSWorkspace.OpenConfiguration())
+            if NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) != nil {
+                AppActivation.bringForward(bundleID: bundleId, name: doc.title)
             } else {
                 NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                report("Opened \(doc.title)", icon: "arrow.up.forward.app", bundleID: bundleId)
             }
 
         case .browserURL(let url, let browserBundleId, _, _, _):
@@ -153,6 +171,36 @@ enum GlobalContextRow {
             // Handled by the field that ran the row: in the corner the extension opens in
             // the board, not in a window of its own beside it.
             break
+
+        case .plugin(let id):
+            guard let manifest = PluginRegistry.shared.plugin(id: id)?.manifest else { break }
+            switch PluginLaunch.behaviour(for: manifest) {
+            case .openPanel:
+                // A plugin with a panel IS that panel, so choosing it shows the panel rather
+                // than running something. The window host is used here because this path has
+                // no board to put it in; the corner opens it inline instead.
+                PluginWindowManager.shared.open(manifest)
+            case .run(let action):
+                // A one-shot — Sleep is the first. Opening an empty window for it would be a
+                // worse answer than doing the thing. A person chose this row: that is the
+                // consent, so nothing up to `medium` asks again. `high` still does.
+                Task { @MainActor in
+                    let result = await PluginRuntime.shared.run(
+                        PluginActionRequest(name: action), manifest: manifest,
+                        inputs: PluginInputs(), origin: .user)
+                    let title = manifest.actions[action]?.success?.title
+                        ?? manifest.actions[action]?.title ?? manifest.name
+                    switch result {
+                    case .success:
+                        report(title, icon: manifest.icon, bundleID: nil)
+                    case .failure(let failure):
+                        report(failure.message, icon: "exclamationmark.triangle.fill",
+                               bundleID: nil, success: false)
+                    }
+                }
+            case .nothing:
+                break
+            }
 
         case .cliScope:
             // Handled by the field that ran the row — stepping into a tool changes that

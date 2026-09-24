@@ -645,6 +645,7 @@ struct GeneralChatWindowView: View {
                         case .chat: chatPane
                         case .work: workPane
                         case .dashboard: DashboardPane()
+                        case .creator: PluginCreatorPane()
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -792,6 +793,7 @@ struct GeneralChatWindowView: View {
                             }
                             AIChatMessageView(
                                 message: message,
+                                onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: liveSteps(for: message))

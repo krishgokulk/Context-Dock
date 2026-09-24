@@ -60,6 +60,16 @@ if pgrep -f "Context-Dock.app/Contents/MacOS/Context-Dock" >/dev/null 2>&1; then
   exit 1
 fi
 
+# The test host is a copy of the app and shares its UserDefaults domain. Preferences the
+# developer has set in their own running app — a pinned corner, say — then leak into every
+# model the suite builds, and "expected .mini, got .prompt" across three files read as an
+# idle-timer flake for weeks. The models that persist a preference read it from the suite
+# named here instead (AppChatPromptModel.pinStore); xcodebuild forwards TEST_RUNNER_* to
+# the host. Emptied first, so one run's writes do not become the next run's starting state.
+TEST_DEFAULTS_SUITE="com.krishgokul.ContextDock.tests"
+defaults delete "$TEST_DEFAULTS_SUITE" >/dev/null 2>&1 || true
+export TEST_RUNNER_CONTEXT_DOCK_DEFAULTS_SUITE="$TEST_DEFAULTS_SUITE"
+
 xcodebuild test \
   -project "$ROOT_DIR/Context-Dock.xcodeproj" \
   -scheme Context-Dock \

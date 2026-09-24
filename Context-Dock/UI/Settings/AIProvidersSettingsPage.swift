@@ -10,6 +10,20 @@ struct AIProvidersSettingsPage: View {
     /// that can reach loopback with the token — it is switched on deliberately or not at all.
     @AppStorage(DoraXMCPServer.enabledKey) private var mcpEnabled = false
     @ObservedObject private var server = DoraXMCPServer.shared
+    @ObservedObject private var computerUse = ComputerUseConsentStore.shared
+
+    /// Names the apps rather than counting them: "2 apps" is a number, and what the user needs
+    /// to decide anything is which two.
+    private var grantedAppsTitle: String {
+        let granted = computerUse.grantedBundleIDs()
+        guard !granted.isEmpty else { return "No App Is Granted Yet" }
+        let names = granted.map { bundleID -> String in
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .flatMap { FileManager.default.displayName(atPath: $0.path) }
+                ?? bundleID
+        }
+        return "Granted: " + names.sorted().joined(separator: ", ")
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -28,6 +42,43 @@ struct AIProvidersSettingsPage: View {
                     ) {
                         Toggle("", isOn: $continueEditorSession)
                             .labelsHidden()
+                    }
+                }
+            }
+
+            CardSection(title: "Computer Use", systemImage: "hand.tap") {
+                VStack(spacing: 0) {
+                    SettingsPageRow(
+                        icon: "cursorarrow.click.2",
+                        iconColor: .orange,
+                        title: "Let DoraX Operate Apps",
+                        subtitle:
+                            "When no capability, CLI, MCP tool or published menu command can do "
+                            + "what you asked, DoraX may press the app's own menu the way you "
+                            + "would. Off by default, and off here means off everywhere — no app "
+                            + "is operated whatever its own setting says."
+                    ) {
+                        Toggle("", isOn: $computerUse.isMasterEnabled)
+                            .labelsHidden()
+                    }
+                    Divider()
+                    SettingsPageRow(
+                        icon: "checklist",
+                        iconColor: .gray,
+                        title: grantedAppsTitle,
+                        subtitle:
+                            "Each app is granted separately, on its own page in Integrations → "
+                            + "Access. Sending, replying, forwarding and deleting are never "
+                            + "pressed this way, whatever you ask for."
+                    ) {
+                        if !computerUse.grantedBundleIDs().isEmpty {
+                            Button("Turn All Off") {
+                                for bundleID in computerUse.grantedBundleIDs() {
+                                    computerUse.setMode(.off, for: bundleID)
+                                }
+                            }
+                            .controlSize(.small)
+                        }
                     }
                 }
             }

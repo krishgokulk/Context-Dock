@@ -48,6 +48,11 @@ enum WorkflowAuthor {
         /// True when the script does something that cannot be taken back. Drives the red
         /// warning, and is judged from the script rather than from the model's opinion.
         let isDestructive: Bool
+        /// The one thing about the action that varies, when the model declared one: the
+        /// unit its `{{value}}` slot expects, and what runs when the sentence names no
+        /// number. Nil for an action with nothing to adjust.
+        var valueLabel: String? = nil
+        var valueDefault: String? = nil
     }
 
     // MARK: - Authoring
@@ -64,50 +69,94 @@ enum WorkflowAuthor {
         let provider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
 
-        let prompt = """
-            The user asked \(appName) to do this, and nothing on their Mac can:
-
-            "\(request)"
-
-            Write one macOS action that does it. Reply with ONLY this JSON:
-            {"name":"<short title>","summary":"<one line, what it does>",
-             "kind":"shell"|"applescript","script":"<the exact source>",
-             "triggers":["<word>","<word>"]}
-
-            Rules:
-            - The script must be complete and runnable as written, not a sketch.
-            - Available placeholders, substituted before it runs: {{selection}} for the
-              selected text, {{file}} for the selected file path, {{clipboard}},
-              {{url}} for the current browser URL, {{query}} for what the user typed.
-            - Prefer shell. Use applescript only when the job needs to drive \(appName)
-              itself.
-            - Use only tools that ship with macOS unless the user named one.
-            - Do not write anything that deletes, overwrites, or uploads without the work
-              being exactly what was asked for.
-            - Reply with the JSON and nothing else.
-            """
-
         let raw = try? await AIProviderService.shared.sendMessage(
-            prompt, context: .none, provider: provider,
+            prompt(request: request, appName: appName), context: .none, provider: provider,
             apiKey: rawKey.isEmpty ? nil : rawKey,
             conversationHistory: [], surfaceScoped: true)
         guard let raw else { return nil }
-        guard let range = raw.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression),
-            let data = String(raw[range]).data(using: .utf8),
-            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let name = (object["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-            let script = (object["script"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !name.isEmpty, !script.isEmpty
+        guard let proposal = proposal(
+            fromReply: raw, request: request, bundleID: bundleID, appName: appName)
         else {
             log.notice("author: no usable proposal")
             return nil
         }
+        return proposal
+    }
+
+    /// What the model is asked. Separate from the asking so a test can read it.
+    static func prompt(request: String, appName: String) -> String {
+        """
+        The user asked \(appName) to do this, and nothing on their Mac can:
+
+        "\(request)"
+
+        Write one macOS action that does it. Reply with ONLY this JSON:
+        {"name":"<short title>","summary":"<one line, what it does>",
+         "kind":"shell"|"applescript","script":"<the exact source>",
+         "triggers":["<word>","<word>"],
+         "value":{"label":"<unit>","default":"<the number in this request>"}}
+
+        Rules:
+        - The script must be complete and runnable as written, not a sketch.
+        - Available placeholders, substituted before it runs: {{selection}} for the
+          selected text, {{file}} for the selected file path, {{clipboard}},
+          {{url}} for the current browser URL, {{query}} for what the user typed.
+        - If the request names a quantity that will change next time — a delay, a
+          count, a percentage, a size — do not bake it in. Put {{value}} where it goes,
+          and declare it in "value": "label" is the unit the script needs there
+          ("seconds", "minutes", "percent", "count"), "default" is the number from this
+          request in that unit. "minimise after 5 min" → `sleep {{value}}` with
+          {"label":"seconds","default":"300"}, so "after 10 min" runs the same action
+          with 600. One value per action. Omit "value" when nothing varies.
+        - Prefer shell. Use applescript only when the job needs to drive \(appName)
+          itself.
+        - Use only tools that ship with macOS unless the user named one.
+        - Do not write anything that deletes, overwrites, or uploads without the work
+          being exactly what was asked for.
+        - Reply with the JSON and nothing else.
+        """
+    }
+
+    /// The proposal in the model's reply, or nil when there is no usable one. Pure, so the
+    /// shape of what is accepted can be checked without a provider.
+    ///
+    /// `fallbackName` is used when the reply names nothing — a revision knows the name
+    /// already, and only the script is worth refusing over.
+    static func proposal(
+        fromReply raw: String, request: String, bundleID: String, appName: String,
+        fallbackName: String? = nil
+    ) -> Proposal? {
+        guard let range = raw.range(of: "\\{[\\s\\S]*\\}", options: .regularExpression),
+            let data = String(raw[range]).data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let script = (object["script"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !script.isEmpty
+        else { return nil }
+        let replyName = (object["name"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = replyName.isEmpty ? (fallbackName ?? "") : replyName
+        guard !name.isEmpty else { return nil }
 
         let kind: AdapterActionType =
             (object["kind"] as? String)?.lowercased() == "applescript" ? .applescript : .shell
         let triggers = (object["triggers"] as? [String])?
             .map { $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty } ?? []
+
+        // A value with no label is no value: nothing to convert to, and a default without
+        // a unit is a number nobody can adjust.
+        let value = object["value"] as? [String: Any]
+        let valueLabel = (value?["label"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let hasLabel = !(valueLabel ?? "").isEmpty
+        let valueDefault: String? = hasLabel
+            ? (value?["default"]).flatMap { any -> String? in
+                if let s = any as? String { return s.isEmpty ? nil : s }
+                if let n = any as? NSNumber { return n.stringValue }
+                return nil
+            }
+            : nil
 
         return Proposal(
             name: name,
@@ -117,7 +166,144 @@ enum WorkflowAuthor {
             triggers: triggers.isEmpty ? derivedTriggers(from: request) : triggers,
             bundleID: bundleID,
             appName: appName,
-            isDestructive: looksDestructive(script))
+            isDestructive: looksDestructive(script),
+            valueLabel: hasLabel ? valueLabel : nil,
+            valueDefault: valueDefault)
+    }
+
+    // MARK: - Revising
+
+    /// Asks the model to change an action the user already has, rather than write a second
+    /// one beside it.
+    ///
+    /// Reached when the request differs from the saved action by more than a value
+    /// (`ActionReuse.decide` → `.revise`). The revision keeps the existing name, so its
+    /// `stableID` matches and saving replaces; a model free to rename would produce the
+    /// duplicate this exists to prevent.
+    static func revise(
+        existing: AdapterAction, request: String, bundleID: String, appName: String
+    ) async -> Proposal? {
+        let settings = AppSettings.shared
+        let provider = settings.selectedAIProvider
+        let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
+
+        let raw = try? await AIProviderService.shared.sendMessage(
+            revisionPrompt(existing: existing, request: request, appName: appName),
+            context: .none, provider: provider,
+            apiKey: rawKey.isEmpty ? nil : rawKey,
+            conversationHistory: [], surfaceScoped: true)
+        guard let raw else { return nil }
+        guard let revised = revision(
+            fromReply: raw, existing: existing, request: request,
+            bundleID: bundleID, appName: appName)
+        else {
+            log.notice("author: no usable revision")
+            return nil
+        }
+        return revised
+    }
+
+    /// What the model is asked in order to change an action. Separate from the asking so a
+    /// test can read it.
+    static func revisionPrompt(
+        existing: AdapterAction, request: String, appName: String
+    ) -> String {
+        let valueLine = existing.valueLabel.map {
+            "\n        The script's {{value}} is a number in \($0); keep it exactly as it is.\n"
+        } ?? ""
+        return """
+        \(appName) already has this action, and the user has now asked for something it
+        does not quite do.
+
+        Action: \(existing.name) — \(existing.description)
+        Its script:
+        \(existing.script ?? "")
+        \(valueLine)
+        The new request:
+
+        "\(request)"
+
+        Change the script so it does what the request asks. Reply with ONLY this JSON:
+        {"summary":"<one line, what it does now>","kind":"shell"|"applescript",
+         "script":"<the whole new source>","triggers":["<word>","<word>"],
+         "value":{"label":"<unit>","default":"<number>"}}
+
+        Rules:
+        - Change only what the request changes. Everything the action already did, it
+          still does, unless the request says otherwise.
+        - Reply with the whole script, not a patch or a diff.
+        - Keep {{value}} where the script has one, and keep its "value" declaration — the
+          user adjusts that number by asking, and dropping it takes that away.
+        - The placeholders available are the same: {{selection}}, {{file}}, {{clipboard}},
+          {{url}}, {{query}}, {{value}}.
+        - Do not rename the action.
+        - Reply with the JSON and nothing else.
+        """
+    }
+
+    /// The revision in the model's reply, or nil when there is no usable one.
+    ///
+    /// The name is the existing one whatever the model says, so the saved action is
+    /// replaced rather than joined. The value declaration survives a reply that forgot to
+    /// repeat it, as long as the new script still has a slot to fill — dropping it would
+    /// quietly take away an adjustment the user has already been told about.
+    static func revision(
+        fromReply raw: String, existing: AdapterAction, request: String,
+        bundleID: String, appName: String
+    ) -> Proposal? {
+        guard var proposal = proposal(
+            fromReply: raw, request: request, bundleID: bundleID, appName: appName,
+            fallbackName: existing.name)
+        else { return nil }
+
+        let hasSlot = proposal.script.contains("{{value}}")
+        let label = hasSlot ? (proposal.valueLabel ?? existing.valueLabel) : nil
+        let fallbackDefault = proposal.valueLabel == nil ? existing.valueDefault : proposal.valueDefault
+
+        proposal = Proposal(
+            name: existing.name,
+            summary: proposal.summary,
+            kind: proposal.kind,
+            script: proposal.script,
+            triggers: proposal.triggers,
+            bundleID: bundleID,
+            appName: appName,
+            isDestructive: proposal.isDestructive,
+            valueLabel: label,
+            valueDefault: label == nil ? nil : fallbackDefault)
+        return proposal
+    }
+
+    /// What the user reads before replacing an action they already have. Both scripts, in
+    /// full: approving a change means seeing what it was as well as what it becomes.
+    static func revisionText(existing: AdapterAction, revised: Proposal) -> String {
+        let fence = revised.kind == .applescript ? "applescript" : "bash"
+        var lines = [
+            "**\(existing.name)** already does most of this, so here it is changed rather "
+                + "than a second action beside it. Approving will replace the saved one.",
+            "",
+            "Now:",
+            "```\(fence)",
+            existing.script ?? "",
+            "```",
+            "",
+            "Becomes:",
+            "```\(fence)",
+            revised.script,
+            "```",
+        ]
+        if revised.isDestructive {
+            lines.append("")
+            lines.append(
+                "⚠️ This changes or removes things. Check the paths it touches before "
+                    + "approving.")
+        }
+        if let label = revised.valueLabel {
+            let saved = revised.valueDefault.map { "\($0) \(label)" } ?? label
+            lines.append("")
+            lines.append("It still runs at \(saved), and still takes a different number.")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Judged from the script, not from what the model says about it. A model describing
@@ -157,18 +343,7 @@ enum WorkflowAuthor {
     /// that turns out to be wrong is then one refusal away from never running again.
     @discardableResult
     static func save(_ proposal: Proposal) async -> AdapterAction {
-        let action = AdapterAction(
-            id: "authored.\(UUID().uuidString.prefix(8).lowercased())",
-            name: proposal.name,
-            icon: proposal.kind == .applescript ? "applescript" : "terminal",
-            description: proposal.summary,
-            triggers: proposal.triggers,
-            category: "Authored",
-            type: proposal.kind,
-            script: proposal.script,
-            requiresApproval: true,
-            isDestructive: proposal.isDestructive
-        )
+        let action = action(for: proposal)
 
         if AppAdapterManager.shared.adapter(for: proposal.bundleID) == nil {
             await AppAdapterManager.shared.createAdapter(
@@ -178,6 +353,25 @@ enum WorkflowAuthor {
         log.notice(
             "author: saved \(action.name, privacy: .public) to \(proposal.bundleID, privacy: .public)")
         return action
+    }
+
+    /// The adapter action a proposal becomes. Pure, so what is saved can be checked
+    /// without a store.
+    static func action(for proposal: Proposal) -> AdapterAction {
+        AdapterAction(
+            id: "authored.\(UUID().uuidString.prefix(8).lowercased())",
+            name: proposal.name,
+            icon: proposal.kind == .applescript ? "applescript" : "terminal",
+            description: proposal.summary,
+            triggers: proposal.triggers,
+            category: "Authored",
+            type: proposal.kind,
+            script: proposal.script,
+            requiresApproval: true,
+            isDestructive: proposal.isDestructive,
+            valueLabel: proposal.valueLabel,
+            valueDefault: proposal.valueDefault
+        )
     }
 
     /// What the user reads before deciding. The script is included in full and unedited —
@@ -198,6 +392,13 @@ enum WorkflowAuthor {
             lines.append(
                 "⚠️ This changes or removes things. Check the paths it touches before "
                     + "approving.")
+        }
+        if let label = proposal.valueLabel {
+            let saved = proposal.valueDefault.map { "\($0) \(label)" } ?? label
+            lines.append("")
+            lines.append(
+                "It runs at \(saved). Say a different number next time — this same action "
+                    + "uses it, instead of writing another one.")
         }
         lines.append("")
         lines.append(

@@ -84,6 +84,36 @@ final class DockActionFeedback {
         )
     }
 
+    // MARK: - The two an app surface reports
+
+    /// An app is being opened or brought forward. A launch is watched, not reported: the
+    /// line stands while it happens and leaves when the app is there, so what the user gets
+    /// is "Opening Messages…" and then their app — never a tick for something they watched
+    /// happen. Carries the bundle id, which is what lets the shell take the app's own
+    /// colour. `AppActivation` owns the other end; the id it returns is how it lets go.
+    @discardableResult
+    static func appOpening(
+        _ name: String, bundleID: String?, id: String = UUID().uuidString
+    ) -> String {
+        post(
+            id: id, title: "Opening \(name)…", icon: "arrow.up.forward.app",
+            phase: "progress", subject: name, bundleID: bundleID)
+        return id
+    }
+
+    /// An app was asked to quit. "Quit" in the title is what makes the result read red
+    /// wherever it lands (`ActionFeedbackTint.isDestructive`), so the wording is part of
+    /// the contract rather than a label.
+    static func appQuit(
+        _ name: String, bundleID: String?, succeeded: Bool = true,
+        id: String = UUID().uuidString
+    ) {
+        showResult(
+            succeeded ? "Quit \(name)" : "Couldn't quit \(name)",
+            icon: "xmark.circle.fill", success: succeeded, id: id,
+            subject: name, bundleID: bundleID)
+    }
+
     static func progress(_ id: String, value: Double) {
         // No-op — AppToast doesn't support progress bars; persistent pill stays visible
     }

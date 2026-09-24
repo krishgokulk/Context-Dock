@@ -99,6 +99,30 @@ actor MCPRuntime {
     func callTool(
         bundleId: String, server: String, tool: String, arguments: [String: Any]
     ) async throws -> String {
+        // Safari's own server can navigate, click, type and evaluate JavaScript. A page DoraX
+        // reads can contain a sentence telling the model to do exactly that, and the model
+        // cannot tell that sentence came from a stranger — so each act is the user's, one at a
+        // time, and a sensitive destination is refused before it is even offered.
+        let isBrowser = await MainActor.run {
+            ScopedAppPromptBuilder.isBrowserBundle(bundleId)
+        }
+        if isBrowser {
+            switch BrowserActionGate.decide(tool: tool, arguments: arguments) {
+            case .allow:
+                break
+            case .refuse(let reason):
+                throw AICapabilityError.blocked(reason)
+            case .askFirst(let what, let detail):
+                let approved = await AICapabilityApprovalCenter.shared
+                    .requestApprovalForBrowserAction(
+                        what: what, detail: detail, tool: tool, bundleId: bundleId)
+                guard approved else {
+                    throw AICapabilityError.blocked(
+                        "The user did not approve \(what.lowercased()). Say so and stop — do "
+                            + "not reach for another tool to do the same thing.")
+                }
+            }
+        }
         let configs = await MainActor.run { MCPServerManager.shared.servers(forBundleId: bundleId) }
         guard let config = configs.first(where: { $0.name == server }) ?? configs.first
         else { throw MCPClientError.notConnected }

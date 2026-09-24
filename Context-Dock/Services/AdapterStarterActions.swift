@@ -323,7 +323,7 @@ enum AdapterStarterActions {
                 AdapterAction(
                     id: "starter.codex.docs", name: "Codex Documentation",
                     icon: "book", description: "Open the official Codex documentation",
-                    triggers: ["codex", "docs", "help", "cli"], type: .urlScheme,
+                    triggers: ["docs", "help", "cli"], type: .urlScheme,
                     urlScheme: "https://developers.openai.com/codex/",
                     accentColor: "green"
                 )
@@ -333,14 +333,14 @@ enum AdapterStarterActions {
                 AdapterAction(
                     id: "starter.claude.codeDocs", name: "Claude Code CLI Reference",
                     icon: "book", description: "Open Anthropic's official Claude Code CLI reference",
-                    triggers: ["claude", "code", "cli", "docs"], type: .urlScheme,
+                    triggers: ["code", "cli", "docs"], type: .urlScheme,
                     urlScheme: "https://docs.anthropic.com/en/docs/claude-code/cli-usage",
                     accentColor: "orange"
                 ),
                 AdapterAction(
                     id: "starter.claude.mcpDocs", name: "Claude MCP Setup",
                     icon: "server.rack", description: "Open Anthropic's official MCP guide",
-                    triggers: ["claude", "mcp", "tools", "setup"], type: .urlScheme,
+                    triggers: ["mcp", "tools", "setup"], type: .urlScheme,
                     urlScheme: "https://docs.anthropic.com/en/docs/mcp",
                     accentColor: "orange"
                 ),

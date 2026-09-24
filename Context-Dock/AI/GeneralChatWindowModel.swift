@@ -340,6 +340,10 @@ final class GeneralChatWindowModel: ObservableObject {
         let named = answer.files.isEmpty
             ? AppScopedChatService.mentionedFiles(in: answer.text)
             : answer.files
+        // Records the capabilities actually read, as cards. One mapping, shared with every
+        // other surface — per-surface row building is how note cards ended up existing in
+        // the dock's Notes branch and nowhere else.
+        let rows = ChatResultRowMapper.map(answer.rows)
         let liveProgress = progressByScopeKey[scope.storageKey] ?? []
         var durableTrace: [String] = []
         for step in liveProgress + answer.trace + ["Task complete"] {
@@ -352,7 +356,13 @@ final class GeneralChatWindowModel: ObservableObject {
         deliver(
             AIChatMessage(
                 role: .assistant, content: answer.text,
-                recentFiles: named.map { RecentFileAction(url: $0) },
+                structuredData: answer.proposalJSON,
+                appLaunches: rows.apps,
+                recentFiles: rows.files.isEmpty
+                    ? named.map { RecentFileAction(url: $0) } : rows.files,
+                noteResults: rows.notes,
+                reminderResults: rows.reminders,
+                pageLinks: rows.links,
                 mcpToolsRan: answer.toolChips,
                 evidenceReceipts: answer.evidenceReceipts,
                 subjectiveEvaluation: answer.subjectiveEvaluation,
@@ -447,6 +457,43 @@ final class GeneralChatWindowModel: ObservableObject {
         messages.last { $0.role == .user }?.content ?? ""
     }
 
+    /// The user approved a proposed action — in practice a revision of one they already
+    /// have — from a General Chat thread.
+    ///
+    /// Saved through the same installer the app chats use, so one action is written one way
+    /// wherever it was approved. The confirmation is appended here rather than posted by
+    /// the installer: General Chat keeps its own transcript, and writing into the app
+    /// chats' conversation would merge two surfaces that are deliberately separate.
+    func installProposal(_ json: String) {
+        guard let data = json.data(using: .utf8),
+            let proposal = try? JSONDecoder().decode(ExtensionProposalData.self, from: data)
+        else { return }
+        let scope = activeScope
+        let title = activeTitle
+        Task { @MainActor in
+            // A revision names the action it replaces and so knows its own adapter. An
+            // ordinary proposal needs the thread's app, and General has none.
+            var bundleId = ""
+            var appName = ""
+            if case .app(let id) = scope {
+                bundleId = id
+                appName = AppAdapterManager.shared.adapter(for: id)?.appName ?? ""
+            }
+            let message = await AdapterActionProposalInstaller.perform(
+                proposal, bundleId: bundleId, appName: appName)
+            if scope == self.activeScope {
+                self.messages.append(message)
+                GeneralChatSessionStore.save(
+                    self.messages, scope: scope, title: self.activeTitle)
+            } else {
+                var stored = GeneralChatSessionStore.load(scope: scope)
+                stored.append(message)
+                GeneralChatSessionStore.save(stored, scope: scope, title: title)
+            }
+            self.sessions = GeneralChatSessionStore.index()
+        }
+    }
+
     /// "Enable <app> for this chat": attach the app, then ask the question again so the
     /// user gets an answer rather than a granted permission and a dead end.
     func enableApp(_ request: EnableAppRequest) {
@@ -458,11 +505,19 @@ final class GeneralChatWindowModel: ObservableObject {
         //
         // Matched case-insensitively against the name the gate reported, so the two sides
         // agree even when the app is not running and the installed-apps cache is cold.
-        let already = currentMembership.contains {
-            $0.caseInsensitiveCompare(request.name) == .orderedSame
+        // Every app the request named, in one step. "Create a note of all the open tabs in
+        // Safari" needs both apps in the conversation before the cross-app planner will even
+        // look at it; enabling one and re-asking produced a list of Notes commands that could
+        // not know what Safari had open.
+        var membership = currentMembership
+        for app in request.allApps
+        where !membership.contains(where: {
+            $0.caseInsensitiveCompare(app.name) == .orderedSame
+        }) {
+            membership.append(app.name)
         }
-        if !already {
-            openCombination(currentMembership + [request.name])
+        if membership.count != currentMembership.count {
+            openCombination(membership)
         }
         // Say what just changed, before the answer arrives.
         //

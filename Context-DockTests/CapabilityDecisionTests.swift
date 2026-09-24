@@ -13,11 +13,13 @@ import Foundation
 struct CapabilityDecisionTests {
 
     private func hit(
-        _ id: String, _ score: Double, write: Bool, coverage: Double = 1.0
+        _ id: String, _ score: Double, write: Bool, coverage: Double = 1.0,
+        surface: CapabilityRecord.Surface = .headless
     ) -> CapabilityIndex.Hit {
         .init(
             record: CapabilityRecord(
-                id: id, app: "App", kind: .capability, title: id, isWrite: write),
+                id: id, app: "App", kind: .capability, title: id, isWrite: write,
+                surface: surface),
             score: score,
             matched: ["x"],
             coverage: coverage)
@@ -165,5 +167,98 @@ struct CapabilityDecisionTests {
             .summary.contains("finder.trash"))
         #expect(CapabilityDecision.make(from: [hit("a", 4.0, write: true), hit("b", 3.9, write: true)])
             .summary.contains("ask"))
+    }
+
+    // MARK: - Cost, before score
+    //
+    // The index ranks what DoraX can do. These cover what doing it costs, which is the axis
+    // it was missing — and the report it came from: "new chat" in the Claude scope, where a
+    // linked CLI and a menu item could both have done it and neither was offered.
+
+    /// The report. Two paths in the band, different surfaces, so the user chooses.
+    @Test func ablePathsThatDifferInCostAreAChoiceForTheUser() {
+        let cli = hit("claude.cli.newChat", 11.0, write: true, surface: .headless)
+        let menu = hit("claude.menu.newChat", 10.2, write: true, surface: .opensApp)
+
+        #expect(CapabilityDecision.make(from: [cli, menu]) == .ask([cli, menu]))
+    }
+
+    /// And the cheapest is named first, so the default reading is the cheap one.
+    @Test func theCheapestIsOfferedFirst() throws {
+        let menu = hit("claude.menu.newChat", 11.0, write: true, surface: .opensApp)
+        let cli = hit("claude.cli.newChat", 10.2, write: true, surface: .headless)
+
+        guard case .ask(let offered) = CapabilityDecision.make(from: [menu, cli]) else {
+            Issue.record("expected a choice"); return
+        }
+        #expect(offered.map(\.record.id) == ["claude.cli.newChat", "claude.menu.newChat"])
+    }
+
+    /// Finder, "empty the trash": `finder.emptyTrash` names the request outright and the
+    /// menu item is far behind it. Three able paths, one obvious winner, and it must not
+    /// become a question — this is the test that stops the rule turning into a prompt on
+    /// every request.
+    @Test func aClearWinnerStillRunsEvenWhenCheaperNeighboursExist() {
+        let action = hit("finder.emptyTrash", 14.0, write: true, surface: .headless)
+        let menu = hit("finder.menu.emptyTrash", 6.0, write: true, surface: .opensApp)
+        let screen = hit("finder.computerUse", 4.0, write: true, surface: .takesScreen)
+
+        #expect(CapabilityDecision.make(from: [action, menu, screen]) == .act(action))
+    }
+
+    /// Two headless paths are not a cost question. VS Code's `code --list-extensions` and
+    /// its registered capability do the same thing at the same cost, so the cost rule stays
+    /// out of it and the existing ranking picks — even though both are well inside the band
+    /// that would have triggered a choice had their surfaces differed.
+    ///
+    /// Written expecting `.ask` at first, which was wrong: 0.4 apart is outside the read
+    /// tie-margin, so acting is right and the assertion was the thing at fault.
+    @Test func sameSurfaceNeighboursAreRankedNotAsked() {
+        let capability = hit("vscode.extensions.list", 11.0, write: false, surface: .headless)
+        let cli = hit("vscode.cli.listExtensions", 10.6, write: false, surface: .headless)
+
+        #expect(CapabilityDecision.make(from: [capability, cli]) == .act(capability))
+    }
+
+    /// The same two, moved close enough to tie. Now it asks — but as peers of equal cost,
+    /// which is the pre-existing tie rule and not the cost rule. Both questions exist; they
+    /// are asked for different reasons.
+    @Test func sameSurfacePeersThatGenuinelyTieStillAsk() {
+        let capability = hit("vscode.extensions.list", 11.0, write: false, surface: .headless)
+        // 0.02 apart. Picked 10.95 first, which is exactly tieMargin away and came out at
+        // 0.05000000000000071 in floating point — just outside, so it acted.
+        let cli = hit("vscode.cli.listExtensions", 10.98, write: false, surface: .headless)
+
+        #expect(CapabilityDecision.make(from: [capability, cli]) == .ask([capability, cli]))
+    }
+
+    /// The rule that matters most: the screen is never taken while something cheaper is in
+    /// contention. Even with Computer Use scoring highest, it is not acted on alone.
+    @Test func theScreenIsNeverTakenSilentlyWhileSomethingCheaperIsInContention() throws {
+        let screen = hit("appstore.computerUse", 11.0, write: true, surface: .takesScreen)
+        let cli = hit("appstore.cli.update", 9.5, write: true, surface: .headless)
+
+        guard case .ask(let offered) = CapabilityDecision.make(from: [screen, cli]) else {
+            Issue.record("expected a choice, not a silent screen-take"); return
+        }
+        #expect(offered.first?.record.surface == .headless)
+    }
+
+    /// When the only able path takes the screen, that is not a tie and not a failure — it
+    /// is the answer. App Store "update all": nothing headless can do it, the button is
+    /// right there.
+    @Test func theScreenIsTheAnswerWhenNothingCheaperCanDoIt() {
+        let screen = hit("appstore.updateAll", 12.0, write: true, surface: .takesScreen)
+
+        #expect(CapabilityDecision.make(from: [screen]) == .act(screen))
+    }
+
+    @Test func theSummaryNamesTheCostBecauseThatIsWhatTheChoiceIsAbout() {
+        let cli = hit("claude.cli.newChat", 11.0, write: true, surface: .headless)
+        let menu = hit("claude.menu.newChat", 10.2, write: true, surface: .opensApp)
+
+        let summary = CapabilityDecision.make(from: [cli, menu]).summary
+        #expect(summary.contains("no window opens"))
+        #expect(summary.contains("opens the app"))
     }
 }

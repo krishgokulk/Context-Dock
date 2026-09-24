@@ -103,6 +103,11 @@ extension DockPinKind {
             self = .globalCommand(id: "user:\(id.uuidString)")
         case .adapterAction(let bundleID, _, let actionID):
             self = .globalCommand(id: "adapter:\(bundleID):\(actionID)")
+        case .plugin(let id):
+            // Pinnable like any other global thing you run by name. The prefix keeps it
+            // distinct from the command it may have been migrated from, so a pin survives
+            // the cut-over instead of pointing at something retired.
+            self = .globalCommand(id: "plugin:\(id)")
         case .cachedMenu, .browserURL:
             return nil
         }
@@ -140,6 +145,26 @@ extension DockPinKind {
                 ? NSWorkspace.shared.icon(forFile: path) : nil
         case .globalCommand, .cliTool:
             return nil  // the strip asks the document for its icon
+        }
+    }
+
+    /// The plugin this pin stands for, when it is one: `globalCommand(id: "plugin:<id>")`.
+    /// A pinned plugin with a bar widget draws as that widget in the strip.
+    var pluginID: String? {
+        guard case .globalCommand(let id) = self, id.hasPrefix("plugin:") else { return nil }
+        let pluginID = String(id.dropFirst("plugin:".count))
+        return pluginID.isEmpty ? nil : pluginID
+    }
+
+    /// What the strip draws when the real icon is missing. Never an empty square: the user
+    /// pinned something, and the shape of what they pinned is the least the row can say.
+    var fallbackSymbol: String {
+        switch self {
+        case .app: return "app.dashed"
+        case .globalCommand: return "command"
+        case .cliTool: return "terminal"
+        case .file: return "doc"
+        case .folder: return "folder"
         }
     }
 

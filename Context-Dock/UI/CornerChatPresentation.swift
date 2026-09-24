@@ -224,17 +224,29 @@ final class CornerChatPresentation: ObservableObject {
     /// while the corner's own panel holds key focus, which reports us, the same trap the
     /// hotkey path already routes around via the menu-bar owner instead.
     private func currentFrontmostTarget() -> CornerChatTarget? {
+        guard let target = frontmostTargetProvider() else { return nil }
+        latestTarget = target
+        return target
+    }
+
+    /// Who is in front, as a closure.
+    ///
+    /// The default is the real read, and it stays the behaviour: returning to the app scope
+    /// goes to the app in front NOW. A test cannot have an opinion about that — the answer is
+    /// whatever app happens to own the menu bar while the suite runs — so two tests here
+    /// passed or failed depending on what was open on the developer's screen (#30). They set
+    /// this to `{ nil }` and walk back to the target they gave, which is the thing they are
+    /// actually about.
+    var frontmostTargetProvider: () -> CornerChatTarget? = {
         guard let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
               !app.isTerminated,
               let bundleID = app.bundleIdentifier, !bundleID.isEmpty
         else { return nil }
-        let target = CornerChatTarget(
+        return CornerChatTarget(
             name: app.localizedName ?? bundleID,
             bundleID: bundleID,
             suggestions: AppChatSuggestionProvider.suggestions(for: app),
             summary: AppChatSuggestionProvider.summary(for: app))
-        latestTarget = target
-        return target
     }
 
     /// A swipe walks the same scopes the arrows do, one step per swipe.

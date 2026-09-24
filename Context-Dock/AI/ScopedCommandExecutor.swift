@@ -68,6 +68,8 @@ final class ScopedCommandExecutor {
                 return await runAdapterAction(invocation, purpose: purpose)
             case .mcp:
                 return await runMCP(invocation, command: command)
+            case .operateApp:
+                return await runComputerUse(invocation)
             default:
                 break
             }
@@ -94,6 +96,22 @@ final class ScopedCommandExecutor {
         let (ok, output) = await AppAdapterManager.shared.runMenuPath(
             path, targetBundleId: bundle, appName: configuration.appName)
         return (ok, output.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : output, ok ? 0 : -1)
+    }
+
+    // MARK: - Computer Use
+
+    /// Press what the live menu bar has, when the cached map does not have it.
+    ///
+    /// The rung below `runMenu`, reached the same way — as a directive the model wrote —
+    /// because that is the only way a provider without native tools can reach anything.
+    private func runComputerUse(_ invocation: AITypedInvocation) async -> (Bool, String, Int32) {
+        let target = invocation.arguments["target"] ?? ""
+        guard !target.isEmpty else { return (false, "No command named for Computer Use.", -1) }
+        let bundle = nonEmpty(invocation.arguments["bundleId"]) ?? configuration.bundleId
+        onStatus?("Reading \(configuration.appName)'s live menus…")
+        let result = await ComputerUseRunner.run(
+            target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
+        return (result.success, result.output, result.success ? 0 : -1)
     }
 
     // MARK: - Adapter action

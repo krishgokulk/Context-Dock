@@ -131,6 +131,12 @@ extension AppWindowSnapshotService {
     /// window; palettes, tooltips and menus sit above it. The size floor drops the
     /// one-line palettes that pass as layer 0. Windows on another Space or minimised are
     /// kept — "no windows" for an app whose windows are simply elsewhere was the row lying.
+    ///
+    /// An untitled window counts only while it is on screen. Apps keep full-size layer 0
+    /// windows alive that nobody can ever see — Safari one, Electron apps such as Claude
+    /// two — and each drew a black tile labelled "Untitled" next to the real window.
+    /// Every one of them is untitled; every real window either carries a title or is
+    /// visible, which is why this reads both fields rather than gating on `isOnScreen`.
     nonisolated static func eligibleWindows(
         _ all: [WindowCandidate], bundleID: String, limit: Int = windowRowLimit
     ) -> [WindowCandidate] {
@@ -138,6 +144,7 @@ extension AppWindowSnapshotService {
             all.filter {
                 $0.bundleID == bundleID && $0.layer == 0
                     && $0.frame.width > 80 && $0.frame.height > 80
+                    && (!$0.title.isEmpty || $0.isOnScreen)
             }
             .prefix(limit))
     }

@@ -2092,13 +2092,18 @@ extension LauncherView {
     /// original query now that it's in scope. Keeps the user in control — nothing was read
     /// until they tapped.
     func enableAppForGeneralChat(_ req: EnableAppRequest) {
-        if !chatFocusApps.contains(where: {
-            $0.bundleId.caseInsensitiveCompare(req.bundleId) == .orderedSame
+        // Every app the sentence named, together. One of them is rarely the whole job: a
+        // note made of Safari's open tabs needs Safari in the chat as much as Notes, and the
+        // cross-app planner does not run until both are there.
+        var focus = chatFocusApps
+        for app in req.allApps
+        where !focus.contains(where: {
+            $0.bundleId.caseInsensitiveCompare(app.bundleId) == .orderedSame
         }) {
-            withAnimation(.dockStandard) {
-                switchDockWorkspace(
-                    to: chatFocusApps + [.init(name: req.name, bundleId: req.bundleId)])
-            }
+            focus.append(.init(name: app.name, bundleId: app.bundleId))
+        }
+        if focus.count != chatFocusApps.count {
+            withAnimation(.dockStandard) { switchDockWorkspace(to: focus) }
         }
         aiMode.pendingEnableApp = nil
         guard !aiMode.isLoading, aiMode.streamingId == nil else { return }
@@ -2177,6 +2182,8 @@ extension LauncherView {
         aiMode.attachments = []
 
         aiMode.isLoading = true
+        // Cards belong to this turn only. See ChatResultRowCollector.
+        ChatResultRowCollector.shared.begin(scope: .general)
         let turnStartedAt = Date()
         aiMode.loadingStartedAt = turnStartedAt
 
@@ -2252,9 +2259,19 @@ extension LauncherView {
                         // Auto-create: if the AI proposed a runnable extension (no route fit),
                         // tag the message so it shows Run once / Save buttons instead of just
                         // describing a script.
+                        // Whatever this turn's capabilities read, as cards — the same mapper
+                        // the dock's app chat and the chat window use. General Chat answered
+                        // a Notes question in prose while the dock drew rows for it, purely
+                        // because rows were built per surface.
+                        let rows = ChatResultRowMapper.map(
+                            ChatResultRowCollector.shared.take(scope: .general))
                         let baseMsg = AIChatMessage(
-                            role: .assistant, content: cleaned, appLaunches: launches,
-                            recentFiles: recentFiles,
+                            role: .assistant, content: cleaned,
+                            appLaunches: launches + rows.apps,
+                            recentFiles: recentFiles.isEmpty ? rows.files : recentFiles,
+                            noteResults: rows.notes,
+                            reminderResults: rows.reminders,
+                            pageLinks: rows.links,
                             mcpToolsRan: self.aiMode.pendingToolChips,
                             // A turn that executed something hands over a typed record, and
                             // its receipts are the ones that ran. The loose field still
@@ -2374,6 +2391,18 @@ extension LauncherView {
                             + "\(outcome.note)\n\n\(report)",
                         evidenceReceipts: [outcome.receipt]))
             }
+            return
+        }
+
+        // A card offered by the pre-model resolver is remembered as a candidate, not as a
+        // ChatRoute. Asking only the route store is why "Use Code" answered "That route is
+        // no longer available" for an offer made seconds earlier.
+        if OfferedChoiceOwner.decide(
+            id: id, candidateIDs: pendingActionCandidates.map(\.id),
+            routeIDs: AppScopedChatService.pendingRouteIDs(for: scope)) == .candidate
+        {
+            runPickedActionChoice(
+                ActionChoice(id: id, title: title, routeLabel: "", appName: ""), inDock: true)
             return
         }
 
@@ -4963,6 +4992,7 @@ extension LauncherView {
                             AIChatMessage(
                                 role: .assistant,
                                 content: outcome.text,
+                                structuredData: outcome.proposalJSON,
                                 mcpToolsRan: outcome.chips))
                         finishL2AIRequest(l2RequestID)
                     }
@@ -5423,6 +5453,12 @@ extension LauncherView {
                     // the same round budget, and the same checks on what the answer claims to
                     // have done. This was ~200 lines of the dock's own copy, and the copy is
                     // why the two surfaces behaved differently for the same question.
+                    // Rows belong to the turn that read them; last turn's are dropped here so
+                    // a stale card can never appear under a new answer.
+                    await MainActor.run {
+                        ChatResultRowCollector.shared.begin(
+                            scope: GeneralChatScope(dockBundleId: scopedBundleId))
+                    }
                     let outcome = try await ScopedTurnRunner.run(
                         query: query,
                         systemPrompt: activeContextPrompt,
@@ -5496,8 +5532,21 @@ extension LauncherView {
                         toolsRan += applied.toolsRan
                     }
                     await MainActor.run {
+                        // The records this turn's capabilities actually read, drawn as cards
+                        // through the same mapper the chat window uses. The dock used to be
+                        // the only surface with note rows, and only inside its own Notes
+                        // branch; now every surface draws whatever any capability read.
+                        let rows = ChatResultRowMapper.map(
+                            ChatResultRowCollector.shared.take(
+                                scope: GeneralChatScope(dockBundleId: scopedBundleId)))
                         var msg = AIChatMessage(
-                            role: .assistant, content: finalResponse, mcpToolsRan: toolsRan,
+                            role: .assistant, content: finalResponse,
+                            appLaunches: rows.apps,
+                            recentFiles: rows.files,
+                            noteResults: rows.notes,
+                            reminderResults: rows.reminders,
+                            pageLinks: rows.links,
+                            mcpToolsRan: toolsRan,
                             evidenceReceipts: browserPageReceipts
                                 + executed.map(DoraXActionReceipt.init),
                             subjectiveEvaluation: subjectiveEvaluation,
@@ -5938,6 +5987,17 @@ extension LauncherView {
                     : (out.isEmpty ? "Couldn't run \(action.name)." : out),
                 [action.name]
             )
+
+        case .operateApp:
+            // The directive arriving as final text rather than mid-loop. Same press, same
+            // approval card; without this case it falls through to `default` and the user
+            // reads a line of JSON where a click should have happened.
+            let target = invocation.arguments["target"] ?? ""
+            guard !target.isEmpty else { return nil }
+            await setL2LoadingStatus("Reading \(scopeName)'s menus…", requestID: requestID)
+            let result = await ComputerUseRunner.run(
+                target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
+            return (result.output, [result.displayCommand])
 
         default:
             return nil

@@ -179,6 +179,9 @@ extension AIProviderService {
 
                     var (success, output): (Bool, String) = (false, "")
                     var exitCode: Int32?
+                    // Say what is about to run, before it runs. Everything needed for this
+                    // was already here and none of it was published — see AgentToolNarration.
+                    onStatus?(AgentToolNarration.start(tool: tc.function.name, arguments: args))
                     if simulateAllTools {
                         success = true
                         output = "Simulated \(tc.function.name) tool call"
@@ -200,6 +203,10 @@ extension AIProviderService {
                             output: output,
                             success: success,
                             isVerification: tc.function.name == "verify_outcome"))
+                        onStatus?(
+                            AgentToolNarration.finish(
+                                displayCommand: result.displayCommand, success: success,
+                                output: output))
                     } else {
                         // Not a registered tool — an L2 extension, resolved by name at run time.
                         (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
@@ -401,6 +408,7 @@ extension AIProviderService {
                 var (success, output): (Bool, String) = (false, "")
                     var exitCode: Int32?
 
+                onStatus?(AgentToolNarration.start(tool: toolName, arguments: args))
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(toolName) tool call"
@@ -422,6 +430,10 @@ extension AIProviderService {
                         output: output,
                         success: success,
                         isVerification: toolName == "verify_outcome"))
+                    onStatus?(
+                        AgentToolNarration.finish(
+                            displayCommand: result.displayCommand, success: success,
+                            output: output))
                 } else {
                     // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: toolName, arguments: args)
@@ -570,6 +582,7 @@ extension AIProviderService {
 
                 var (success, output): (Bool, String) = (false, "")
                     var exitCode: Int32?
+                onStatus?(AgentToolNarration.start(tool: fc.name, arguments: args))
                 if simulateAllTools {
                     success = true
                     output = "Simulated \(fc.name) tool call"
@@ -591,6 +604,10 @@ extension AIProviderService {
                         output: output,
                         success: success,
                         isVerification: fc.name == "verify_outcome"))
+                    onStatus?(
+                        AgentToolNarration.finish(
+                            displayCommand: result.displayCommand, success: success,
+                            output: output))
                 } else {
                     // Not a registered tool — an L2 extension, resolved by name at run time.
                     (success, output) = await dispatchCustomTool(name: fc.name, arguments: args)

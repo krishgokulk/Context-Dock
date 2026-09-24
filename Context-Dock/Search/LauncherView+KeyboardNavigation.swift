@@ -1615,608 +1615,510 @@ extension LauncherView {
 
     var contentKeyHandlersView: some View {
         contentNotificationHandlersView
-            .onExitCommand {
-                // Layer overlays close first
-                if showMediaLayer {
-                    withAnimation(.dockSheet) {
-                        showMediaLayer = false
+            .modifier(
+                LauncherKeyHandlers(
+                    onExitCommand: {
+                    // Layer overlays close first
+                    if showMediaLayer {
+                        withAnimation(.dockSheet) {
+                            showMediaLayer = false
+                        }
+                        return
                     }
-                    return
-                }
-                if showAIExtensionSuggestions {
-                    withAnimation(.spring(response: 0.3)) {
-                        showAIExtensionSuggestions = false
+                    if showAIExtensionSuggestions {
+                        withAnimation(.spring(response: 0.3)) {
+                            showAIExtensionSuggestions = false
+                        }
+                        return
                     }
-                    return
-                }
-                // App scope: exit scope, close dock, switch to scoped app
-                if let targetInfo = l2.targetApp {
-                    let bundleId = targetInfo.bundleId
-                    clearSearchContext()
-                    AppDelegate.shared?.hideLauncher()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                        let app =
-                            NSWorkspace.shared.runningApplications.first {
-                                $0.bundleIdentifier == bundleId && !$0.isTerminated
-                            } ?? AppDelegate.shared?.previousFrontmostApp
-                        app?.activate(options: [.activateIgnoringOtherApps])
+                    // App scope: exit scope, close dock, switch to scoped app
+                    if let targetInfo = l2.targetApp {
+                        let bundleId = targetInfo.bundleId
+                        clearSearchContext()
+                        AppDelegate.shared?.hideLauncher()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                            let app =
+                                NSWorkspace.shared.runningApplications.first {
+                                    $0.bundleIdentifier == bundleId && !$0.isTerminated
+                                } ?? AppDelegate.shared?.previousFrontmostApp
+                            app?.activate(options: [.activateIgnoringOtherApps])
+                        }
+                        return
                     }
-                    return
-                }
-                // Smart panel / search context: exit back to normal search, keep dock open
-                if searchState.activeSmartQueryKey != nil || searchState.contextApp != nil {
-                    clearSearchContext()
-                    remPanelIsProcessing = false
-                    remIsInstalled = nil
-                    systemDataResults = []
-                    searchState.lastSmartQuery = ""
-                    return
-                }
-                // Pills / results highlighted: clear selection, return focus to search field
-                if l2.focusedPillIndex != nil || focusedAppPillIndex != nil
-                    || searchState.selectedIndex != nil
-                {
-                    l2.focusedPillIndex = nil
-                    focusedAppPillIndex = nil
-                    l2.pillNavViaKeyboard = false
-                    searchState.selectedIndex = nil
-                    isSearchFieldFocused = true
-                    return
-                }
-                // Nothing active: close dock and return to previous app
-                onClose()
-            }
-            .onKeyPress(.upArrow) {
-                // Quick Note split editor owns arrows (cursor / list); never switch layer.
-                if activeNotepadScopeCommand != nil { return .ignored }
-                if isGlobalContextActive,
-                    shouldUsePureGlobalAppSearch,
-                    !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                {
-                    _ = moveGlobalGroupedListFocus(
-                        direction: settings.effectiveDockAtBottom ? 1 : -1
-                    )
-                    return .handled
-                }
-                if isGlobalContextActive,
-                    isSearchFieldFocused,
-                    focusedAppPillIndex == nil,
-                    l2.focusedPillIndex == nil,
-                    searchState.selectedIndex == nil
-                {
-                    return .handled
-                }
-                if searchState.activeSmartQueryKey == "clipboard" {
-                    if NSEvent.modifierFlags.contains(.command) {
-                        extendClipboardSelection(direction: -1)
-                        return .handled
+                    // Smart panel / search context: exit back to normal search, keep dock open
+                    if searchState.activeSmartQueryKey != nil || searchState.contextApp != nil {
+                        clearSearchContext()
+                        remPanelIsProcessing = false
+                        remIsInstalled = nil
+                        systemDataResults = []
+                        searchState.lastSmartQuery = ""
+                        return
                     }
-                    if clipboardSourcePillFocusIndex != nil {
-                        clipboardSourcePillFocusIndex = nil
-                        isKeyboardNavigation = false
+                    // Pills / results highlighted: clear selection, return focus to search field
+                    if l2.focusedPillIndex != nil || focusedAppPillIndex != nil
+                        || searchState.selectedIndex != nil
+                    {
+                        l2.focusedPillIndex = nil
+                        focusedAppPillIndex = nil
+                        l2.pillNavViaKeyboard = false
+                        searchState.selectedIndex = nil
                         isSearchFieldFocused = true
+                        return
+                    }
+                    // Nothing active: close dock and return to previous app
+                    onClose()
+                    },
+                    onUpArrow: {
+                    // Quick Note split editor owns arrows (cursor / list); never switch layer.
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    if isGlobalContextActive,
+                        shouldUsePureGlobalAppSearch,
+                        !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    {
+                        _ = moveGlobalGroupedListFocus(
+                            direction: settings.effectiveDockAtBottom ? 1 : -1
+                        )
                         return .handled
                     }
-                    navigateClipboardScope(direction: -1)
-                    return .handled
-                }
-                if searchState.activeSmartQueryKey == "notifications" {
-                    guard searchState.selectedIndex != nil else { return .handled }
-                    if searchState.selectedIndex == 0 {
-                        withAnimation(.dockStandard) {
-                            searchState.selectedIndex = nil
+                    if isGlobalContextActive,
+                        isSearchFieldFocused,
+                        focusedAppPillIndex == nil,
+                        l2.focusedPillIndex == nil,
+                        searchState.selectedIndex == nil
+                    {
+                        return .handled
+                    }
+                    if searchState.activeSmartQueryKey == "clipboard" {
+                        if NSEvent.modifierFlags.contains(.command) {
+                            extendClipboardSelection(direction: -1)
+                            return .handled
+                        }
+                        if clipboardSourcePillFocusIndex != nil {
+                            clipboardSourcePillFocusIndex = nil
                             isKeyboardNavigation = false
                             isSearchFieldFocused = true
+                            return .handled
                         }
+                        navigateClipboardScope(direction: -1)
+                        return .handled
+                    }
+                    if searchState.activeSmartQueryKey == "notifications" {
+                        guard searchState.selectedIndex != nil else { return .handled }
+                        if searchState.selectedIndex == 0 {
+                            withAnimation(.dockStandard) {
+                                searchState.selectedIndex = nil
+                                isKeyboardNavigation = false
+                                isSearchFieldFocused = true
+                            }
+                            return .handled
+                        }
+                        navigateResults(direction: -1)
                         return .handled
                     }
                     navigateResults(direction: -1)
                     return .handled
-                }
-                navigateResults(direction: -1)
-                return .handled
-            }
-            .onKeyPress(.downArrow) {
-                // Quick Note split editor owns arrows (cursor / list); never switch layer.
-                if activeNotepadScopeCommand != nil { return .ignored }
-                // ↓ is what opens the result sheet — in an app-scope capsule and in the
-                // frontmost Context Dock alike. Until then only the inline ghost shows, so
-                // typing never throws the list open.
-                if !isDockResultSheetRevealed,
-                    showContextInDock,
-                    !aiMode.isActive,
-                    !isCompactSmartScope,
-                    !hasSelectionScopeSurface,
-                    !isFinderDesktopOnlyMode,
-                    !isInCLIToolScope,
-                    !isContextDockChatRoutingLocked,
-                    isActiveGlobalRunningAppMenuScope()
-                        || (!isGlobalContextActive
-                            && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                                .isEmpty)
-                {
-                    expandScopedCapsuleSheet(selectFirst: true)
-                    return .handled
-                }
-                if isGlobalContextActive,
-                    shouldUsePureGlobalAppSearch,
-                    !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                {
-                    if globalContextViewModel.typingSnapshot.phase != .expanded {
-                        if expandGlobalContextTypingMatch(selectFirst: true) {
-                            return .handled
-                        }
-                        return .handled
-                    }
-
-                    _ = moveGlobalGroupedListFocus(
-                        direction: settings.effectiveDockAtBottom ? -1 : 1
-                    )
-                    return .handled
-                }
-                if showContextInDock, isGlobalContextActive, !aiMode.isActive {
-                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased()
-                    // File/text selection chip is showing: Down arrow moves focus into the action pills
-                    // instead of dismissing the context (let the user act on the selected file via keyboard)
-                    let hasSelection =
-                        frozenSelectionText != nil
-                        || !effectiveFinderSelectionURLsForPills().isEmpty
-                    if hasSelection && l2.focusedPillIndex == nil {
-                        let pills = buildDockPills(query: q)
-                        if !pills.isEmpty {
-                            l2.pillNavViaKeyboard = true
-                            var idx = 0
-                            while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
-                            l2.focusedPillIndex = idx
-                            return .handled
-                        }
-                    }
-                    // Only an empty input field switches layers. Typed global queries keep
-                    // the current dock so Down can navigate visible results/menus.
-                    if q.isEmpty && l2.focusedPillIndex == nil && focusedAppPillIndex == nil {
-                        switchDockLayer(.down)
-                        return .handled
-                    }
-                }
-                if searchState.activeSmartQueryKey == "clipboard" {
-                    if NSEvent.modifierFlags.contains(.command) {
-                        extendClipboardSelection(direction: 1)
-                        return .handled
-                    }
-                    if clipboardSourcePillFocusIndex == nil,
-                        focusedClipboardEntryIndex == nil,
-                        searchState.selectedIndex == nil
+                    },
+                    onDownArrow: {
+                    // Quick Note split editor owns arrows (cursor / list); never switch layer.
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    // ↓ is what opens the result sheet — in an app-scope capsule and in the
+                    // frontmost Context Dock alike. Until then only the inline ghost shows, so
+                    // typing never throws the list open.
+                    if !isDockResultSheetRevealed,
+                        showContextInDock,
+                        !aiMode.isActive,
+                        !isCompactSmartScope,
+                        !hasSelectionScopeSurface,
+                        !isFinderDesktopOnlyMode,
+                        !isInCLIToolScope,
+                        !isContextDockChatRoutingLocked,
+                        isActiveGlobalRunningAppMenuScope()
+                            || (!isGlobalContextActive
+                                && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    .isEmpty)
                     {
-                        focusFirstClipboardSourcePill()
+                        expandScopedCapsuleSheet(selectFirst: true)
                         return .handled
                     }
-                    if clipboardSourcePillFocusIndex != nil {
-                        clipboardSourcePillFocusIndex = nil
+                    if isGlobalContextActive,
+                        shouldUsePureGlobalAppSearch,
+                        !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    {
+                        if globalContextViewModel.typingSnapshot.phase != .expanded {
+                            if expandGlobalContextTypingMatch(selectFirst: true) {
+                                return .handled
+                            }
+                            return .handled
+                        }
+
+                        _ = moveGlobalGroupedListFocus(
+                            direction: settings.effectiveDockAtBottom ? -1 : 1
+                        )
+                        return .handled
                     }
-                    navigateClipboardScope(direction: 1)
-                    return .handled
-                }
-                if searchState.activeSmartQueryKey == "notifications" {
+                    if showContextInDock, isGlobalContextActive, !aiMode.isActive {
+                        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .lowercased()
+                        // File/text selection chip is showing: Down arrow moves focus into the action pills
+                        // instead of dismissing the context (let the user act on the selected file via keyboard)
+                        let hasSelection =
+                            frozenSelectionText != nil
+                            || !effectiveFinderSelectionURLsForPills().isEmpty
+                        if hasSelection && l2.focusedPillIndex == nil {
+                            let pills = buildDockPills(query: q)
+                            if !pills.isEmpty {
+                                l2.pillNavViaKeyboard = true
+                                var idx = 0
+                                while idx < pills.count - 1 && pills[idx].isSeparator { idx += 1 }
+                                l2.focusedPillIndex = idx
+                                return .handled
+                            }
+                        }
+                        // Only an empty input field switches layers. Typed global queries keep
+                        // the current dock so Down can navigate visible results/menus.
+                        if q.isEmpty && l2.focusedPillIndex == nil && focusedAppPillIndex == nil {
+                            switchDockLayer(.down)
+                            return .handled
+                        }
+                    }
+                    if searchState.activeSmartQueryKey == "clipboard" {
+                        if NSEvent.modifierFlags.contains(.command) {
+                            extendClipboardSelection(direction: 1)
+                            return .handled
+                        }
+                        if clipboardSourcePillFocusIndex == nil,
+                            focusedClipboardEntryIndex == nil,
+                            searchState.selectedIndex == nil
+                        {
+                            focusFirstClipboardSourcePill()
+                            return .handled
+                        }
+                        if clipboardSourcePillFocusIndex != nil {
+                            clipboardSourcePillFocusIndex = nil
+                        }
+                        navigateClipboardScope(direction: 1)
+                        return .handled
+                    }
+                    if searchState.activeSmartQueryKey == "notifications" {
+                        navigateResults(direction: 1)
+                        return .handled
+                    }
                     navigateResults(direction: 1)
                     return .handled
-                }
-                navigateResults(direction: 1)
-                return .handled
-            }
-            .onKeyPress(.space) {
-                // Quick Note editor: space is text — never steal it back to the input.
-                if activeNotepadScopeCommand != nil { return .ignored }
-                if !allGlobalInlineAppScopes.isEmpty && !isSearchFieldFocused {
-                    searchState.query.append(" ")
-                    reclaimSearchInputFocus()
-                    resetCollapseTimer()
-                    return .handled
-                }
-
-                if searchState.activeSmartQueryKey == "clipboard" {
-                    guard focusedClipboardEntryIndex != nil || isKeyboardNavigation else {
-                        return .ignored
-                    }
-                    quickLookFocusedClipboardEntry()
-                    return .handled
-                }
-
-                // Close contact preview if it's showing
-                if showContactPreview {
-                    withAnimation {
-                        showContactPreview = false
-                        contactPreviewData = nil
-                    }
-                    return .handled
-                }
-
-                // Only handle space for Quick Look when the search field is NOT focused
-                // This allows typing spaces in the search field
-                if !isSearchFieldFocused, searchState.selectedIndex != nil,
-                    !searchState.results.isEmpty
-                {
-                    quickLookSelectedItem()
-                    return .handled
-                }
-                return .ignored
-            }
-            .onKeyPress(keys: [.init("y")], phases: .down) { keyPress in
-                // Cmd+Y for Quick Look (like Finder)
-                if keyPress.modifiers.contains(.command), searchState.selectedIndex != nil,
-                    !searchState.results.isEmpty
-                {
-                    quickLookSelectedItem()
-                    return .handled
-                }
-                return .ignored
-            }
-            .onKeyPress(.return) {
-                // Quick Note editor: Return / Shift+Return insert a newline.
-                if activeNotepadScopeCommand != nil { return .ignored }
-                if executeScopedRunningAppIfIdle() {
-                    return .handled
-                }
-                // Submenu ghost: Enter executes the first matching child directly
-                if let subCtx = submenuGhostContext, let firstChild = subCtx.children.first {
-                    let frontPID =
-                        AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
-                    let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
-                    searchState.query = ""
-                    lockedSubmenuParent = nil
-                    executeDockMenuAction(
-                        sourcePID: pid, path: firstChild.path,
-                        shortcutChar: firstChild.shortcutChar,
-                        shortcutModifiers: firstChild.shortcutModifiers
-                    )
-                    return .handled
-                }
-                // Execute inline pill ghost completion if available
-                if let ghost = ghostPillCompletion {
-                    ghost.execute()
-                    searchState.query = ""
-                    l2.focusedPillIndex = nil
-                    return .handled
-                }
-                if isCLIToolScopeLocked {
-                    let trimmed = searchState.query.trimmingCharacters(
-                        in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return .handled }
-                    if let target = currentGlobalScopedChatTarget {
-                        armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
-                        dismissMediaLayer()
-                        handleL2QuerySkippingMenuRouter(trimmed)
-                    }
-                    return .handled
-                }
-                if isL2ContextActive,
-                    l2.focusedPillIndex != nil,
-                    executeFocusedOrDirectAppPillIfNeeded()
-                {
-                    return .handled
-                }
-                if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
-                    return .handled
-                }
-                // Finder desktop scope never launches a typed app — file search only.
-                if isFinderDesktopOnlyMode {
-                    if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
-                    if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
+                    },
+                    onSpace: {
+                    // Quick Note editor: space is text — never steal it back to the input.
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    if !allGlobalInlineAppScopes.isEmpty && !isSearchFieldFocused {
+                        searchState.query.append(" ")
+                        reclaimSearchInputFocus()
+                        resetCollapseTimer()
                         return .handled
                     }
-                    return .handled
-                }
-                if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
-                    return .handled
-                }
-                // Enter runs the row the user is looking at. The highlighted row is what
-                // the leading icon and the ghost are both drawn from, and
-                // executeFocusedGlobalGroupedListRow is the accessor that reads it —
-                // three NSEvent monitors already use it.
-                //
-                // This handler reached launchTypedAppMatchIfNeeded first, which resolves
-                // an app from the *typed text* through L2AppActionRouter: a fourth
-                // resolver, independent of the icon, the ghost and Tab. So "remi" could
-                // show Reminders and launch something else, and which happened depended
-                // on whether this handler or a monitor saw the key first.
-                if isGlobalContextActive, executeFocusedGlobalGroupedListRow() {
-                    return .handled
-                }
-                if launchTypedAppMatchIfNeeded() {
-                    return .handled
-                }
-                if searchState.activeSmartQueryKey == "clipboard" {
-                    let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if q.isEmpty {
-                        _ = pasteFocusedClipboardEntriesToFrontmost()
-                    } else {
-                        _ = submitClipboardScopeAIQuery(q)
-                    }
-                    return .handled
-                }
-                // Only explicit chat mode routes Enter to AI. App panels stay menu-first.
-                let isAIAppPanel =
-                    searchState.contextApp != nil || searchState.activeSmartQueryKey != nil
-                if isAIAppPanel
-                    && (l2.chatArmed || l2.showChatPopover)
-                    && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                        .isEmpty
-                {
-                    handleRemPanelQuery()
-                    return .handled
-                } else if isL2ContextActive {
-                    // NSEvent monitor handles Enter when pills exist (returns nil, consuming the event).
-                    // We only reach here when no pills are visible — escalate to AI.
-                    let trimmed = searchState.query.trimmingCharacters(
-                        in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { return .handled }
-                    if shouldShowSelectionCompactAIAction
-                        || shouldShowContextDockAIQueryFallback
-                    {
-                        runCompactAIActionFromInput()
-                        return .handled
-                    }
-                    // Send when arming the chat (first message, before the sheet opens) AND when a
-                    // conversation is already open — otherwise once showChatPopover is true every
-                    // follow-up Enter fell through to `.handled` below and was silently dropped.
-                    if l2.chatArmed
-                        || shouldShowContextDockChatSheet
-                        || shouldShowContextDockAIQueryFallback
-                    {
-                        dismissMediaLayer()
-                        handleL2QuerySkippingMenuRouter(trimmed)
-                        return .handled
-                    }
-                    if executeFirstMatchingFinderFolderPillIfNeeded() {
-                        return .handled
-                    }
-                    // Normal Context Dock is menu-first. AI chat only sends after the
-                    // user explicitly connects chat with the right-side control.
-                    return .handled
-                } else if aiMode.isActive {
-                    submitAIQuery()
-                } else {
-                    // L1/L2: Execute selected result
-                    executeSelectedResult()
-                }
-                return .handled
-            }
-            .onKeyPress(.tab) {
-                if activeNotepadScopeCommand != nil { return .ignored }
-                if isL2ContextActive && !isGlobalContextActive {
-                    return .handled
-                }
 
-                // Tab on submenu ghost — lock parent if not yet locked; execute if already locked
-                if let subCtx = submenuGhostContext, !subCtx.children.isEmpty {
-                    if lockedSubmenuParent == nil {
-                        // First Tab: lock the parent as a chip, clear all app-detection state
-                        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
-                            lockedSubmenuParent = subCtx.parent
-                            searchState.query = ""
+                    if searchState.activeSmartQueryKey == "clipboard" {
+                        guard focusedClipboardEntryIndex != nil || isKeyboardNavigation else {
+                            return .ignored
                         }
-                        l2.appCompletion = nil
-                        l2.showResultsPopover = false
-                        crossAppMenuItems = []
-                        cachedDockPills = []
+                        quickLookFocusedClipboardEntry()
                         return .handled
-                    } else if let firstChild = subCtx.children.first {
-                        // Already locked + Tab: execute the highlighted child
+                    }
+
+                    // Close contact preview if it's showing
+                    if showContactPreview {
+                        withAnimation {
+                            showContactPreview = false
+                            contactPreviewData = nil
+                        }
+                        return .handled
+                    }
+
+                    // Only handle space for Quick Look when the search field is NOT focused
+                    // This allows typing spaces in the search field
+                    if !isSearchFieldFocused, searchState.selectedIndex != nil,
+                        !searchState.results.isEmpty
+                    {
+                        quickLookSelectedItem()
+                        return .handled
+                    }
+                    return .ignored
+                    },
+                    onY: { keyPress in
+                    // Cmd+Y for Quick Look (like Finder)
+                    if keyPress.modifiers.contains(.command), searchState.selectedIndex != nil,
+                        !searchState.results.isEmpty
+                    {
+                        quickLookSelectedItem()
+                        return .handled
+                    }
+                    return .ignored
+                    },
+                    onReturn: {
+                    // Quick Note editor: Return / Shift+Return insert a newline.
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    if executeScopedRunningAppIfIdle() {
+                        return .handled
+                    }
+                    // Submenu ghost: Enter executes the first matching child directly
+                    if let subCtx = submenuGhostContext, let firstChild = subCtx.children.first {
                         let frontPID =
                             AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
                         let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
-                        let path = firstChild.path
-                        let sc = firstChild.shortcutChar
-                        let mod = firstChild.shortcutModifiers
                         searchState.query = ""
                         lockedSubmenuParent = nil
                         executeDockMenuAction(
-                            sourcePID: pid, path: path, shortcutChar: sc, shortcutModifiers: mod)
+                            sourcePID: pid, path: firstChild.path,
+                            shortcutChar: firstChild.shortcutChar,
+                            shortcutModifiers: firstChild.shortcutModifiers
+                        )
                         return .handled
                     }
-                }
-                // Tab accepts pill ghost completion (prefix match on pill name)
-                if let ghost = ghostPillCompletion {
-                    searchState.query = ghost.name
-                    return .handled
-                }
-
-                // L1 mode: Tab fills ghost from selected result when it's a prefix match.
-                if !isL2ContextActive, !isGlobalContextActive {
-                    let typed = searchState.query.trimmingCharacters(in: .whitespaces)
-                    if !typed.isEmpty,
-                        let idx = searchState.selectedIndex,
-                        idx < searchState.results.count
+                    // Execute inline pill ghost completion if available
+                    if let ghost = ghostPillCompletion {
+                        ghost.execute()
+                        searchState.query = ""
+                        l2.focusedPillIndex = nil
+                        return .handled
+                    }
+                    if isCLIToolScopeLocked {
+                        let trimmed = searchState.query.trimmingCharacters(
+                            in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return .handled }
+                        if let target = currentGlobalScopedChatTarget {
+                            armGlobalScopedChat(appName: target.appName, bundleId: target.bundleId)
+                            dismissMediaLayer()
+                            handleL2QuerySkippingMenuRouter(trimmed)
+                        }
+                        return .handled
+                    }
+                    if isL2ContextActive,
+                        l2.focusedPillIndex != nil,
+                        executeFocusedOrDirectAppPillIfNeeded()
                     {
-                        let result = searchState.results[idx]
-                        if result.title.lowercased().hasPrefix(typed.lowercased()) {
-                            searchState.query = result.title
+                        return .handled
+                    }
+                    if isL2ContextActive, executeFirstMatchingFinderFolderPillIfNeeded() {
+                        return .handled
+                    }
+                    // Finder desktop scope never launches a typed app — file search only.
+                    if isFinderDesktopOnlyMode {
+                        if executeFirstVisibleFinderDesktopPillIfNeeded() { return .handled }
+                        if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
+                            return .handled
+                        }
+                        return .handled
+                    }
+                    if submitCurrentFinderFolderAIQueryIfNeeded(searchState.query) {
+                        return .handled
+                    }
+                    // Enter runs the row the user is looking at. The highlighted row is what
+                    // the leading icon and the ghost are both drawn from, and
+                    // executeFocusedGlobalGroupedListRow is the accessor that reads it —
+                    // three NSEvent monitors already use it.
+                    //
+                    // This handler reached launchTypedAppMatchIfNeeded first, which resolves
+                    // an app from the *typed text* through L2AppActionRouter: a fourth
+                    // resolver, independent of the icon, the ghost and Tab. So "remi" could
+                    // show Reminders and launch something else, and which happened depended
+                    // on whether this handler or a monitor saw the key first.
+                    if isGlobalContextActive, executeFocusedGlobalGroupedListRow() {
+                        return .handled
+                    }
+                    if launchTypedAppMatchIfNeeded() {
+                        return .handled
+                    }
+                    if searchState.activeSmartQueryKey == "clipboard" {
+                        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if q.isEmpty {
+                            _ = pasteFocusedClipboardEntriesToFrontmost()
+                        } else {
+                            _ = submitClipboardScopeAIQuery(q)
+                        }
+                        return .handled
+                    }
+                    // Only explicit chat mode routes Enter to AI. App panels stay menu-first.
+                    let isAIAppPanel =
+                        searchState.contextApp != nil || searchState.activeSmartQueryKey != nil
+                    if isAIAppPanel
+                        && (l2.chatArmed || l2.showChatPopover)
+                        && !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty
+                    {
+                        handleRemPanelQuery()
+                        return .handled
+                    } else if isL2ContextActive {
+                        // NSEvent monitor handles Enter when pills exist (returns nil, consuming the event).
+                        // We only reach here when no pills are visible — escalate to AI.
+                        let trimmed = searchState.query.trimmingCharacters(
+                            in: .whitespacesAndNewlines)
+                        guard !trimmed.isEmpty else { return .handled }
+                        if shouldShowSelectionCompactAIAction
+                            || shouldShowContextDockAIQueryFallback
+                        {
+                            runCompactAIActionFromInput()
+                            return .handled
+                        }
+                        // Send when arming the chat (first message, before the sheet opens) AND when a
+                        // conversation is already open — otherwise once showChatPopover is true every
+                        // follow-up Enter fell through to `.handled` below and was silently dropped.
+                        if l2.chatArmed
+                            || shouldShowContextDockChatSheet
+                            || shouldShowContextDockAIQueryFallback
+                        {
+                            dismissMediaLayer()
+                            handleL2QuerySkippingMenuRouter(trimmed)
+                            return .handled
+                        }
+                        if executeFirstMatchingFinderFolderPillIfNeeded() {
+                            return .handled
+                        }
+                        // Normal Context Dock is menu-first. AI chat only sends after the
+                        // user explicitly connects chat with the right-side control.
+                        return .handled
+                    } else if aiMode.isActive {
+                        submitAIQuery()
+                    } else {
+                        // L1/L2: Execute selected result
+                        executeSelectedResult()
+                    }
+                    return .handled
+                    },
+                    onTab: {
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    if isL2ContextActive && !isGlobalContextActive {
+                        return .handled
+                    }
+
+                    // Tab on submenu ghost — lock parent if not yet locked; execute if already locked
+                    if let subCtx = submenuGhostContext, !subCtx.children.isEmpty {
+                        if lockedSubmenuParent == nil {
+                            // First Tab: lock the parent as a chip, clear all app-detection state
+                            withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                                lockedSubmenuParent = subCtx.parent
+                                searchState.query = ""
+                            }
+                            l2.appCompletion = nil
+                            l2.showResultsPopover = false
+                            crossAppMenuItems = []
+                            cachedDockPills = []
+                            return .handled
+                        } else if let firstChild = subCtx.children.first {
+                            // Already locked + Tab: execute the highlighted child
+                            let frontPID =
+                                AppDelegate.shared?.previousFrontmostApp?.processIdentifier ?? 0
+                            let pid = firstChild.sourcePID != 0 ? firstChild.sourcePID : frontPID
+                            let path = firstChild.path
+                            let sc = firstChild.shortcutChar
+                            let mod = firstChild.shortcutModifiers
+                            searchState.query = ""
+                            lockedSubmenuParent = nil
+                            executeDockMenuAction(
+                                sourcePID: pid, path: path, shortcutChar: sc, shortcutModifiers: mod)
                             return .handled
                         }
                     }
-                }
+                    // Tab accepts pill ghost completion (prefix match on pill name)
+                    if let ghost = ghostPillCompletion {
+                        searchState.query = ghost.name
+                        return .handled
+                    }
 
-                // Global context: Tab fills ghost text from top/focused match.
-                // Scope resolves inline from query — no dock switch.
-                if isGlobalContextActive {
-                    let q = searchState.query.trimmingCharacters(in: .whitespaces)
-                    if !q.isEmpty {
-                        // Match the event-monitor path: complete the visible app name before
-                        // turning it into a scope chip. Tab and Right Arrow now share one
-                        // completion transaction.
-                        if acceptTopGlobalAppGhostCompletionIfPossible() {
-                            return .handled
-                        }
-                        // Tab completes whatever the input is ghosting, which is the row
-                        // under the highlight. That logic already exists and Right Arrow uses
-                        // it: it follows the visible selection, enters the scope for a
-                        // syscmd:// or cli:// row, and fills the title for an app.
-                        //
-                        // Tab used to run its own lookup instead — focused-or-top *app*
-                        // result — and system commands live in appResults alongside apps. So
-                        // with "Screenshots · System Command" highlighted and ghosted, Tab
-                        // skipped it and filled the first app in the list: typing "scree"
-                        // ghosted "screenshot" and completed to "iPhone Mirroring".
-                        //
-                        // One implementation for both keys, so they cannot disagree about
-                        // what the user is pointing at.
-                        if acceptTopGlobalAppGhostCompletionIfPossible() {
-                            return .handled
-                        }
-                        let hit =
-                            focusedGlobalAppResultForInputPreview()
-                            ?? topGlobalAppResultForInputPreview()
-                        if let result = hit {
-                            if let bundleId = bundleIdentifier(forApplicationResult: result),
-                                activateGlobalInlineScope(result: result, bundleID: bundleId)
-                            {
+                    // L1 mode: Tab fills ghost from selected result when it's a prefix match.
+                    if !isL2ContextActive, !isGlobalContextActive {
+                        let typed = searchState.query.trimmingCharacters(in: .whitespaces)
+                        if !typed.isEmpty,
+                            let idx = searchState.selectedIndex,
+                            idx < searchState.results.count
+                        {
+                            let result = searchState.results[idx]
+                            if result.title.lowercased().hasPrefix(typed.lowercased()) {
+                                searchState.query = result.title
                                 return .handled
                             }
-                            searchState.query = result.title
-                            focusedAppPillIndex = nil
+                        }
+                    }
+
+                    // Global context: Tab fills ghost text from top/focused match.
+                    // Scope resolves inline from query — no dock switch.
+                    if isGlobalContextActive {
+                        let q = searchState.query.trimmingCharacters(in: .whitespaces)
+                        if !q.isEmpty {
+                            // Match the event-monitor path: complete the visible app name before
+                            // turning it into a scope chip. Tab and Right Arrow now share one
+                            // completion transaction.
+                            if acceptTopGlobalAppGhostCompletionIfPossible() {
+                                return .handled
+                            }
+                            // Tab completes whatever the input is ghosting, which is the row
+                            // under the highlight. That logic already exists and Right Arrow uses
+                            // it: it follows the visible selection, enters the scope for a
+                            // syscmd:// or cli:// row, and fills the title for an app.
+                            //
+                            // Tab used to run its own lookup instead — focused-or-top *app*
+                            // result — and system commands live in appResults alongside apps. So
+                            // with "Screenshots · System Command" highlighted and ghosted, Tab
+                            // skipped it and filled the first app in the list: typing "scree"
+                            // ghosted "screenshot" and completed to "iPhone Mirroring".
+                            //
+                            // One implementation for both keys, so they cannot disagree about
+                            // what the user is pointing at.
+                            if acceptTopGlobalAppGhostCompletionIfPossible() {
+                                return .handled
+                            }
+                            let hit =
+                                focusedGlobalAppResultForInputPreview()
+                                ?? topGlobalAppResultForInputPreview()
+                            if let result = hit {
+                                if let bundleId = bundleIdentifier(forApplicationResult: result),
+                                    activateGlobalInlineScope(result: result, bundleID: bundleId)
+                                {
+                                    return .handled
+                                }
+                                searchState.query = result.title
+                                focusedAppPillIndex = nil
+                                return .handled
+                            }
+                        }
+                    }
+
+                    // Non-global context: Tab may enter explicit app sub-scope
+                    if !isGlobalContextActive {
+                        if activateTypedAppScopeIfPossible() {
                             return .handled
                         }
                     }
-                }
 
-                // Non-global context: Tab may enter explicit app sub-scope
-                if !isGlobalContextActive {
-                    if activateTypedAppScopeIfPossible() {
+                    if isL2ContextActive && !isGlobalContextActive {
+                        if focusFirstDockPillIfAvailable(for: searchState.query) {
+                            return .handled
+                        }
                         return .handled
                     }
-                }
 
-                if isL2ContextActive && !isGlobalContextActive {
-                    if focusFirstDockPillIfAvailable(for: searchState.query) {
+                    // Tab → always open context panel for selected result (files, folders, apps, etc.)
+                    if let idx = searchState.selectedIndex, idx < searchState.results.count {
+                        let result = searchState.results[idx]
+                        activateSearchContext(for: result)
                         return .handled
                     }
-                    return .handled
-                }
 
-                // Tab → always open context panel for selected result (files, folders, apps, etc.)
-                if let idx = searchState.selectedIndex, idx < searchState.results.count {
-                    let result = searchState.results[idx]
-                    activateSearchContext(for: result)
+                    toggleAIModePreservingLayer()
                     return .handled
-                }
-
-                toggleAIModePreservingLayer()
-                return .handled
-            }
-            .onKeyPress(.escape) {
-                // Inline Share Sheet: ESC exits back to normal dock
-                if inlineShareActive {
-                    inlineShareActive = false
-                    isSearchFieldFocused = true
-                    scheduleDockPillRebuild(
-                        query: searchState.query, delayNanoseconds: 0, refreshContext: false)
-                    return .handled
-                }
-                // Clipboard Scope closes the dock outright rather than falling back.
-                if exitClipboardScopeClosingLauncher() { return .handled }
-                // App scope or app panel: ESC exits scope and returns to L1 (stays open)
-                if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
-                    || searchState.contextApp != nil
-                {
-                    let wasAppScope = l2.targetApp != nil
-                    clearSearchContext()
-                    remPanelIsProcessing = false
-                    remIsInstalled = nil
-                    systemDataResults = []
-                    searchState.lastSmartQuery = ""
-                    // Restore global app-search mode so dock shows app search, not empty limbo
-                    if wasAppScope {
-                        globalContextActivation = GlobalContextActivation(autoActivated: false)
-                    }
-                    isSearchFieldFocused = true
-                    return .handled
-                }
-                // Pills focused (no scope): ESC returns focus to search field, keeps dock open
-                if l2.focusedPillIndex != nil || focusedAppPillIndex != nil
-                    || searchState.selectedIndex != nil
-                {
-                    l2.focusedPillIndex = nil
-                    focusedAppPillIndex = nil
-                    l2.pillNavViaKeyboard = false
-                    searchState.selectedIndex = nil
-                    isSearchFieldFocused = true
-                    return .handled
-                }
-                // Dock visible, nothing active: ESC hides dock and returns to previous app
-                AppDelegate.shared?.hideLauncher(force: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
-                    AppDelegate.shared?.previousFrontmostApp?.activate(options: [
-                        .activateIgnoringOtherApps
-                    ])
-                }
-                return .handled
-            }
-            .onKeyPress(.delete) {
-                // Quick Note editor: Backspace deletes characters in the note.
-                if activeNotepadScopeCommand != nil { return .ignored }
-                let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-                if text.isEmpty {
-                    // Backspace on an empty field leaves a compact scope. Clipboard exits
-                    // the dock entirely; Notifications still steps out to the surface below.
-                    if exitClipboardScopeClosingLauncher() { return .handled }
-                    if searchState.activeSmartQueryKey != nil {
-                        clearSearchContext()
-                        isSearchFieldFocused = true
-                        scheduleDockPillRebuild(
-                            query: "", delayNanoseconds: 0, refreshContext: false)
-                        requestWindowSizeUpdate(reason: .modeChanged)
-                        return .handled
-                    }
-                    // Exit inline Share Sheet first
+                    },
+                    onEscape: {
+                    // Inline Share Sheet: ESC exits back to normal dock
                     if inlineShareActive {
                         inlineShareActive = false
                         isSearchFieldFocused = true
                         scheduleDockPillRebuild(
-                            query: "", delayNanoseconds: 0, refreshContext: false)
+                            query: searchState.query, delayNanoseconds: 0, refreshContext: false)
                         return .handled
                     }
-                    // Unlock locked submenu parent first
-                    if lockedSubmenuParent != nil {
-                        withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
-                            lockedSubmenuParent = nil
-                        }
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    // Dismiss file/text selection chip (same as clicking "-")
-                    if hasSelectionScopeSurface {
-                        dismissSelectionAndStayInGlobalContext()
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    if isContextDockChatConnected,
-                        AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
-                    {
-                        withAnimation(.dockStandard) {
-                            exitContextDockChatSheet()
-                            WebResearchSession.shared.clear()
-                            searchState.revision += 1
-                        }
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    if shouldShowContextDockChatSheet || l2.showChatPopover {
-                        withAnimation(.dockStandard) {
-                            exitContextDockChatBackToContext()
-                        }
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    if l2.chatArmed {
-                        withAnimation(.dockStandard) {
-                            exitContextDockChatBackToContext()
-                        }
-                        isSearchFieldFocused = true
-                        return .handled
-                    }
-                    // Exit app/smart-query scope — same as Esc, restores L1
-                    if l2.targetApp != nil || searchState.contextApp != nil
-                        || searchState.activeSmartQueryKey != nil
+                    // Clipboard Scope closes the dock outright rather than falling back.
+                    if exitClipboardScopeClosingLauncher() { return .handled }
+                    // App scope or app panel: ESC exits scope and returns to L1 (stays open)
+                    if l2.targetApp != nil || searchState.activeSmartQueryKey != nil
+                        || searchState.contextApp != nil
                     {
                         let wasAppScope = l2.targetApp != nil
                         clearSearchContext()
@@ -2224,146 +2126,247 @@ extension LauncherView {
                         remIsInstalled = nil
                         systemDataResults = []
                         searchState.lastSmartQuery = ""
+                        // Restore global app-search mode so dock shows app search, not empty limbo
                         if wasAppScope {
                             globalContextActivation = GlobalContextActivation(autoActivated: false)
                         }
                         isSearchFieldFocused = true
                         return .handled
                     }
-                }
-                // Browsing a Finder folder with an empty field → pop to the parent
-                // folder, then back out to the search results.
-                if popFinderBrowseFromEmptyBackspaceIfNeeded() { return .handled }
-                return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
-            }
-            // Left Arrow on an empty field (no scope chips) → standalone General AI
-            // chat. With text or a scope chip present it stays a normal cursor/scope key.
-            .onKeyPress(.leftArrow) {
-                if searchState.activeSmartQueryKey == "clipboard",
-                    clipboardSourcePillFocusIndex != nil
-                {
-                    return retreatClipboardSourcePill() ? .handled : .ignored
-                }
-                guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    allGlobalInlineAppScopes.isEmpty,
-                    activeNotepadScopeCommand == nil,
-                    isGlobalContextActive || showContextInDock,
-                    !aiMode.isActive,
-                    !showMediaLayer,
-                    !isCompactSmartScope,
-                    // Never hop out of an open frontmost-app chat — Left Arrow only enters
-                    // General Chat from a bare dock, not from an active scoped conversation.
-                    !shouldShowContextDockChatSheet,
-                    !l2.chatArmed,
-                    !l2.showChatPopover,
-                    l2.targetApp == nil,
-                    settings.enableAIMode
-                else { return .ignored }
-                enterGeneralChatPreservingLayer()
-                return .handled
-            }
-            // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
-            // use Right Arrow for app scope navigation.
-            .onKeyPress(.rightArrow) {
-                if activeNotepadScopeCommand != nil { return .ignored }
-                // Finder desktop: drill into the focused folder, showing its contents.
-                // Only when the caret is at the end so it never hijacks cursor movement
-                // while editing the query.
-                if searchInputCursorIsAtEnd(), drillIntoFocusedFinderFolderIfPossible() {
-                    return .handled
-                }
-                if searchState.activeSmartQueryKey == "clipboard",
-                    clipboardSourcePillFocusIndex != nil
-                {
-                    return advanceClipboardSourcePill() ? .handled : .ignored
-                }
-                // Right arrow on a focused multi-file clip expands its file stack; then
-                // Down arrow walks into the files.
-                if let stackEntry = focusedClipboardStackEntry(),
-                    !expandedClipboardEntryIDs.contains(stackEntry.id)
-                {
-                    toggleClipboardStackExpansion(stackEntry)
-                    return .handled
-                }
-                if acceptTopGlobalAppGhostCompletionIfPossible() {
-                    return .handled
-                }
-                // Entering an app scope belongs to Tab alone. Both keys used to do it, and
-                // Right Arrow is the one that costs something: inside a text field it means
-                // "move the caret", so editing mid-query could change scope instead. Tab has
-                // no text-editing meaning and is the launcher convention. Right Arrow keeps
-                // its own jobs above and below — accepting ghost text, drilling into a Finder
-                // folder, walking clipboard entries.
-                if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    focusTopGlobalAppResultIfPossible()
-                {
-                    return .handled
-                }
-                if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    currentSelectionActivationSnapshot(refresh: true) != nil
-                {
-                    openSelectionContextFromTrailingButton()
-                    return .handled
-                }
-                if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    openCurrentFinderFolderAIChatIfNeeded()
-                {
-                    return .handled
-                }
-                // In a browser with an empty field, right-arrow grabs the current
-                // page and immediately arms app-scoped chat for that page. Verify against
-                // the LIVE frontmost app: a stale cached bundle made this fire while the
-                // user was in a non-browser app (VS Code), attaching a browser page to
-                // that app's chat.
-                let liveFrontmostBundle =
-                    AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
-                    ?? frontmost.bundleID
-                if isGlobalContextActive || showContextInDock,
-                    searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    !aiMode.isActive,
-                    !showMediaLayer,
-                    !isCompactSmartScope,
-                    l2.targetApp == nil,
-                    AXWebReader.shared.isBrowser(bundleId: liveFrontmostBundle),
-                    liveFrontmostBundle == frontmost.bundleID,
-                    addCurrentSafariPageToContextFromKeyboard()
-                {
-                    searchState.revision += 1
-                    openInlineAIChatPanel()
-                    return .handled
-                }
-                if isGlobalContextActive || showContextInDock,
-                    searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                    !aiMode.isActive,
-                    !showMediaLayer,
-                    !isCompactSmartScope,
-                    frontmost.bundleID != "com.apple.finder"
-                {
-                    openInlineAIChatPanel()
-                    return .handled
-                }
-                if let findToken = lockedFindToken,
-                    findToken.hasChildMenu,
-                    searchInputCursorIsAtEnd()
-                {
-                    withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
-                        showFindTokenMenu = true
+                    // Pills focused (no scope): ESC returns focus to search field, keeps dock open
+                    if l2.focusedPillIndex != nil || focusedAppPillIndex != nil
+                        || searchState.selectedIndex != nil
+                    {
+                        l2.focusedPillIndex = nil
+                        focusedAppPillIndex = nil
+                        l2.pillNavViaKeyboard = false
+                        searchState.selectedIndex = nil
+                        isSearchFieldFocused = true
+                        return .handled
+                    }
+                    // Dock visible, nothing active: ESC hides dock and returns to previous app
+                    AppDelegate.shared?.hideLauncher(force: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                        AppDelegate.shared?.previousFrontmostApp?.activate(options: [
+                            .activateIgnoringOtherApps
+                        ])
                     }
                     return .handled
-                }
-                if let completion = l2.appCompletion,
-                    !completion.ghost.isEmpty,
-                    searchInputCursorIsAtEnd()
-                {
-                    let full = completion.appName
-                    if !full.isEmpty && searchState.query.lowercased() != full.lowercased() {
-                        withAnimation(.easeInOut(duration: 0.1)) {
-                            searchState.query = full
+                    },
+                    onDelete: {
+                    // Quick Note editor: Backspace deletes characters in the note.
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    let text = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if text.isEmpty {
+                        // Backspace on an empty field leaves a compact scope. Clipboard exits
+                        // the dock entirely; Notifications still steps out to the surface below.
+                        if exitClipboardScopeClosingLauncher() { return .handled }
+                        if searchState.activeSmartQueryKey != nil {
+                            clearSearchContext()
+                            isSearchFieldFocused = true
+                            scheduleDockPillRebuild(
+                                query: "", delayNanoseconds: 0, refreshContext: false)
+                            requestWindowSizeUpdate(reason: .modeChanged)
+                            return .handled
+                        }
+                        // Exit inline Share Sheet first
+                        if inlineShareActive {
+                            inlineShareActive = false
+                            isSearchFieldFocused = true
+                            scheduleDockPillRebuild(
+                                query: "", delayNanoseconds: 0, refreshContext: false)
+                            return .handled
+                        }
+                        // Unlock locked submenu parent first
+                        if lockedSubmenuParent != nil {
+                            withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
+                                lockedSubmenuParent = nil
+                            }
+                            isSearchFieldFocused = true
+                            return .handled
+                        }
+                        // Dismiss file/text selection chip (same as clicking "-")
+                        if hasSelectionScopeSurface {
+                            dismissSelectionAndStayInGlobalContext()
+                            isSearchFieldFocused = true
+                            return .handled
+                        }
+                        if isContextDockChatConnected,
+                            AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
+                        {
+                            withAnimation(.dockStandard) {
+                                exitContextDockChatSheet()
+                                WebResearchSession.shared.clear()
+                                searchState.revision += 1
+                            }
+                            isSearchFieldFocused = true
+                            return .handled
+                        }
+                        if shouldShowContextDockChatSheet || l2.showChatPopover {
+                            withAnimation(.dockStandard) {
+                                exitContextDockChatBackToContext()
+                            }
+                            isSearchFieldFocused = true
+                            return .handled
+                        }
+                        if l2.chatArmed {
+                            withAnimation(.dockStandard) {
+                                exitContextDockChatBackToContext()
+                            }
+                            isSearchFieldFocused = true
+                            return .handled
+                        }
+                        // Exit app/smart-query scope — same as Esc, restores L1
+                        if l2.targetApp != nil || searchState.contextApp != nil
+                            || searchState.activeSmartQueryKey != nil
+                        {
+                            let wasAppScope = l2.targetApp != nil
+                            clearSearchContext()
+                            remPanelIsProcessing = false
+                            remIsInstalled = nil
+                            systemDataResults = []
+                            searchState.lastSmartQuery = ""
+                            if wasAppScope {
+                                globalContextActivation = GlobalContextActivation(autoActivated: false)
+                            }
+                            isSearchFieldFocused = true
+                            return .handled
+                        }
+                    }
+                    // Browsing a Finder folder with an empty field → pop to the parent
+                    // folder, then back out to the search results.
+                    if popFinderBrowseFromEmptyBackspaceIfNeeded() { return .handled }
+                    return detachFinderFolderQueryModeFromEmptyBackspace() ? .handled : .ignored
+                    },
+                    // Left Arrow on an empty field (no scope chips) → standalone General AI
+                    // chat. With text or a scope chip present it stays a normal cursor/scope key.
+                    onLeftArrow: {
+                    if searchState.activeSmartQueryKey == "clipboard",
+                        clipboardSourcePillFocusIndex != nil
+                    {
+                        return retreatClipboardSourcePill() ? .handled : .ignored
+                    }
+                    guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        allGlobalInlineAppScopes.isEmpty,
+                        activeNotepadScopeCommand == nil,
+                        isGlobalContextActive || showContextInDock,
+                        !aiMode.isActive,
+                        !showMediaLayer,
+                        !isCompactSmartScope,
+                        // Never hop out of an open frontmost-app chat — Left Arrow only enters
+                        // General Chat from a bare dock, not from an active scoped conversation.
+                        !shouldShowContextDockChatSheet,
+                        !l2.chatArmed,
+                        !l2.showChatPopover,
+                        l2.targetApp == nil,
+                        settings.enableAIMode
+                    else { return .ignored }
+                    enterGeneralChatPreservingLayer()
+                    return .handled
+                    },
+                    // Right Arrow: accept visible ghost text first. If no prefix ghost exists,
+                    // use Right Arrow for app scope navigation.
+                    onRightArrow: {
+                    if activeNotepadScopeCommand != nil { return .ignored }
+                    // Finder desktop: drill into the focused folder, showing its contents.
+                    // Only when the caret is at the end so it never hijacks cursor movement
+                    // while editing the query.
+                    if searchInputCursorIsAtEnd(), drillIntoFocusedFinderFolderIfPossible() {
+                        return .handled
+                    }
+                    if searchState.activeSmartQueryKey == "clipboard",
+                        clipboardSourcePillFocusIndex != nil
+                    {
+                        return advanceClipboardSourcePill() ? .handled : .ignored
+                    }
+                    // Right arrow on a focused multi-file clip expands its file stack; then
+                    // Down arrow walks into the files.
+                    if let stackEntry = focusedClipboardStackEntry(),
+                        !expandedClipboardEntryIDs.contains(stackEntry.id)
+                    {
+                        toggleClipboardStackExpansion(stackEntry)
+                        return .handled
+                    }
+                    if acceptTopGlobalAppGhostCompletionIfPossible() {
+                        return .handled
+                    }
+                    // Entering an app scope belongs to Tab alone. Both keys used to do it, and
+                    // Right Arrow is the one that costs something: inside a text field it means
+                    // "move the caret", so editing mid-query could change scope instead. Tab has
+                    // no text-editing meaning and is the launcher convention. Right Arrow keeps
+                    // its own jobs above and below — accepting ghost text, drilling into a Finder
+                    // folder, walking clipboard entries.
+                    if !searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        focusTopGlobalAppResultIfPossible()
+                    {
+                        return .handled
+                    }
+                    if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        currentSelectionActivationSnapshot(refresh: true) != nil
+                    {
+                        openSelectionContextFromTrailingButton()
+                        return .handled
+                    }
+                    if searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        openCurrentFinderFolderAIChatIfNeeded()
+                    {
+                        return .handled
+                    }
+                    // In a browser with an empty field, right-arrow grabs the current
+                    // page and immediately arms app-scoped chat for that page. Verify against
+                    // the LIVE frontmost app: a stale cached bundle made this fire while the
+                    // user was in a non-browser app (VS Code), attaching a browser page to
+                    // that app's chat.
+                    let liveFrontmostBundle =
+                        AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
+                        ?? frontmost.bundleID
+                    if isGlobalContextActive || showContextInDock,
+                        searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        !aiMode.isActive,
+                        !showMediaLayer,
+                        !isCompactSmartScope,
+                        l2.targetApp == nil,
+                        AXWebReader.shared.isBrowser(bundleId: liveFrontmostBundle),
+                        liveFrontmostBundle == frontmost.bundleID,
+                        addCurrentSafariPageToContextFromKeyboard()
+                    {
+                        searchState.revision += 1
+                        openInlineAIChatPanel()
+                        return .handled
+                    }
+                    if isGlobalContextActive || showContextInDock,
+                        searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        !aiMode.isActive,
+                        !showMediaLayer,
+                        !isCompactSmartScope,
+                        frontmost.bundleID != "com.apple.finder"
+                    {
+                        openInlineAIChatPanel()
+                        return .handled
+                    }
+                    if let findToken = lockedFindToken,
+                        findToken.hasChildMenu,
+                        searchInputCursorIsAtEnd()
+                    {
+                        withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {
+                            showFindTokenMenu = true
                         }
                         return .handled
                     }
-                }
-                return .ignored
-            }
+                    if let completion = l2.appCompletion,
+                        !completion.ghost.isEmpty,
+                        searchInputCursorIsAtEnd()
+                    {
+                        let full = completion.appName
+                        if !full.isEmpty && searchState.query.lowercased() != full.lowercased() {
+                            withAnimation(.easeInOut(duration: 0.1)) {
+                                searchState.query = full
+                            }
+                            return .handled
+                        }
+                    }
+                    return .ignored
+                    }
+                ))
     }
 }

@@ -39,6 +39,10 @@ enum AITypedInvocationKind: String, Codable, Sendable {
     case terminal
     case adapterAction
     case menuAction
+    /// Press what the app's LIVE menu bar has, when the cached map does not have it.
+    case operateApp
+    /// Run a script the app's own AGENT.md declares.
+    case appScript
 }
 
 struct AITypedInvocation: Equatable, Sendable {
@@ -247,6 +251,52 @@ enum AITypedInvocationResolver {
                     return AITypedInvocation(
                         kind: .menuAction, capabilityID: "app.menu.click",
                         arguments: args, requiresApproval: false)
+                }
+            }
+
+            // The rung below the cached menu: {"operate_app":{"target":"Check for Updates"}}.
+            //
+            // A provider with no tools of its own reaches Computer Use only here. Without this
+            // directive the owner's own chat — Claude Code — could see `Check for Updates…`
+            // was missing from the menu cache and had no way to look at the live menu bar,
+            // which is the one thing that would have found it.
+            if let call = root["operate_app"] as? [String: Any] {
+                let target = ((call["target"] as? String)
+                    ?? (call["item"] as? String)
+                    ?? (call["command"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !target.isEmpty {
+                    var args: [String: String] = ["target": target]
+                    if let reason = call["reason"] as? String, !reason.isEmpty {
+                        args["reason"] = reason
+                    }
+                    if let b = (call["bundleId"] as? String) ?? (call["app"] as? String),
+                        !b.isEmpty {
+                        args["bundleId"] = b
+                    }
+                    return AITypedInvocation(
+                        kind: .operateApp, capabilityID: "computerUse.pressMenuItem",
+                        arguments: args, requiresApproval: true)
+                }
+            }
+
+            // A script the app's profile declares: {"app_script": {"name": "tabs-to-md.sh"}}.
+            //
+            // Without this a provider with no tools of its own cannot reach `run_app_script`
+            // at all — asked to run a declared script it went hunting the file system with
+            // shell commands, which is both the wrong answer and the wrong authority.
+            if let call = root["app_script"] as? [String: Any] {
+                let name = ((call["name"] as? String)
+                    ?? (call["script"] as? String) ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !name.isEmpty {
+                    var args: [String: String] = ["name": name]
+                    if let reason = call["reason"] as? String, !reason.isEmpty {
+                        args["reason"] = reason
+                    }
+                    return AITypedInvocation(
+                        kind: .appScript, capabilityID: "appAgent.runScript",
+                        arguments: args, requiresApproval: true)
                 }
             }
 

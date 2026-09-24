@@ -79,6 +79,8 @@ final class GlobalSearchService {
         /// and the corner could not find one by any name.
         case userExtension(id: UUID)
         case browserURL(url: URL, browserBundleId: String, browserName: String, kind: String, domain: String)
+        /// An installed plugin, opened in its own host rather than dispatched like a command.
+        case plugin(id: String)
     }
 
     struct SearchDocument {
@@ -460,6 +462,18 @@ final class GlobalSearchService {
             if let bid = appBundleId {
                 boost += min(AppUsageLearner.shared.score(forBundleID: bid) * 75.0, 520)
             }
+        case .plugin:
+            // Learned like a Global Command, for the same reason: run by name, belonging to
+            // no app. A migrated plugin also inherits nothing from the command it replaced —
+            // its usage key is its own, so the ranking starts fresh rather than borrowing.
+            boost += min(
+                AppUsageLearner.shared.blendedActionScore(
+                    trackingKey: doc.usageTrackingKey,
+                    visibleAction: doc.title,
+                    inBundleID: nil
+                ) * 85.0,
+                680
+            )
         case .userExtension:
             // Learned like a Global Command: something the user runs by name, belonging to
             // no app.
@@ -758,6 +772,35 @@ extension GlobalSearchService.SearchDocument {
             icon: icon,
             usageTrackingKey: "userext:\(ext.id.uuidString)",
             action: .userExtension(id: ext.id)
+        )
+    }
+
+    /// An installed plugin, indexed by the same terms the Plugins page shows: its name, its
+    /// description and the keywords its author wrote — never the migration bookkeeping.
+    init(plugin manifest: PluginManifest, icon: NSImage?) {
+        let norm = AppMenuCapabilityCache.normalize(manifest.name)
+        var aliases = PluginSupersession.userVisibleKeywords(of: manifest)
+            .map(AppMenuCapabilityCache.normalize)
+        let description = AppMenuCapabilityCache.normalize(manifest.description)
+        if !description.isEmpty { aliases.append(description) }
+        aliases = Array(Set(aliases.filter { !$0.isEmpty }))
+
+        self.init(
+            id: "plugin://\(manifest.id)",
+            title: manifest.name,
+            subtitle: manifest.description.isEmpty ? "Plugin" : manifest.description,
+            bundleId: "plugin://\(manifest.id)",
+            filePath: nil,
+            normalizedTitle: norm,
+            titleWords: norm.split(separator: " ").map(String.init),
+            acronym: Self.acronym(from: norm),
+            aliases: aliases,
+            aliasWords: Self.words(fromAliases: aliases),
+            sourceKind: .systemCommand,
+            rankingBoost: 0,
+            icon: icon,
+            usageTrackingKey: "plugin:\(manifest.id)",
+            action: .plugin(id: manifest.id)
         )
     }
 

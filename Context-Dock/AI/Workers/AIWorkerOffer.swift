@@ -19,6 +19,27 @@ enum AIWorkerOffer {
         return AIWorkerKind(rawValue: String(choiceID.dropFirst(prefix.count)))
     }
 
+    /// Whether this rung is reached at all.
+    ///
+    /// A worker costs minutes and money where a linked route costs neither, so the ladder only
+    /// arrives here once nothing linked could carry the request out. That ordering was a bare
+    /// `sendChoices.isEmpty` at the call site and nothing held it: deleting the condition would
+    /// have started offering a specialist alongside routes that already work, and no test would
+    /// have failed. It is a function now, for the same reason
+    /// `ComputerUseFallback.shouldOffer` is one — the rung below this makes its own ordering
+    /// checkable, and this one should too.
+    ///
+    /// `hasLinkedRoute` is the question "could anything already linked do this", not "did it
+    /// succeed". A route that exists and failed is still a route; failing over to a worker
+    /// because a command errored would be a different decision, and not this one.
+    static func shouldOffer(hasLinkedRoute: Bool, task: AIWorkerTask?, workers: [AIWorker])
+        -> Bool
+    {
+        guard !hasLinkedRoute else { return false }
+        guard let task else { return false }  // not work, or outside every specialist's domain
+        return !choices(for: task, workers: workers).isEmpty
+    }
+
     static func choices(for task: AIWorkerTask, workers: [AIWorker]) -> [ActionChoice] {
         workers
             .filter { !$0.domains.isDisjoint(with: task.domains) }

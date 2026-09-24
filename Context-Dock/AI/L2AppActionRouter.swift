@@ -411,7 +411,9 @@ final class L2AppActionRouter {
         var matches: [L2AppActionMatch] = []
 
         for action in adapter.actions {
-            let actionScore = score(action: action, against: actionQuery, fullQuery: fullQuery)
+            let actionScore = score(
+                action: action, against: actionQuery, fullQuery: fullQuery,
+                appName: adapter.appName)
             guard actionScore > 0 else { continue }
 
             matches.append(L2AppActionMatch(
@@ -444,10 +446,35 @@ final class L2AppActionRouter {
         return score
     }
 
-    private func score(action: AdapterAction, against actionQuery: String, fullQuery: String) -> Double {
+    /// Triggers worth scoring inside an app's own scope.
+    ///
+    /// A trigger that is the app's own name matches everything said there, because the app's
+    /// name is in the sentence. Asked "new chat on claude" in the Claude scope, both seeded
+    /// Claude actions list `claude` as a trigger, `actionQuery.contains(trigger)` scored 78 for
+    /// each, and the app opened the MCP documentation page — a confident answer to a question
+    /// nobody asked.
+    ///
+    /// Only the action-level score is filtered. Choosing *which app* a request is about still
+    /// uses the name, and should; that is a different function.
+    nonisolated static func meaningfulTriggers(
+        _ triggers: [String], forAppNamed appName: String
+    ) -> [String] {
+        let name = appName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return triggers }
+        let nameWords = Set(name.split(separator: " ").map(String.init))
+        return triggers.filter { trigger in
+            let t = trigger.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            return !t.isEmpty && t != name && !nameWords.contains(t)
+        }
+    }
+
+    private func score(
+        action: AdapterAction, against actionQuery: String, fullQuery: String, appName: String
+    ) -> Double {
         let normalizedName = normalize(action.name)
         let normalizedDescription = normalize(action.description)
-        let normalizedTriggers = action.triggers.map(normalize)
+        let normalizedTriggers = Self.meaningfulTriggers(action.triggers, forAppNamed: appName)
+            .map(normalize)
 
         var score = 0.0
 

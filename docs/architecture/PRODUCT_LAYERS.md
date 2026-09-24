@@ -34,6 +34,9 @@ Rules:
 - Verify live state only when needed for execution.
 - Rank installed and recent apps high.
 
+Plugins are Global Context's extension unit — see [Plugins](PLUGINS.md). A plugin is found
+and launched here; its `panel` filters as the user types; it never converses in this layer.
+
 ## Context Dock
 
 Context Dock = Frontmost App Command Layer.

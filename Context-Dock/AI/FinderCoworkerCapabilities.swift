@@ -744,6 +744,10 @@ enum FinderCoworkerCapabilities {
                 guard !hits.isEmpty else {
                     return .init(success: true, output: "No files matched \"\(query)\".")
                 }
+                // The same hits as chat rows. The table below is drawn by the Preview
+                // composer only; every chat surface reads these.
+                ChatResultRowCollector.shared.addFiles(
+                    Array(hits.prefix(30)), scope: request.chatScope)
                 CapabilityResultStore.shared.publish(
                     CapabilityResultTable(
                         capabilityID: "finder.searchFiles",
@@ -797,6 +801,8 @@ enum FinderCoworkerCapabilities {
                     let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory ?? false
                     return "\(isDir ? "📁" : "📄") \(url.lastPathComponent)"
                 }
+                ChatResultRowCollector.shared.addFiles(
+                    Array(items.prefix(30)), scope: request.chatScope)
                 CapabilityResultStore.shared.publish(
                     CapabilityResultTable(
                         capabilityID: "finder.listFolder",

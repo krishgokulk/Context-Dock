@@ -189,7 +189,13 @@ class AIProviderService: ObservableObject {
         conversationHistory: [ChatMessage] = [],
         additionalContextPrompt: String = "",
         attachments: [AIAttachment] = [],
-        surfaceScoped: Bool = false
+        surfaceScoped: Bool = false,
+        /// What the provider is doing right now, for surfaces that show live steps.
+        ///
+        /// Only the tool-carrying path reported this, so a Claude Code turn — which runs a
+        /// CLI with its own tools and reports every one of them — sat silent until it
+        /// finished. The owner watched an app be upgraded with no account of how.
+        onStatus: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
 
         #if DEBUG
@@ -286,7 +292,8 @@ class AIProviderService: ObservableObject {
                     message: message, history: conversationHistory),
                 systemPrompt: contextPrompt,
                 model: AppSettings.shared.claudeCodeModel.isEmpty
-                    ? nil : AppSettings.shared.claudeCodeModel)
+                    ? nil : AppSettings.shared.claudeCodeModel,
+                onProgress: onStatus.map { report in { step in report(step) } })
             currentResponse = response
             return response
         }

@@ -162,6 +162,42 @@ final class ClaudeCodeBridge {
         return NSHomeDirectory()
     }
 
+    /// One line describing a Claude Code tool call, in the words of the work.
+    ///
+    /// The CLI reports `tool_use` blocks with their inputs; only the tool's class name was
+    /// being shown. A person watching an app be upgraded wants the command, and a person
+    /// watching a search wants the pattern.
+    nonisolated static func activityLabel(tool: String, input: [String: Any]) -> String {
+        func text(_ key: String) -> String? {
+            guard let value = input[key] else { return nil }
+            let string = String(describing: value).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !string.isEmpty else { return nil }
+            return string.count > 90 ? String(string.prefix(90)) + "…" : string
+        }
+        switch tool {
+        case "Bash":
+            return text("command").map { "Running `\($0)`" } ?? "Running a command"
+        case "Read":
+            return text("file_path").map { "Reading \(URL(fileURLWithPath: $0).lastPathComponent)" }
+                ?? "Reading a file"
+        case "Edit", "Write":
+            return text("file_path").map { "Editing \(URL(fileURLWithPath: $0).lastPathComponent)" }
+                ?? "Editing a file"
+        case "Grep":
+            return text("pattern").map { "Searching for “\($0)”" } ?? "Searching"
+        case "Glob":
+            return text("pattern").map { "Listing \($0)" } ?? "Listing files"
+        case "WebFetch", "WebSearch":
+            return text("url") ?? text("query").map { "Searching the web for “\($0)”" }
+                ?? "Reading the web"
+        case "Task":
+            return text("description").map { "Delegating: \($0)" } ?? "Delegating a subtask"
+        default:
+            let subject = text("path") ?? text("query") ?? text("pattern")
+            return subject.map { "\(tool) \($0)" } ?? tool
+        }
+    }
+
     func ask(
         query: String,
         scope: GeneralChatScope,
@@ -304,11 +340,12 @@ final class ClaudeCodeBridge {
                         for block in blocks where block["type"] as? String == "tool_use" {
                             guard let name = block["name"] as? String else { continue }
                             if !tools.contains(name) { tools.append(name) }
-                            let target = (block["input"] as? [String: Any])
-                                .flatMap { $0["file_path"] ?? $0["pattern"] ?? $0["path"] }
-                                .map { "\($0)" }
-                            let label = target.map { "\(name) \(URL(fileURLWithPath: $0).lastPathComponent)" }
-                                ?? name
+                            // What it is actually doing, not which tool class it used.
+                            // "Bash" told the owner nothing while their app was being
+                            // upgraded underneath it; "Running `brew upgrade vibeproxy`"
+                            // is the same fact, said.
+                            let label = ClaudeCodeBridge.activityLabel(
+                                tool: name, input: block["input"] as? [String: Any] ?? [:])
                             transcript.append("· \(label)")
                             DispatchQueue.main.async {
                                 MainActor.assumeIsolated { onProgress(label) }

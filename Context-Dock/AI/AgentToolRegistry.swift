@@ -676,14 +676,29 @@ final class AgentToolRegistry {
         } ?? allTools
         // Agreeing is not asking. "Do it" carries no verb of its own, so it reads as a
         // question and had the action tools stripped from the very turn it approved.
+        //
+        // `isActionRequest` is consulted alongside `asksOnly` because the two vocabularies
+        // disagree, and the disagreement was costing the user their own saved actions.
+        // Window verbs — minimise, maximise, hide, zoom — are imperatives in
+        // ChatRouteResolver's list and absent from the change-verb list, so "now minimise
+        // code app after 2min" read as a question here and lost run_adapter_action: the
+        // model was handed an app inventory naming the action the user had just saved and
+        // no tool to run it with, and said so.
+        //
+        // Widening the change-verb list instead is the wrong repair — it decides approvals
+        // and write-intent guards everywhere, and it would turn "what does minimise do"
+        // into a write. `isActionRequest` already refuses question shapes ("what", "which",
+        // "how", a trailing "?"), so asking about a verb stays a question while commanding
+        // with one keeps its tools.
         guard !query.isEmpty, !ChatRouteRecovery.isBareConfirmation(query),
-            GeneralAIActionResolver.shared.asksOnly(query)
+            GeneralAIActionResolver.shared.asksOnly(query),
+            !ChatRouteResolver.isActionRequest(query)
         else {
             return policyFiltered
         }
         let actionOnly: Set<String> = [
             "run_command", "spawn_worker", "send_keys", "window_control",
-            "run_adapter_action", "run_menu_command", "compose_message",
+            "run_adapter_action", "run_menu_command", "compose_message", "operate_app",
         ]
         return policyFiltered.filter { !actionOnly.contains($0.name) }
     }
@@ -985,6 +1000,11 @@ final class AgentToolRegistry {
         registerReadingTools()
         // The deterministic resolver, offered rather than applied. See RouteTools.swift.
         registerRouteTools()
+        // The rung below a verified menu, off unless the user turned it on for that app.
+        // See ComputerUseTool.swift.
+        registerComputerUseTool()
+        // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
+        registerAppAgentScriptTool()
 
         register(AgentTool(
             name: "read_tool_result",
@@ -1651,6 +1671,13 @@ final class AgentToolRegistry {
                     "type": "string",
                     "description": "One line on why, shown to the user with the action.",
                 ],
+                "value": [
+                    "type": "string",
+                    "description": "For an action listed as taking a value: the number to "
+                        + "run it with, in the unit the inventory names. Omit it and the "
+                        + "number in the user's own sentence is used, or the action's "
+                        + "default when it names none.",
+                ],
             ],
             required: ["action_id"]
         ) { arguments, context in
@@ -1687,15 +1714,28 @@ final class AgentToolRegistry {
                     output: "\(adapter.appName) has not granted action control.",
                     displayCommand: "run_adapter_action(\(actionID))")
             }
+            // The user's own sentence, not the model's one-line reason. An action that
+            // takes a value reads its number from the query, so running it against
+            // "Requested in chat" could only ever use the default — "minimise after 2min"
+            // would have minimised after the 60 seconds it was saved with, silently.
+            let sentence = context.userRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+            let request = sentence.isEmpty
+                ? (arguments["reason"] as? String ?? "Requested in chat") : sentence
+            let explicitValue = (arguments["value"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let (ok, output) = await AppAdapterManager.shared.execute(
                 action,
                 context: AXContextReader.shared.current,
                 targetBundleId: adapter.bundleId,
-                query: arguments["reason"] as? String ?? "Requested in chat")
+                query: request,
+                value: (explicitValue?.isEmpty == false) ? explicitValue : nil)
+            let ranAt = action.value(for: request, explicit: explicitValue)
+                .map { " at \($0) \(action.valueLabel ?? "")".trimmingCharacters(in: .whitespaces) }
+                ?? ""
             return AgentToolResult(
                 success: ok,
                 output: output.isEmpty
-                    ? (ok ? "Done — \(action.name)." : "Couldn't run \(action.name).")
+                    ? (ok ? "Done — \(action.name)\(ranAt)." : "Couldn't run \(action.name).")
                     : output,
                 displayCommand: "run_adapter_action(\(action.name))")
         })

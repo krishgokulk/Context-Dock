@@ -217,7 +217,6 @@ extension AppChatPromptModel {
         adoptScope(name: Self.globalScopeName, bundleID: "")
         adapterActions = []
         allMenuItems = []
-        hasActed = false
         refreshSelectionForCurrentScope()
         updateMenuMatches()
         set(.prompt)
@@ -251,8 +250,11 @@ extension AppChatPromptModel {
             top: typed.isEmpty
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
-            icons: Array(running.prefix(Self.matchIconLimit)),
-            overflow: max(running.count - Self.matchIconLimit, 0))
+            running: running,
+            // As many as the field can grow to hold on this screen. Four was the count
+            // that fits a 372-point field, and the field is no longer fixed at 372.
+            fieldCapacity: AppChatPromptMetrics.matchIconCapacity(
+                maximumWidth: DockStripPlan.screenBudget))
     }
 
     /// The pills: what is running, and the clipboard when it is holding something.
@@ -347,8 +349,10 @@ extension AppChatPromptModel {
             }
     }
 
-    /// How many app icons fit beside a 372-point field before the rest become "+N".
-    static let matchIconLimit = 4
+    /// Kept for the tests and for any caller with no screen to ask about: the count that
+    /// fits a field at its base width. What the field actually shows is
+    /// `AppChatPromptMetrics.matchIconCapacity(maximumWidth:)`, because the field grows.
+    static let matchIconLimit = AppChatPromptMetrics.matchIconBaseCount
 
     /// Tab takes the top match, the way it does in the dock: the fastest path from three
     /// letters to the thing you meant. Returns false when there is nothing to take, so the
@@ -423,7 +427,6 @@ extension AppChatPromptModel {
             })
         else { return false }
         app.activate()
-        hasActed = true
         touch()
         return true
     }
@@ -439,7 +442,6 @@ extension AppChatPromptModel {
             name: name, bundleID: bundleID,
             suggestions: AppChatSuggestionProvider.suggestions(for: app),
             summary: AppChatSuggestionProvider.summary(for: app))
-        hasActed = false
         loadMenuItems()
         // `loadMenuItems` returns early when the scope is not a running app — a CLI tool
         // never is — so the rows have to be rebuilt here or the scope opens still showing
@@ -485,7 +487,6 @@ extension AppChatPromptModel {
         scopedExtension = ext
         returnsToGlobalScope = true
         adoptScope(name: ext.name, bundleID: "userext://\(ext.id.uuidString)")
-        hasActed = false
         rows = []
         updateGlobalTyping(for: "")
         syncListPhase()
@@ -513,7 +514,6 @@ extension AppChatPromptModel {
         panelConversation.append(ChatMessage(role: .user, content: question))
         query = ""
         isAskingPanel = true
-        hasActed = true
         syncListPhase()
 
         Task { @MainActor [weak self] in
@@ -540,7 +540,6 @@ extension AppChatPromptModel {
         scopedCommand = command
         returnsToGlobalScope = true
         adoptScope(name: command.name, bundleID: "syscmd://\(command.id.uuidString)")
-        hasActed = false
         rows = []
         updateGlobalTyping(for: "")
         syncListPhase()
@@ -713,7 +712,6 @@ extension AppChatPromptModel {
     }
 
     func openGlobalMatchIcon(_ icon: MatchDockIcon) {
-        hasActed = true
         touch()
         if icon.id == Self.clipboardPillID {
             ClipboardPanelController.shared.show()
@@ -884,10 +882,12 @@ extension AppChatPromptModel {
     }
 
     func run(_ row: AppChatRow) {
+        // Taking a row is done with the list: most of these clear the field, and a list
+        // left standing over a cleared field refills with everything the app can do.
+        focusedMenuIndex = nil
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }
-            hasActed = true
             query = ""
             updateMenuMatches()
             touch()
@@ -901,7 +901,6 @@ extension AppChatPromptModel {
             queryChanged()
             touch()
         case .file(let url):
-            hasActed = true
             query = ""
             updateMenuMatches()
             touch()
@@ -934,7 +933,6 @@ extension AppChatPromptModel {
                 scopeIntoCLI(command: command, displayName: displayName)
             }
         case .global(let doc):
-            hasActed = true
             query = ""
             updateMenuMatches()
             touch()
@@ -966,7 +964,6 @@ extension AppChatPromptModel {
     /// its context resolution already live.
     func runAdapterAction(_ action: AdapterAction) {
         let bundleID = appBundleID
-        hasActed = true
         query = ""
         updateMenuMatches()
         touch()
@@ -1037,7 +1034,6 @@ extension AppChatPromptModel {
 
         // Running a command is using the surface: the opening list of what the app can do
         // does not come back afterwards.
-        hasActed = true
         query = ""
         updateMenuMatches()
         touch()

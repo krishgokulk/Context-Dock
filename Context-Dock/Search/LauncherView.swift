@@ -1406,204 +1406,210 @@ struct LauncherView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
 
-            // AI Extension Suggestions Overlay
+            // AI Extension Suggestions Overlay.
+            //
+            // A type of its own, not an inline ZStack: inline, its `.transition` on
+            // `AIModeView` is what made SILGen abort on the Release build. See
+            // `AIExtensionSuggestionsOverlay`.
             if showAIExtensionSuggestions {
-                ZStack {
-                    // Dim background
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                        .onTapGesture {
-                            withAnimation(.spring(response: 0.3)) {
-                                showAIExtensionSuggestions = false
+                AIExtensionSuggestionsOverlay(
+                    currentContext: currentContextBinding,
+                    isVisible: showAIExtensionSuggestionsBinding
+                )
+            }
+
+        }
+        .modifier(
+            LauncherApprovalSubscriptions(
+                adapter: adapterManager.$pendingApproval.eraseToAnyPublisher(),
+                onAdapter: { pending in
+                // Where this belongs is ApprovalCenter's decision now — the same one the chat
+                // window and the preview ask. This block only carries it out: show the card
+                // here, or open the floating panel when no surface will draw it.
+                DispatchQueue.main.async {
+                    let mine = ApprovalCenter.shared.pending(for: .dock) != nil
+                    if let pending {
+                        if mine, dockOwnsInlineApproval {
+                            AdapterApprovalWindowHost.close()
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                pendingAdapterApproval = pending
                             }
-                        }
-
-                    // AI Suggestions View
-                    AIModeView(
-                        currentContext: currentContextBinding,
-                        isVisible: showAIExtensionSuggestionsBinding
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.95)))
-                }
-            }
-
-        }
-        .onReceive(adapterManager.$pendingApproval) { pending in
-            // Where this belongs is ApprovalCenter's decision now — the same one the chat
-            // window and the preview ask. This block only carries it out: show the card
-            // here, or open the floating panel when no surface will draw it.
-            DispatchQueue.main.async {
-                let mine = ApprovalCenter.shared.pending(for: .dock) != nil
-                if let pending {
-                    if mine, dockOwnsInlineApproval {
-                        AdapterApprovalWindowHost.close()
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                            pendingAdapterApproval = pending
-                        }
-                        requestWindowSizeUpdate(reason: .chatChanged)
-                    } else if ApprovalCenter.shared.needsFloatingWindow, !dockOwnsInlineApproval {
-                        pendingAdapterApproval = nil
-                        openAdapterApprovalWindow(request: pending)
-                    } else {
-                        // Another surface draws it.
-                        pendingAdapterApproval = nil
-                        AdapterApprovalWindowHost.close()
-                    }
-                } else {
-                    if pendingAdapterApproval != nil {
-                        withAnimation(.dockSoft) {
+                            requestWindowSizeUpdate(reason: .chatChanged)
+                        } else if ApprovalCenter.shared.needsFloatingWindow, !dockOwnsInlineApproval {
                             pendingAdapterApproval = nil
+                            openAdapterApprovalWindow(request: pending)
+                        } else {
+                            // Another surface draws it.
+                            pendingAdapterApproval = nil
+                            AdapterApprovalWindowHost.close()
+                        }
+                    } else {
+                        if pendingAdapterApproval != nil {
+                            withAnimation(.dockSoft) {
+                                pendingAdapterApproval = nil
+                            }
+                            requestWindowSizeUpdate(reason: .chatChanged)
+                        }
+                        AdapterApprovalWindowHost.close()
+                    }
+                }
+            
+                },
+                capability: AICapabilityApprovalCenter.shared.$pending.eraseToAnyPublisher(),
+                onCapability: { pending in
+                if let pending {
+                    if dockOwnsInlineApproval {
+                        AICapabilityApprovalWindowHost.close()
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            pendingCapabilityApproval = pending
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    } else if ApprovalCenter.shared.needsFloatingWindow {
+                        pendingCapabilityApproval = nil
+                        openAICapabilityApprovalWindow(pending: pending)
+                    } else {
+                        pendingCapabilityApproval = nil
+                        AICapabilityApprovalWindowHost.close()
+                    }
+                } else {
+                    if pendingCapabilityApproval != nil {
+                        withAnimation(.dockSoft) {
+                            pendingCapabilityApproval = nil
                         }
                         requestWindowSizeUpdate(reason: .chatChanged)
                     }
-                    AdapterApprovalWindowHost.close()
-                }
-            }
-        }
-        .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
-            if let pending {
-                if dockOwnsInlineApproval {
-                    AICapabilityApprovalWindowHost.close()
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                        pendingCapabilityApproval = pending
-                    }
-                    requestWindowSizeUpdate(reason: .chatChanged)
-                } else if ApprovalCenter.shared.needsFloatingWindow {
-                    pendingCapabilityApproval = nil
-                    openAICapabilityApprovalWindow(pending: pending)
-                } else {
-                    pendingCapabilityApproval = nil
                     AICapabilityApprovalWindowHost.close()
                 }
-            } else {
-                if pendingCapabilityApproval != nil {
-                    withAnimation(.dockSoft) {
-                        pendingCapabilityApproval = nil
-                    }
-                    requestWindowSizeUpdate(reason: .chatChanged)
-                }
-                AICapabilityApprovalWindowHost.close()
-            }
-        }
-        .onReceive(AIPrivacyApprovalCenter.shared.$pending) { pending in
-            // Prefer the inline card whenever a chat surface is on screen — a separate floating
-            // window covered the dock and hid the context the question is about.
-            if let pending {
-                if dockOwnsInlineApproval {
-                    AIPrivacyApprovalWindowHost.close()
-                    withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                        pendingPrivacyApproval = pending
-                    }
-                    requestWindowSizeUpdate(reason: .chatChanged)
-                } else if ApprovalCenter.shared.frontmostSurface == .dock {
-                    pendingPrivacyApproval = nil
-                    openAIPrivacyApprovalWindow(pending: pending)
-                } else {
-                    pendingPrivacyApproval = nil
-                    AIPrivacyApprovalWindowHost.close()
-                }
-            } else {
-                if pendingPrivacyApproval != nil {
-                    withAnimation(.dockSoft) {
+            
+                },
+                privacy: AIPrivacyApprovalCenter.shared.$pending.eraseToAnyPublisher(),
+                onPrivacy: { pending in
+                // Prefer the inline card whenever a chat surface is on screen — a separate floating
+                // window covered the dock and hid the context the question is about.
+                if let pending {
+                    if dockOwnsInlineApproval {
+                        AIPrivacyApprovalWindowHost.close()
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            pendingPrivacyApproval = pending
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    } else if ApprovalCenter.shared.frontmostSurface == .dock {
                         pendingPrivacyApproval = nil
+                        openAIPrivacyApprovalWindow(pending: pending)
+                    } else {
+                        pendingPrivacyApproval = nil
+                        AIPrivacyApprovalWindowHost.close()
                     }
-                    requestWindowSizeUpdate(reason: .chatChanged)
+                } else {
+                    if pendingPrivacyApproval != nil {
+                        withAnimation(.dockSoft) {
+                            pendingPrivacyApproval = nil
+                        }
+                        requestWindowSizeUpdate(reason: .chatChanged)
+                    }
+                    AIPrivacyApprovalWindowHost.close()
                 }
-                AIPrivacyApprovalWindowHost.close()
-            }
-        }
-        .onReceive(TerminalAIBridge.shared.$pendingApproval) { pending in
-            // Only what this surface asked for. A card from the chat window landing here
-            // is someone else's conversation appearing in the user's.
-            if let pending = pending, pending.origin == .dock {
-                // A CLI scope is a real command workspace, not an app adapter. Keep its
-                // live status honest while the approval card is on screen.
+            
+                },
+                command: TerminalAIBridge.shared.$pendingApproval.eraseToAnyPublisher(),
+                onCommand: { pending in
+                // Only what this surface asked for. A card from the chat window landing here
+                // is someone else's conversation appearing in the user's.
+                if let pending = pending, pending.origin == .dock {
+                    // A CLI scope is a real command workspace, not an app adapter. Keep its
+                    // live status honest while the approval card is on screen.
+                    let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
+                        || l2.targetApp?.bundleId.hasPrefix("cli://") == true
+                    if isCLIScope, l2.isLoading {
+                        l2.loadingStatus = "Waiting for your approval to run \(pending.command)…"
+                    }
+                    let risk = pending.classification.riskLevel.displayName
+                    let approvalMsg = AIChatMessage(
+                        role: .approval,
+                        content: pending.command,
+                        structuredData: "\(pending.purpose)|||/\(risk)"
+                    )
+                    // An explicit app / CLI scope owns its entire conversation, including
+                    // on-device tool approvals.  Checking L2 first used to send this card
+                    // to an invisible L2 transcript while the visible scoped chat remained
+                    // stuck on its empty streaming placeholder.
+                    if searchState.activeSmartQueryKey != nil {
+                        let alreadyShown = remPanelChatMessages.contains {
+                            $0.role == .approval && $0.content == pending.command
+                        }
+                        if !alreadyShown {
+                            appendPanelMessage(approvalMsg)
+                        }
+                        if let statusIndex = remPanelChatMessages.lastIndex(where: {
+                            $0.role == .assistant
+                                && $0.structuredData == "on-device-status"
+                        }) {
+                            let status = remPanelChatMessages[statusIndex]
+                            remPanelChatMessages[statusIndex] = AIChatMessage(
+                                id: status.id,
+                                role: .assistant,
+                                content: "Waiting for your approval to run the command below…",
+                                structuredData: "on-device-status"
+                            )
+                        }
+                    } else if l2.targetApp != nil || showContextInDock {
+                        // L2 app scope active — show inline in L2 chat
+                        l2.chatMessages.append(approvalMsg)
+                    } else {
+                        openCommandApprovalWindow(pending: pending)
+                    }
+                } else {
+                    // Close popup if one was open (for non-panel contexts)
+                    CommandApprovalWindowHost.close()
+                }
+            
+                },
+                capabilityStatus: AICapabilityApprovalCenter.shared.$pending.eraseToAnyPublisher(),
+                onCapabilityStatus: { pending in
+                // A capability approval is a second, separate way a turn can block — its own
+                // window, its own centre, nothing to do with TerminalAIBridge. The status line
+                // watched only the bridge, so a chat waiting on this window kept displaying
+                // whatever stage set it last ("Checking that actually happened…") and read as a
+                // hang while the answer was one click away, behind a window the dock had put on
+                // screen itself.
+                guard l2.isLoading else { return }
+                if let pending {
+                    l2.loadingStatus =
+                        "Waiting for your approval — \(pending.capability.title.lowercased())…"
+                } else if l2.loadingStatus?.hasPrefix("Waiting for your approval") == true {
+                    l2.loadingStatus = "Working…"
+                }
+            
+                },
+                runningCommand: TerminalAIBridge.shared.$currentCommand.eraseToAnyPublisher(),
+                onRunningCommand: { command in
+                // TerminalAIBridge is the authoritative execution signal. Updating from it
+                // avoids fake timer-based progress and keeps the CLI agent transcript aligned
+                // with the actual approval/execution lifecycle.
                 let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
                     || l2.targetApp?.bundleId.hasPrefix("cli://") == true
-                if isCLIScope, l2.isLoading {
-                    l2.loadingStatus = "Waiting for your approval to run \(pending.command)…"
-                }
-                let risk = pending.classification.riskLevel.displayName
-                let approvalMsg = AIChatMessage(
-                    role: .approval,
-                    content: pending.command,
-                    structuredData: "\(pending.purpose)|||/\(risk)"
-                )
-                // An explicit app / CLI scope owns its entire conversation, including
-                // on-device tool approvals.  Checking L2 first used to send this card
-                // to an invisible L2 transcript while the visible scoped chat remained
-                // stuck on its empty streaming placeholder.
-                if searchState.activeSmartQueryKey != nil {
-                    let alreadyShown = remPanelChatMessages.contains {
-                        $0.role == .approval && $0.content == pending.command
-                    }
-                    if !alreadyShown {
-                        appendPanelMessage(approvalMsg)
-                    }
-                    if let statusIndex = remPanelChatMessages.lastIndex(where: {
-                        $0.role == .assistant
-                            && $0.structuredData == "on-device-status"
-                    }) {
-                        let status = remPanelChatMessages[statusIndex]
-                        remPanelChatMessages[statusIndex] = AIChatMessage(
-                            id: status.id,
-                            role: .assistant,
-                            content: "Waiting for your approval to run the command below…",
-                            structuredData: "on-device-status"
-                        )
-                    }
-                } else if l2.targetApp != nil || showContextInDock {
-                    // L2 app scope active — show inline in L2 chat
-                    l2.chatMessages.append(approvalMsg)
-                } else {
-                    openCommandApprovalWindow(pending: pending)
-                }
-            } else {
-                // Close popup if one was open (for non-panel contexts)
-                CommandApprovalWindowHost.close()
-            }
-        }
-        .onReceive(AICapabilityApprovalCenter.shared.$pending) { pending in
-            // A capability approval is a second, separate way a turn can block — its own
-            // window, its own centre, nothing to do with TerminalAIBridge. The status line
-            // watched only the bridge, so a chat waiting on this window kept displaying
-            // whatever stage set it last ("Checking that actually happened…") and read as a
-            // hang while the answer was one click away, behind a window the dock had put on
-            // screen itself.
-            guard l2.isLoading else { return }
-            if let pending {
-                l2.loadingStatus =
-                    "Waiting for your approval — \(pending.capability.title.lowercased())…"
-            } else if l2.loadingStatus?.hasPrefix("Waiting for your approval") == true {
-                l2.loadingStatus = "Working…"
-            }
-        }
-        .onReceive(TerminalAIBridge.shared.$currentCommand) { command in
-            // TerminalAIBridge is the authoritative execution signal. Updating from it
-            // avoids fake timer-based progress and keeps the CLI agent transcript aligned
-            // with the actual approval/execution lifecycle.
-            let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
-                || l2.targetApp?.bundleId.hasPrefix("cli://") == true
-            guard isCLIScope else { return }
+                guard isCLIScope else { return }
 
-            let status = command.map { "Running \($0)…" } ?? "Reading command result…"
-            if l2.isLoading {
-                l2.loadingStatus = status
-            }
-            if remPanelIsProcessing,
-                let statusIndex = remPanelChatMessages.lastIndex(where: {
-                    $0.role == .assistant && $0.structuredData == "on-device-status"
-                })
-            {
-                let message = remPanelChatMessages[statusIndex]
-                remPanelChatMessages[statusIndex] = AIChatMessage(
-                    id: message.id,
-                    role: .assistant,
-                    content: status,
-                    structuredData: "on-device-status"
-                )
-            }
-        }
+                let status = command.map { "Running \($0)…" } ?? "Reading command result…"
+                if l2.isLoading {
+                    l2.loadingStatus = status
+                }
+                if remPanelIsProcessing,
+                    let statusIndex = remPanelChatMessages.lastIndex(where: {
+                        $0.role == .assistant && $0.structuredData == "on-device-status"
+                    })
+                {
+                    let message = remPanelChatMessages[statusIndex]
+                    remPanelChatMessages[statusIndex] = AIChatMessage(
+                        id: message.id,
+                        role: .assistant,
+                        content: status,
+                        structuredData: "on-device-status"
+                    )
+                }
+            
+                }
+            ))
     }
 
 

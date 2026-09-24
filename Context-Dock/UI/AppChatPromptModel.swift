@@ -79,16 +79,34 @@ final class AppChatPromptModel: ObservableObject {
     /// dragged out of the Dock while its app runs, it comes back next launch.
     @Published var hiddenRunningBundleIDs: Set<String> = []
 
-    /// The app whose icon the pointer is over in the strip, for the window row.
-    @Published var hoveredStripBundleID: String? {
+    /// What the pointer is over in the strip, for the card above it. An app answers with
+    /// its windows; a pinned file, folder or command answers with what it is.
+    @Published var hoveredStripTarget: DockHoverTarget? {
         didSet { scheduleWindowRowUpdate() }
     }
-    /// Which app the window row is showing, once the pointer has rested long enough. The
-    /// strip sets `hoveredStripBundleID` on every icon; this follows it after 250 ms and
-    /// lets go 150 ms after the pointer has left both the icon and the row.
-    @Published private(set) var windowRowBundleID: String?
+    /// What that card is showing, once the pointer has rested long enough. The strip sets
+    /// `hoveredStripTarget` on every icon; this follows it after 250 ms and lets go 150 ms
+    /// after the pointer has left both the icon and the card.
+    @Published private(set) var dockPreviewTarget: DockHoverTarget?
     private var windowRowTask: Task<Void, Never>?
     private var pointerInWindowRow = false
+
+    /// The app whose windows the row is showing, if that is what is up.
+    var windowRowBundleID: String? {
+        if case .app(let bundleID) = dockPreviewTarget { return bundleID }
+        return nil
+    }
+
+    /// The pin whose card is up, if that is what is up.
+    var previewPinID: UUID? {
+        if case .pin(let id) = dockPreviewTarget { return id }
+        return nil
+    }
+
+    /// A pinned plugin whose panel is open above its tile — a tap in the widget asked for it.
+    /// Takes the same slot as the hover cards and wins over them while it is up: a card the
+    /// user opened is not put away by the pointer passing over the next icon.
+    @Published var pluginCardPinID: UUID?
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
@@ -128,6 +146,9 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalTopMatch: GlobalContextTopMatch?
     @Published private(set) var globalMatchIcons: [MatchDockIcon] = []
     @Published private(set) var globalOverflowCount = 0
+    /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
+    /// list trimmed to what fits beside the field.
+    @Published private(set) var allRunningIcons: [MatchDockIcon] = []
     /// This scope was entered from Global, so leaving it goes back there rather than to the
     /// frontmost app.
     @Published var returnsToGlobalScope = false
@@ -154,8 +175,24 @@ final class AppChatPromptModel: ObservableObject {
     /// Whether the corner chat starts pinned. A toggle that reset itself every relaunch was
     /// not a preference — it was a button that occasionally worked, so pressing it wrote the
     /// choice down rather than only holding it in memory for as long as this object exists.
-    @Published private(set) var isPinned = UserDefaults.standard.bool(
+    @Published private(set) var isPinned = AppChatPromptModel.pinStore.bool(
         forKey: AppChatPromptModel.pinnedDefaultsKey)
+
+    /// Where the pin preference lives. The app's own defaults — except under the test
+    /// suite, which runs inside a copy of this app and so shares its domain: a developer
+    /// who had pinned their own corner made every model the suite built start pinned, and
+    /// a pinned model ignores `standDown`. Half a dozen tests across three files read
+    /// "expected .mini, got .prompt" for weeks and were filed as an idle-timer flake. The
+    /// test script names a separate suite in `CONTEXT_DOCK_DEFAULTS_SUITE`; nothing else
+    /// sets it, so the app never sees it.
+    static let pinStore: UserDefaults = {
+        if let suite = ProcessInfo.processInfo.environment["CONTEXT_DOCK_DEFAULTS_SUITE"],
+            let store = UserDefaults(suiteName: suite)
+        {
+            return store
+        }
+        return .standard
+    }()
 
     /// A question is out and its answer has not arrived. The transcript legitimately goes
     /// empty in between, so the card holds rather than reading that as "nothing here".
@@ -169,9 +206,6 @@ final class AppChatPromptModel: ObservableObject {
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
     private var hasPresentedConversation = false
-    /// The user has already done something here — asked, or run a command. What the app can
-    /// do is an opening offer, not a thing to re-present after every action.
-    var hasActed = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
     private var standDownTask: Task<Void, Never>?
@@ -280,10 +314,21 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// Set by `AppChatMenuBrowsing` as the user types in Global Context.
-    func setGlobalTyping(top: GlobalContextTopMatch?, icons: [MatchDockIcon], overflow: Int) {
+    ///
+    /// Takes the running apps whole and cuts them here, because the two surfaces that draw
+    /// them do not want the same number. Beside a 372-point field four icons fit and the
+    /// rest are `+N`; the strip is a dock as wide as the screen, and cutting to four before
+    /// it ever saw the list is why it stopped growing at four apps however much room stood
+    /// empty beside it. `DockStripPlan` does the strip's own cutting, against the width it
+    /// actually has.
+    func setGlobalTyping(
+        top: GlobalContextTopMatch?, running: [MatchDockIcon],
+        fieldCapacity: Int = AppChatPromptMetrics.matchIconBaseCount
+    ) {
         globalTopMatch = top
-        globalMatchIcons = icons
-        globalOverflowCount = overflow
+        allRunningIcons = running
+        globalMatchIcons = Array(running.prefix(max(1, fieldCapacity)))
+        globalOverflowCount = max(running.count - globalMatchIcons.count, 0)
     }
 
     /// Point the surface at a scope. The scope's identity stays `private(set)` — only the
@@ -417,8 +462,12 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
-    /// Opens on suggestions when there are any, because a blank field asks the user to
-    /// guess what the app can do.
+    /// The field, alone. It used to open on the app's suggestions whenever there were any,
+    /// on the theory that a blank field asks the user to guess what the app can do — and
+    /// what that produced was a sheet of 224 rows over a field nobody had typed into, gone
+    /// again two seconds later. The owner asked not to see it (2026-09-16). The list is
+    /// still there: ↓ opens it (`moveMenuFocus`), the same door the dock's own results
+    /// sheet has, and the capability summary under the field still says what is in scope.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Typed: the field alone, same as the dock. Typing never pops the sheet open by
@@ -429,13 +478,27 @@ final class AppChatPromptModel: ObservableObject {
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
         // A scope stepped into from Global shows only what it found. With nothing found the
-        // field rests alone rather than opening an empty board.
+        // field rests alone rather than opening an empty board. An *app* stepped into from
+        // Global never reaches this line — it answers with its window snapshot above — so
+        // what this governs is Finder and a CLI tool, where the rows are the thing the step
+        // went to fetch: the search results, the tool's subcommands.
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
-        if hasActed { return .prompt }
-        // Attaching a file is composing a question about it. Offering the app's opening
-        // menu on top of that answers something the user has already stopped asking.
+        // Attaching a file is composing a question about it. A list open over that is
+        // answering something the user has already stopped asking.
         if !attachments.isEmpty { return .prompt }
-        return (rows.isEmpty && suggestions.isEmpty) ? .prompt : .suggesting
+        // A list the user arrowed open stays open while they are still standing in it —
+        // this is also asked when a live menu read lands, and that must not close what was
+        // just opened. The focused row is what "still in it" means, and it is why the rule
+        // reads it rather than the phase alone: a list opened to pick "Library" out of what
+        // was typed stayed open after the row ran, and `rows` had meanwhile been rebuilt
+        // for the now-empty field — so what stood over that field was every action the app
+        // has, 174 of them, which is the sheet the owner asked not to see wearing a
+        // different coat. Taking a row or asking a question lets go of the focus, and the
+        // list goes with it.
+        if phase == .suggesting, focusedMenuIndex != nil, !rows.isEmpty { return .suggesting }
+        // Nothing else opens the list by itself: not a scope-in, not a cleared field, not
+        // a detached file, not the pointer coming back to the badge. Only the arrows.
+        return .prompt
     }
 
     // MARK: - Controls
@@ -465,7 +528,7 @@ final class AppChatPromptModel: ObservableObject {
         // Only here, not wherever this session happens to reset the in-memory flag (idling
         // out, dismissing): a toggle is the user stating a preference, an idle timeout is
         // not them changing their mind about it.
-        UserDefaults.standard.set(isPinned, forKey: Self.pinnedDefaultsKey)
+        Self.pinStore.set(isPinned, forKey: Self.pinnedDefaultsKey)
         if isPinned {
             cancel()
         } else {
@@ -504,7 +567,6 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         attachments = []
         hasPresentedConversation = false
-        hasActed = false
         stopAwaitingAnswer()
         set(restingInputPhase)
         touch()
@@ -687,7 +749,7 @@ final class AppChatPromptModel: ObservableObject {
 
     /// The strip's running section: the dock's own running pills, minus the removed ones.
     var stripIcons: [MatchDockIcon] {
-        globalMatchIcons.filter { icon in
+        allRunningIcons.filter { icon in
             guard let bundleID = icon.bundleID else { return true }
             return !hiddenRunningBundleIDs.contains(bundleID)
         }
@@ -698,9 +760,10 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// The corner's own affordances that join the strip: the clipboard when a copy just
-    /// happened, the selection when there is one. Same rules as the field's own row.
-    func dockToolCount(clipboardVisible: Bool) -> Int {
-        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
+    /// happened, the selection when there is one, the result of an action for a few seconds
+    /// after it ran. Same rules as the field's own row.
+    func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
+        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 
     /// The first printable character brings the field back and lands in it. Anything the
@@ -717,6 +780,16 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// Puts the plugin card away however it came up. A tapped-open card is closed by
+    /// forgetting the tap; a hover-opened one by letting go of the hover, so it stays away
+    /// until the pointer leaves the icon and comes back — the pointer is still on the icon
+    /// that opened it, and a card that came straight back would read as the × misfiring.
+    func dismissPluginCard() {
+        pluginCardPinID = nil
+        windowRowTask?.cancel()
+        dockPreviewTarget = nil
+    }
+
     func windowRowHovered(_ inside: Bool) {
         pointerInWindowRow = inside
         if inside { windowRowTask?.cancel() } else { scheduleWindowRowUpdate() }
@@ -724,13 +797,13 @@ final class AppChatPromptModel: ObservableObject {
 
     private func scheduleWindowRowUpdate() {
         windowRowTask?.cancel()
-        let target = hoveredStripBundleID
+        let target = hoveredStripTarget
         let delay: TimeInterval = target == nil ? 0.15 : 0.25
         windowRowTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
-            self.windowRowBundleID = target
+            self.dockPreviewTarget = target
         }
     }
 
@@ -767,15 +840,15 @@ final class AppChatPromptModel: ObservableObject {
     func dismiss() {
         cancel()
         windowRowTask?.cancel()
-        windowRowBundleID = nil
-        hoveredStripBundleID = nil
+        dockPreviewTarget = nil
+        hoveredStripTarget = nil
+        pluginCardPinID = nil
         query = ""
         suggestions = []
         capabilitySummary = ""
         attachments = []
         isPinned = false
         hasPresentedConversation = false
-        hasActed = false
         stopAwaitingAnswer()
         set(.hidden)
     }
@@ -790,10 +863,11 @@ final class AppChatPromptModel: ObservableObject {
         guard !question.isEmpty, !isAnswering else { return false }
         Self.handOff(
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
+        // The question was asked from the list, not into it.
+        focusedMenuIndex = nil
         query = ""
         attachments = []
         hasPresentedConversation = true
-        hasActed = true
         awaitingAnswer = true
         armAnswerWatchdog()
         set(.chat)
@@ -808,7 +882,6 @@ final class AppChatPromptModel: ObservableObject {
     /// see the dock clear the session for the new scope, and step straight back to a field.
     func expectAnswer() {
         hasPresentedConversation = true
-        hasActed = true
         awaitingAnswer = true
         armAnswerWatchdog()
         set(.chat)
@@ -866,6 +939,8 @@ final class AppChatPromptModel: ObservableObject {
     func set(_ next: AppChatPromptPhase) {
         guard phase != next else { return }
         phase = next
+        // A plugin's card belongs to the strip; leaving the dock takes it down with it.
+        if next != .dock { pluginCardPinID = nil }
         onPhaseChange?(next)
     }
 }

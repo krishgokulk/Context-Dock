@@ -128,7 +128,16 @@ final class MenuExecutionCoordinator {
 
             if isQuitAction {
                 await MainActor.run {
-                    _ = sourceApp.terminate()
+                    let name = sourceApp.localizedName ?? request.path.last ?? "app"
+                    let quitting = sourceApp.terminate()
+                    // Said, not assumed: a quit run from the corner or from a cached menu row
+                    // posted nothing, so the surface that ran it showed no result. The dock's
+                    // own app-pill quit reports through its own feedback id and never comes
+                    // through here, so this is one post per quit, not two.
+                    DockActionFeedback.showResult(
+                        quitting ? "Quit \(name)" : "Couldn't quit \(name)",
+                        icon: "xmark.circle.fill", success: quitting,
+                        subject: name, bundleID: sourceApp.bundleIdentifier)
                     callbacks.scheduleTerminationRefresh(sourceApp)
                     callbacks.refreshRunningApps()
                     callbacks.clearLiveDockMenuState()
