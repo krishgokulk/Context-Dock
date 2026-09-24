@@ -1807,6 +1807,12 @@ extension LauncherView {
     /// app-scoped chat that already exists, down the same path the "Chat with <App>" pill
     /// uses, so there is one conversation rather than two.
     func handleAppChatPromptSubmission(_ note: Notification) {
+        // The corner's prompt tests post these notifications and check that they were posted.
+        // In the test host this dock is live too, and acting on them started real turns on the
+        // shared conversation — a model call from an offline suite, and a loading conversation
+        // that held later tests' prompts up (GitHub #75). The same guard is on every
+        // appChatPrompt* handler below.
+        guard !AppDelegate.isHostingTests else { return }
         guard let info = note.userInfo,
             let bundleId = info["bundleId"] as? String,
             let appName = info["appName"] as? String
@@ -1854,6 +1860,7 @@ extension LauncherView {
     /// The turn ran on the dock's pipeline, so the choice runs there too — the corner is a
     /// second presentation of this conversation, not a second engine for it.
     func handleAppChatPromptPickAction(_ note: Notification) {
+        guard !AppDelegate.isHostingTests else { return }
         guard let choiceID = note.userInfo?["choiceID"] as? String, !choiceID.isEmpty else {
             return
         }
@@ -1863,6 +1870,7 @@ extension LauncherView {
 
     /// The corner asked to stop the running turn. The task is the dock's, so the stop is too.
     func handleAppChatPromptCancel() {
+        guard !AppDelegate.isHostingTests else { return }
         guard l2.isLoading || l2.currentTask != nil else { return }
         l2.currentTask?.cancel()
         l2.currentTask = nil
@@ -1895,6 +1903,7 @@ extension LauncherView {
     /// The corner asked to start over. It shows the dock's conversation rather than one of
     /// its own, so the dock is what empties it.
     func handleAppChatPromptNewChat() {
+        guard !AppDelegate.isHostingTests else { return }
         l2.currentTask?.cancel()
         l2.currentTask = nil
         l2.isLoading = false
@@ -1908,6 +1917,7 @@ extension LauncherView {
     }
 
     func handleAppChatPromptScopeChange(_ note: Notification) {
+        guard !AppDelegate.isHostingTests else { return }
         guard let info = note.userInfo,
             let bundleId = info["bundleId"] as? String,
             let appName = info["appName"] as? String
