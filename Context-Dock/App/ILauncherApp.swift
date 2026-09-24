@@ -600,15 +600,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
-        // A test host is a copy of the app that exists to load the test bundle — it runs none
-        // of the launch below. On a fresh CI runner that launch (LaunchServices scans, the MCP
-        // server, menus, hotkeys, accessibility checks) took minutes, and XCTest gave up with
-        // "timed out while preparing to run tests" before a single test ran. The same launch
-        // on a developer's Mac also contends for the port and store of their running copy.
-        if Self.isHostingTests {
-            NSApp.setActivationPolicy(.accessory)
-            return
-        }
         // The agent-facing server, only if the user turned it on. Started here rather than
         // lazily: an agent's first tool call must not be the thing that starts the server,
         // or that call fails and the agent concludes the capability does not exist.
@@ -645,7 +636,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let bundleID = Bundle.main.bundleIdentifier ?? ""
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty {
+        if !others.isEmpty, !Self.isHostingTests {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)
