@@ -42,7 +42,8 @@ extension LauncherView {
         }
     }
 
-    var contentWithModifiers: some View {
+    /// `mainContent` sized, backed and faded — no handlers.
+    var contentLayout: some View {
         mainContent
             .frame(width: calculatedWidth)
             // In dock mode anchor content to bottom so dock bar stays fixed while results grow upward.
@@ -77,6 +78,11 @@ extension LauncherView {
             )
             .opacity(isVisible ? 1.0 : 0.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isVisible)
+    }
+
+    /// `contentLayout` plus the result, window-size and chat-count handlers.
+    var contentResultHandlers: some View {
+        contentLayout
             .onAppear {
                 handleContentAppear()
             }
@@ -108,6 +114,13 @@ extension LauncherView {
                 // SubscriptionView<…> from too many chained subscriptions crashes the view body).
                 requestWindowSizeUpdate(reason: .chatChanged)
             }
+    }
+
+    /// The launcher content with every lifecycle handler attached. Split across three properties
+    /// because Xcode 26's type checker gave up on the single chain (CI, 2026-09-24): each property
+    /// body is type-checked on its own.
+    var contentWithModifiers: some View {
+        contentResultHandlers
             .onChange(of: aiMode.isActive) { _, newValue in
                 handleAIModeActiveChange(newValue)
             }
