@@ -402,6 +402,13 @@ struct ILauncherApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// True when this process is the host XCTest loaded the test bundle into, not the app a
+    /// person launched.
+    static let isHostingTests: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil
+    }()
+
     /// Pointer monitors that keep the transparent part of the launcher click-through.
     private var pointerTransparencyGlobalMonitor: Any?
     private var pointerTransparencyLocalMonitor: Any?
@@ -593,6 +600,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // A test host is a copy of the app that exists to load the test bundle — it runs none
+        // of the launch below. On a fresh CI runner that launch (LaunchServices scans, the MCP
+        // server, menus, hotkeys, accessibility checks) took minutes, and XCTest gave up with
+        // "timed out while preparing to run tests" before a single test ran. The same launch
+        // on a developer's Mac also contends for the port and store of their running copy.
+        if Self.isHostingTests {
+            NSApp.setActivationPolicy(.accessory)
+            return
+        }
         // The agent-facing server, only if the user turned it on. Started here rather than
         // lazily: an agent's first tool call must not be the thing that starts the server,
         // or that call fails and the agent concludes the capability does not exist.
@@ -627,11 +643,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // before establishing connection". That is why this project believed it could not
         // have automated tests: it could, the host was quitting before they started.
         let bundleID = Bundle.main.bundleIdentifier ?? ""
-        let underTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty, !underTest {
+        if !others.isEmpty {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)
