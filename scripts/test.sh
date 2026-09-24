@@ -77,7 +77,7 @@ xcodebuild test \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA_DIR" \
   ENABLE_DEBUG_DYLIB=NO \
-  "$@" 2>&1 | tee "$DERIVED_DATA_DIR/last-test-run.log" | grep -E \
+  "$@" 2>&1 | tee "$DERIVED_DATA_DIR/last-test-run.log" | grep --line-buffered -E \
   "Test Suite|Test Case|error:|warning: .*test|✔|✘|TEST (SUCCEEDED|FAILED)"
 # The exit code is xcodebuild's, not the grep's, and it must be read on the very next line.
 # This used to end the pipeline with `|| true` and read PIPESTATUS after it — but under

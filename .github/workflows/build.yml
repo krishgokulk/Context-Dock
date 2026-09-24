@@ -18,7 +18,7 @@ jobs:
   test:
     name: Build and test
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -47,15 +47,21 @@ jobs:
           ./scripts/test.sh \
             -skipPackagePluginValidation \
             -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 300 \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM= \
             PROVISIONING_PROFILE_SPECIFIER=
 
       - name: Upload test log
-        if: failure()
+        # Also on cancel: a hung run is exactly the one whose log says where it hung.
+        if: failure() || cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: test-log
-          path: .build/XcodeTestDerivedData/last-test-run.log
+          path: |
+            .build/XcodeTestDerivedData/last-test-run.log
+            .build/XcodeTestDerivedData/Logs/Test/*.xcresult
           if-no-files-found: ignore
