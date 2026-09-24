@@ -85,6 +85,15 @@ enum AppChatPromptMetrics {
     /// A dock icon drawn at the pill's 18 points.
     static var pillIconScale: CGFloat { 18 / dockIconSize }
 
+    /// `ContextMatchDock`'s capsule, measured: 18-point icons 7 apart, a 24-point `+N`, and
+    /// 8 of padding each side. The Global field keeps this room and the strip's own icons
+    /// shrink into it, so both have to agree on the number.
+    static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
+        let items = icons + (overflow ? 1 : 0)
+        guard items > 0 else { return 0 }
+        return CGFloat(icons) * 18 + (overflow ? 24 : 0) + CGFloat(items - 1) * 7 + 16
+    }
+
     /// How wide the field is with `icons` running apps beside it. A "+N" is a number you
     /// cannot click, so the field grows to hold the row instead of cutting it — up to the
     /// screen's budget, past which the rest really does become "+N".
@@ -109,10 +118,11 @@ enum AppChatPromptMetrics {
         let width: CGFloat
         /// The strip's inset at both ends. The magnifier and the pins sit on the edges.
         var leadingInset: CGFloat = AppChatPromptMetrics.dockInset
-        /// Room the shell holds beyond what the row needs, for the field it opens into. It
-        /// sits right after the magnifier — where the field's text opens — rather than as
-        /// margin on the edges, which pushed the magnifier in from the corner.
-        var stubExtra: CGFloat = 0
+        /// Room the shell holds beyond what the row needs, for the field it opens into,
+        /// shared out as extra gap before each app. Kept as edge margin it pushed the
+        /// magnifier in from the corner; kept in one piece after the magnifier it read as a
+        /// hole. Spread over every gap it is a few points each.
+        var appSpread: CGFloat = 0
         /// The pins and the corner's tools, from the last app to the trailing inset. This
         /// region stays put when the field opens — only what is before it morphs.
         var trailingRegion: CGFloat = 0
@@ -201,7 +211,8 @@ enum AppChatPromptMetrics {
             natural, min(fieldMinimumWidth(icons: fieldIcons) + trailingRegion, maximumWidth))
         return DockLayout(
             shownRunning: shownRunning, overflow: overflow, tools: tools, width: width,
-            stubExtra: width - natural, trailingRegion: trailingRegion)
+            appSpread: (width - natural) / CGFloat(max(1, pinnedApps + runningSlots)),
+            trailingRegion: trailingRegion)
     }
 
     /// What sits over the field — an approval waiting on a yes, attached files — is part
@@ -432,7 +443,10 @@ struct AppChatPromptPill: View {
     /// A capsule while it rests as a dock, a card once the field is open. Animated as one
     /// number, so the corner never looks like two shapes changing at once.
     private var shellRadius: CGFloat {
-        model.phase == .dock ? AppChatPromptMetrics.dockHeight / 2 : 22
+        // The dock and its field are one bar of one height, so one capsule: a radius that
+        // changed with the phase is what made opening the field read as a different shape.
+        [.dock, .prompt, .suggesting].contains(model.phase)
+            ? AppChatPromptMetrics.dockHeight / 2 : 22
     }
 
     /// The whole morph, one curve. `dockMorphDuration` is the single number to turn when
@@ -648,7 +662,9 @@ struct AppChatPromptPill: View {
         HStack(spacing: 10) {
             if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
+                    // The strip's own size in Global: the field opens on the icon the
+                    // pointer rested on, and a smaller one there read as a swap.
+                    .font(.system(size: model.isGlobalScope ? 20 : 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 22)
             } else if model.isGlobalScope {
@@ -795,19 +811,33 @@ struct AppChatPromptPill: View {
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                ContextMatchDock(
-                    phase: .idle,
-                    icons: model.globalMatchIcons,
-                    overflowCount: model.globalOverflowCount,
-                    isSearching: false,
-                    onSelect: { icon in model.openGlobalMatchIcon(icon) })
-                    // Opacity only, for the same reason as the field above: this pill is a
-                    // sibling of the TextField inside the focused subtree, and a geometry
-                    // transition here moves the field's own layout while focus is claimed.
-                    .transition(.opacity)
-                    // Resting the pointer on the small pills asks for the big ones: the
-                    // field folds into the dock at once rather than waiting out the dwell.
-                    .onHover { inside in if inside { model.foldToDock() } }
+                if model.isGlobalScope {
+                    // The strip's own icons shrink into this spot and are the pill, so the
+                    // field only keeps the room — drawing a second set here is what showed
+                    // every app twice while the first set was still travelling.
+                    Color.clear
+                        .frame(
+                            width: AppChatPromptMetrics.pillWidth(
+                                icons: model.globalMatchIcons.count,
+                                overflow: model.globalOverflowCount > 0),
+                            height: 30)
+                        .allowsHitTesting(false)
+                } else {
+                    ContextMatchDock(
+                        phase: .idle,
+                        icons: model.globalMatchIcons,
+                        overflowCount: model.globalOverflowCount,
+                        isSearching: false,
+                        onSelect: { icon in model.openGlobalMatchIcon(icon) })
+                        // Opacity only, for the same reason as the field above: this pill is
+                        // a sibling of the TextField inside the focused subtree, and a
+                        // geometry transition here moves the field's own layout while focus
+                        // is claimed.
+                        .transition(.opacity)
+                        // Resting the pointer on the small pills asks for the big ones: the
+                        // field folds into the dock at once rather than waiting out the dwell.
+                        .onHover { inside in if inside { model.foldToDock() } }
+                }
                 // Beside the running-app capsule, not inside it: the clipboard used to
                 // lead that list as one of its icons, which put a permanent member in a
                 // row meant to be "what's running" and made a stale old copy look as

@@ -65,6 +65,8 @@ struct DockStripComposition: Equatable {
         otherPins.reduce(0) { $0 + width(of: $1) - AppChatPromptMetrics.dockIconSize }
     }
 
+    static let finderBundleID = "com.apple.finder"
+
     /// Pure: two lists in, one row out.
     ///
     /// `runningBundleIDs` is every app that is up, which is a wider set than `running` —
@@ -111,6 +113,13 @@ struct DockStripComposition: Equatable {
             DockAppSlot(
                 bundleID: icon.bundleID ?? icon.id, title: icon.title, pin: nil, running: icon,
                 isRunning: icon.isRunning)
+        }
+
+        // Finder leads the apps, pinned or not — the fixed point the eye starts from, and
+        // the order the field's pill uses, so an app gathering into the pill or spreading
+        // back out of it never crosses another on the way.
+        if let finder = appSlots.firstIndex(where: { $0.bundleID == Self.finderBundleID }) {
+            appSlots.insert(appSlots.remove(at: finder), at: 0)
         }
 
         return DockStripComposition(
@@ -229,8 +238,9 @@ struct DockStripPlan {
         var cursor = layout.leadingInset
         func advance(_ width: CGFloat) { cursor += width + M.dockIconGap }
 
-        advance(M.dockIconSize + layout.stubExtra)  // the folded field, and the room after it
+        advance(M.dockIconSize)  // the folded field
         for slot in composition.apps {
+            cursor += layout.appSpread
             if case .app(let bundleID) = target, slot.bundleID == bundleID {
                 return cursor + M.dockIconSize / 2
             }
@@ -239,7 +249,7 @@ struct DockStripPlan {
             }
             advance(M.dockIconSize)
         }
-        if layout.overflow > 0 { advance(M.dockIconSize) }
+        if layout.overflow > 0 { advance(layout.appSpread + M.dockIconSize) }
         guard !composition.otherPins.isEmpty else { return nil }
         advance(1)  // the hairline divider
         for pin in composition.otherPins {

@@ -288,9 +288,20 @@ extension AppChatPromptModel {
         // Finder leads the apps, always. It is the one scope that is always there and
         // always means the same thing, so it is the fixed point the eye starts from — the
         // dock puts it first for the same reason.
-        let finder = apps.filter { $0.bundleID == "com.apple.finder" }
-        let rest = apps.filter { $0.bundleID != "com.apple.finder" }
-        return icons + finder + rest
+        // Then the pinned apps in the order the user placed them, then the rest — the
+        // strip's own order, so the dock and this pill are one row at two sizes.
+        let finder = apps.filter { $0.bundleID == DockStripComposition.finderBundleID }
+        let pinOrder = DockPinStore.shared.pins.compactMap { pin -> String? in
+            if case .app(let bundleID) = pin.kind { return bundleID }
+            return nil
+        }
+        let pinned = pinOrder.compactMap { id in apps.first { $0.bundleID == id } }
+            .filter { $0.bundleID != DockStripComposition.finderBundleID }
+        let rest = apps.filter {
+            $0.bundleID != DockStripComposition.finderBundleID
+                && !pinOrder.contains($0.bundleID ?? "")
+        }
+        return icons + finder + pinned + rest
     }
 
     /// The clipboard, as a pill, when there is anything in it.

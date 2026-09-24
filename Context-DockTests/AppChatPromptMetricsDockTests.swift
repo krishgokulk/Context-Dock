@@ -137,12 +137,12 @@ struct AppChatPromptMetricsDockTests {
     }
 
     /// Held wider than its icons for the field, the strip keeps its magnifier on the edge
-    /// and puts the room after it, where the field's text opens.
-    @Test func aStripHeldWideKeepsItsMagnifierOnTheEdge() {
-        let natural = M.dockLayout(running: 1, pinned: 0)
-        let held = M.dockLayout(running: 1, pinned: 0, fieldIcons: 6)
-        #expect(held.width == M.fieldMinimumWidth(icons: 6))
+    /// and shares the room out over the gap before each app.
+    @Test func aStripHeldWideSpreadsTheRoomOverItsGaps() {
+        let natural = M.dockLayout(running: 3, pinned: 0)
+        let held = M.dockLayout(running: 3, pinned: 0, fieldIcons: 9)
+        #expect(held.width == M.fieldMinimumWidth(icons: 9))
         #expect(held.leadingInset == M.dockInset)
-        #expect(held.stubExtra == held.width - natural.width)
+        #expect(abs(held.appSpread * 3 - (held.width - natural.width)) < 0.001)
     }
 }

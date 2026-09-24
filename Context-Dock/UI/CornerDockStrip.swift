@@ -18,6 +18,10 @@ struct CornerDockStrip: View {
     /// themselves condensing while this is true, so the glass morph has something to morph
     /// *from* rather than a strip that blinks out. Cancelled if the pointer leaves first.
     @State private var condensing = false
+    /// Set as the pill spreads back into the dock. The icons move out from under a pointer
+    /// that has not moved, and whichever one lands under it would magnify and start its
+    /// window preview mid-flight — hover waits until the row has arrived.
+    @State private var hoverSettlesAt = Date.distantPast
     @State private var hoverIntent: Task<Void, Never>?
     /// The icon whose Dock-style menu is up — a popover over the icon, arrow down, the
     /// way the Dock does it, rather than a menu at the pointer.
@@ -44,22 +48,55 @@ struct CornerDockStrip: View {
             : .easeIn(duration: full * 0.3).delay(full * 0.5)
     }
 
+    /// The field is up and showing its pill: the strip's apps are that pill, shrunk into
+    /// the room the field keeps for it. Typing hides it, as it hid the field's own.
+    private var isPill: Bool {
+        [.prompt, .suggesting].contains(model.phase) && model.isSearchField
+            && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Where the pill sits in the shell: ending where the strip's trailing region begins,
+    /// exactly where the field keeps its room.
+    private func pillSpan(_ plan: DockStripPlan) -> (start: CGFloat, end: CGFloat) {
+        let layout = plan.layout
+        let end = layout.width - layout.leadingInset - layout.trailingRegion
+        let width = M.pillWidth(
+            icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0)
+        return (end - width, end)
+    }
+
+    /// One after another. Folding in, the icon nearest the pill goes first, so the row
+    /// folds up into it from its end. Spreading out, Finder goes first and the rest follow
+    /// in order, so the row unrolls from the magnifier back to the pins. Read when the body
+    /// is rebuilt for the new state, so `gathered` is where the row is heading.
+    private func gatherAnimation(index: Int, count: Int) -> Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        let step = gathered ? max(0, count - 1 - index) : index
+        return .smooth(duration: full * 0.55).delay(Double(step) * full * 0.05)
+    }
+
+    /// Whether the app in this slot is one the field's pill carries.
+    private func inPill(_ bundleID: String?) -> Bool {
+        guard let bundleID else { return model.globalOverflowCount > 0 }
+        return model.globalMatchIcons.contains { $0.bundleID == bundleID }
+    }
+
     /// How far app `index` travels to reach its slot in the field's pill — found by bundle
     /// id, since the pill leads with Finder and the strip with its pinned apps. Anything
     /// the pill does not show lands on the pill's end, where its `+N` is.
     private func gatherOffset(index: Int, bundleID: String?, plan: DockStripPlan) -> CGFloat {
         let layout = plan.layout
         let pills = model.globalMatchIcons
-        let pillEnd = layout.width - layout.leadingInset - layout.trailingRegion
-        let pillStart = pillEnd - (CGFloat(pills.count) * M.matchPillIconSpan + 9)
-        let from = layout.leadingInset + M.dockSearchStubSpan + layout.stubExtra
+        let (pillStart, pillEnd) = pillSpan(plan)
+        let from = layout.leadingInset + M.dockSearchStubSpan
+            + CGFloat(index + 1) * layout.appSpread
             + CGFloat(index) * (M.dockIconSize + M.dockIconGap) + M.dockIconSize / 2
         let to: CGFloat
         if let bundleID, let slot = pills.firstIndex(where: { $0.bundleID == bundleID }) {
             // 8 of capsule padding, then half an 18-point icon; 25 per icon after that.
             to = pillStart + 17 + CGFloat(slot) * M.matchPillIconSpan
         } else {
-            to = pillEnd - 9
+            to = pillEnd - 20  // the `+N`
         }
         return to - from
     }
@@ -82,13 +119,23 @@ struct CornerDockStrip: View {
             toolIcon("magnifyingglass", title: "Search") { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
+                // The hairline between the field, folded, and the apps — the same one the
+                // pins get. Drawn over room that is already there, so it costs no width, and
+                // centred between what the eye sees — the 20-point glyph, not its 48-point
+                // slot — and Finder. It belongs to the magnifier and leaves with it.
+                .overlay(alignment: .center) {
+                    let glyphEdge: CGFloat = 10
+                    let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.18))
+                        .frame(width: 1, height: M.dockIconSize * 0.7)
+                        .offset(x: (glyphEdge + appEdge) / 2)
+                        .allowsHitTesting(false)
+                }
                 // The field's own magnifier opens on this exact spot; this one hands over.
                 .opacity(isDock ? 1 : 0)
                 .animation(movingFade, value: isDock)
                 .allowsHitTesting(isDock)
-                // The room the field needs beyond the row, kept after the magnifier where
-                // the text opens — outside the hover, so resting on it expands nothing.
-                .padding(.trailing, self.plan.layout.stubExtra)
             // One region for apps: the pinned ones first, in the order the user placed
             // them, then whatever else is running. Composed once for the whole pass —
             // `scale(for:)` runs per icon per hover frame and must not compose again.
@@ -98,25 +145,34 @@ struct CornerDockStrip: View {
             // Each app flies to its own slot in the field's small pill and shrinks to its
             // size — drawn there, not laid out there, so the row's geometry never moves
             // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
-            Group {
-                ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
-                    appIcon(slot, ids: ids)
-                        .scaleEffect(gathered ? M.pillIconScale : 1)
-                        .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
-                }
-                if plan.layout.overflow > 0 {
-                    overflowPill(plan.layout.overflow)
-                        .scaleEffect(gathered ? M.pillIconScale : 1)
-                        .offset(
-                            x: gathered
-                                ? gatherOffset(
-                                    index: plan.composition.apps.count, bundleID: nil, plan: plan)
-                                : 0)
-                }
+            let count = plan.composition.apps.count + (plan.layout.overflow > 0 ? 1 : 0)
+            ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
+                let stays = isDock || (isPill && inPill(slot.bundleID))
+                appIcon(slot, ids: ids)
+                    .scaleEffect(gathered ? M.pillIconScale : 1)
+                    .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
+                    .animation(gatherAnimation(index: index, count: count), value: gathered)
+                    // An app the pill does not carry goes as it leaves; the rest are the pill.
+                    .opacity(stays ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.2), value: stays)
+                    .allowsHitTesting(stays)
+                    .padding(.leading, plan.layout.appSpread)
             }
-            .opacity(isDock ? 1 : 0)
-            .animation(movingFade, value: isDock)
-            .allowsHitTesting(isDock)
+            if plan.layout.overflow > 0 {
+                let stays = isDock || (isPill && model.globalOverflowCount > 0)
+                overflowPill(plan.layout.overflow)
+                    .scaleEffect(gathered ? M.pillIconScale : 1)
+                    .offset(
+                        x: gathered
+                            ? gatherOffset(
+                                index: plan.composition.apps.count, bundleID: nil, plan: plan)
+                            : 0)
+                    .animation(gatherAnimation(index: count - 1, count: count), value: gathered)
+                    .opacity(stays ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.2), value: stays)
+                    .allowsHitTesting(isDock)
+                    .padding(.leading, plan.layout.appSpread)
+            }
             if !plan.composition.otherPins.isEmpty {
                 // The HStack's own gap on each side of this hairline is the 17-point
                 // `dockDividerSpan` the metrics count.
@@ -179,9 +235,35 @@ struct CornerDockStrip: View {
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
         .padding(.horizontal, plan.layout.leadingInset)
         .frame(height: M.dockHeight)
-        // The whole strip catches the pointer only while it is the dock. Over the field it
-        // is drawn on top, and an empty stretch of it must not swallow a click on the text.
-        .contentShape(StripHitShape(active: isDock))
+        // The pill's capsule, drawn behind the icons that became it — it arrives once they
+        // have, so what the eye follows is the icons, not a second shape appearing.
+        .background(alignment: .leading) {
+            let span = pillSpan(plan)
+            Capsule(style: .continuous)
+                .fill(.regularMaterial)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7))
+                .frame(width: max(0, span.end - span.start), height: 30)
+                .offset(x: span.start)
+                .opacity(isPill ? 1 : 0)
+                .animation(
+                    isPill
+                        ? .easeOut(duration: M.dockMorphDuration * 0.3)
+                            .delay(M.dockMorphDuration * 0.35)
+                        : .easeIn(duration: M.dockMorphDuration * 0.15),
+                    value: isPill)
+                .allowsHitTesting(false)
+        }
+        // The gaps between icons catch the pointer only while this is the dock. Over the
+        // field the strip is drawn on top, and an empty stretch of it must not swallow a
+        // click on the text. A background, not the strip's own content shape: that shape
+        // bounds the whole subtree, and an empty one took the pill and the pins with it.
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .allowsHitTesting(isDock)
+        }
         .onDrop(of: [.fileURL, .plainText], isTargeted: $isDropTarget) { providers in
             acceptDrop(providers)
         }
@@ -206,7 +288,10 @@ struct CornerDockStrip: View {
         // do — it clears the flag on the path where SwiftUI keeps the view's identity
         // instead, which would otherwise leave the dock permanently condensed.
         .onChange(of: model.phase) { _, phase in
-            if phase == .dock { condensing = false }
+            if phase == .dock {
+                condensing = false
+                hoverSettlesAt = Date().addingTimeInterval(AppChatPromptMetrics.dockMorphDuration * 0.75)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Dock")
@@ -226,10 +311,26 @@ struct CornerDockStrip: View {
             scale: scale(for: id, among: ids)
         )
         .onHover { inside in
+            // As the field's pill, resting on an app asks for the dock back, as the field's
+            // own pill did.
+            guard isDock else {
+                if inside { _ = model.foldToDock() }
+                return
+            }
+            // Still spreading out of the pill: an icon arriving under the pointer is not
+            // the pointer choosing it. Leaving is always honoured, so nothing sticks.
+            if inside, Date() < hoverSettlesAt { return }
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
             model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
         }
-        .onTapGesture { openApp(slot) }
+        .onTapGesture {
+            // As the pill, a click scopes the field into the app, as the pill always has.
+            if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
+                model.openGlobalMatchIcon(icon)
+            } else {
+                openApp(slot)
+            }
+        }
         // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
         // and a running app nobody pinned has no place to be moved to.
         .modifier(DockPinDrag(pinID: slot.pin?.id, dragging: $draggingPinID))
@@ -712,11 +813,4 @@ struct RightClickReporter: NSViewRepresentable {
             if event.modifierFlags.contains(.control) { onRightClick?() } else { super.mouseDown(with: event) }
         }
     }
-}
-
-/// The strip's hit area: all of it while it is the dock, none of it while the field is up —
-/// then only the pins and tools, which carry their own shapes, answer the pointer.
-private struct StripHitShape: Shape {
-    let active: Bool
-    func path(in rect: CGRect) -> Path { active ? Path(rect) : Path() }
 }
