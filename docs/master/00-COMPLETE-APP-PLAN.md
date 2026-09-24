@@ -137,6 +137,15 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 | ↑ / ↓ | Move Global Context ↔ Context Dock ↔ Media Dock |
 | ← / → | Move Context Dock ↔ General Chat |
 
+**Trackpad swipes** `[code]`
+
+| Shell | Swipe | Does | Source |
+|---|---|---|---|
+| Dock (⌥⌥) | two-finger ↑ / ↓ | Global Context ↔ Context Dock ↔ Media Dock | `Search/LauncherView+InteractionLifecycle.swift` |
+| Dock (⌥⌥) | two-finger ← / → | Context Dock ↔ General Chat | same |
+| Corner | two-finger ← / → **over the input field** | One step along General Chat ↔ Global Context ↔ Frontmost App — the same walk as ←/→. No wrap at the ends. Only when the field is empty; needs a clearly sideways swipe (> 70 pt, sideways > 1.8× vertical) | `UI/CornerDockWindow.swift` `handleChatSwipe`, `UI/CornerChatPresentation.swift` `handleHorizontalSwipe` |
+| Corner | two-finger ↑ / ↓ | **Nothing** — no vertical swipe in the Corner (Media Dock is not in the Corner) | — |
+
 **Name: "General Chat" everywhere** (owner decision, 2026-09-24). The app still shows
 "AI Assistant" in six places — see the blueprint's naming rule for the list.
 
