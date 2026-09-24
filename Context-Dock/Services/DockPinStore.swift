@@ -21,6 +21,10 @@ struct DockPin: Codable, Identifiable, Equatable {
     /// GlobalSearchService document id for commands and tools, so a click can run the real
     /// document; nil for apps, files, folders.
     var documentID: String?
+    /// A plugin with a bar widget, set by the user to draw as its icon instead — the tile
+    /// then shows on hover. Nil (the default, and every pin saved before this existed)
+    /// draws the widget.
+    var showsAsIcon: Bool? = nil
 }
 
 @MainActor
@@ -53,6 +57,12 @@ final class DockPinStore: ObservableObject {
         guard let index = pins.firstIndex(where: { $0.id == id }) else { return }
         pins.remove(at: index)
         renumber()
+        persist()
+    }
+
+    func setShowsAsIcon(_ id: UUID, _ asIcon: Bool) {
+        guard let index = pins.firstIndex(where: { $0.id == id }) else { return }
+        pins[index].showsAsIcon = asIcon ? true : nil
         persist()
     }
 

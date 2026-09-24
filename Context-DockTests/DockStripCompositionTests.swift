@@ -31,7 +31,7 @@ struct DockStripCompositionTests {
         #expect(safari.first?.isRunning == true)
     }
 
-    @Test func pinnedAppsComeFirstInPinOrderThenTheRunningOnes() {
+    @Test func finderLeadsThenPinnedAppsInPinOrderThenTheRunningOnes() {
         let pins = [
             pin(.app(bundleID: "com.microsoft.VSCode"), "Code", order: 0),
             pin(.app(bundleID: "com.apple.Safari"), "Safari", order: 1),
@@ -41,10 +41,10 @@ struct DockStripCompositionTests {
             pins: pins, runningBundleIDs: [])
 
         #expect(composed.apps.map(\.bundleID) == [
-            "com.microsoft.VSCode", "com.apple.Safari", "com.apple.finder",
+            "com.apple.finder", "com.microsoft.VSCode", "com.apple.Safari",
         ])
         // A pinned app that is not running still draws, without a dot.
-        #expect(composed.apps.first?.isRunning == false)
+        #expect(composed.apps[1].isRunning == false)
     }
 
     @Test func pinsThatAreNotAppsKeepTheirOwnRegion() {

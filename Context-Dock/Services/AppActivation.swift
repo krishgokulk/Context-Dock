@@ -36,17 +36,28 @@ enum AppActivation {
     static func bringForward(bundleID: String, name: String) {
         let feedbackID = DockActionFeedback.appOpening(name, bundleID: bundleID)
 
-        if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .first(where: { !$0.isTerminated })
-        {
-            raise(running, restoringWindows: true)
-            settle(feedbackID, app: running)
+        // A running app goes through LaunchServices too, the way the Dock does. The corner
+        // panel is non-activating, so a click there leaves us inactive: `yieldActivation`
+        // has nothing to yield and cooperative activation can drop `activate()`. And an app
+        // whose windows are closed or minimised needs the reopen event `openApplication`
+        // sends to an already-running app — activating it alone shows nothing.
+        guard let url = running?.bundleURL
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else {
+            if let running {
+                raise(running, restoringWindows: true)
+                settle(feedbackID, app: running)
+            } else {
+                DockActionFeedback.dismiss(feedbackID)
+            }
             return
         }
-
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
-            DockActionFeedback.dismiss(feedbackID)
-            return
+        if let running {
+            // The reopen event brings back a closed window; a minimised one still needs
+            // taking out of the Dock (CornerAppActivationTests).
+            raise(running, restoringWindows: true)
         }
         // Yield before the launch as well as after it. Clicking a strip icon makes the
         // corner panel key, which makes us the active app at the moment of the click; a

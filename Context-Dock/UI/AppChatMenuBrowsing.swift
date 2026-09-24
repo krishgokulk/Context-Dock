@@ -246,6 +246,13 @@ extension AppChatPromptModel {
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
         let running = Self.pillIcons(excluding: appBundleID)
+        // The strip's pins stay at the field's trailing end, each a full dock icon — about
+        // two small pills' room apiece, plus the divider.
+        let otherPins = DockPinStore.shared.pins.filter {
+            if case .app = $0.kind { return false }
+            return true
+        }
+        let pinSlots = otherPins.isEmpty ? 0 : otherPins.count * 2 + 1
         setGlobalTyping(
             top: typed.isEmpty
                 ? nil
@@ -253,8 +260,9 @@ extension AppChatPromptModel {
             running: running,
             // As many as the field can grow to hold on this screen. Four was the count
             // that fits a 372-point field, and the field is no longer fixed at 372.
+            // The pins take their room first; they are never the ones cut.
             fieldCapacity: AppChatPromptMetrics.matchIconCapacity(
-                maximumWidth: DockStripPlan.screenBudget))
+                maximumWidth: DockStripPlan.screenBudget) - pinSlots)
     }
 
     /// The pills: what is running, and the clipboard when it is holding something.
@@ -280,9 +288,20 @@ extension AppChatPromptModel {
         // Finder leads the apps, always. It is the one scope that is always there and
         // always means the same thing, so it is the fixed point the eye starts from — the
         // dock puts it first for the same reason.
-        let finder = apps.filter { $0.bundleID == "com.apple.finder" }
-        let rest = apps.filter { $0.bundleID != "com.apple.finder" }
-        return icons + finder + rest
+        // Then the pinned apps in the order the user placed them, then the rest — the
+        // strip's own order, so the dock and this pill are one row at two sizes.
+        let finder = apps.filter { $0.bundleID == DockStripComposition.finderBundleID }
+        let pinOrder = DockPinStore.shared.pins.compactMap { pin -> String? in
+            if case .app(let bundleID) = pin.kind { return bundleID }
+            return nil
+        }
+        let pinned = pinOrder.compactMap { id in apps.first { $0.bundleID == id } }
+            .filter { $0.bundleID != DockStripComposition.finderBundleID }
+        let rest = apps.filter {
+            $0.bundleID != DockStripComposition.finderBundleID
+                && !pinOrder.contains($0.bundleID ?? "")
+        }
+        return icons + finder + pinned + rest
     }
 
     /// The clipboard, as a pill, when there is anything in it.
