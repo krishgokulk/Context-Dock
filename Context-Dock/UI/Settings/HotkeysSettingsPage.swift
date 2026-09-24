@@ -30,7 +30,29 @@ struct HotkeysSettingsPage: View {
                         ))
                         .labelsHidden()
                     }
-                    .padding(.vertical, 12)
+                    .padding(.top, 12)
+                    // Optional key for the same action. Registered on its own, so it keeps
+                    // working when double-press Command is off.
+                    HStack(spacing: 12) {
+                        Color.clear.frame(width: 38, height: 1)
+                        Text("or record a key")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        HotkeyRecorderControl(
+                            displayString: settings.globalContextHotkeyDisplayString,
+                            onClear: {
+                                settings.globalContextHotkeyKeyCode = 0
+                                settings.globalContextHotkeyModifiers = 0
+                                NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                            }
+                        ) { keyCode, modifiers in
+                            settings.globalContextHotkeyKeyCode = keyCode
+                            settings.globalContextHotkeyModifiers = modifiers
+                            NotificationCenter.default.post(name: .hotkeyChanged, object: nil)
+                        }
+                    }
+                    .padding(.bottom, 12)
                     Divider()
                     HStack(spacing: 12) {
                         Text("⌥⌥")
@@ -118,21 +140,6 @@ struct HotkeysSettingsPage: View {
                             apply: {
                                 settings.chatWindowHotkeyKeyCode = $0
                                 settings.chatWindowHotkeyModifiers = $1
-                            })
-                        Divider()
-                        captureHotkeyRow(
-                            icon: "globe", color: .teal,
-                            title: "Global Context",
-                            subtitle:
-                                "Search everything in the corner. Double-press Command is the default; add another shortcut here.",
-                            display: settings.globalContextHotkeyDisplayString,
-                            clear: {
-                                settings.globalContextHotkeyKeyCode = 0
-                                settings.globalContextHotkeyModifiers = 0
-                            },
-                            apply: {
-                                settings.globalContextHotkeyKeyCode = $0
-                                settings.globalContextHotkeyModifiers = $1
                             })
                         Divider()
                         captureHotkeyRow(
@@ -356,9 +363,6 @@ private struct ClipboardHotkeyRecorderRow: View {
     let onClear: (() -> Void)?
     let apply: (UInt32, UInt32) -> Void
 
-    @State private var isRecording = false
-    @State private var monitor: Any?
-
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: icon)
@@ -374,6 +378,23 @@ private struct ClipboardHotkeyRecorderRow: View {
 
             Spacer()
 
+            HotkeyRecorderControl(displayString: displayString, onClear: onClear, apply: apply)
+        }
+    }
+}
+
+/// The recorder itself — the key chip, "Press keys…" while listening, and the clear button.
+/// One copy, used by every recorder row and by the ⌘⌘ row's optional key.
+private struct HotkeyRecorderControl: View {
+    let displayString: String
+    let onClear: (() -> Void)?
+    let apply: (UInt32, UInt32) -> Void
+
+    @State private var isRecording = false
+    @State private var monitor: Any?
+
+    var body: some View {
+        HStack(spacing: 8) {
             if isRecording {
                 Text("Press keys…")
                     .font(.system(size: 12, weight: .medium))

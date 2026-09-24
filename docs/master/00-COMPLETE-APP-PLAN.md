@@ -116,7 +116,7 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 |---|---|---|
 | Open Global Context in the corner | **⌘⌘ double-press Command** (on) | Hotkeys → Launch Shortcut |
 | Show the launcher | **⌥⌥ double-press Option** (on) | Hotkeys → Launch Shortcut |
-| Global Context (extra shortcut) | unset | Hotkeys → Custom Shortcuts |
+| Global Context (extra shortcut) | unset | Hotkeys → Launch Shortcut, "or record a key" under Double-press Command — works with ⌘⌘ off |
 | App Chat (ask the frontmost app) | unset | Hotkeys → Custom Shortcuts |
 | Chat Window (General Chat) | unset | Hotkeys → Custom Shortcuts |
 | Selection Scope | unset — while unset, a selection auto-scopes on every launch | Hotkeys → Custom Shortcuts |
