@@ -112,6 +112,41 @@ surface lost its one job ("selection-aware action engine", `docs/architecture/SE
 global hotkey captures every capital S typed anywhere, so typing "S" in TextEdit opened this card.
 Fix: the recorder must require ⌘, ⌥ or ⌃ (`UI/Settings/HotkeysSettingsPage.swift`, `startRecording()`).
 
+## 4b. Swipes — the Corner must match the Dock exactly (owner decision, 2026-09-24)
+
+The owner wants the Corner's trackpad swipes to behave **exactly** like the Dock's, over the input
+field only. Below is the Dock's behaviour read from `Search/LauncherView+InteractionLifecycle.swift`
+(`setupSwipeGestureMonitor`) `[code]`, and what the Corner does today
+(`UI/CornerDockWindow.swift` `handleChatSwipe`, `UI/CornerChatPresentation.swift`) `[code]`.
+
+Corner scope names map to Dock layers: **Global Context = Global Context**, **Frontmost App = Context
+Dock**, **General = General Chat**, **Media = Media Dock**.
+
+| # | Rule | Dock (the target) | Corner today | Gap |
+|---|---|---|---|---|
+| W1 | Where | Over the dock area or the input field | Over the input field only | Owner: **input field only** in the Corner — keep |
+| W2 | Detection | Adds finger movement **and** momentum; decides when the fingers lift and again when momentum ends; **one action per swipe** | Adds both; decides only once at the end | Match the Dock (a fast flick must still count) |
+| W3 | Sideways threshold | > 70 pt and > 1.8× the vertical movement | Same | ✅ |
+| W4 | Sideways action | **Toggle General Chat**: in General Chat → back to the scope you came from; elsewhere, swipe **right** → General Chat (remembering that scope); swipe left outside General Chat → nothing | **Steps** one place along General ↔ Global Context ↔ Frontmost App | ❌ change to the toggle |
+| W5 | Vertical threshold | > 55 pt and > 1.15× the sideways movement | none | ❌ add |
+| W6 | Swipe **up** | Global Context → Frontmost App → Media (Media **only if** Settings' Media layer — `enableLayer3` — is on) | none | ❌ add |
+| W7 | Swipe **down** | General → back to the previous scope; Media → Frontmost App → Global Context | none | ❌ add |
+| W8 | App scope locked (a running-app capsule is open) | Sideways swipe is swallowed, vertical is left for normal scrolling, no scope change | — | ❌ add |
+| W9 | Sideways scroll over the row of pills / commands above the field | Moves the highlight one pill per 22 pt, skips separators, runs off the end to "nothing highlighted"; the list itself does not scroll | — | ❌ add |
+| W10 | Typed text | Swiping does not require an empty field; the text stays | Swipes only when the field is **empty** | **Owner decision** — Dock parity says remove the guard; the guard protects a draft. Recommendation: keep text in the field (as the Dock does) rather than block the swipe |
+
+**Keys must agree with swipes.** The Dock's ←/→ also toggles General Chat (Hotkeys → Dock Key Map).
+If W4 changes, the Corner's ←/→ must change with it, or the keys and the swipes will disagree about what
+sits next to what — the exact reason `CornerChatPresentation.handleHorizontalSwipe` was written as a walk.
+Decide keys and swipes together.
+
+**Done when**
+1. W2, W4–W9 behave as the Dock column; W1 stays input-only; W10 as the owner decides.
+2. The rules live in one pure function (e.g. `CornerSwipe.classify(dx:dy:scope:mediaEnabled:locked:)
+   -> CornerSwipeAction`) with a swift-testing test per row — so no agent can drift them silently.
+3. ←/→ keys and swipes give the same result from every scope (test).
+4. Checked by hand on a trackpad: slow swipe, fast flick, flick with momentum, swipe with text typed.
+
 ## 5. The end state (owner decisions still open)
 
 When every Dock job has a Corner home:
