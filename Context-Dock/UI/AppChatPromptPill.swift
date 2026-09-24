@@ -342,6 +342,21 @@ struct AppChatPromptPill: View {
             ? .handled : .ignored
     }
 
+    /// ↑/↓ in the field. With a row highlighted, or something typed, they move through the
+    /// list. On an empty field with nothing highlighted the layer comes first — otherwise the
+    /// app scope's own action list, which ↑ used to open, caught ↑ and Global was
+    /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
+    /// until the Media Dock moves in) the list opens as before.
+    private func arrow(up: Bool) -> KeyPress.Result {
+        if AppChatPromptModel.layerKeyComesFirst(
+            query: model.query, hasFocusedRow: model.focusedRow != nil),
+            layerKey(up: up) == .handled
+        {
+            return .handled
+        }
+        return model.moveMenuFocus(by: up ? -1 : 1) ? .handled : .ignored
+    }
+
     var body: some View {
         Group {
             if model.isGlobalScope {
@@ -740,14 +755,8 @@ struct AppChatPromptPill: View {
                         if model.enterFocusedRow() { return .handled }
                         return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
-                    .onKeyPress(.downArrow) {
-                        if model.moveMenuFocus(by: 1) { return .handled }
-                        return layerKey(up: false)
-                    }
-                    .onKeyPress(.upArrow) {
-                        if model.moveMenuFocus(by: -1) { return .handled }
-                        return layerKey(up: true)
-                    }
+                    .onKeyPress(.downArrow) { arrow(up: false) }
+                    .onKeyPress(.upArrow) { arrow(up: true) }
                     .onKeyPress(keys: [.delete, .deleteForward]) { _ in
                         // Backspace on an empty field leaves the scope — the dock's way out,
                         // and the one most people reach for before they find the "−". Both
@@ -782,10 +791,10 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.rightArrow) {
                         // A chosen row is what the user is pointing at, so → steps into it
-                        // before anything else. Otherwise it takes the ghost completion, and
-                        // on an empty field it steps into an app; failing all of that it
-                        // leaves General Chat (CornerNavigation).
-                        if model.enterFocusedRow() { return .handled }
+                        // before anything else — steps in, never runs (D4). Otherwise it takes
+                        // the ghost completion, and on an empty field it steps into an app;
+                        // failing all of that it leaves General Chat (CornerNavigation).
+                        if model.stepIntoFocusedRow() { return .handled }
                         if model.acceptGhostCompletion() { return .handled }
                         if model.scopeIntoFirstRunningApp() { return .handled }
                         return CornerDockController.shared.chatPresentation
