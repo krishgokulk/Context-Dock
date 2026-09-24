@@ -146,28 +146,7 @@ extension LauncherView {
                 requestWindowSizeUpdate(reason: .chatChanged)
             }
             .onChange(of: aiMode.isActive) { _, newValue in
-                suppressHoverExpand = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    self.suppressHoverExpand = false
-                }
-                if newValue {
-                    cancelBrowserContextWarmup()
-                    menuLoadTask?.cancel()
-                    liveMenuRefreshTask?.cancel()
-                    liveMenuItems = []
-                    crossAppMenuItems = []
-                    contextMenuPills = []
-                    cachedDockPills = []
-                    l2.focusedPillIndex = nil
-                    focusedAppPillIndex = nil
-                    l2.appCompletion = nil
-                } else {
-                    scheduleBrowserContextWarmup(reason: "AI mode toggled")
-                }
-                // Delay resize so it runs after the animation starts (prevents background flash)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    requestWindowSizeUpdate(reason: .modeChanged)
-                }
+                handleAIModeActiveChange(newValue)
             }
             .onChange(of: frontmost.isSectionExpanded) { _, _ in
                 requestWindowSizeUpdate(reason: .panelChanged)
@@ -190,213 +169,10 @@ extension LauncherView {
                 requestWindowSizeUpdate(reason: .chatChanged)
             }
             .onChange(of: showContextInDock) { _, newValue in
-                // Block expand during layer transition (icon swap fires phantom hover)
-                suppressHoverExpand = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    self.suppressHoverExpand = false
-                }
-                if newValue {
-                    guard !aiMode.isActive else {
-                        liveMenuItems = []
-                        crossAppMenuItems = []
-                        contextMenuPills = []
-                        cachedDockPills = []
-                        return
-                    }
-                    let activeApp = contextTargetApp()
-                    // First paint path: title/role only. Selection, URL, Finder files stay off open path.
-                    if let app = activeApp {
-                        AXContextReader.shared.refreshLightweight(from: app)
-                        axContext = AXContextReader.shared.current
-                    }
-                    scheduleBrowserContextWarmup(reason: "context dock opened")
-                    // Reload dock tool extensions so newly installed ones show immediately
-                    Task { await L2ExtensionManager.shared.loadExtensions() }
-                    updateL2ContextExtensions()
-                    l2.focusedPillIndex = nil  // don't auto-focus; user must arrow-key to a pill
-
-                    // Load live menu items from frontmost app only (primary context).
-                    // Global Context stays cache-only; Apple Menu uses static fallback pills.
-                    menuLoadTask?.cancel()
-                    let useCacheOnly = isGlobalContextActive
-                    let warmBundleId = activeApp?.bundleIdentifier ?? ""
-                    if !useCacheOnly, !warmBundleId.isEmpty {
-                        warmingMenuBundleIds.insert(warmBundleId)
-                    }
-                    if let app = activeApp {
-                        var cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
-                            for: app, maxResults: 120)
-                        if cachedItems.isEmpty {
-                            cachedItems = ContextDockEngine.shared.cachedMenuItems(
-                                for: app, maxResults: 120)
-                        }
-                        if !cachedItems.isEmpty {
-                            liveMenuItems = menuItemsVisibleInActiveDockMode(cachedItems)
-                            menuDebugText =
-                                "\(app.localizedName ?? ""): \(liveMenuItems.count) cached menus"
-                            lastLiveMenuSignature = menuSignature(for: liveMenuItems)
-                            previousEnabledIDs = Set(liveMenuItems.filter(\.isEnabled).map(\.id))
-                            syncRecentAppsFromAppleMenu(cachedItems)
-                            scheduleDockPillRebuild(
-                                query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
-                        }
-                    }
-                    menuLoadTask = Task.detached(priority: .userInitiated) {
-                        defer {
-                            if !warmBundleId.isEmpty {
-                                Task { @MainActor in
-                                    self.warmingMenuBundleIds.remove(warmBundleId)
-                                }
-                            }
-                        }
-                        let app = await MainActor.run { self.contextTargetApp() }
-                        guard let app, !app.isTerminated else { return }
-                        let pid = app.processIdentifier
-                        let name = app.localizedName ?? ""
-                        // Don't warm Finder in desktop-only mode (no window) — its menus aren't
-                        // shown there (files are), and the open-to-populate scan would flash
-                        // Finder's menus for nothing.
-                        let isFinderApp = app.bundleIdentifier == "com.apple.finder"
-                        let finderDesktopOnly =
-                            isFinderApp ? (await MainActor.run { self.isFinderDesktopOnlyMode }) : false
-                        let skipFinderDesktopWarm = isFinderApp && finderDesktopOnly
-                        var items: [AXMenuItem] = []
-                        if useCacheOnly {
-                            items = GlobalContextEngine.shared.cachedMenuItems(
-                                for: app, maxResults: 120)
-                        } else if skipFinderDesktopWarm {
-                            items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
-                        } else {
-                            await MenuWarmCacheService.shared.warm(app: app, force: false)
-                            items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
-                            if items.isEmpty {
-                                items = ContextDockEngine.shared.cachedMenuItems(
-                                    for: app, maxResults: 120)
-                            }
-                        }
-                        let debug =
-                            await AXMenuReader.shared.lastDebug(for: pid) ?? "no reader detail"
-                        let resolvedItems = items
-                        await MainActor.run {
-                            guard self.contextTargetApp()?.processIdentifier == pid else { return }
-                            guard !resolvedItems.isEmpty else {
-                                self.scheduleDockPillRebuild(
-                                    query: self.lastPillQuery, delayNanoseconds: 0,
-                                    refreshContext: false)
-                                return
-                            }
-                            let visibleItems = self.menuItemsVisibleInActiveDockMode(resolvedItems)
-                            self.liveMenuItems = visibleItems
-                            self.menuDebugText = "\(name): \(visibleItems.count) menus, \(debug)"
-                            self.lastLiveMenuSignature = self.menuSignature(for: visibleItems)
-                            // Seed the enabled-ID baseline so first delta is meaningful
-                            self.previousEnabledIDs = Set(
-                                visibleItems.filter(\.isEnabled).map(\.id))
-                            // Sync recentApps from Apple menu "Recent Items > Applications"
-                            // — more authoritative than activation-order tracking
-                            self.syncRecentAppsFromAppleMenu(resolvedItems)
-                            self.refreshVisibleGlobalContextAfterMenuCacheUpdate(
-                                bundleIdentifier: app.bundleIdentifier)
-                        }
-                    }
-                    // Auto-generate a synthetic adapter for unknown frontmost apps
-                    if let app = activeApp {
-                        Task { await adapterManager.autoGenerateAdapterIfNeeded(for: app) }
-                    }
-
-                    // Run contextReaders for the frontmost app's adapter (current file, git branch, etc.)
-                    if let frontmostBundleId = activeApp?.bundleIdentifier {
-                        let capturedCtx = axContext
-                        Task {
-                            let data = await adapterManager.runContextReaders(
-                                for: frontmostBundleId, axContext: capturedCtx)
-                            await MainActor.run { adapterContextData = data }
-                        }
-                    }
-
-                    // Start AX selection observer for the frontmost app
-                    if let pid = activeApp?.processIdentifier {
-                        selectionModel.start(for: pid)
-                    }
-                    suppressCurrentFinderSelectionBaseline()
-                    // Refresh running apps list (for Layer 1 bar) — off main thread
-                    runningRegularApps = currentRegularRunningApps()
-                    rebuildGlobalSearchIndex()
-                    // Refresh AX context periodically while dock is open so pills update as user interacts
-                    axContextRefreshTimer?.invalidate()
-                    axContextRefreshTimer = Timer.scheduledTimer(
-                        withTimeInterval: 0.75, repeats: true
-                    ) { [self] _ in
-                        guard self.showContextInDock else { return }
-                        self.refreshLiveContextDockState()
-                    }
-                    axContextRefreshTimer?.tolerance = 0.15
-                } else {
-                    if !aiMode.isActive { cancelBrowserContextWarmup() }
-                    axContextRefreshTimer?.invalidate()
-                    axContextRefreshTimer = nil
-                    selectionModel.stop()
-                    liveDockSelectionPreviewText = nil
-                    l2.extensionResults = []
-                    // NEVER destroy an active conversation on dock hide: an approved chat
-                    // command (`code --status`) can activate its target app, which auto-hides
-                    // the launcher — wiping messages + scope here killed the chat mid-answer.
-                    // Menus/pills below still reset; the chat + pinned scope survive so the
-                    // next open resumes exactly where the user left off.
-                    let hasActiveChat =
-                        l2.isLoading || l2.currentTask != nil || !l2.chatMessages.isEmpty
-                    if !hasActiveChat {
-                        l2.chatMessages = []
-                        l2.isLoading = false
-                        l2.activeRequestID = nil
-                        l2.currentTask?.cancel()
-                        l2.currentTask = nil
-                    }
-                    liveMenuRefreshTask?.cancel()
-                    liveMenuRefreshTask = nil
-                    menuAvailabilityRefreshTask?.cancel()
-                    menuAvailabilityRefreshTask = nil
-                    menuAvailabilityRefreshGeneration &+= 1
-                    lastLiveMenuStructureRefresh = .distantPast
-                    lastLiveMenuSignature = ""
-                    searchState.results = []
-                    searchState.selectedIndex = nil
-                    liveMenuItems = []
-                    crossAppMenuItems = []
-                    crossAppMenuTargetPID = 0
-                    contextMenuPills = []
-                    previousEnabledIDs = []
-                    l2.focusedPillIndex = nil
-                    focusedAppPillIndex = nil
-                    adapterContextData = [:]
-                    l2.appCompletion = nil
-                    // Keep the pinned scope alive with an active chat (see hasActiveChat
-                    // above) so reopening the dock lands back in the same conversation.
-                    if !hasActiveChat {
-                        l2.targetApp = nil
-                    }
-                    menuLoadTask?.cancel()
-                    crossAppMenuTask?.cancel()
-                }
-                requestWindowSizeUpdate(reason: .modeChanged)
+                handleShowContextInDockChange(newValue)
             }
             .onChange(of: showMediaLayer) { _, newValue in
-                if newValue {
-                    l2.extensionResults = []
-                    l2.chatMessages = []
-                    l2.isLoading = false
-                    l2.activeRequestID = nil
-                    l2.currentTask?.cancel()
-                    l2.currentTask = nil
-                    searchState.results = []
-                    searchState.selectedIndex = nil
-                    // Block expand during layer transition (globe ↔ magnifying glass icon swap)
-                    suppressHoverExpand = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                        self.suppressHoverExpand = false
-                    }
-                }
-                requestWindowSizeUpdate(reason: .modeChanged)
+                handleShowMediaLayerChange(newValue)
             }
             // AX selection observer fired — diff enabled states and surface context pills
             .onChange(of: selectionModel.changeCount) { _, _ in
@@ -2644,5 +2420,250 @@ extension LauncherView {
             }
             scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
         }
+    }
+}
+
+
+// Handlers for `contentWithModifiers`. Kept out of the modifier chain on purpose: a multi-statement
+// closure is type-checked together with the expression around it, and with these bodies inline
+// Xcode 26's type checker gave up on the chain (CI, 2026-09-24).
+extension LauncherView {
+    /// `.onChange(of: aiMode.isActive)`.
+    func handleAIModeActiveChange(_ newValue: Bool) {
+        suppressHoverExpand = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            self.suppressHoverExpand = false
+        }
+        if newValue {
+            cancelBrowserContextWarmup()
+            menuLoadTask?.cancel()
+            liveMenuRefreshTask?.cancel()
+            liveMenuItems = []
+            crossAppMenuItems = []
+            contextMenuPills = []
+            cachedDockPills = []
+            l2.focusedPillIndex = nil
+            focusedAppPillIndex = nil
+            l2.appCompletion = nil
+        } else {
+            scheduleBrowserContextWarmup(reason: "AI mode toggled")
+        }
+        // Delay resize so it runs after the animation starts (prevents background flash)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            requestWindowSizeUpdate(reason: .modeChanged)
+        }
+    }
+
+    /// `.onChange(of: showContextInDock)`.
+    func handleShowContextInDockChange(_ newValue: Bool) {
+        // Block expand during layer transition (icon swap fires phantom hover)
+        suppressHoverExpand = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            self.suppressHoverExpand = false
+        }
+        if newValue {
+            guard !aiMode.isActive else {
+                liveMenuItems = []
+                crossAppMenuItems = []
+                contextMenuPills = []
+                cachedDockPills = []
+                return
+            }
+            let activeApp = contextTargetApp()
+            // First paint path: title/role only. Selection, URL, Finder files stay off open path.
+            if let app = activeApp {
+                AXContextReader.shared.refreshLightweight(from: app)
+                axContext = AXContextReader.shared.current
+            }
+            scheduleBrowserContextWarmup(reason: "context dock opened")
+            // Reload dock tool extensions so newly installed ones show immediately
+            Task { await L2ExtensionManager.shared.loadExtensions() }
+            updateL2ContextExtensions()
+            l2.focusedPillIndex = nil  // don't auto-focus; user must arrow-key to a pill
+
+            // Load live menu items from frontmost app only (primary context).
+            // Global Context stays cache-only; Apple Menu uses static fallback pills.
+            menuLoadTask?.cancel()
+            let useCacheOnly = isGlobalContextActive
+            let warmBundleId = activeApp?.bundleIdentifier ?? ""
+            if !useCacheOnly, !warmBundleId.isEmpty {
+                warmingMenuBundleIds.insert(warmBundleId)
+            }
+            if let app = activeApp {
+                var cachedItems = MenuWarmCacheService.shared.cachedMenuItems(
+                    for: app, maxResults: 120)
+                if cachedItems.isEmpty {
+                    cachedItems = ContextDockEngine.shared.cachedMenuItems(
+                        for: app, maxResults: 120)
+                }
+                if !cachedItems.isEmpty {
+                    liveMenuItems = menuItemsVisibleInActiveDockMode(cachedItems)
+                    menuDebugText =
+                        "\(app.localizedName ?? ""): \(liveMenuItems.count) cached menus"
+                    lastLiveMenuSignature = menuSignature(for: liveMenuItems)
+                    previousEnabledIDs = Set(liveMenuItems.filter(\.isEnabled).map(\.id))
+                    syncRecentAppsFromAppleMenu(cachedItems)
+                    scheduleDockPillRebuild(
+                        query: lastPillQuery, delayNanoseconds: 0, refreshContext: false)
+                }
+            }
+            menuLoadTask = Task.detached(priority: .userInitiated) {
+                defer {
+                    if !warmBundleId.isEmpty {
+                        Task { @MainActor in
+                            self.warmingMenuBundleIds.remove(warmBundleId)
+                        }
+                    }
+                }
+                let app = await MainActor.run { self.contextTargetApp() }
+                guard let app, !app.isTerminated else { return }
+                let pid = app.processIdentifier
+                let name = app.localizedName ?? ""
+                // Don't warm Finder in desktop-only mode (no window) — its menus aren't
+                // shown there (files are), and the open-to-populate scan would flash
+                // Finder's menus for nothing.
+                let isFinderApp = app.bundleIdentifier == "com.apple.finder"
+                let finderDesktopOnly =
+                    isFinderApp ? (await MainActor.run { self.isFinderDesktopOnlyMode }) : false
+                let skipFinderDesktopWarm = isFinderApp && finderDesktopOnly
+                var items: [AXMenuItem] = []
+                if useCacheOnly {
+                    items = GlobalContextEngine.shared.cachedMenuItems(
+                        for: app, maxResults: 120)
+                } else if skipFinderDesktopWarm {
+                    items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
+                } else {
+                    await MenuWarmCacheService.shared.warm(app: app, force: false)
+                    items = await AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
+                    if items.isEmpty {
+                        items = ContextDockEngine.shared.cachedMenuItems(
+                            for: app, maxResults: 120)
+                    }
+                }
+                let debug =
+                    await AXMenuReader.shared.lastDebug(for: pid) ?? "no reader detail"
+                let resolvedItems = items
+                await MainActor.run {
+                    guard self.contextTargetApp()?.processIdentifier == pid else { return }
+                    guard !resolvedItems.isEmpty else {
+                        self.scheduleDockPillRebuild(
+                            query: self.lastPillQuery, delayNanoseconds: 0,
+                            refreshContext: false)
+                        return
+                    }
+                    let visibleItems = self.menuItemsVisibleInActiveDockMode(resolvedItems)
+                    self.liveMenuItems = visibleItems
+                    self.menuDebugText = "\(name): \(visibleItems.count) menus, \(debug)"
+                    self.lastLiveMenuSignature = self.menuSignature(for: visibleItems)
+                    // Seed the enabled-ID baseline so first delta is meaningful
+                    self.previousEnabledIDs = Set(
+                        visibleItems.filter(\.isEnabled).map(\.id))
+                    // Sync recentApps from Apple menu "Recent Items > Applications"
+                    // — more authoritative than activation-order tracking
+                    self.syncRecentAppsFromAppleMenu(resolvedItems)
+                    self.refreshVisibleGlobalContextAfterMenuCacheUpdate(
+                        bundleIdentifier: app.bundleIdentifier)
+                }
+            }
+            // Auto-generate a synthetic adapter for unknown frontmost apps
+            if let app = activeApp {
+                Task { await adapterManager.autoGenerateAdapterIfNeeded(for: app) }
+            }
+
+            // Run contextReaders for the frontmost app's adapter (current file, git branch, etc.)
+            if let frontmostBundleId = activeApp?.bundleIdentifier {
+                let capturedCtx = axContext
+                Task {
+                    let data = await adapterManager.runContextReaders(
+                        for: frontmostBundleId, axContext: capturedCtx)
+                    await MainActor.run { adapterContextData = data }
+                }
+            }
+
+            // Start AX selection observer for the frontmost app
+            if let pid = activeApp?.processIdentifier {
+                selectionModel.start(for: pid)
+            }
+            suppressCurrentFinderSelectionBaseline()
+            // Refresh running apps list (for Layer 1 bar) — off main thread
+            runningRegularApps = currentRegularRunningApps()
+            rebuildGlobalSearchIndex()
+            // Refresh AX context periodically while dock is open so pills update as user interacts
+            axContextRefreshTimer?.invalidate()
+            axContextRefreshTimer = Timer.scheduledTimer(
+                withTimeInterval: 0.75, repeats: true
+            ) { [self] _ in
+                guard self.showContextInDock else { return }
+                self.refreshLiveContextDockState()
+            }
+            axContextRefreshTimer?.tolerance = 0.15
+        } else {
+            if !aiMode.isActive { cancelBrowserContextWarmup() }
+            axContextRefreshTimer?.invalidate()
+            axContextRefreshTimer = nil
+            selectionModel.stop()
+            liveDockSelectionPreviewText = nil
+            l2.extensionResults = []
+            // NEVER destroy an active conversation on dock hide: an approved chat
+            // command (`code --status`) can activate its target app, which auto-hides
+            // the launcher — wiping messages + scope here killed the chat mid-answer.
+            // Menus/pills below still reset; the chat + pinned scope survive so the
+            // next open resumes exactly where the user left off.
+            let hasActiveChat =
+                l2.isLoading || l2.currentTask != nil || !l2.chatMessages.isEmpty
+            if !hasActiveChat {
+                l2.chatMessages = []
+                l2.isLoading = false
+                l2.activeRequestID = nil
+                l2.currentTask?.cancel()
+                l2.currentTask = nil
+            }
+            liveMenuRefreshTask?.cancel()
+            liveMenuRefreshTask = nil
+            menuAvailabilityRefreshTask?.cancel()
+            menuAvailabilityRefreshTask = nil
+            menuAvailabilityRefreshGeneration &+= 1
+            lastLiveMenuStructureRefresh = .distantPast
+            lastLiveMenuSignature = ""
+            searchState.results = []
+            searchState.selectedIndex = nil
+            liveMenuItems = []
+            crossAppMenuItems = []
+            crossAppMenuTargetPID = 0
+            contextMenuPills = []
+            previousEnabledIDs = []
+            l2.focusedPillIndex = nil
+            focusedAppPillIndex = nil
+            adapterContextData = [:]
+            l2.appCompletion = nil
+            // Keep the pinned scope alive with an active chat (see hasActiveChat
+            // above) so reopening the dock lands back in the same conversation.
+            if !hasActiveChat {
+                l2.targetApp = nil
+            }
+            menuLoadTask?.cancel()
+            crossAppMenuTask?.cancel()
+        }
+        requestWindowSizeUpdate(reason: .modeChanged)
+    }
+
+    /// `.onChange(of: showMediaLayer)`.
+    func handleShowMediaLayerChange(_ newValue: Bool) {
+        if newValue {
+            l2.extensionResults = []
+            l2.chatMessages = []
+            l2.isLoading = false
+            l2.activeRequestID = nil
+            l2.currentTask?.cancel()
+            l2.currentTask = nil
+            searchState.results = []
+            searchState.selectedIndex = nil
+            // Block expand during layer transition (globe ↔ magnifying glass icon swap)
+            suppressHoverExpand = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.suppressHoverExpand = false
+            }
+        }
+        requestWindowSizeUpdate(reason: .modeChanged)
     }
 }
