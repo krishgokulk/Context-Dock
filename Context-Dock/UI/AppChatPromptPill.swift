@@ -288,6 +288,14 @@ struct AppChatPromptPill: View {
             maximumWidth: DockStripPlan.screenBudget)
     }
 
+    /// ↑/↓ with no list to move through change layer, as the Dock's keys do — on an empty
+    /// field only, and never from inside a conversation.
+    private func layerKey(up: Bool) -> KeyPress.Result {
+        guard model.query.isEmpty, model.phase != .chat else { return .ignored }
+        return CornerDockController.shared.chatPresentation.handleLayerKey(up: up)
+            ? .handled : .ignored
+    }
+
     /// The strip's pins stay beside Global Context's open field (see
     /// `AppChatPromptMetrics.pinsBesideFieldSpan`). The width they take, scaled, and how far
     /// the strip is pushed so only they show.
@@ -697,10 +705,12 @@ struct AppChatPromptPill: View {
                         return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
                     .onKeyPress(.downArrow) {
-                        model.moveMenuFocus(by: 1) ? .handled : .ignored
+                        if model.moveMenuFocus(by: 1) { return .handled }
+                        return layerKey(up: false)
                     }
                     .onKeyPress(.upArrow) {
-                        model.moveMenuFocus(by: -1) ? .handled : .ignored
+                        if model.moveMenuFocus(by: -1) { return .handled }
+                        return layerKey(up: true)
                     }
                     .onKeyPress(keys: [.delete, .deleteForward]) { _ in
                         // Backspace on an empty field leaves the scope — the dock's way out,
@@ -738,7 +748,7 @@ struct AppChatPromptPill: View {
                         // A chosen row is what the user is pointing at, so → steps into it
                         // before anything else. Otherwise it takes the ghost completion, and
                         // on an empty field it steps into an app; failing all of that it
-                        // walks back through the scopes.
+                        // leaves General Chat (CornerNavigation).
                         if model.enterFocusedRow() { return .handled }
                         if model.acceptGhostCompletion() { return .handled }
                         if model.scopeIntoFirstRunningApp() { return .handled }

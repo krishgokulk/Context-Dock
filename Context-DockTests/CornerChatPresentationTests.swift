@@ -16,24 +16,26 @@ struct CornerChatPresentationTests {
         CornerChatTarget(name: "Safari", bundleID: "com.apple.Safari")
     }
 
-    /// App Chat arrows into General, so General has to arrow back — a keyboard that can
-    /// only make the trip one way leaves the user reaching for the mouse to undo it.
+    /// ← steps into General Chat from either scope and → steps back to that scope — the
+    /// Dock's ←/→ toggle (§4b W4), so a keyboard trip is never one-way.
     @Test func theArrowRouteBetweenModesRunsBothWays() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { nil }
         subject.showFrontmostApp(target: code)
 
-        // Global Context sits between the two chats, so the walk outward is two steps.
-        #expect(subject.handleLeftArrow(draft: "") == true)
-        #expect(subject.mode == .globalContext)
         #expect(subject.handleLeftArrow(draft: "") == true)
         #expect(subject.mode == .general)
-
-        #expect(subject.handleRightArrow(draft: "") == true)
-        #expect(subject.mode == .globalContext)
+        #expect(subject.handleLeftArrow(draft: "") == false)
         #expect(subject.handleRightArrow(draft: "") == true)
         #expect(subject.mode == .frontmostApp)
+
+        subject.showGlobalContext()
+        #expect(subject.handleLeftArrow(draft: "") == true)
+        #expect(subject.mode == .general)
+        #expect(subject.handleRightArrow(draft: "") == true)
+        #expect(subject.mode == .globalContext)
     }
 
     /// With something typed the arrows belong to the text, in both directions.
@@ -45,7 +47,7 @@ struct CornerChatPresentationTests {
         _ = subject.handleLeftArrow(draft: "")
 
         #expect(subject.handleRightArrow(draft: "half a question") == false)
-        #expect(subject.mode == .globalContext)
+        #expect(subject.mode == .general)
     }
 
     @Test func theHotkeySummonsFrontmostAppChat() {
@@ -153,7 +155,7 @@ struct CornerChatPresentationTests {
         subject.showFrontmostApp(target: code)
 
         #expect(subject.handleLeftArrow(draft: "") == true)
-        #expect(subject.mode == .globalContext)
+        #expect(subject.mode == .general)
 
         subject.showFrontmostApp(target: code)
         #expect(subject.handleLeftArrow(draft: "editing") == false)
@@ -202,6 +204,8 @@ struct CornerChatPresentationTests {
         #expect(app.query == "for code")
     }
 
+    /// Swipe right into General Chat from either scope, and any sideways swipe back to the
+    /// scope it came from — the Dock's toggle. A swipe left outside General does nothing.
     @Test func horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
@@ -209,19 +213,41 @@ struct CornerChatPresentationTests {
         subject.frontmostTargetProvider = { nil }
         subject.showFrontmostApp(target: code)
 
-        // From the app scope there is nothing further right, and one swipe left is one
-        // step of the same walk the arrows take.
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == false)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
-        #expect(subject.mode == .globalContext)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == false)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
         #expect(subject.mode == .general)
-        // And nothing further left of General.
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == false)
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
         #expect(subject.mode == .frontmostApp)
         #expect(subject.appChat.appBundleID == code.bundleID)
+
+        subject.showGlobalContext()
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
+        #expect(subject.mode == .general)
+        // Either direction leaves General, as in the Dock.
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
+        #expect(subject.mode == .globalContext)
+    }
+
+    /// ↑/↓ and vertical swipes move between the layers: Global Context above the frontmost
+    /// app, and General Chat left the way it was entered.
+    @Test func theLayerKeysMoveBetweenGlobalAndTheApp() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { nil }
+        subject.showFrontmostApp(target: code)
+
+        #expect(subject.handleLayerKey(up: true) == true)
+        #expect(subject.mode == .globalContext)
+        #expect(subject.handleLayerKey(up: true) == false)
+        #expect(subject.handleLayerKey(up: false) == true)
+        #expect(subject.mode == .frontmostApp)
+        // Nothing below the app until the Media Dock moves into the corner.
+        #expect(subject.handleLayerKey(up: false) == false)
+
+        _ = subject.handleLeftArrow(draft: "")
+        #expect(subject.handleLayerKey(up: false) == true)
+        #expect(subject.mode == .frontmostApp)
     }
 
     @Test func generalChatShrinksThenHidesAndHoverRestoresIt() {

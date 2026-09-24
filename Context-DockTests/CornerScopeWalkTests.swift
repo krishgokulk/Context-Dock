@@ -12,28 +12,69 @@ import Testing
 @Suite("Corner scope walk")
 struct CornerScopeWalkTests {
 
-    @Test("The scopes sit in one order: General, Global, the frontmost app")
-    func theOrderIsFixed() {
-        #expect(CornerChatMode.walk == [.general, .globalContext, .frontmostApp])
+    @Test("← and a swipe right go into General Chat from either scope; → and a swipe left do not")
+    func generalIsSteppedIntoSideways() {
+        for mode in [CornerChatMode.globalContext, .frontmostApp] {
+            #expect(CornerNavigation.destination(for: .leftKey, from: mode, origin: mode) == .general)
+            #expect(CornerNavigation.destination(
+                for: .swipeSideways(right: true), from: mode, origin: mode) == .general)
+            #expect(CornerNavigation.destination(for: .rightKey, from: mode, origin: mode) == nil)
+            #expect(CornerNavigation.destination(
+                for: .swipeSideways(right: false), from: mode, origin: mode) == nil)
+        }
     }
 
-    @Test("Left from the app scope reaches Global, and left again reaches General")
-    func leftWalksOutward() {
-        #expect(CornerChatMode.step(from: .frontmostApp, by: -1) == .globalContext)
-        #expect(CornerChatMode.step(from: .globalContext, by: -1) == .general)
+    @Test("Every way out of General Chat but ← goes back to the scope it was entered from")
+    func generalReturnsToItsOrigin() {
+        for origin in [CornerChatMode.globalContext, .frontmostApp] {
+            for move in [CornerNavigation.Move.rightKey, .swipeSideways(right: true),
+                .swipeSideways(right: false), .layerUp, .layerDown]
+            {
+                #expect(CornerNavigation.destination(for: move, from: .general, origin: origin)
+                    == origin)
+            }
+            #expect(CornerNavigation.destination(for: .leftKey, from: .general, origin: origin)
+                == nil)
+        }
     }
 
-    @Test("Right walks back the same way")
-    func rightWalksBack() {
-        #expect(CornerChatMode.step(from: .general, by: 1) == .globalContext)
-        #expect(CornerChatMode.step(from: .globalContext, by: 1) == .frontmostApp)
+    @Test("Global Context is the layer above the frontmost app, and neither end wraps")
+    func theLayersStack() {
+        let g = CornerChatMode.globalContext, a = CornerChatMode.frontmostApp
+        #expect(CornerNavigation.destination(for: .layerUp, from: a, origin: a) == g)
+        #expect(CornerNavigation.destination(for: .layerDown, from: g, origin: g) == a)
+        #expect(CornerNavigation.destination(for: .layerUp, from: g, origin: g) == nil)
+        #expect(CornerNavigation.destination(for: .layerDown, from: a, origin: a) == nil)
     }
 
-    @Test("The walk stops at both ends rather than wrapping")
-    func itDoesNotWrap() {
-        // Running off one end and reappearing at the other reads as losing your place.
-        #expect(CornerChatMode.step(from: .general, by: -1) == nil)
-        #expect(CornerChatMode.step(from: .frontmostApp, by: 1) == nil)
+    @Test("A swipe is read with the Dock's thresholds and signs")
+    func swipesAreClassifiedLikeTheDock() {
+        #expect(CornerSwipe.classify(dx: 90, dy: 0) == .swipeSideways(right: true))
+        #expect(CornerSwipe.classify(dx: -90, dy: 10) == .swipeSideways(right: false))
+        #expect(CornerSwipe.classify(dx: 70, dy: 0) == nil)  // not past 70
+        #expect(CornerSwipe.classify(dx: 90, dy: 60) == nil)  // not 1.8× the vertical
+        #expect(CornerSwipe.classify(dx: 0, dy: -60) == .layerDown)  // swipe up
+        #expect(CornerSwipe.classify(dx: 0, dy: 60) == .layerUp)  // swipe down
+        #expect(CornerSwipe.classify(dx: 0, dy: 55) == nil)  // not past 55
+        #expect(CornerSwipe.classify(dx: 50, dy: 56) == nil)  // not 1.15× the sideways
+    }
+
+    @Test("Keys and swipes agree from every scope")
+    func keysAndSwipesAgree() {
+        let pairs: [(CornerNavigation.Move, CornerNavigation.Move)] = [
+            (.leftKey, .swipeSideways(right: true)),
+            (.layerUp, CornerSwipe.classify(dx: 0, dy: 80)!),
+            (.layerDown, CornerSwipe.classify(dx: 0, dy: -80)!),
+        ]
+        for mode in [CornerChatMode.globalContext, .frontmostApp] {
+            for (key, swipe) in pairs {
+                #expect(CornerNavigation.destination(for: key, from: mode, origin: mode)
+                    == CornerNavigation.destination(for: swipe, from: mode, origin: mode))
+            }
+        }
+        #expect(CornerNavigation.destination(for: .rightKey, from: .general, origin: .globalContext)
+            == CornerNavigation.destination(
+                for: .swipeSideways(right: false), from: .general, origin: .globalContext))
     }
 
     @Test("Global Context asks the dock's index, and rests empty until something is typed")
