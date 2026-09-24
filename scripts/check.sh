@@ -17,11 +17,24 @@ if pgrep -qf "xcodebuild.*Context-Dock" 2>/dev/null; then
   exit 0
 fi
 
+APP_BIN="$ROOT_DIR/.build/XcodeDerivedData/Build/Products/Debug/Context-Dock.app/Contents/MacOS/Context-Dock"
+START_MARK="$ROOT_DIR/.build/check.start"
+touch "$START_MARK"
+
 echo "check: building Debug…"
 if ! "$ROOT_DIR/scripts/build-debug.sh" >"$LOG" 2>&1; then
-  echo "check: BUILD FAILED — last errors (full log: .build/check.log):"
-  grep -E "error:" "$LOG" | head -20 || tail -30 "$LOG"
-  exit 1
+  # xcodebuild can exit non-zero on the trailing PruneExplicitPrecompiledModules step with
+  # "build.db: disk I/O error" after compile, link and sign all succeeded — the product is
+  # fine (ship.sh tolerates the same flake by checking the product). Pass only when that
+  # is the ONLY error and the binary was rebuilt by this run; any other error still fails.
+  other_errors="$(grep -E "error:" "$LOG" | grep -Ev 'build\.db.*disk I/O error' || true)"
+  if [ -z "$other_errors" ] && [ -x "$APP_BIN" ] && [ "$APP_BIN" -nt "$START_MARK" ]; then
+    echo "check: warning — xcodebuild hit the known build.db prune flake; the app was built fresh, treating as OK."
+  else
+    echo "check: BUILD FAILED — last errors (full log: .build/check.log):"
+    grep -E "error:" "$LOG" | head -20 || tail -30 "$LOG"
+    exit 1
+  fi
 fi
 echo "check: build OK"
 
