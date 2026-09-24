@@ -509,7 +509,7 @@ final class CornerDockController: NSObject {
         let preview =
             DockPinPreviewService.shared.preview(for: pin)
             ?? .missing(name: pin.title, reason: "")
-        return DockPinPreviewMetrics.size(for: preview)
+        return DockPinPreviewMetrics.size(for: preview, expanded: prompt.pinPreviewExpanded)
     }
 
     /// The app's commands, or what it can do — a card of its own above the field, and only

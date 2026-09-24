@@ -65,15 +65,18 @@ enum DockPinPreviewMetrics {
     /// The folder browser brings its own list, grid and footer, so it is given a window to
     /// be a window in rather than a height derived from a count this no longer knows.
     static let folder = CGSize(width: 360, height: 320)
+    /// The folder card after its expand control: room for a real column of names and a
+    /// grid more than two icons wide. Files and messages have nothing more to show.
+    static let folderExpanded = CGSize(width: 560, height: 480)
 
-    static func size(for preview: DockPinPreview) -> CGSize {
+    static func size(for preview: DockPinPreview, expanded: Bool = false) -> CGSize {
         switch preview {
         case .file:
             return CGSize(
                 width: width,
                 height: 2 * inset + thumb.height + 6 + titleHeight + 2 + detailHeight)
         case .folder:
-            return folder
+            return expanded ? folderExpanded : folder
         case .document, .missing:
             return CGSize(width: width, height: 2 * inset + titleHeight + 4 + detailHeight + 20)
         }

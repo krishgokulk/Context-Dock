@@ -87,7 +87,18 @@ final class AppChatPromptModel: ObservableObject {
     /// What that card is showing, once the pointer has rested long enough. The strip sets
     /// `hoveredStripTarget` on every icon; this follows it after 250 ms and lets go 150 ms
     /// after the pointer has left both the icon and the card.
-    @Published private(set) var dockPreviewTarget: DockHoverTarget?
+    @Published private(set) var dockPreviewTarget: DockHoverTarget? {
+        didSet {
+            // Expanded belongs to the card that was expanded; the next one opens at its
+            // own size.
+            if dockPreviewTarget != oldValue { pinPreviewExpanded = false }
+        }
+    }
+    /// A pin card the user pinned open. The pointer moving over other icons, or away, no
+    /// longer puts it away; unpinning hands the slot back to the hover.
+    @Published private(set) var pinnedPreviewPinID: UUID?
+    /// The pin card grown by its expand control (`DockPinPreviewMetrics.folderExpanded`).
+    @Published private(set) var pinPreviewExpanded = false
     private var windowRowTask: Task<Void, Never>?
     private var pointerInWindowRow = false
 
@@ -790,6 +801,23 @@ final class AppChatPromptModel: ObservableObject {
         dockPreviewTarget = nil
     }
 
+    func togglePinPreviewPinned(_ id: UUID) {
+        pinnedPreviewPinID = pinnedPreviewPinID == id ? nil : id
+        if pinnedPreviewPinID == nil { scheduleWindowRowUpdate() }
+    }
+
+    func togglePinPreviewExpanded() {
+        pinPreviewExpanded.toggle()
+    }
+
+    /// What the card slot shows: a pinned card wins over whatever the pointer is on.
+    nonisolated static func previewTarget(
+        hovered: DockHoverTarget?, pinnedPin: UUID?
+    ) -> DockHoverTarget? {
+        if let pinnedPin { return .pin(id: pinnedPin) }
+        return hovered
+    }
+
     func windowRowHovered(_ inside: Bool) {
         pointerInWindowRow = inside
         if inside { windowRowTask?.cancel() } else { scheduleWindowRowUpdate() }
@@ -803,7 +831,8 @@ final class AppChatPromptModel: ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
-            self.dockPreviewTarget = target
+            self.dockPreviewTarget = Self.previewTarget(
+                hovered: target, pinnedPin: self.pinnedPreviewPinID)
         }
     }
 

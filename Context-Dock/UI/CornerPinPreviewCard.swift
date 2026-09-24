@@ -29,14 +29,23 @@ struct CornerPinPreviewCard: View {
             }
         }
         .padding(M.inset)
+        // The card is exactly its slot. It used to take the file card's width whatever it
+        // showed, so a folder's 360 pt slot held a 260 pt card with 50 pt of glass either
+        // side of it.
         .frame(
-            width: M.width,
-            height: M.size(for: preview ?? .missing(name: pin.title, reason: "")).height)
+            width: size(preview).width,
+            height: size(preview).height)
         // The card is part of the target: crossing from the icon onto it must not count as
         // leaving, or it would vanish under the pointer.
         .onHover { inside in model.windowRowHovered(inside) }
         .onAppear { refresh() }
         .onChange(of: pin.id) { _, _ in refresh() }
+    }
+
+    private func size(_ preview: DockPinPreview?) -> CGSize {
+        M.size(
+            for: preview ?? .missing(name: pin.title, reason: ""),
+            expanded: model.pinPreviewExpanded)
     }
 
     private func refresh() {
@@ -96,12 +105,37 @@ struct CornerPinPreviewCard: View {
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                 Spacer(minLength: 0)
+                // The same two controls, drawn the same way, as the clipboard card's header.
+                Button { model.togglePinPreviewExpanded() } label: {
+                    headerGlyph(
+                        model.pinPreviewExpanded
+                            ? "arrow.down.right.and.arrow.up.left"
+                            : "arrow.up.left.and.arrow.down.right")
+                }
+                .buttonStyle(.plain)
+                .help(model.pinPreviewExpanded ? "Make the preview smaller" : "Expand the preview")
+                Button { model.togglePinPreviewPinned(pin.id) } label: {
+                    headerGlyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin preview" : "Pin preview — keep it open")
             }
             .frame(height: M.headerHeight)
             PreviewFolderBrowser(url: URL(fileURLWithPath: detail.path))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var isPinned: Bool { model.pinnedPreviewPinID == pin.id }
+
+    private func headerGlyph(_ symbol: String, tinted: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(tinted ? Color.accentColor : .secondary)
+            .frame(width: 22, height: 22)
+            .background(tinted ? Color.accentColor.opacity(0.18) : Color.clear, in: Circle())
+            .contentShape(Circle())
     }
 
     private func document(_ detail: DockPinPreview.DocumentDetail) -> some View {
