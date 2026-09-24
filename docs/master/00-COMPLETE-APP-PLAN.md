@@ -107,7 +107,29 @@ Raycast user from switching. `[judgment]`
 Every feature belongs to one of three verbs (`00-PRODUCT-PLAN.md §2`). Each item lists its
 **acceptance test** — how we know it is done.
 
-### 2.1 FIND — `⌥Space` `[judgment: default hotkey]`
+### Hotkeys as built `[code]`
+
+Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2026-09-24).
+**The app is the source of truth** — if this table and Settings → Hotkeys disagree, fix the table.
+
+| Action | Default | Where to change |
+|---|---|---|
+| Open Global Context in the corner | **⌘⌘ double-press Command** (on) | Hotkeys → Launch Shortcut |
+| Show the launcher | **⌥⌥ double-press Option** (on) | Hotkeys → Launch Shortcut |
+| Global Context (extra shortcut) | unset | Hotkeys → Custom Shortcuts |
+| App Chat (ask the frontmost app) | unset | Hotkeys → Custom Shortcuts |
+| Chat Window (General Chat) | unset | Hotkeys → Custom Shortcuts |
+| Selection Scope | unset — while unset, a selection auto-scopes on every launch | Hotkeys → Custom Shortcuts |
+| Clipboard Scope | unset | Hotkeys → Custom Shortcuts |
+| Quick Note | unset | Hotkeys → Custom Shortcuts |
+| Capture Text / Capture Area / Screenshot | unset | Hotkeys → Custom Shortcuts |
+
+The old "long-press ⌘ opens the Selection Shortcut Sheet" was **removed**; ⌘ only tap-toggles
+scope now (`Search/LauncherView+KeyboardNavigation.swift`, around line 1303).
+Earlier drafts of these plans proposed ⌥Space / ⌥⌘Space / hold-⌘ — those were never in the app.
+Whether Ask should get a default hotkey is an open owner decision.
+
+### 2.1 FIND — `⌘⌘` (double-press Command) `[code: today's default]`
 
 One root search. Everything is findable from here.
 
@@ -127,7 +149,7 @@ One root search. Everything is findable from here.
 Performance budget: open < 100 ms, keystroke → results < 16 ms, **no AX scan while typing**
 (existing rule, `PERFORMANCE_RULES.md`).
 
-### 2.2 ASK — `⌥⌘Space`, or Tab from Find
+### 2.2 ASK — App Chat / Chat Window hotkeys (unset by default), or Tab from Find `[proposal]`
 
 One chat. A **scope chip** at the top: `This app · These apps · Everywhere`.
 
@@ -144,7 +166,7 @@ One chat. A **scope chip** at the top: `This app · These apps · Everywhere`.
 | A9 | History | Threads per scope; search history | Reopening a thread restores its scope |
 | A10 | Enable an app | "Enable Notes for this chat" one-tap grant | Grant visible and revocable |
 
-### 2.3 ACT ON THIS — long-press `⌘`
+### 2.3 ACT ON THIS — selection auto-scopes on launch, or the Selection Scope hotkey (unset by default)
 
 Whatever is selected or just copied.
 

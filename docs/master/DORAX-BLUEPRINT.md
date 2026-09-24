@@ -15,7 +15,7 @@
 | **One sentence** | *Tell your Mac what to do, in any app — it uses the app's own controls, asks first, and proves it worked.* |
 | **First users** | Mac developers who already use Claude Code or Codex. |
 | **Why it wins** | Raycast and Alfred need someone to write an extension per app. DoraX reads any app's live menus and verifies every action. `[code]` |
-| **What the user sees** | Three verbs: **Find** (⌥Space) · **Ask** (⌥⌘Space, or Tab from Find) · **Act on this** (hold ⌘) |
+| **What the user sees** | Three verbs: **Find** (⌘⌘ double-press Command) · **Ask** (App Chat / Chat Window hotkeys, set by the user) · **Act on this** (selection auto-scopes on launch, or the Selection Scope hotkey) — see [Hotkeys as built](00-COMPLETE-APP-PLAN.md#hotkeys-as-built-code) |
 | **v1 includes** | Launcher basics (apps, files, calculator, conversions, quicklinks, clipboard, windows, hotkeys, ⌘K actions) + app-scoped and cross-app AI with verified actions + onboarding + signed install |
 | **Later (Labs)** | Memory vault, dashboard, coding-agent workers, media dock, drop shelf |
 | **Never** | Visual workflow editor, own extension store (MCP is the store), acting without asking |

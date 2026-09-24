@@ -83,9 +83,9 @@ Users do not think in layers. They think in verbs. Keep the layers separate **in
 
 | Verb | What the user sees | Layers underneath | Hotkey |
 |---|---|---|---|
-| **Find** | One search bar. "This app" commands first, then everything else. | `01` Global Context + `02` Context Dock | ⌥Space `[guess]` |
-| **Ask** | One chat with a scope chip: *This app · These apps · Everywhere* | `03` + `04` (already one engine, `04 §0`) | ⌥⌘Space `[guess]` |
-| **Act on this** | Hold ⌘ on a selection or clip | `05` Selection + Clipboard | long-press ⌘ |
+| **Find** | One search bar. "This app" commands first, then everything else. | `01` Global Context + `02` Context Dock | ⌘⌘ double-press Command (today's Global Context default) `[code]` |
+| **Ask** | One chat with a scope chip: *This app · These apps · Everywhere* | `03` + `04` (already one engine, `04 §0`) | none by default — set under Settings → Hotkeys (App Chat / Chat Window) `[code]`; Tab from Find `[proposal]` |
+| **Act on this** | Act on a selection or clip | `05` Selection + Clipboard | none by default — a selection auto-scopes on launch, or set Selection Scope in Settings → Hotkeys `[code]` |
 
 This is the Unified Dock Surface rule applied to naming: one shell, modes inside it.
 
