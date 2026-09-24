@@ -32,7 +32,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | A1 | ⌥⌥ opens the launcher | — | End state decision open (`00-DOCK-AND-CORNER.md` §5): what ⌥⌥ opens after the Dock retires |
 | A2 | ⌘⌘ opens Global Context | ✅ | Opens in the Corner (Hotkeys page); `CornerGlobalContextParityTests` |
 | A3 | Hotkey toggles: pressing again puts it away / brings it back | ✅ | `theHotkeyPutsAnOpenCornerAway`, `theHotkeyBringsBackAShrunkenCorner` |
-| A4 | Esc closes / steps back one layer | 🟡 | Corner General Chat: `CornerGeneralChatView.handleEscape` ("one layer per press"); other Corner phases ❓ |
+| A4 | Esc closes / steps back one layer | 🟡 | Corner General Chat: `CornerGeneralChatView.handleEscape` (one layer per press). Global/app field (checked on the app 2026-09-24): Esc clears the query first, then closes — no step back through scopes |
 | A5 | Idle collapse timer when nothing typed | ✅ | Corner idle shrink: `generalChatShrinksThenHidesAndHoverRestoresIt`, `pinAndComposerFocusProtectGeneralChatFromIdleShrink` |
 | A6 | Position | — | Dock = centre; Corner = Left / Centre / Right (`CornerDockAnchorTests`) — Corner is richer by design |
 | A7 | Dock height presets (`LauncherView+DockHeight`) | — | Corner sizes itself to content (`AppChatPromptMetrics…Tests`); not a parity item |
@@ -43,7 +43,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 |---|---|---|---|
 | B1 | Ghost-text completion; **Tab** / **→** accepts | ✅ | "The focused row is what Tab and the right arrow take" |
 | B2 | Pills are atomic text: Backspace at a pill's right edge turns it back into text; ←/→ jump over a pill in one press | ❓ | Dock `KeyboardNavigation` ~l.374–400 |
-| B3 | Backspace on empty field steps out of the current scope (folder → Finder search, app chat → app menus, Global inline scope pops) | ❓ | Dock ~l.414–490; several distinct rules — check each |
+| B3 | Backspace on empty field steps out of the current scope (folder → Finder search, app chat → app menus, Global inline scope pops) | 🟡 | checked on the app 2026-09-24: scoped into Finder from Global, Backspace on an empty field goes back to Global ✅; folder → Finder and inline-scope rules not tried |
 | B4 | Backspace on empty field in Selection Scope leaves the scope **and** closes | ❓ | Dock ~l.229 |
 | B5 | Typing a printable key while at rest expands and seeds the field | ✅ | `aPrintableCharacterExpandsAndSeeds` |
 | B6 | Draft kept when switching scope / app | ✅ | `switchingModesPreservesIndependentDrafts`, `comingBackToTheSameAppKeepsWhatWasTyped` |
@@ -53,15 +53,15 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 
 | # | Dock behaviour | Corner | Evidence / note |
 |---|---|---|---|
-| C1 | **↓** first press expands the result sheet, then moves down | ❓ | Dock ~l.782 |
-| C2 | **↑ / ↓** move through grouped app/menu rows | 🟡 | Corner lists rows above the field; key handling not pinned by a test |
+| C1 | **↓** first press expands the result sheet, then moves down | 🟡 | checked on the app 2026-09-24: the first ↓ opens the list **and** highlights row 1 in one press (Dock: first press opens, next moves) |
+| C2 | **↑ / ↓** move through grouped app/menu rows | ✅ | checked on the app 2026-09-24: ↓↓ walks the Global rows (Safari → Turn Off the Lights…) |
 | C3 | **↩** runs the focused row, or the top row if none is focused | 🟡 | `tabRunsTheDockActionAndDisabledRowsDoNotRun` covers Tab; ↩ ❓ |
-| C4 | **←** leaves result focus back to the field | ❓ | Dock ~l.795 |
-| C5 | **Esc** collapses the sheet to compact typing, keeps the query | ❓ | Dock ~l.804 |
-| C6 | **Backspace** on a focused row clears focus only (never quits an app) | ❓ | Dock ~l.828 / 991 — safety rule, must hold in the Corner |
-| C7 | **Tab** enters / leaves app-pill navigation (and blocks macOS Full Keyboard Navigation) | ❓ | Dock ~l.877, 1015 |
+| C4 | **←** leaves result focus back to the field | ❌ | checked on the app 2026-09-24: ← with a row focused leaves the highlight on the row |
+| C5 | **Esc** collapses the sheet to compact typing, keeps the query | ❌ | checked on the app 2026-09-24: Esc with a row focused **clears the query** and closes the list (Dock keeps the query) |
+| C6 | **Backspace** on a focused row clears focus only (never quits an app) | ❌ | checked on the app 2026-09-24: Backspace with a row focused deletes a character and closes the list (Dock clears focus only). It never quits an app ✅ |
+| C7 | **Tab** enters / leaves app-pill navigation (and blocks macOS Full Keyboard Navigation) | ❌ | checked on the app 2026-09-24: Tab on an empty Global field shows no app-pill navigation |
 | C8 | **→** on an app row scopes that app into a pill | ✅ | `rightArrowFromDockScopesLikeAnEmptyPromptDoes`, `steppingIntoAnotherAppTakesYouToThatAppsChat` |
-| C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ❓ | Dock ~l.1021–1060 |
+| C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ❌ | checked on the app 2026-09-24: after → into an app, →/← move no highlight along the running-app pills |
 | C10 | **Space** = Quick Look on the focused file/row (only while navigating, never while typing) | 🟡 | `AppChatMenuBrowsing` toggles `FileQuickLookPanel`; Space binding not verified |
 | C11 | **→** on a folder row enters the folder | 🟡 | → on an app row scopes into the app instead of launching it (checked on the app 2026-09-25); folder rows not tried |
 | C12 | **⌘R** refreshes the front app's live menus | ❓ | Hotkeys page lists it for the Dock only |
@@ -101,7 +101,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 
 | # | Dock behaviour | Corner | Evidence / note |
 |---|---|---|---|
-| F1 | Trackpad swipes — all rows W1–W10 | 🟡 | Spec: `00-DOCK-AND-CORNER.md` §4b; horizontal partly (`horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp`), vertical ❌ |
+| F1 | Trackpad swipes — all rows W1–W10 | ✅ | Owner hand-tested on the trackpad 2026-09-24 after PR #79 (`CornerNavigation`, `CornerSwipe`; `CornerScopeWalkTests`) |
 | F2 | ↑/↓ keys switch Global ↔ Context ↔ Media when not in a list | ✅ | ↓ Global → app and ↑ back, checked on the app 2026-09-25 (`CornerRightArrowTests`, `theLayerKeysMoveBetweenGlobalAndTheApp`) |
 | F3 | Media Dock layer | — | Labs; appears only if Settings' Media layer is on (same gate in the Corner — §4b W6) |
 | F4 | Pinned results | ✅ | Corner dock strip pins (`DockPinStoreTests`, `pinsAreNeverOverflowed`) |
@@ -113,7 +113,13 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 
 | | ✅ | 🟡 | ❌ | ❓ | — |
 |---|---:|---:|---:|---:|---:|
-| Rows (52) | 16 | 11 | 3 | 18 | 4 |
+| Rows (52) | 19 | 13 | 8 | 8 | 4 |
+
+**Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
+C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,
+D14, E3, E4; also untried, left as they were: B7, C3, C10, D2, D5, D6, D10, E5 — rows that run
+commands, need a selection, or need a live model.
+**D4 was a safety bug** (→ on a system-command row ran it) — fixed in #81.
 
 **What this says:** the Corner already matches the Dock on the *big* things — Global Context, CLI
 scope, General Chat, clipboard, pins, feedback — and each is pinned by tests. The gaps are in the
