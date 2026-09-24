@@ -98,6 +98,34 @@ enum AppChatPromptMetrics {
         return matchIconBaseCount + Int(room / matchPillIconSpan)
     }
 
+    // MARK: The strip beside the open field
+
+    /// Opening the field used to take the whole strip away, and with it everything that is
+    /// not an app — pinned folders, plugin tiles — so the things the user had chosen to keep
+    /// at hand vanished the moment they started typing. The strip's pins region now stays
+    /// beside the field, drawn at the field's height. (Its apps do not: the field's own pill
+    /// already shows them.)
+    static let fieldStripScale: CGFloat = inputHeight / dockHeight
+
+    /// How much of the strip, unscaled, shows beside the open field: the pins region with
+    /// its leading hairline, and a margin after it. Nothing when nothing is pinned.
+    static func pinsBesideFieldSpan(
+        pinned: Int, pinnedExtraWidth: CGFloat = 0, tools: Int = 0
+    ) -> CGFloat {
+        guard pinned > 0 else { return 0 }
+        let pins = dockDividerSpan + runWidth(pinned) + pinnedExtraWidth
+        // With tools after the pins, the margin is the gap before their hairline, so the
+        // clip falls exactly on that hairline; without them it is the strip's own inset.
+        return pins + (tools > 0 ? dockIconGap : dockInset)
+    }
+
+    /// How far the strip is pushed trailing, unscaled, so that its tools — which the field
+    /// carries itself — fall outside the shell rather than showing twice.
+    static func toolsBesideFieldOffset(pinned: Int, tools: Int) -> CGFloat {
+        guard pinned > 0, tools > 0 else { return 0 }
+        return dockDividerSpan + runWidth(tools) + dockInset - dockIconGap
+    }
+
     struct DockLayout: Equatable {
         /// Running icons actually drawn; the rest are the `+N` pill.
         let shownRunning: Int
@@ -185,6 +213,8 @@ enum AppChatPromptMetrics {
         tools: Int = 0,
         /// Running apps drawn in the field's own pill, which the field grows to hold.
         promptIcons: Int = 0,
+        /// Global Context's field, which keeps the strip's pins beside it.
+        stripBesideField: Bool = false,
         /// The width the row was planned against. The shell and the row are two readings
         /// of one number and must be given the same budget, or the row overflows the glass
         /// it is drawn in and the leading magnifier is what gets clipped.
@@ -205,8 +235,12 @@ enum AppChatPromptMetrics {
         case .prompt, .suggesting:
             // The list is its own card above this one, so the field stays a field — but it
             // widens for the running-app row it carries.
+            let beside = stripBesideField
+                ? fieldStripScale * pinsBesideFieldSpan(
+                    pinned: pinned, pinnedExtraWidth: pinnedExtraWidth, tools: tools)
+                : 0
             return CGSize(
-                width: promptWidth(icons: promptIcons, maximumWidth: maximumWidth),
+                width: promptWidth(icons: promptIcons, maximumWidth: maximumWidth) + beside,
                 height: inputHeight + sheet)
         case .chat:
             return CGSize(width: width, height: chatHeight(messages: messages) + sheet)
@@ -250,7 +284,28 @@ struct AppChatPromptPill: View {
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: tools,
             promptIcons: model.globalMatchIcons.count,
+            stripBesideField: model.isGlobalScope,
             maximumWidth: DockStripPlan.screenBudget)
+    }
+
+    /// The strip's pins stay beside Global Context's open field (see
+    /// `AppChatPromptMetrics.pinsBesideFieldSpan`). The width they take, scaled, and how far
+    /// the strip is pushed so only they show.
+    private var stripBesideField: (width: CGFloat, offset: CGFloat)? {
+        guard model.phase == .prompt || model.phase == .suggesting else { return nil }
+        let tools = model.dockToolCount(
+            clipboardVisible: clipboard.phase.isVisible,
+            feedbackVisible: actionFeedback.glyph != nil)
+        let composition = DockStripPlan.make(
+            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools
+        ).composition
+        let pinned = composition.otherPins.count
+        guard pinned > 0 else { return nil }
+        let k = AppChatPromptMetrics.fieldStripScale
+        return (
+            k * AppChatPromptMetrics.pinsBesideFieldSpan(
+                pinned: pinned, pinnedExtraWidth: composition.widgetExtraWidth, tools: tools),
+            k * AppChatPromptMetrics.toolsBesideFieldOffset(pinned: pinned, tools: tools))
     }
 
     var body: some View {
@@ -298,17 +353,28 @@ struct AppChatPromptPill: View {
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
         let isDock = model.phase == .dock
+        let beside = stripBesideField
         return ZStack(alignment: .bottomTrailing) {
+            // Under the field, so the part of it the field covers never takes a click.
+            // Beside the open field only its pins show: scaled to the field's height from
+            // the trailing corner, and pushed so its tools fall outside the glass. Scale and
+            // offset draw without laying out, so the field's focused subtree never moves.
+            CornerDockStrip(model: model, besideField: beside != nil)
+                .scaleEffect(
+                    beside != nil ? AppChatPromptMetrics.fieldStripScale : 1,
+                    anchor: .bottomTrailing)
+                .offset(x: beside?.offset ?? 0)
+                .opacity(isDock || beside != nil ? 1 : 0)
+                .allowsHitTesting(isDock || beside != nil)
+                .animation(stripFade, value: model.phase)
+
             inputStack
                 .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                // The field keeps its place at the leading edge; the pins sit after it.
+                .offset(x: -(beside?.width ?? 0))
                 .opacity(showsInput ? 1 : 0)
                 .allowsHitTesting(showsInput)
                 .animation(fieldFade, value: model.phase)
-
-            CornerDockStrip(model: model)
-                .opacity(isDock ? 1 : 0)
-                .allowsHitTesting(isDock)
-                .animation(stripFade, value: model.phase)
 
             miniContent
                 .opacity(model.phase == .mini ? 1 : 0)

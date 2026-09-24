@@ -6,6 +6,10 @@ import UniformTypeIdentifiers
 /// to go and never answers anything — typing is what brings the field back.
 struct CornerDockStrip: View {
     @ObservedObject var model: AppChatPromptModel
+    /// Drawn beside Global Context's open field: only the pins region shows (the shell
+    /// scales and clips the rest), so the magnifier, the apps and the tools stand down —
+    /// the field carries its own of each.
+    var besideField = false
     @ObservedObject private var pins = DockPinStore.shared
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var feedback = CornerActionFeedback.shared
@@ -28,7 +32,10 @@ struct CornerDockStrip: View {
     /// The icons are collapsed toward the pill whenever the field is on its way in or
     /// already up — not only while the magnifier is hovered. Typing a letter and clicking
     /// the magnifier open the field too, and they are the same motion.
-    private var gathered: Bool { condensing || model.phase != .dock }
+    private var gathered: Bool { condensing || (model.phase != .dock && !besideField) }
+
+    /// The parts the field already carries: invisible and untouchable beside it.
+    private var standsDownBesideField: Double { besideField ? 0 : 1 }
 
     /// The row and its geometry, made together: an app appears once, whether it is pinned,
     /// running or both.
@@ -47,6 +54,8 @@ struct CornerDockStrip: View {
             toolIcon("magnifyingglass", title: "Search") { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
+                .opacity(standsDownBesideField)
+                .allowsHitTesting(!besideField)
             // Everything but the magnifier condenses toward it while the field comes back:
             // each icon shrinks in place and fades, so the capsule reads as gathering itself
             // into the field rather than being replaced by it. Sizes are untouched — the
@@ -61,9 +70,13 @@ struct CornerDockStrip: View {
                 + plan.composition.otherPins.map(\.id.uuidString)
             ForEach(plan.composition.apps) { slot in
                 appIcon(slot, ids: ids)
+                    .opacity(standsDownBesideField)
+                    .allowsHitTesting(!besideField)
             }
             if plan.layout.overflow > 0 {
                 overflowPill(plan.layout.overflow)
+                    .opacity(standsDownBesideField)
+                    .allowsHitTesting(!besideField)
             }
             if !plan.composition.otherPins.isEmpty {
                 // The HStack's own gap on each side of this hairline is the 17-point
@@ -90,6 +103,7 @@ struct CornerDockStrip: View {
                 }
             }
             if plan.layout.tools > 0 {
+                Group {
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
@@ -118,6 +132,9 @@ struct CornerDockStrip: View {
                     ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
+                }
+                .opacity(standsDownBesideField)
+                .allowsHitTesting(!besideField)
             }
             }
             // Gathering toward the trailing edge, which is where the field's own small
