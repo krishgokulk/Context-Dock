@@ -67,7 +67,7 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | General Chat | ✅ | ✅ | **Moved** — parity tasks 1, 2, 3, 6, 8 done | `[code]` CLAUDE.md current sequence |
 | Frontmost app's menu commands + actions | ✅ | 🟡 | **In progress** — plan 2026-09-08 Phases 1–2 done (ranking extracted to `FrontmostMenuMatcher`; actions and menus ranked together by `AppChatRowRanker`). Phase 3 (retire the Dock's copy) and Phase 4 (scope pills) not started: the Dock still builds its own `contextMenuPills` | `[code]` checked 2026-09-24 |
 | Clipboard | ✅ | ✅ | **Moved** — ambient pill + card. The Dock still keeps its own copy of the pasteboard rules (`LauncherView+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardPreviewCard` |
-| Selection | ✅ | 🟡 | **Partial — see §4a** | `[code]` `SelectionScopeCard` |
+| Selection | ✅ | ✅ | **Moved (hand check owed)** — the card lists the Dock's Selection Scope rows above its field, ↑/↓/↩, ✕ to close; see §4a | `[code]` `SelectionScopeCard`, `SelectionActionSource` |
 | Drop shelf | — | ✅ | **Corner-only** | `[code]` `DropShelfWindow` |
 | Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[code]` corner rows run the Dock's `executeGlobalAppSearchResult` → `activateGlobalInlineScope`; `[plan]` 2026-09-10 scope stack, "plan only" |
 | CLI tools as a scope (+ terminal) | ✅ | ❌ | **Not moved** — same hand-off | `[plan]` 2026-09-10 Phases 3–4 |
@@ -111,6 +111,16 @@ surface lost its one job ("selection-aware action engine", `docs/architecture/SE
 **Related bug found while testing:** the Selection Scope hotkey was recorded as **⇧S**. A Shift-only
 global hotkey captures every capital S typed anywhere, so typing "S" in TextEdit opened this card.
 Fix: the recorder must require ⌘, ⌥ or ⌃ (`UI/Settings/HotkeysSettingsPage.swift`, `startRecording()`).
+
+**As built (2026-09-24, branch `selection-in-corner`).** Criteria 1–4 are in code with tests
+(`SelectionScopeActionTests`). For criterion 5 the rows are **reused through a bridge, not extracted**:
+`SelectionActionSource` — the same pattern as `GlobalContextResultSource` — lends the card's selection
+to the Dock as its frozen `selectionScopePayload` while the card is up, lists the rows the Dock's own
+`buildDockPills` renders for the query (minus its "Ask AI" row: the card's field is the ask), and runs
+a picked row through `executeDockPill`. One pipeline, so the two surfaces cannot disagree. Extracting
+the dozen builders out of `LauncherView` is still worth doing for the Dock's retirement (§5), but it is
+not needed for the Corner to act. **Not yet checked by hand:** that each row kind (Shortcut, share,
+menu command, extension) runs correctly from the corner with the Dock hidden.
 
 ## 4b. Swipes — the Corner must match the Dock exactly (owner decision, 2026-09-24)
 

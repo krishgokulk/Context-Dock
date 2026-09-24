@@ -29,7 +29,7 @@ struct SelectionScopeSubmitTests {
     private func summoned(text: String = "the paragraph the user highlighted")
         -> SelectionScopeModel
     {
-        let model = SelectionScopeModel()
+        let model = SelectionScopeModel(source: SelectionActionSource())
         let context = AXContext(
             appName: "Code", bundleId: "com.microsoft.VSCode", pid: 0, selectedText: text)
         #expect(model.summon(from: context))

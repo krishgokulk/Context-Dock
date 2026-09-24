@@ -27,6 +27,9 @@ enum SelectionScopePhase: Equatable {
 final class SelectionScopeModel: ObservableObject {
     /// Matches the rest of the corner: nothing here outlives the user's attention.
     static let idleDwell: TimeInterval = 8
+    /// Rows shown above the field. The Dock's sheet can hold more; the card is for the few
+    /// that match what is typed, and typing narrows them.
+    static let maxVisibleActions = 5
 
     @Published private(set) var phase: SelectionScopePhase = .hidden
     @Published var query = ""
@@ -42,8 +45,20 @@ final class SelectionScopeModel: ObservableObject {
     /// the conversation is in the chat now, and a follow-up should be typeable there without
     /// the user having to dismiss the thing their question was about.
     @Published private(set) var hasAsked = false
+    /// What can be done with the selection — the Dock's Selection Scope rows for `query`.
+    @Published private(set) var actions: [DockPill] = []
+    /// The row ↑/↓ has reached. Nil means ↩ asks the question instead.
+    @Published private(set) var focusedActionIndex: Int?
 
+    private let source: SelectionActionSource
+    /// Set while this card's selection is the Dock's frozen payload, so dismissing gives it
+    /// back without clearing a Selection Scope the Dock opened on its own.
+    private var lentToDock = false
     private var standDownTask: Task<Void, Never>?
+
+    init(source: SelectionActionSource? = nil) {
+        self.source = source ?? .shared
+    }
 
     var onPhaseChange: ((SelectionScopePhase) -> Void)?
 
@@ -78,9 +93,77 @@ final class SelectionScopeModel: ObservableObject {
         appBundleID = context.bundleId
         query = ""
         hasAsked = false
+        lendSelectionToDock()
+        refreshActions()
         set(.showing)
         arm(after: Self.idleDwell)
         return true
+    }
+
+    /// The selection as the Dock freezes its own — the same shape
+    /// `currentSelectionActivationSnapshot` builds, so the Dock's builders read it unchanged.
+    private var activation: GlobalContextActivation {
+        if !files.isEmpty {
+            return GlobalContextActivation(
+                autoActivated: false,
+                frozenText: files.map(\.lastPathComponent).joined(separator: ", "),
+                frozenIcon: files.count == 1 ? "doc" : "doc.on.doc",
+                sourceBundleId: appBundleID,
+                frozenFilePaths: files.map(\.path))
+        }
+        return GlobalContextActivation(
+            autoActivated: false,
+            frozenText: String(text.prefix(120)),
+            frozenFullText: text,
+            frozenIcon: "text.cursor",
+            sourceBundleId: appBundleID)
+    }
+
+    private func lendSelectionToDock() {
+        guard let adopt = source.adopt else { return }
+        adopt(activation)
+        lentToDock = true
+    }
+
+    // MARK: - Actions
+
+    /// The typed text changed: narrow the rows to it, and forget a highlight that pointed
+    /// into the old list.
+    func queryDidChange() {
+        touch()
+        refreshActions()
+    }
+
+    func refreshActions() {
+        let rows = source.actions?(query) ?? []
+        actions = Array(rows.prefix(Self.maxVisibleActions))
+        focusedActionIndex = nil
+    }
+
+    /// ↑/↓ over the rows, the Dock's keys. Moving up from the first row returns to the
+    /// field (nothing highlighted), the way the Dock's sheet does. Returns false when there
+    /// is nothing to move through, so the key can do its ordinary job.
+    @discardableResult
+    func moveActionFocus(by delta: Int) -> Bool {
+        guard !actions.isEmpty else { return false }
+        touch()
+        guard let current = focusedActionIndex else {
+            focusedActionIndex = delta > 0 ? 0 : nil
+            return delta > 0
+        }
+        let next = current + delta
+        if next < 0 {
+            focusedActionIndex = nil
+        } else {
+            focusedActionIndex = min(next, actions.count - 1)
+        }
+        return true
+    }
+
+    /// Run a row through the Dock's executor. The work is done by then; the card goes.
+    func run(_ pill: DockPill) {
+        source.run?(pill)
+        dismiss()
     }
 
     func toggle(from context: AXContext) {
@@ -98,6 +181,11 @@ final class SelectionScopeModel: ObservableObject {
     /// does not run a second kind of turn.
     @discardableResult
     func submit() -> Bool {
+        // A highlighted row is what ↩ means — the same as the Dock's sheet.
+        if let index = focusedActionIndex, actions.indices.contains(index) {
+            run(actions[index])
+            return true
+        }
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { return false }
         // The selected text travels with the question. The pipeline otherwise falls back to
@@ -142,6 +230,12 @@ final class SelectionScopeModel: ObservableObject {
         cancel()
         isPinned = false
         hasAsked = false
+        actions = []
+        focusedActionIndex = nil
+        if lentToDock {
+            source.adopt?(nil)
+            lentToDock = false
+        }
         set(.hidden)
     }
 

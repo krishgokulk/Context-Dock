@@ -219,6 +219,12 @@ final class CornerDockController: NSObject {
                 self.publishKeyboardOwner()
             }
         }.store(in: &sinks)
+        // The card's height follows its rows, and the shell hit-tests that height: without
+        // this, typing that adds or removes rows redraws the card while its clickable area
+        // stays the old size.
+        selection.$actions.map(\.count).removeDuplicates().sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
         prompt.$phase.sink { [weak self] _ in
             Task { @MainActor in
                 self?.refresh()
@@ -363,7 +369,8 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
+            selection: selection.phase.isVisible
+                ? SelectionScopeMetrics.size(actionRows: selection.actions.count) : nil,
             list: showsExtensionPanel
                 ? ExtensionScopeMetrics.size
                 : (showsAppSnapshot
@@ -577,7 +584,8 @@ final class CornerDockController: NSObject {
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
+            selection: selection.phase.isVisible
+                ? SelectionScopeMetrics.size(actionRows: selection.actions.count) : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width
