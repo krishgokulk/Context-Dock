@@ -5097,16 +5097,7 @@ extension LauncherView {
         let root = descriptor.path.first.map(normalizedDockPillText) ?? ""
         let pathText = descriptor.path.map(normalizedDockPillText).joined(separator: " ")
         // Stable commands that live under History/Bookmarks but are NOT URL rows.
-        let name = normalizedDockPillText(descriptor.name)
-        let stableCommands: Set<String> = [
-            "show all history", "show history", "show personal history",
-            "clear history", "clear history…", "clear history...",
-            "back", "forward", "home", "reopen last closed window",
-            "reopen all windows from last session", "show bookmarks",
-            "edit bookmarks", "add bookmark", "add bookmark…", "bookmark all tabs",
-            "show bookmarks editor", "add to reading list",
-        ]
-        if stableCommands.contains(name) { return false }
+        if BrowserStableMenuCommand.isStable(title: descriptor.name) { return false }
         return root == "history"
             || root == "bookmarks"
             || pathText.contains("recent")
