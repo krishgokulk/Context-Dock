@@ -57,6 +57,10 @@ Grounded improvement plans, one subfolder per document, built one at a time:
 - [`02-context-dock/`](02-context-dock/) ✅
 - (03–10 pending)
 
+Cross-cutting themes that span surfaces:
+- [`cross-cutting/fragmentation.md`](cross-cutting/fragmentation.md) ✅ — duplicated
+  rankers (15+), usage learners (4), stop-word lists (9); staged, eval-gated consolidation.
+
 ## Diagrams
 
 One diagram per document + a whole-app overview, all in
