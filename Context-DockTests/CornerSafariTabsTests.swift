@@ -125,6 +125,9 @@ struct CornerSafariTabsTests {
     func contextDockHeightAndFit() {
         let textEdit = scope(bundleID: "com.apple.TextEdit", name: "TextEdit")
         #expect(textEdit.usesDockHeight && !textEdit.usesDockShell)
+        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25).
+        let finder = scope(bundleID: "com.apple.finder", name: "Finder")
+        #expect(finder.usesDockHeight && !finder.usesDockShell)
         let fitted = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, running: 12, pinned: 3,
             fieldHeight: AppChatPromptMetrics.dockHeight, fitsContent: true)
