@@ -51,15 +51,18 @@ struct CornerDockStrip: View {
     /// The field is up and showing its pill: the strip's apps are that pill, shrunk into
     /// the room the field keeps for it. Typing hides it, as it hid the field's own.
     private var isPill: Bool {
-        [.prompt, .suggesting].contains(model.phase) && model.isSearchField
-            && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        [.prompt, .suggesting].contains(model.phase) && model.showsFieldPills
+            && (model.showsTabBar
+                || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     /// Where the pill sits in the shell: ending where the strip's trailing region begins,
     /// exactly where the field keeps its room.
     private func pillSpan(_ plan: DockStripPlan) -> (start: CGFloat, end: CGFloat) {
         let layout = plan.layout
+        let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let end = layout.width - layout.leadingInset - layout.trailingRegion
+            - (model.showsTabBar ? M.appFieldTrailingReserve(typed: typed) : 0)
         let width = M.pillWidth(
             icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0)
         return (end - width, end)
@@ -105,7 +108,7 @@ struct CornerDockStrip: View {
     /// running or both.
     private var plan: DockStripPlan {
         DockStripPlan.make(
-            running: model.stripIcons, pins: pins.pins,
+            running: model.stripIcons, pins: model.stripPins,
             tools: model.dockToolCount(
                 clipboardVisible: clipboard.phase.isVisible,
                 feedbackVisible: feedback.glyph != nil),
@@ -116,7 +119,9 @@ struct CornerDockStrip: View {
         HStack(spacing: M.dockIconGap) {
             // The field, folded: the first item in the strip. Hovering it, or clicking
             // it, widens it back.
-            toolIcon("magnifyingglass", title: "Search") { expandField() }
+            // The field, folded: the magnifier in Global, the app's own icon in its Context
+            // Dock — what the field says it is about when it opens.
+            foldedField { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
                 // The hairline between the field, folded, and the apps — the same one the
@@ -321,11 +326,16 @@ struct CornerDockStrip: View {
             // the pointer choosing it. Leaving is always honoured, so nothing sticks.
             if inside, Date() < hoverSettlesAt { return }
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
+            // A tab has no app window to preview.
+            guard !model.isTabIcon(slot.bundleID) else { return }
             model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
+            // A tab, big or in the pill: Safari shows it.
+            if model.isTabIcon(slot.bundleID), let icon = slot.running {
+                model.openTabIcon(icon)
             // As the pill, a click scopes the field into the app, as the pill always has.
-            if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
+            } else if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
                 model.openGlobalMatchIcon(icon)
             } else {
                 openApp(slot)
@@ -334,7 +344,8 @@ struct CornerDockStrip: View {
         // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
         // and a running app nobody pinned has no place to be moved to.
         .modifier(DockPinDrag(pinID: slot.pin?.id, dragging: $draggingPinID))
-        .overlay(RightClickReporter { menuID = id })
+        // An app's menu (Quit, Hide, Show in Finder) means nothing for a tab.
+        .overlay(RightClickReporter { if !model.isTabIcon(slot.bundleID) { menuID = id } })
         .popover(isPresented: menuBinding(id), arrowEdge: .top) {
             DockIconMenu(items: appMenuItems(slot))
         }
@@ -401,6 +412,26 @@ struct CornerDockStrip: View {
         }
         .accessibilityLabel(pin.title)
         .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private func foldedField(action: @escaping () -> Void) -> some View {
+        if model.showsTabBar,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: model.appBundleID)
+        {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 24, height: 24)
+                .frame(width: M.dockIconSize, height: M.dockIconSize)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: action)
+                .help("Ask \(model.appName)")
+                .accessibilityLabel("Ask \(model.appName)")
+                .accessibilityAddTraits(.isButton)
+        } else {
+            toolIcon("magnifyingglass", title: "Search", action: action)
+        }
     }
 
     private func toolIcon(_ symbol: String, title: String, action: @escaping () -> Void)
