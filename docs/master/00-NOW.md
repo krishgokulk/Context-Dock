@@ -27,7 +27,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
-| 2026-09-25 | Safari tabs in the Corner (D13) | this PR |
+| 2026-09-25 | Safari tabs in the Corner (D13) | #89 |
 
 ## Owner decisions (append-only)
 
