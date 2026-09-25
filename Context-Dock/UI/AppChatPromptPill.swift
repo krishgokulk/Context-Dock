@@ -77,6 +77,17 @@ enum AppChatPromptMetrics {
 
     // MARK: The field's row of running apps
 
+    /// The app field's chip ("Safari") and its trailing buttons (+, expand, pin), in pill
+    /// slots. `fieldMinimumWidth` is measured for the Global field, whose only leading chrome is
+    /// a 22-point magnifier; the app field carries about 180 points more, and without them its
+    /// text was crushed to "…" by a row of tab pills.
+    static let appFieldChromeSlots = 8
+
+    /// How many tab pills fit beside the app field on a screen this wide.
+    static func tabCapacity(maximumWidth: CGFloat = dockMaximumWidth) -> Int {
+        max(0, matchIconCapacity(maximumWidth: maximumWidth) - appFieldChromeSlots)
+    }
+
     /// How many icons the 372-point field was built to hold. Past this it grows.
     static let matchIconBaseCount = 4
     /// What one more icon costs the field: `ContextMatchDock` draws an 18-point icon with
@@ -514,8 +525,12 @@ struct AppChatPromptPill: View {
     /// already invisible by the time the pill is narrow enough to slice it.
     private var legacyBody: some View {
         ZStack(alignment: .bottomLeading) {
+            // At least the 372-point stack (what the collapse to the badge relies on), wider
+            // when the shell is — Safari's tab pills grow it, and a stack held at 372 inside
+            // a wider shell crushed the field's own text.
             inputStack
-                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                .frame(
+                    width: max(AppChatPromptMetrics.width, size.width), alignment: .bottomLeading)
                 .opacity(model.phase.showsInput ? 1 : 0)
                 .allowsHitTesting(model.phase.showsInput)
                 .animation(.easeOut(duration: 0.11), value: model.phase)
@@ -831,7 +846,18 @@ struct AppChatPromptPill: View {
             // matched, and two answers to one question is the clutter the dock avoids. An
             // untyped field is not that case — there the pills are the only thing offering
             // anywhere to go, so they stay through a scope change.
-            if model.isSearchField,
+            // Safari's open tabs, beside the field in a Safari scope — the Dock's tab strip,
+            // drawn with the same pill as the running apps and taking their place here. Typing
+            // narrows them; the field grows to hold them, and the rest are "+N".
+            if !model.tabIcons.isEmpty || model.tabOverflowCount > 0 {
+                ContextMatchDock(
+                    phase: .idle,
+                    icons: model.tabIcons,
+                    overflowCount: model.tabOverflowCount,
+                    isSearching: false,
+                    onSelect: { icon in model.openTabIcon(icon) })
+                    .transition(.opacity)
+            } else if model.isSearchField,
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {

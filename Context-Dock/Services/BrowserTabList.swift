@@ -54,27 +54,36 @@ enum BrowserTabList {
         }
     }
 
-    /// A tab as a row: its title, its site, and ↩ switches to it.
+    /// Pure: the tabs that fit beside the field, and how many become "+N".
+    static func strip(_ tabs: [SafariTab], capacity: Int) -> (shown: [SafariTab], overflow: Int) {
+        let room = max(capacity, 0)
+        guard tabs.count > room else { return (tabs, 0) }
+        // The "+N" takes a slot of its own, as the running-app pills' does.
+        let shown = Array(tabs.prefix(max(room - 1, 0)))
+        return (shown, tabs.count - shown.count)
+    }
+
+    static func iconID(for tab: SafariTab) -> String { "safari-tab:\(tab.id)" }
+
+    /// A tab's site icon — the favicon store the Dock's strip reads, Safari's own icon while it
+    /// loads. Asking starts the fetch.
     @MainActor
-    static func pill(for tab: SafariTab, onSwitch: @escaping () -> Void = {}) -> DockPill {
-        var pill = DockPill(
-            id: "safari-tab:\(tab.id)",
-            name: tab.title.isEmpty ? tab.domain : tab.title,
-            icon: "safari",
-            accentColorName: "blue",
-            badge: tab.domain,
-            execute: {
-                SafariTabManager.shared.switchTo(tab)
-                onSwitch()
-            }
-        )
-        pill.sourceBundleId = safariBundleID
-        pill.sourceAppName = "Safari"
-        pill.menuStatusBadge = "Tab"
-        pill.rankingKind = "safariTab"
-        if let url = URL(string: tab.url) { pill.resolvedURL = url }
-        pill.trackingIdentifier = "safari-tab:\(tab.url)"
-        pill.searchTerms = [tab.title, tab.domain, tab.url, "tab"]
-        return pill
+    static func favicon(for tab: SafariTab) -> NSImage? {
+        guard let url = URL(string: tab.url) else { return nil }
+        if let icon = FaviconStore.shared.icon(for: url) { return icon }
+        FaviconStore.shared.fetchIfNeeded(for: url)
+        return nil
+    }
+
+    /// A tab as a pill in the field's strip — the same pill the running apps use.
+    @MainActor
+    static func icon(for tab: SafariTab) -> MatchDockIcon {
+        let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: safariBundleID)
+            .map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSImage()
+        return MatchDockIcon(
+            id: iconID(for: tab), bundleID: nil,
+            title: tab.title.isEmpty ? tab.domain : tab.title,
+            icon: favicon(for: tab) ?? safari,
+            isRunning: false, isExpandable: false, score: 0, isExactAppPrefix: false)
     }
 }

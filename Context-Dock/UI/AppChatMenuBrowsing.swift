@@ -40,6 +40,11 @@ extension AppChatPromptModel {
     /// Called when the prompt opens and when the app changes — never per keystroke. The
     /// cached rows land immediately so the list is never empty while the AX read runs.
     func loadMenuItems() {
+        // Safari's tab pills do not wait on the menu read, nor on the app being found: they
+        // come from the tab cache. (Gating them behind the running-app check below made them
+        // appear only when Safari happened to be open — a race the CI run caught.)
+        updateTabStrip()
+        refreshTabs()
         guard !appBundleID.isEmpty,
             let app = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == appBundleID && !$0.isTerminated
@@ -54,7 +59,6 @@ extension AppChatPromptModel {
             .actions.filter { !$0.name.isEmpty } ?? []
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
-        refreshTabs()
 
         // The AX read walks the whole menu bar, so it happens after the surface is up
         // rather than in front of it. Live items go first: where both have a row, the live
@@ -72,6 +76,7 @@ extension AppChatPromptModel {
     /// Re-filters against what is typed. Pure and synchronous: the matcher does no I/O, so
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
+        updateTabStrip()
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         // A CLI scope offers the tool's own subcommands, and Return runs the line.
         if isCLIScope {
@@ -117,7 +122,7 @@ extension AppChatPromptModel {
         }
         if returnsToGlobalScope, !typed.isEmpty,
             let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName) {
-            rows = tabRows(for: typed) + scoped.map(AppChatRow.dock)
+            rows = scoped.map(AppChatRow.dock)
             menuMatches = []
             focusedMenuIndex = nil
             syncListPhase()
@@ -137,8 +142,6 @@ extension AppChatPromptModel {
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
-        // Safari's open tabs lead its scope, as the Dock shows them; typing filters them.
-        rows = tabRows(for: typed) + rows
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -149,30 +152,48 @@ extension AppChatPromptModel {
         syncListPhase()
     }
 
-    /// How many tabs the scope lists before the app's own commands.
-    static let tabRowLimit = 8
+    // MARK: Safari's tabs, as pills beside the field (inventory D13)
 
-    /// The open tabs of the scoped browser, current page first, filtered by what is typed —
-    /// the shared `BrowserTabList`, fed from `SafariTabManager`'s cache (refreshed when the
-    /// scope opens). Empty for browsers whose tabs cannot be listed.
-    func tabRows(for typed: String) -> [AppChatRow] {
-        guard BrowserTabList.listsTabs(bundleID: appBundleID) else { return [] }
-        let tabs = BrowserTabList.matching(
-            BrowserTabList.ordered(
-                tabSource(), currentURL: SafariTabManager.shared.lastSelectedTab()?.url),
-            query: typed)
-        return tabs.prefix(Self.tabRowLimit).map { tab in
-            .dock(BrowserTabList.pill(for: tab) { [weak self] in self?.dismiss() })
+    /// Rebuilds the tab pills for the scoped browser: current page first, filtered by what is
+    /// typed, as many as the field can grow to hold on this screen, the rest a "+N" — the
+    /// same capacity rule the running-app pills use. Empty outside a Safari scope.
+    func updateTabStrip() {
+        guard !isGlobalScope, BrowserTabList.listsTabs(bundleID: appBundleID) else {
+            setTabStrip([])
+            return
         }
+        let tabs = BrowserTabList.matching(
+            BrowserTabList.ordered(tabSource(), currentURL: currentTabURL()),
+            query: query.trimmingCharacters(in: .whitespacesAndNewlines))
+        setTabStrip(tabs)
     }
 
-    /// Reads the tabs again and redraws the list when they land.
+    func setTabStrip(_ tabs: [SafariTab]) {
+        let split = BrowserTabList.strip(tabs, capacity: tabCapacity())
+        tabsByIconID = Dictionary(
+            split.shown.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
+        tabIcons = split.shown.map(BrowserTabList.icon(for:))
+        tabOverflowCount = split.overflow
+    }
+
+    /// Reads the tabs again and redraws the pills when they land.
     func refreshTabs() {
         guard BrowserTabList.listsTabs(bundleID: appBundleID) else { return }
         let bundleID = appBundleID
         refreshTabCache { [weak self] in
             guard let self, self.appBundleID == bundleID else { return }
-            self.updateMenuMatches()
+            self.updateTabStrip()
+        }
+    }
+
+    /// A tab pill: Safari shows that tab. The Corner stays, as the Dock's strip does, and the
+    /// pills re-order a moment later so the new current tab leads.
+    func openTabIcon(_ icon: MatchDockIcon) {
+        guard let tab = tabsByIconID[icon.id] else { return }
+        touch()
+        switchTab(tab)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            self?.refreshTabs()
         }
     }
 

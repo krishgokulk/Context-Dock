@@ -1,7 +1,12 @@
 // Context-DockTests/CornerSafariTabsTests.swift
 //
-// Safari's open tabs in the Corner's Safari scope (inventory D13), from the loader the Dock
-// uses (`SafariTabManager`) through the shared `BrowserTabList`.
+// Safari's open tabs in the Corner's Safari scope (inventory D13): pills beside the field,
+// like the Dock's tab strip — the field sizes itself for them and the rest are "+N". From the
+// loader the Dock uses (`SafariTabManager`) through the shared `BrowserTabList`.
+//
+// Nothing here depends on Safari running: the tab source, refresh, capacity and switch are all
+// injected. (The first version read the scope's rows only after a running-app check, and so
+// passed on a Mac with Safari open and failed on CI.)
 
 import Foundation
 import Testing
@@ -17,40 +22,69 @@ struct CornerSafariTabsTests {
         SafariTab(title: "Swift Forums", url: "https://forums.swift.org/latest", windowIndex: 2, tabIndex: 1),
     ]
 
-    private func safariScope() -> AppChatPromptModel {
+    private func safariScope(
+        capacity: Int = 10, tabs: [SafariTab]? = nil, switched: ((SafariTab) -> Void)? = nil,
+        bundleID: String = "com.apple.Safari", name: String = "Safari"
+    ) -> AppChatPromptModel {
         let model = AppChatPromptModel(conversation: AppChatConversation())
-        model.tabSource = { self.tabs }
+        let source = tabs ?? self.tabs
+        model.tabSource = { source }
         model.refreshTabCache = { _ in }
-        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        model.tabCapacity = { capacity }
+        model.currentTabURL = { nil }
+        model.switchTab = { switched?($0) }
+        model.summon(app: name, bundleID: bundleID)
         return model
     }
 
-    private func tabTitles(_ model: AppChatPromptModel) -> [String] {
-        model.rows.compactMap { row -> String? in
-            guard case .dock(let pill) = row, pill.id.hasPrefix("safari-tab:") else { return nil }
-            return pill.name
-        }
-    }
-
-    @Test("The Corner's Safari scope lists the open tabs from the shared loader, in order")
-    func theSafariScopeListsTabs() {
+    @Test("The Safari scope shows the open tabs as pills beside the field, in order")
+    func theSafariScopeShowsTabPills() {
         let model = safariScope()
-        #expect(tabTitles(model) == ["Inbox", "Pull requests", "Swift Forums"])
-        guard case .dock(let first) = model.rows.first else {
-            Issue.record("tabs lead the list")
-            return
-        }
-        #expect(first.id.hasPrefix("safari-tab:"))
+        #expect(model.tabIcons.map(\.title) == ["Inbox", "Pull requests", "Swift Forums"])
+        #expect(model.tabOverflowCount == 0)
+        // Pills, not rows: the list is the app's own commands.
+        #expect(!model.rows.contains {
+            if case .dock(let pill) = $0 { return pill.id.hasPrefix("safari-tab:") }
+            return false
+        })
+        // The field is sized for the tabs and its own chip and buttons, not the running apps.
+        #expect(model.promptIconCount == 3 + AppChatPromptMetrics.appFieldChromeSlots)
     }
 
-    @Test("Typing filters the tabs by title, site or address")
+    @Test("More tabs than fit: the strip shows what fits and the rest are +N")
+    func overflowGoesToPlusN() {
+        let many = (1...9).map {
+            SafariTab(title: "Tab \($0)", url: "https://example.com/\($0)", windowIndex: 1, tabIndex: $0)
+        }
+        let model = safariScope(capacity: 5, tabs: many)
+        #expect(model.tabIcons.count == 4)
+        #expect(model.tabOverflowCount == 5)
+        #expect(BrowserTabList.strip(many, capacity: 9).overflow == 0)
+        #expect(BrowserTabList.strip(many, capacity: 0).shown.isEmpty)
+        // The app field's chrome comes out of the room first, so its text is never crushed.
+        #expect(AppChatPromptMetrics.tabCapacity(maximumWidth: 900)
+            == AppChatPromptMetrics.matchIconCapacity(maximumWidth: 900)
+                - AppChatPromptMetrics.appFieldChromeSlots)
+    }
+
+    @Test("Typing narrows the tab pills by title, site or address")
     func typingFiltersTabs() {
         let model = safariScope()
         model.query = "swift"
         model.updateMenuMatches()
-        #expect(tabTitles(model) == ["Swift Forums"])
+        #expect(model.tabIcons.map(\.title) == ["Swift Forums"])
         #expect(BrowserTabList.matching(tabs, query: "github pull").map(\.title) == ["Pull requests"])
-        #expect(BrowserTabList.matching(tabs, query: "nothing-like-this").isEmpty)
+        model.query = "nothing-like-this"
+        model.updateMenuMatches()
+        #expect(model.tabIcons.isEmpty && model.tabOverflowCount == 0)
+    }
+
+    @Test("Choosing a tab pill switches Safari to that tab")
+    func aTabPillSwitches() {
+        var switched: [String] = []
+        let model = safariScope(switched: { switched.append($0.title) })
+        model.openTabIcon(model.tabIcons[2])
+        #expect(switched == ["Swift Forums"])
     }
 
     @Test("The current page's tab comes first")
@@ -60,13 +94,10 @@ struct CornerSafariTabsTests {
         #expect(BrowserTabList.normalizedURLKey("https://A.com/x/#frag") == "https://a.com/x")
     }
 
-    @Test("Other apps and other browsers list no tabs")
-    func onlySafariListsTabs() {
-        let model = AppChatPromptModel(conversation: AppChatConversation())
-        model.tabSource = { self.tabs }
-        model.refreshTabCache = { _ in }
-        model.summon(app: "Google Chrome", bundleID: "com.google.Chrome")
-        #expect(tabTitles(model).isEmpty)
+    @Test("Other apps and other browsers show no tab pills")
+    func onlySafariShowsTabs() {
+        let chrome = safariScope(bundleID: "com.google.Chrome", name: "Google Chrome")
+        #expect(chrome.tabIcons.isEmpty)
         #expect(!BrowserTabList.listsTabs(bundleID: "com.google.Chrome"))
     }
 
@@ -76,13 +107,5 @@ struct CornerSafariTabsTests {
             == "tabs, page cmds, menu cmds")
         #expect(AppScopeHint.hint(bundleId: "com.google.Chrome", appName: "Google Chrome")
             == "page cmds, menu cmds")
-    }
-
-    @Test("A tab row switches to its tab and names its site")
-    func aTabRowSwitches() {
-        let pill = BrowserTabList.pill(for: tabs[0])
-        #expect(pill.name == "Pull requests")
-        #expect(pill.badge == "github.com")
-        #expect(pill.resolvedURL?.absoluteString == "https://github.com/pulls")
     }
 }

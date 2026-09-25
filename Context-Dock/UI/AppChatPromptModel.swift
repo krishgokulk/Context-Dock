@@ -159,7 +159,18 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalOverflowCount = 0
     /// What the field widens for: its running-app pills. The pins are not in the field —
     /// they are the strip's trailing region, which stays on screen while the field is up.
-    var promptIconCount: Int { globalMatchIcons.count }
+    /// The icons the field holds beside it: Safari's tab pills in a Safari scope, else the
+    /// running apps. What the field's width is sized for.
+    /// With tab pills, the app field's chip and buttons are counted as slots too.
+    var promptIconCount: Int {
+        guard !tabIcons.isEmpty || tabOverflowCount > 0 else { return globalMatchIcons.count }
+        return tabIcons.count + (tabOverflowCount > 0 ? 1 : 0)
+            + AppChatPromptMetrics.appFieldChromeSlots
+    }
+    /// Safari's open tabs as pills beside the field (inventory D13), and how many did not fit.
+    @Published var tabIcons: [MatchDockIcon] = []
+    @Published var tabOverflowCount = 0
+    var tabsByIconID: [String: SafariTab] = [:]
     /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
     /// list trimmed to what fits beside the field.
     @Published private(set) var allRunningIcons: [MatchDockIcon] = []
@@ -223,7 +234,19 @@ final class AppChatPromptModel: ObservableObject {
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
     /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
-    var tabSource: () -> [SafariTab] = { SafariTabManager.shared.cachedTabs(maxAge: 45) }
+    var tabSource: () -> [SafariTab] = {
+        // A quit Safari has no tabs, whatever the cache last held.
+        NSRunningApplication.runningApplications(withBundleIdentifier: BrowserTabList.safariBundleID)
+            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: 45)
+    }
+    /// How many tab pills fit beside the field on this screen. Tests pin it.
+    var tabCapacity: () -> Int = {
+        AppChatPromptMetrics.tabCapacity(maximumWidth: DockStripPlan.screenBudget)
+    }
+    /// The page Safari is showing, which leads the pills. Tests replace it.
+    var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
+    /// Shows a tab in Safari. Tests replace it so they never script the user's Safari.
+    var switchTab: (SafariTab) -> Void = { SafariTabManager.shared.switchTo($0) }
     /// Reads Safari's tabs again, then calls back. Tests replace it so they never script
     /// the user's Safari.
     var refreshTabCache: (@escaping @MainActor () -> Void) -> Void = { done in

@@ -1160,12 +1160,8 @@ extension LauncherView {
     }
 
     func safariTabStripIcon(for tab: SafariTab) -> NSImage? {
-        guard let url = URL(string: tab.url) else { return nil }
-        if let favicon = FaviconStore.shared.icon(for: url) {
-            return preparedDockIcon(favicon)
-        }
-        FaviconStore.shared.fetchIfNeeded(for: url)
-        return nil
+        guard let favicon = BrowserTabList.favicon(for: tab) else { return nil }
+        return preparedDockIcon(favicon)
     }
 
     func selectSafariTabFromStrip(_ tab: SafariTab) {
