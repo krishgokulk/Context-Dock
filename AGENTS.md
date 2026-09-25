@@ -77,6 +77,10 @@ edited by someone else **right now**, and that HEAD moves under you.
 
 - **One agent = one worktree = one branch = one issue.** Put work in `.claude/worktrees/`, not the
   shared tree.
+- **Claim before you build.** At the start of a task, list the open PRs (`gh pr list`). If one already
+  covers your task, stop and tell the owner. Otherwise branch fresh from `origin/general-chat-agent`
+  (never reuse a branch whose PR is merged) and open a **draft PR titled with the task number**
+  (`Task 4b: …`) within your first commits. Open PRs are the live list of who is doing what.
 - **Never `git add -A` / `git commit -a`.** Stage explicit paths only — anything else sweeps up
   another session's half-finished work.
 - **Never** `git checkout -- .`, `git stash`, `git reset --hard`, or branch switches on the shared
