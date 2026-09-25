@@ -1,6 +1,6 @@
 # Corner Selection panel: one panel that does everything the Dock's Selection does
 
-> **Status: BUILDING (2026-09-25). Part A ✅ done and checked on the app (answer in the card, table, Replace→copy without Computer Use, follow-up, Esc). Next: A2 (surfaces and consent on rows), then B, C, D, E, F.** Written so work can resume exactly here
+> **Status: BUILDING (2026-09-25). Part A ✅ (checked on the app). A2 ✅ (a64e5a1; full suite 1949/1949). B ✅ route 1 (native destinations in the card, Share on answers); route 3 (typed "send to …") parked — see B note. Next: check B on the app, then C, D, E, F.** Written so work can resume exactly here
 > after any interruption. Spec: `docs/master/00-DOCK-AND-CORNER.md` §4a. Branch:
 > `claude/corner-parity`, PR #84 (open, all work so far committed and pushed).
 
@@ -96,6 +96,12 @@ F. Docs: §4a, inventory D10 (→ ✅ when Share and answers are in), `corner-sh
 - **A2 — Surfaces and consent on rows** (rule 1): Finder-menu, app Share-menu and Writing Tools
   rows are `takesScreen`; with Computer Use off they show the consent offer instead of running.
 - **B — Share** (routes 1–3 above, route 2 only with Computer Use).
+  *Done:* route 1 — "Share Selection" opens the destinations in the card (shared ranking in
+  `ShareActionCoordinator`, `SelectionShare` in `SelectionActions.swift`); Share on answers.
+  *Route 2 not needed for a selection:* the payload is always the captured text or files, which
+  the native destinations take; the app-menu route exists for sharing a *page* whose URL cannot
+  be read. *Route 3 parked:* the Dock's typed "send to …" answers into its own chat (`l2`); the
+  corner needs its own output for it — ask the owner whether it belongs in this PR.
 - **C — File preview**, **D — look**, **E — test matrix**, **F — docs**, as above.
 
 ## Owner answers (2026-09-25)

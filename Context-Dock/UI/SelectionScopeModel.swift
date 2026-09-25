@@ -103,9 +103,12 @@ final class SelectionScopeModel: ObservableObject {
         }
     }
 
-    /// Esc: an answer steps back to the rows; the rows close the card.
+    /// Esc: the share destinations step back to where Share was chosen; an answer steps back
+    /// to the rows; the rows close the card.
     func escapePressed() {
-        if isShowingAnswer {
+        if isSharing {
+            leaveShare()
+        } else if isShowingAnswer {
             isShowingAnswer = false
             touch()
         } else {
@@ -133,6 +136,62 @@ final class SelectionScopeModel: ObservableObject {
         guard let answer = latestAnswer else { return }
         let saved = saveNote(answer)
         reportResult(saved ? "Saved to Quick Note" : "Could not save the note", saved)
+    }
+
+    /// Share the answer: the destinations open in the card, and Esc comes back to the answer.
+    func shareAnswer() {
+        guard let answer = latestAnswer else { return }
+        openShare(items: [answer], fromAnswer: true)
+    }
+
+    // MARK: Share
+
+    /// The card lists share destinations instead of the selection's rows.
+    @Published private(set) var isSharing = false
+    /// True when the answer is what is being shared (Share at the end of an answer).
+    @Published private(set) var isSharingAnswer = false
+    private var sharePayload: [Any] = []
+    /// The destinations for a payload, filtered by what is typed. Tests replace it.
+    var shareRows: ([Any], String) -> [SelectionActionRow] = { items, query in
+        SelectionShare.rows(for: items, query: query)
+    }
+    /// Shares the payload through one destination; false when it is not there. Tests replace
+    /// it so nothing is ever sent.
+    var performShare: (_ rowID: String, _ items: [Any]) -> Bool = { rowID, items in
+        SelectionShare.perform(rowID: rowID, items: items)
+    }
+
+    private func openShare(items: [Any], fromAnswer: Bool) {
+        guard !items.isEmpty else {
+            reportResult("Nothing to share", false)
+            return
+        }
+        touch()
+        sharePayload = items
+        isSharingAnswer = fromAnswer
+        isSharing = true
+        isShowingAnswer = false
+        query = ""
+        refreshRows()
+    }
+
+    private func leaveShare() {
+        isSharing = false
+        sharePayload = []
+        if isSharingAnswer { isShowingAnswer = true }
+        isSharingAnswer = false
+        query = ""
+        touch()
+        refreshRows()
+    }
+
+    private func share(_ row: SelectionActionRow) {
+        if performShare(row.id, sharePayload) {
+            // The destination's own sheet takes over; the card has done its job.
+            dismiss()
+        } else {
+            reportResult("\(row.title) is not available", false)
+        }
     }
 
     var replaceRoute: SelectionActions.ReplaceRoute {
@@ -216,6 +275,7 @@ final class SelectionScopeModel: ObservableObject {
 
     /// One line of what was selected, for the card's body.
     var preview: String {
+        if isSharingAnswer, let answer = latestAnswer { return answer }
         if !files.isEmpty { return files.map(\.lastPathComponent).joined(separator: ", ") }
         return text
     }
@@ -245,6 +305,9 @@ final class SelectionScopeModel: ObservableObject {
         isShowingAnswer = false
         answerAnchorID = nil
         conversationSink = nil
+        isSharing = false
+        isSharingAnswer = false
+        sharePayload = []
         set(.showing)
         refreshRows()
         arm(after: Self.idleDwell)
@@ -286,6 +349,12 @@ final class SelectionScopeModel: ObservableObject {
     func refreshRows() {
         focusedIndex = nil
         rowBuildGeneration += 1
+        if isSharing {
+            // The destinations are one cached system call, asked for when Share was chosen.
+            rows = shareRows(sharePayload, query)
+            isBuildingRows = false
+            return
+        }
         let generation = rowBuildGeneration
         let captured = snapshot
         let typed = query
@@ -339,6 +408,12 @@ final class SelectionScopeModel: ObservableObject {
             run(row)
             return true
         }
+        if isSharing {
+            // Typing narrows the destinations; Return takes the first. Nothing is asked.
+            guard !query.isEmpty, let first = rows.first else { return false }
+            run(first)
+            return true
+        }
         return submit()
     }
 
@@ -358,7 +433,11 @@ final class SelectionScopeModel: ObservableObject {
         case .perform:
             perform(row)
         case .share:
-            break  // not offered in the corner (cornerRows); tracked with the extraction
+            if row.id == SelectionShare.entryRowID {
+                openShare(items: SelectionShare.items(for: snapshot), fromAnswer: false)
+            } else {
+                share(row)
+            }
         }
     }
 

@@ -11,7 +11,7 @@ import Testing
 @testable import Context_Dock
 
 /// A provider that behaves like the Dock: rows for the selection it is handed, including the
-/// Share rows the corner leaves out — and a live selection of its own that can change under
+/// per-destination Share rows the corner lists in its own share view instead — and a live selection of its own that can change under
 /// an open card.
 @MainActor
 private final class FakeDock: SelectionActionProviding {
@@ -59,6 +59,7 @@ private final class FakeDock: SelectionActionProviding {
             row("selection-ask-ai", "Ask AI — what would you like to do?", .ask(prompt: "")),
             row("selection-copy", "Copy File", .perform),
             row("finder-menu-compress", "Compress", .perform),
+            row("selection-share", "Share Selection", .share),
             row("sharing-action-airdrop", "AirDrop", .share),
             row("selection-file-reveal", "Reveal in Finder", .perform),
         ]
@@ -91,26 +92,27 @@ struct CornerSelectionActionsTests {
 
     // MARK: Same rows as the Dock
 
-    @Test("A text selection lists the Dock's rows, in order, less Share")
-    func textRowsAreTheDocksLessShare() {
+    @Test("A text selection lists the Dock's rows, in order; Share is one row")
+    func textRowsAreTheDocksWithOneShareRow() {
         let dock = FakeDock()
         let model = card(text, dock: dock)
-        let docks = FakeDock.rows(for: text)
-        #expect(model.rows == docks.filter { $0.kind != .share })
+        #expect(model.rows == SelectionActions.cornerRows(FakeDock.rows(for: text)))
         #expect(model.rows.map(\.id)
             == ["selection-ask-ai", "selection-copy", "selection-workflow-ai-rewrite",
-                "shortcut-action-make-gif"])
+                "selection-share", "shortcut-action-make-gif"])
     }
 
-    @Test("A Finder file selection lists the Dock's rows, in order, less Share")
-    func fileRowsAreTheDocksLessShare() {
+    @Test("A Finder file selection lists the Dock's rows, in order; Share is one row")
+    func fileRowsAreTheDocksWithOneShareRow() {
         let dock = FakeDock()
         let model = card(file, dock: dock)
-        #expect(model.rows == FakeDock.rows(for: file).filter { $0.kind != .share })
-        #expect(!model.rows.contains { $0.kind == .share })
+        #expect(model.rows.map(\.id)
+            == ["selection-ask-ai", "selection-copy", "finder-menu-compress", "selection-share",
+                "selection-file-reveal"])
+        #expect(model.rows.filter { $0.kind == .share }.map(\.id) == [SelectionShare.entryRowID])
     }
 
-    @Test("The real Dock's rows reach the card unchanged, less Share")
+    @Test("The real Dock's rows reach the card unchanged, with Share Selection")
     func theDocksOwnRowsReachTheCard() {
         // The Dock itself, registered when its view appeared at launch — the cold path: this
         // host never opened ⌥⌥.
@@ -129,8 +131,9 @@ struct CornerSelectionActionsTests {
             context.selectedFilePaths = snapshot.filePaths
             model.summon(from: context)
             #expect(model.rows == SelectionActions.cornerRows(docks))
-            // The corner asks without Share, which is most of the build's cost. Leaving it
-            // out must change nothing else: the Dock's full list, less Share, is the same.
+            #expect(docks.contains { $0.id == SelectionShare.entryRowID })
+            // The corner asks without the per-destination share lists, which are most of the
+            // build's cost. Leaving them out must change nothing else.
             if let launcher = dock as? LauncherView {
                 let full = launcher.selectionRows(for: snapshot, query: "", includeShare: true)
                 #expect(SelectionActions.cornerRows(full) == docks)
@@ -529,5 +532,124 @@ struct CornerSelectionActionsTests {
         model.allowAlways()
         #expect(always == ["com.apple.finder"])
         #expect(dock.ran.map(\.id) == ["finder-menu-compress"])
+    }
+
+    // MARK: Share inside the card (the Dock's route 1: native destinations)
+
+    private func dest(_ title: String) -> SelectionActionRow {
+        SelectionActionRow(
+            id: "share-dest-\(title.lowercased())", title: title, icon: "square.and.arrow.up",
+            badge: "Share", accentColorName: "blue", kind: .share)
+    }
+
+    /// A card whose share destinations are fixed and whose sharing is recorded, never sent.
+    private func sharingCard(
+        _ snapshot: SelectionSnapshot, shared: @escaping (String, [Any]) -> Void
+    ) -> SelectionScopeModel {
+        let model = card(snapshot, dock: FakeDock())
+        let all = [dest("AirDrop"), dest("Mail"), dest("Messages"), dest("Notes")]
+        model.shareRows = { _, query in
+            all.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) }
+        }
+        model.performShare = { id, items in
+            shared(id, items)
+            return true
+        }
+        return model
+    }
+
+    @Test("Share Selection opens the destinations in the card and shares the captured text")
+    func shareSelectionInTheCard() {
+        var sent: [(String, [Any])] = []
+        let model = sharingCard(text) { sent.append(($0, $1)) }
+        model.run(model.rows.first { $0.id == SelectionShare.entryRowID }!)
+        #expect(model.isSharing)
+        #expect(model.rows.map(\.title) == ["AirDrop", "Mail", "Messages", "Notes"])
+        #expect(model.phase.isVisible)
+
+        model.run(model.rows[1])
+        #expect(sent.map(\.0) == ["share-dest-mail"])
+        #expect(sent.first?.1 as? [String] == [text.text])
+        // The destination's own sheet takes over.
+        #expect(!model.phase.isVisible)
+    }
+
+    @Test("Typing finds a destination; Return shares with it and never asks the AI")
+    func typingNarrowsTheDestinations() {
+        var sent: [String] = []
+        var asked: [SelectionAskRequest] = []
+        let model = sharingCard(text) { id, _ in sent.append(id) }
+        model.askHandler = { asked.append($0) }
+        model.run(model.rows.first { $0.id == SelectionShare.entryRowID }!)
+        model.query = "mess"
+        model.queryChanged()
+        #expect(model.rows.map(\.title) == ["Messages"])
+        model.returnPressed()
+        #expect(sent == ["share-dest-messages"])
+        #expect(asked.isEmpty)
+    }
+
+    @Test("Esc steps back from the destinations to the actions")
+    func escLeavesShare() {
+        let model = sharingCard(text) { _, _ in }
+        let actions = model.rows
+        model.run(model.rows.first { $0.id == SelectionShare.entryRowID }!)
+        model.escapePressed()
+        #expect(!model.isSharing)
+        #expect(model.rows == actions)
+        #expect(model.phase.isVisible)
+    }
+
+    @Test("A destination that is gone says so and the card stays")
+    func aMissingDestinationSaysSo() {
+        let model = sharingCard(text) { _, _ in }
+        var reported: [(String, Bool)] = []
+        model.reportResult = { reported.append(($0, $1)) }
+        model.performShare = { _, _ in false }
+        model.run(model.rows.first { $0.id == SelectionShare.entryRowID }!)
+        model.run(model.rows[0])
+        #expect(reported.first?.1 == false)
+        #expect(model.phase.isVisible && model.isSharing)
+    }
+
+    @Test("Share at the end of an answer shares the answer; Esc returns to it")
+    func shareTheAnswer() {
+        let conversation = AppChatConversation()
+        let model = answeringCard(text, dock: FakeDock(), conversation: conversation)
+        var sent: [[Any]] = []
+        model.shareRows = { _, _ in [self.dest("Notes")] }
+        model.performShare = { _, items in sent.append(items); return true }
+        model.query = "summarise"
+        model.returnPressed()
+        conversation.messages.append(AIChatMessage(role: .assistant, content: "Summary."))
+
+        model.shareAnswer()
+        #expect(model.isSharing && model.isSharingAnswer && !model.isShowingAnswer)
+        #expect(model.preview == "Summary.")
+        model.escapePressed()
+        #expect(model.isShowingAnswer && !model.isSharing)
+
+        model.shareAnswer()
+        model.run(model.rows[0])
+        #expect(sent.first as? [String] == ["Summary."])
+    }
+
+    @Test("What is shared: the captured files, else the captured text")
+    func shareItemsFollowTheRouter() {
+        #expect(SelectionShare.items(for: text) as? [String] == [text.text])
+        #expect(SelectionShare.items(for: file) as? [URL] == [URL(fileURLWithPath: "/tmp/report.pdf")])
+    }
+
+    @Test("Destinations rank by use, then the system's order; the filter is the Dock's")
+    func destinationsRankTheDocksWay() {
+        let destinations = [
+            SelectionShare.Destination(title: "AirDrop", image: nil, usage: 0),
+            SelectionShare.Destination(title: "Mail", image: nil, usage: 0),
+            SelectionShare.Destination(title: "Messages", image: nil, usage: 2),
+        ]
+        #expect(SelectionShare.rows(destinations, query: "").map(\.title)
+            == ["Messages", "AirDrop", "Mail"])
+        #expect(SelectionShare.rows(destinations, query: "ma").map(\.title) == ["Mail"])
+        #expect(SelectionShare.rows(destinations, query: "").first?.id == "share-dest-messages")
     }
 }

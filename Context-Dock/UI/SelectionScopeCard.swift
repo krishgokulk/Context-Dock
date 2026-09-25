@@ -165,6 +165,8 @@ struct SelectionScopeCard: View {
             resultButton("Copy", "doc.on.doc") { model.copyAnswer() }
             resultButton("Quick Note", "note.text.badge.plus") { model.saveAnswerToQuickNote() }
                 .help("Save the answer to a Quick Note")
+            resultButton("Share", "square.and.arrow.up") { model.shareAnswer() }
+                .help("Share the answer")
             Spacer(minLength: 0)
             Button { model.escapePressed() } label: {
                 Image(systemName: "list.bullet")
@@ -207,10 +209,10 @@ struct SelectionScopeCard: View {
     /// selection is the failure this surface exists to prevent.
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: model.scope?.icon ?? "text.cursor")
+            Image(systemName: model.isSharing ? "square.and.arrow.up" : (model.scope?.icon ?? "text.cursor"))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
-            Text(model.scope?.label ?? "Selection")
+            Text(headerTitle)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Color.accentColor)
             if !model.appName.isEmpty {
@@ -240,6 +242,12 @@ struct SelectionScopeCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: SelectionScopeMetrics.headerHeight)
+    }
+
+    private var headerTitle: String {
+        let subject = model.scope?.label ?? "Selection"
+        guard model.isSharing else { return subject }
+        return model.isSharingAnswer ? "Share the answer" : "Share \(subject)"
     }
 
     private var preview: some View {
@@ -280,10 +288,16 @@ struct SelectionScopeCard: View {
 
     private func rowView(_ row: SelectionActionRow, isFocused: Bool) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: row.icon)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
+            Group {
+                if let image = row.image {
+                    Image(nsImage: image).resizable().scaledToFit().frame(width: 20, height: 20)
+                } else {
+                    Image(systemName: row.icon)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 if case .needsConsent = model.screenGate(for: row) {
@@ -307,11 +321,16 @@ struct SelectionScopeCard: View {
         .accessibilityAddTraits(.isButton)
     }
 
+    private var placeholder: String {
+        if model.isSharing { return "Find a destination…" }
+        return model.isShowingAnswer ? "Ask a follow-up…" : "Ask about this selection…"
+    }
+
     private var field: some View {
         HStack(spacing: 8) {
             ZStack(alignment: .leading) {
                 if model.query.isEmpty {
-                    Text(model.isShowingAnswer ? "Ask a follow-up…" : "Ask about this selection…")
+                    Text(placeholder)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary.opacity(0.6))
                 }

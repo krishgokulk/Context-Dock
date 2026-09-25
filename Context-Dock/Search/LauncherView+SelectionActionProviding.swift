@@ -14,9 +14,9 @@ extension LauncherView: SelectionActionProviding {
         selectionRows(for: snapshot, query: query, includeShare: false)
     }
 
-    /// The Dock's list for this selection. The corner asks without Share — it does not offer
-    /// it, and building it is most of the cost; the test asks with it, to show that leaving
-    /// Share out changes nothing else.
+    /// The Dock's list for this selection. The corner asks without the per-destination share
+    /// lists — it lists destinations in its own card, and building them is most of the cost;
+    /// the test asks with them, to show that leaving them out changes nothing else.
     func selectionRows(
         for snapshot: SelectionSnapshot, query: String, includeShare: Bool
     ) -> [SelectionActionRow] {

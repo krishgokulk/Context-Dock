@@ -2404,10 +2404,11 @@ extension LauncherView {
         let destinations = ShareActionCoordinator.shared.shareDestinations(items: listingItems)
         return destinations.enumerated().compactMap { index, dest in
             let normalizedTitle = normalizedDockPillText(dest.title)
-            guard normalizedQuery.isEmpty || normalizedTitle.contains(normalizedQuery)
+            guard ShareActionCoordinator.destinationMatches(
+                normalizedTitle: normalizedTitle, normalizedQuery: normalizedQuery)
             else { return nil }
             var pill = DockPill(
-                id: "share-dest-\(normalizedTitle)",
+                id: ShareActionCoordinator.destinationRowID(normalizedTitle: normalizedTitle),
                 name: dest.title,
                 icon: "square.and.arrow.up",
                 accentColorName: "blue",
@@ -2415,7 +2416,7 @@ extension LauncherView {
                 execute: {
                     inlineShareActive = false
                     // Learn the user's preferred destinations — ranks them higher next time.
-                    UsageTracker.shared.recordAccess(for: "share-dest:\(normalizedTitle)")
+                    ShareActionCoordinator.recordUse(normalizedTitle: normalizedTitle)
                     // Resolve the live payload BEFORE hiding (needs the source app context),
                     // then dismiss the launcher panel and run the service once the previous
                     // app is frontmost — NSSharingService can't present its UI (Mail/Messages
@@ -2436,9 +2437,9 @@ extension LauncherView {
             pill.hasLiveAvailability = true
             // Frecency-ranked: destinations you use most float to the top, with the system
             // order as the tiebreaker.
-            let usage = UsageTracker.shared.getScore(for: "share-dest:\(normalizedTitle)")
-            pill.rankingScore = usage * 1_000 + Double(1_000 - index)
-            pill.trackingIdentifier = "share-dest:\(normalizedTitle)"
+            pill.rankingScore = ShareActionCoordinator.rankingScore(
+                normalizedTitle: normalizedTitle, systemIndex: index)
+            pill.trackingIdentifier = ShareActionCoordinator.usageKey(normalizedTitle: normalizedTitle)
             pill.searchTerms = [dest.title, "share", "send", "airdrop", "export"]
             return pill
         }

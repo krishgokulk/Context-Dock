@@ -84,7 +84,8 @@ struct SelectionActionRow: Identifiable, Equatable {
         case ask(prompt: String)
         /// Runs as the Dock runs it — files, clipboard, other apps.
         case perform
-        /// The Dock's inline share mode. Not in the corner yet (tracked with the extraction).
+        /// Sharing: "Share Selection" opens the share destinations, and each destination is
+        /// a `.share` row too.
         case share
     }
 
@@ -94,6 +95,8 @@ struct SelectionActionRow: Identifiable, Equatable {
     let badge: String?
     let accentColorName: String?
     let kind: Kind
+    /// The destination's own icon, for share destinations; everything else draws `icon`.
+    var image: NSImage? = nil
 
     /// A Finder menu command: it acts on whatever Finder has selected when it runs.
     var actsOnFinderSelection: Bool { id.hasPrefix("finder-") }
@@ -150,9 +153,11 @@ enum SelectionActions {
         return row.actsOnLiveTextSelection ? .hidden : .needsConsent(bundleID: app)
     }
 
-    /// Pure: the corner's list is the Dock's, in the Dock's order, less Share.
+    /// Pure: the corner's list is the Dock's, in the Dock's order. Of the share rows only
+    /// "Share Selection" is kept: it opens the destinations inside the card, which is where
+    /// every one of them is listed.
     static func cornerRows(_ rows: [SelectionActionRow]) -> [SelectionActionRow] {
-        rows.filter { $0.kind != .share }
+        rows.filter { $0.kind != .share || $0.id == SelectionShare.entryRowID }
     }
 
     /// Pure: what the end-of-answer Replace does. Replacing writes into another app through its
@@ -193,5 +198,73 @@ enum SelectionActions {
             isScopedToCapturedSelection = wasScoped
         }
         return body()
+    }
+}
+
+/// Sharing a selection from the corner — the Dock's share route 1 (native destinations, every
+/// installed share extension, frecency-ranked), fed the captured selection rather than
+/// whatever the Dock holds.
+@MainActor
+enum SelectionShare {
+    /// The Dock's "Share Selection" row: in the corner it opens the destinations in the card.
+    static let entryRowID = "selection-share"
+
+    /// What is shared: the captured files, else the captured text — the router's own rule.
+    static func items(for snapshot: SelectionSnapshot) -> [Any] {
+        var context = AXContext(appName: snapshot.appName, bundleId: snapshot.bundleID, pid: 0)
+        context.selectedText = snapshot.text.isEmpty ? nil : snapshot.text
+        context.selectedFilePaths = snapshot.filePaths
+        return ShareIntentRouter.shared.shareableItems(for: context)
+    }
+
+    struct Destination: Equatable {
+        let title: String
+        let image: NSImage?
+        let usage: Double
+    }
+
+    /// Pure: destinations as rows, filtered by what is typed and ranked the Dock's way.
+    static func rows(_ destinations: [Destination], query: String) -> [SelectionActionRow] {
+        let normalizedQuery = DockTextMatch.normalized(query)
+        return destinations.enumerated()
+            .compactMap { index, destination -> (SelectionActionRow, Double)? in
+                let normalizedTitle = DockTextMatch.normalized(destination.title)
+                guard ShareActionCoordinator.destinationMatches(
+                    normalizedTitle: normalizedTitle, normalizedQuery: normalizedQuery)
+                else { return nil }
+                let row = SelectionActionRow(
+                    id: ShareActionCoordinator.destinationRowID(normalizedTitle: normalizedTitle),
+                    title: destination.title, icon: "square.and.arrow.up", badge: "Share",
+                    accentColorName: "blue", kind: .share, image: destination.image)
+                return (row, ShareActionCoordinator.rankingScore(
+                    usage: destination.usage, systemIndex: index))
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+    }
+
+    /// The installed destinations for `items`, as rows.
+    static func rows(for items: [Any], query: String) -> [SelectionActionRow] {
+        let destinations = ShareActionCoordinator.shared.shareDestinations(items: items).map {
+            Destination(
+                title: $0.title, image: $0.image,
+                usage: UsageTracker.shared.getScore(
+                    for: ShareActionCoordinator.usageKey(
+                        normalizedTitle: DockTextMatch.normalized($0.title))))
+        }
+        return rows(destinations, query: query)
+    }
+
+    /// Share `items` through the destination with this row id. False when it is not there.
+    static func perform(rowID: String, items: [Any]) -> Bool {
+        guard let destination = ShareActionCoordinator.shared.shareDestinations(items: items)
+            .first(where: {
+                ShareActionCoordinator.destinationRowID(
+                    normalizedTitle: DockTextMatch.normalized($0.title)) == rowID
+            })
+        else { return false }
+        ShareActionCoordinator.recordUse(normalizedTitle: DockTextMatch.normalized(destination.title))
+        destination.perform(withItems: items)
+        return true
     }
 }
