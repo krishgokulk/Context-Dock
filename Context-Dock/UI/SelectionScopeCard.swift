@@ -131,10 +131,13 @@ struct SelectionScopeCard: View {
             }
             resultButton("Copy", "doc.on.doc") { model.copyAnswer() }
             resultButton("Quick Note", "note.text.badge.plus") { model.saveAnswerToQuickNote() }
+                .help("Save the answer to a Quick Note")
             Spacer(minLength: 0)
             Button { model.escapePressed() } label: {
-                Label("Actions", systemImage: "list.bullet")
+                Image(systemName: "list.bullet")
                     .font(.system(size: 11, weight: .medium))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
@@ -152,6 +155,8 @@ struct SelectionScopeCard: View {
         Button(action: action) {
             Label(title, systemImage: symbol)
                 .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, 10)
                 .frame(height: 24)
                 .background(Capsule().fill(Color.primary.opacity(0.08)))

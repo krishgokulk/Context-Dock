@@ -789,6 +789,19 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // Esc on the selection card steps back one layer — answer → actions → closed. Taken
+        // here, like Backspace above, because with an answer up the key did not reach the
+        // field's own handler and Esc did nothing.
+        if event.keyCode == 53,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            selection.phase.isVisible,
+            keyboardState.owner == .selection
+        {
+            selection.escapePressed()
+            return nil
+        }
+
         // A plugin's field has the caret: every key is its. The dock's own reading of a
         // typed letter — bring the field back — is exactly what put the "5" in the wrong
         // place.
