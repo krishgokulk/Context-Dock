@@ -83,9 +83,9 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Selection Share rows left out of the Corner for now; D10 stays 🟡 ("Share missing") until they return. |
 | 2026-09-25 | The Corner captures the selection when it builds its list and runs every row on that copy, never on the live Dock payload. |
 | 2026-09-25 | New bug-fix sessions wait until the Selection PR merges. |
+| 2026-09-25 | Chat Window hotkey stays **⌃C** (advised ⌃⌥C). Known cost: a global hotkey takes the key from every app, so ⌃C no longer interrupts a running command in Terminal (or reaches any other app) while DoraX runs. Revisit if that bites. |
 
 ## Open decisions (owner)
 
-- Chat Window hotkey: ⌃C clashes with Terminal's interrupt — advised ⌃⌥C.
 - What ⌥⌥ opens once the Dock retires (A1 end state; task 3 is the interim).
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?
