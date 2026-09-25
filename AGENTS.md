@@ -100,6 +100,11 @@ is part of it and gets fixed on the spot.
 
 When the plan is a numbered sequence, name the task being worked on and what comes next.
 
+**Every finished task ends with a hand-off, unasked.** The last message of a task that opens or
+updates a PR must say, in this order: the PR link; what the owner should try by hand before
+merging (a short checklist); and the next task from `docs/master/00-NOW.md` with its paste block.
+Never end on an open question the plan already answers — if `00-NOW.md` names the next task, say it.
+
 ## Codebase navigation
 
 Before grepping or reading raw source, ask the knowledge graph:
