@@ -29,7 +29,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 
 | # | Dock behaviour | Corner | Evidence / note |
 |---|---|---|---|
-| A1 | ⌥⌥ opens the launcher | — | End state decision open (`00-DOCK-AND-CORNER.md` §5): what ⌥⌥ opens after the Dock retires |
+| A1 | ⌥⌥ opens the launcher | — | Owner 2026-09-25: ⌥⌥ opens the Dock, ⌘⌘ opens the Corner — fixed, no setting. End state after the Dock retires still open (`00-DOCK-AND-CORNER.md` §5) |
 | A2 | ⌘⌘ opens Global Context | ✅ | Opens in the Corner (Hotkeys page); `CornerGlobalContextParityTests` |
 | A3 | Hotkey toggles: pressing again puts it away / brings it back | ✅ | `theHotkeyPutsAnOpenCornerAway`, `theHotkeyBringsBackAShrunkenCorner` |
 | A4 | Esc closes / steps back one layer | 🟡 | Corner General Chat: `CornerGeneralChatView.handleEscape` (one layer per press). Global/app field (checked on the app 2026-09-24): Esc clears the query first, then closes — no step back through scopes |

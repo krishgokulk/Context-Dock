@@ -8,6 +8,7 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 
 - **The plan:** `docs/master/DORAX-BLUEPRINT.md` — product, architecture, code, docs, workflow,
   the 15-week plan and the owner's decisions. Follow it; do not rewrite it.
+- **Now:** `docs/master/00-NOW.md` — the next few tasks in order, and the owner's decisions.
 - **The queue:** GitHub Issues, milestone `1.0`. The milestone is the current order of work.
 - **How the code is laid out today:** `docs/engineering/codebase.md`.
 - **How work is done:** `docs/master/00-ENGINEERING-OPERATING-MODEL.md`.
@@ -30,6 +31,13 @@ or selection-aware actions.
 Unified Dock Surface rule: one shell, multiple modes, stable state, mode-specific content. Do not
 create separate floating visual containers per mode; use shared shell, input, row, animation, and
 size rules.
+
+Before touching any Dock (`LauncherView*`) or Corner (`AppChat*`, `Corner*`, `SelectionScope*`)
+code, read `docs/master/00-DOCK-AND-CORNER.md` and `docs/master/00-DOCK-PARITY-INVENTORY.md`.
+- The Dock is the reference behaviour; the Corner must match it. Reuse Dock code; never write a
+  second copy.
+- A bug fixed in one shell: check the other shell for the same bug in the same PR, and update the
+  matching inventory row.
 
 ## Build, run, test
 

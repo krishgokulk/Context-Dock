@@ -20,3 +20,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 2026-09-25 · mac-claude/claude/corner-parity · #84: every Selection row and answer action checked on the app (TextEdit); follow-up caret fix; next C (file preview).
 2026-09-25 · cloud/claude/jev-popularity-comparison-t530yd · added docs/master/00-NOW.md (work order + owner decisions, so nothing lives only in chat); inventory D13 ❓→❌ (Corner shows a tabs hint but loads no Safari tabs); daily brief now reads 00-NOW.md · Mac: finish Selection (task 1), then tasks 2–4 in 00-NOW.md · —
 2026-09-25 · mac-claude/claude/corner-parity · #84 feature-complete: send-to confirmation, Settings Remove for Computer Use grants, inventory Corner-only section, D10 ✅, task 1 → Done in 00-NOW.md; owner tries then merges.
+2026-09-25 · mac-claude/claude/agents-dock-corner-rule · task 2: AGENTS.md Dock/Corner rule + 00-NOW.md in Start here (docs only).
