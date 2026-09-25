@@ -50,7 +50,8 @@ extension LauncherView {
 
     func buildMacOSExtensionActionPills(
         query rawQuery: String,
-        excludingTitles: Set<String> = []
+        excludingTitles: Set<String> = [],
+        includeSharing: Bool = true
     ) -> [DockPill] {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let services = buildServicesActionSourcePills(
@@ -67,10 +68,9 @@ extension LauncherView {
         let finderTitles = serviceTitles.union(
             finderQuickActions.map { normalizedDockPillText($0.name) }
         )
-        let sharing = buildSharingActionSourcePills(
-            query: query,
-            excludingTitles: finderTitles
-        )
+        let sharing = includeSharing
+            ? buildSharingActionSourcePills(query: query, excludingTitles: finderTitles)
+            : []
         let shortcutTitles = finderTitles.union(
             sharing.map { normalizedDockPillText($0.name) }
         )

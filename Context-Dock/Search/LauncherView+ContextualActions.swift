@@ -4435,12 +4435,16 @@ extension LauncherView {
 
     /// The Selection Scope list — the Dock's, and through `SelectionActionProviding` the
     /// corner's. Stable order, never empty: Ask AI is its floor row.
-    func buildSelectionScopePills(query q: String) -> [DockPill] {
+    /// `includeShare: false` is the corner's list: it does not offer Share (#83), and the Share
+    /// sources are the slow part of this list — asking every share extension for its services
+    /// cost the corner card most of its opening time.
+    func buildSelectionScopePills(query q: String, includeShare: Bool = true) -> [DockPill] {
         let finderFilePills = buildFinderFilePills(query: q)
         let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
         let macOSExtensionPills = buildMacOSExtensionActionPills(
             query: q,
-            excludingTitles: finderMenuTitleSet
+            excludingTitles: finderMenuTitleSet,
+            includeSharing: includeShare
         )
         let extensionTitleSet = finderMenuTitleSet.union(
             macOSExtensionPills.map { normalizedDockPillText($0.name) }
@@ -4459,8 +4463,10 @@ extension LauncherView {
         sel.append(contentsOf: finderFilePills)
         sel.append(contentsOf: macOSExtensionPills)
         sel.append(contentsOf: finderMenuPills)
-        sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
-        sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
+        if includeShare {
+            sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
+            sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
+        }
         let rankedSelection = dedupeRankedDockPills(
             rankDockPills(
                 sel,

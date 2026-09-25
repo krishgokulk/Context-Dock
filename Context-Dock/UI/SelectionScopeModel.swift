@@ -68,6 +68,28 @@ final class SelectionScopeModel: ObservableObject {
         AXContextReader.shared.refresh(from: app)
         return AXContextReader.shared.current.selectedText
     }
+    /// When the rows are built. The card draws first and the rows follow a turn later: the
+    /// Dock's builders read Finder's menus over Accessibility, and waiting for them held a
+    /// file selection's card back by half a second. Tests run it at once.
+    var scheduleRowBuild: (@escaping @MainActor () -> Void) -> Void = { build in
+        DispatchQueue.main.async { MainActor.assumeIsolated { build() } }
+    }
+    /// The rows are being built for what is on the card now.
+    @Published private(set) var isBuildingRows = false
+    private var rowBuildGeneration = 0
+    /// Whether the user is on the card right now — the pointer over it, or its field holding
+    /// the keyboard while Context Dock is the active app. The idle clock does not run then.
+    var isInUse: () -> Bool = {
+        NSApp.isActive && CornerDockController.shared.keyboardState.owner == .selection
+    }
+    private(set) var pointerInside = false
+    /// Said when the hotkey finds nothing selected, rather than doing nothing silently.
+    var reportNothingSelected: (String) -> Void = { appName in
+        AppToast.show(
+            appName.isEmpty ? "Nothing selected" : "Nothing selected in \(appName)",
+            icon: "text.cursor")
+    }
+
     /// A short line the corner shows when a row has run, or could not.
     var reportResult: (_ title: String, _ success: Bool) -> Void = { title, success in
         DockActionFeedback.showResult(
@@ -113,26 +135,63 @@ final class SelectionScopeModel: ObservableObject {
         snapshot = SelectionSnapshot(
             text: selectedText, filePaths: selectedFiles.map(\.path),
             appName: context.appName, bundleID: context.bundleId)
-        refreshRows()
+        rows = []
+        focusedIndex = nil
         set(.showing)
+        refreshRows()
         arm(after: Self.idleDwell)
         return true
     }
 
+    enum HotkeyAction: Equatable { case open, close, replace, nothingSelected }
+
+    /// Pure: what the Selection hotkey does. It closes the card only when the card is already
+    /// about this selection. A new selection replaces it — pressing the hotkey on something new
+    /// used to close the old card, and read as the hotkey not working.
+    static func hotkeyAction(
+        isVisible: Bool, captured: SelectionSnapshot, incoming: SelectionSnapshot
+    ) -> HotkeyAction {
+        if incoming.isEmpty { return isVisible ? .close : .nothingSelected }
+        guard isVisible else { return .open }
+        let same = incoming.text == captured.text && incoming.filePaths == captured.filePaths
+        return same ? .close : .replace
+    }
+
     func toggle(from context: AXContext) {
-        if phase.isVisible {
-            dismiss()
-        } else {
-            summon(from: context)
+        let incoming = SelectionSnapshot(
+            text: context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            filePaths: context.selectedFilePaths, appName: context.appName,
+            bundleID: context.bundleId)
+        switch Self.hotkeyAction(
+            isVisible: phase.isVisible, captured: snapshot, incoming: incoming)
+        {
+        case .close: dismiss()
+        case .open, .replace: summon(from: context)
+        case .nothingSelected: reportNothingSelected(context.appName)
         }
     }
 
     // MARK: - Rows
 
+    /// Rebuild the rows for the captured selection and what is typed — a turn later, and only
+    /// the latest request lands: a build started for an earlier keystroke is dropped.
     func refreshRows() {
         focusedIndex = nil
-        rows = SelectionActions.cornerRows(
-            provider?.selectionRows(for: snapshot, query: query) ?? [])
+        rowBuildGeneration += 1
+        let generation = rowBuildGeneration
+        let captured = snapshot
+        let typed = query
+        isBuildingRows = true
+        scheduleRowBuild { [weak self] in
+            guard let self, generation == self.rowBuildGeneration, self.phase.isVisible,
+                captured == self.snapshot
+            else { return }
+            let built = SelectionActions.cornerRows(
+                self.provider?.selectionRows(for: captured, query: typed) ?? [])
+            guard generation == self.rowBuildGeneration else { return }
+            self.rows = built
+            self.isBuildingRows = false
+        }
     }
 
     /// The field changed: the list narrows the way the Dock's does.
@@ -275,6 +334,18 @@ final class SelectionScopeModel: ObservableObject {
         arm(after: Self.idleDwell)
     }
 
+    func pointerChanged(inside: Bool) {
+        pointerInside = inside
+        touch()
+    }
+
+    /// Pure: whether the idle clock may put the card away. Never while it is pinned, being
+    /// pointed at, or typed into — it used to close after eight seconds while the user was
+    /// still reading its rows.
+    static func mayStandDown(isPinned: Bool, pointerInside: Bool, inUse: Bool) -> Bool {
+        !isPinned && !pointerInside && !inUse
+    }
+
     func dismiss() {
         cancel()
         isPinned = false
@@ -286,8 +357,15 @@ final class SelectionScopeModel: ObservableObject {
         standDownTask?.cancel()
         standDownTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
-            self?.dismiss()
+            guard !Task.isCancelled, let self else { return }
+            guard Self.mayStandDown(
+                isPinned: self.isPinned, pointerInside: self.pointerInside, inUse: self.isInUse())
+            else {
+                // Still in use: look again later rather than closing under the user.
+                self.arm(after: Self.idleDwell)
+                return
+            }
+            self.dismiss()
         }
     }
 

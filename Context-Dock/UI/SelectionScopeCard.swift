@@ -60,7 +60,7 @@ struct SelectionScopeCard: View {
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
-        .onHover { _ in model.touch() }
+        .onHover { inside in model.pointerChanged(inside: inside) }
         .onAppear { fieldFocused = keyboardState.owner == .selection }
         .onChange(of: keyboardState.owner) { _, owner in fieldFocused = owner == .selection }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in

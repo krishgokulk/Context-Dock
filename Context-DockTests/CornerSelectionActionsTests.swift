@@ -73,6 +73,7 @@ struct CornerSelectionActionsTests {
         let model = SelectionScopeModel()
         model.providerOverride = dock
         model.reportResult = { _, _ in }
+        model.scheduleRowBuild = { $0() }
         var context = AXContext(appName: snapshot.appName, bundleId: snapshot.bundleID, pid: 1)
         context.selectedText = snapshot.text.isEmpty ? nil : snapshot.text
         context.selectedFilePaths = snapshot.filePaths
@@ -114,11 +115,18 @@ struct CornerSelectionActionsTests {
             #expect(docks.first?.id == "selection-ask-ai")
             let model = SelectionScopeModel()
             model.reportResult = { _, _ in }
+            model.scheduleRowBuild = { $0() }
             var context = AXContext(appName: snapshot.appName, bundleId: snapshot.bundleID, pid: 1)
             context.selectedText = snapshot.text.isEmpty ? nil : snapshot.text
             context.selectedFilePaths = snapshot.filePaths
             model.summon(from: context)
             #expect(model.rows == SelectionActions.cornerRows(docks))
+            // The corner asks without Share, which is most of the build's cost. Leaving it
+            // out must change nothing else: the Dock's full list, less Share, is the same.
+            if let launcher = dock as? LauncherView {
+                let full = launcher.selectionRows(for: snapshot, query: "", includeShare: true)
+                #expect(SelectionActions.cornerRows(full) == docks)
+            }
         }
     }
 
@@ -267,5 +275,69 @@ struct CornerSelectionActionsTests {
             == none + 3 * SelectionScopeMetrics.rowHeight)
         #expect(SelectionScopeMetrics.size(rows: 20).height
             == SelectionScopeMetrics.size(rows: 6).height)
+    }
+
+    // MARK: Opening fast, staying open, and the hotkey
+
+    @Test("The card is up before its rows are built, and only the latest build lands")
+    func theCardOpensBeforeItsRows() {
+        let dock = FakeDock()
+        let model = SelectionScopeModel()
+        model.providerOverride = dock
+        var pending: [@MainActor () -> Void] = []
+        model.scheduleRowBuild = { pending.append($0) }
+        var context = AXContext(appName: "TextEdit", bundleId: "com.apple.TextEdit", pid: 1)
+        context.selectedText = text.text
+        model.summon(from: context)
+        #expect(model.phase == .showing)
+        #expect(model.rows.isEmpty)
+        #expect(model.isBuildingRows)
+
+        // Typing before the first build ran: that build is stale and must not land.
+        model.query = "copy"
+        model.queryChanged()
+        pending.forEach { $0() }
+        #expect(dock.builtFor.count == 1)
+        #expect(model.rows.map(\.id) == ["selection-copy"])
+        #expect(!model.isBuildingRows)
+    }
+
+    @Test("The idle clock never closes a card that is pinned, pointed at or in use")
+    func theCardStaysWhileInUse() {
+        #expect(SelectionScopeModel.mayStandDown(isPinned: false, pointerInside: false, inUse: false))
+        #expect(!SelectionScopeModel.mayStandDown(isPinned: true, pointerInside: false, inUse: false))
+        #expect(!SelectionScopeModel.mayStandDown(isPinned: false, pointerInside: true, inUse: false))
+        #expect(!SelectionScopeModel.mayStandDown(isPinned: false, pointerInside: false, inUse: true))
+    }
+
+    @Test("The hotkey closes the card only for the same selection; a new one replaces it")
+    func theHotkeyReplacesANewSelection() {
+        let other = SelectionSnapshot(
+            text: "DoraX", filePaths: [], appName: "TextEdit", bundleID: "com.apple.TextEdit")
+        let none = SelectionSnapshot(text: "", filePaths: [], appName: "Mail", bundleID: "")
+        typealias M = SelectionScopeModel
+        #expect(M.hotkeyAction(isVisible: false, captured: text, incoming: text) == .open)
+        #expect(M.hotkeyAction(isVisible: true, captured: text, incoming: text) == .close)
+        #expect(M.hotkeyAction(isVisible: true, captured: text, incoming: other) == .replace)
+        #expect(M.hotkeyAction(isVisible: false, captured: text, incoming: none) == .nothingSelected)
+        #expect(M.hotkeyAction(isVisible: true, captured: text, incoming: none) == .close)
+    }
+
+    @Test("A new selection on the hotkey replaces the card; nothing selected says so")
+    func theHotkeyOnTheModel() {
+        let dock = FakeDock()
+        let model = card(text, dock: dock)
+        var context = AXContext(appName: "TextEdit", bundleId: "com.apple.TextEdit", pid: 1)
+        context.selectedText = "DoraX"
+        model.toggle(from: context)
+        #expect(model.phase == .showing)
+        #expect(model.snapshot.text == "DoraX")
+
+        model.dismiss()
+        var said: [String] = []
+        model.reportNothingSelected = { said.append($0) }
+        model.toggle(from: AXContext(appName: "Mail", bundleId: "com.apple.mail", pid: 1))
+        #expect(model.phase == .hidden)
+        #expect(said == ["Mail"])
     }
 }

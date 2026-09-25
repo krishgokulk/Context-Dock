@@ -11,9 +11,18 @@ import Foundation
 
 extension LauncherView: SelectionActionProviding {
     func selectionRows(for snapshot: SelectionSnapshot, query: String) -> [SelectionActionRow] {
+        selectionRows(for: snapshot, query: query, includeShare: false)
+    }
+
+    /// The Dock's list for this selection. The corner asks without Share — it does not offer
+    /// it, and building it is most of the cost; the test asks with it, to show that leaving
+    /// Share out changes nothing else.
+    func selectionRows(
+        for snapshot: SelectionSnapshot, query: String, includeShare: Bool
+    ) -> [SelectionActionRow] {
         guard !snapshot.isEmpty else { return [] }
         return withCapturedSelection(snapshot) {
-            buildSelectionScopePills(query: query)
+            buildSelectionScopePills(query: query, includeShare: includeShare)
                 .filter { !$0.isSeparator }
                 .map(Self.selectionRow(from:))
         }
@@ -25,9 +34,10 @@ extension LauncherView: SelectionActionProviding {
         return withCapturedSelection(snapshot) {
             // Rebuilt for the captured selection rather than kept from the list: the row's
             // closure is made from that copy, whatever the Dock holds now.
-            let pills = buildSelectionScopePills(query: query)
+            let pills = buildSelectionScopePills(query: query, includeShare: false)
             guard let pill = pills.first(where: { $0.id == id })
-                ?? buildSelectionScopePills(query: "").first(where: { $0.id == id }),
+                ?? buildSelectionScopePills(query: "", includeShare: false)
+                    .first(where: { $0.id == id }),
                 pill.isEnabled
             else { return false }
             pill.execute()
