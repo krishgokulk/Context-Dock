@@ -209,12 +209,63 @@ enum SelectionShare {
     /// The Dock's "Share Selection" row: in the corner it opens the destinations in the card.
     static let entryRowID = "selection-share"
 
-    /// What is shared: the captured files, else the captured text — the router's own rule.
-    static func items(for snapshot: SelectionSnapshot) -> [Any] {
+    /// The captured selection in the shape the share router reads.
+    static func context(for snapshot: SelectionSnapshot) -> AXContext {
         var context = AXContext(appName: snapshot.appName, bundleId: snapshot.bundleID, pid: 0)
         context.selectedText = snapshot.text.isEmpty ? nil : snapshot.text
         context.selectedFilePaths = snapshot.filePaths
-        return ShareIntentRouter.shared.shareableItems(for: context)
+        return context
+    }
+
+    /// What is shared: the captured files, else the captured text — the router's own rule.
+    static func items(for snapshot: SelectionSnapshot) -> [Any] {
+        ShareIntentRouter.shared.shareableItems(for: context(for: snapshot))
+    }
+
+    // MARK: Typed "send to …" — the Dock's route 3
+
+    /// The row a typed send command shows, saying what Return will do.
+    static let intentRowID = "selection-share-intent"
+
+    /// Pure: the row for a parsed send command, or nil when it names no channel or person —
+    /// a bare "share" is what the Share Selection row already does.
+    static func intentRow(for intent: ShareIntent) -> SelectionActionRow? {
+        let recipient = intent.recipientQuery?
+            .trimmingCharacters(in: .whitespacesAndNewlines).capitalized ?? ""
+        let channel: String? = switch intent.channelHint {
+        case .messages: "Messages"
+        case .mail: "Mail"
+        case .airDrop: "AirDrop"
+        case .picker: nil
+        }
+        let title: String
+        switch (channel, recipient.isEmpty) {
+        case (let channel?, false): title = "Send to \(recipient) via \(channel)"
+        case (let channel?, true): title = "Send via \(channel)"
+        case (nil, false): title = "Share to \(recipient)"
+        case (nil, true): return nil
+        }
+        let icon = switch intent.channelHint {
+        case .messages: "message"
+        case .mail: "envelope"
+        case .airDrop: "airplayaudio"
+        case .picker: "square.and.arrow.up"
+        }
+        return SelectionActionRow(
+            id: intentRowID, title: title, icon: icon, badge: "Send", accentColorName: "blue",
+            kind: .share)
+    }
+
+    /// Runs a typed send command on the captured selection, through the Dock's router: the
+    /// contact is looked up, then Messages or Mail sends it (or composes it), or the share
+    /// destinations open. Returns the router's own one-line outcome.
+    static func send(
+        _ intent: ShareIntent, snapshot: SelectionSnapshot,
+        openDestinations: @escaping ([Any]) -> Void
+    ) async -> String {
+        let resolution = await ShareIntentRouter.shared.resolve(intent)
+        return await ShareIntentRouter.shared.execute(
+            resolution, axContext: context(for: snapshot), presentSharingPicker: openDestinations)
     }
 
     struct Destination: Equatable {

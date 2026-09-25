@@ -169,6 +169,41 @@ final class SelectionScopeModel: ObservableObject {
         SelectionShare.perform(rowID: rowID, items: items)
     }
 
+    // MARK: Typed "send to …"
+
+    /// Reads what is typed as a send command. Tests replace it.
+    var parseSendCommand: (String) -> ShareIntent? = { ShareIntentRouter.shared.parse($0) }
+    /// Runs a send command on the captured selection. Tests replace it so nothing is sent.
+    var runSendCommand: (
+        ShareIntent, SelectionSnapshot, @escaping ([Any]) -> Void
+    ) async -> String = { intent, snapshot, openDestinations in
+        await SelectionShare.send(intent, snapshot: snapshot, openDestinations: openDestinations)
+    }
+    /// What the last send command did, said in the card.
+    @Published private(set) var sendOutcome: String?
+    @Published private(set) var isSending = false
+    var showsSendOutcome: Bool { isSending || sendOutcome != nil }
+
+    private func sendTyped() {
+        guard let intent = parseSendCommand(query) else { return }
+        let captured = snapshot
+        query = ""
+        isSending = true
+        sendOutcome = nil
+        touch()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let outcome = await self.runSendCommand(intent, captured) { [weak self] items in
+                // "Share …" with no person: the destinations open here, not in a system sheet.
+                self?.openShare(items: items, fromAnswer: false)
+            }
+            self.isSending = false
+            guard captured == self.snapshot, self.phase.isVisible else { return }
+            self.sendOutcome = outcome
+            self.touch()
+        }
+    }
+
     private func openShare(items: [Any], fromAnswer: Bool) {
         guard !items.isEmpty else {
             reportResult("Nothing to share", false)
@@ -316,6 +351,8 @@ final class SelectionScopeModel: ObservableObject {
         isSharing = false
         isSharingAnswer = false
         sharePayload = []
+        sendOutcome = nil
+        isSending = false
         set(.showing)
         refreshRows()
         arm(after: Self.idleDwell)
@@ -363,6 +400,8 @@ final class SelectionScopeModel: ObservableObject {
             isBuildingRows = false
             return
         }
+        // A typed send command leads the list, saying what Return will do.
+        let sendRow = parseSendCommand(query).flatMap(SelectionShare.intentRow(for:))
         let generation = rowBuildGeneration
         let captured = snapshot
         let typed = query
@@ -378,13 +417,14 @@ final class SelectionScopeModel: ObservableObject {
                     $0, snapshot: captured, computerUseAllowed: self.computerUseAllowed) != .hidden
             }
             guard generation == self.rowBuildGeneration else { return }
-            self.rows = built
+            self.rows = (sendRow.map { [$0] } ?? []) + built
             self.isBuildingRows = false
         }
     }
 
     /// The field changed: the list narrows the way the Dock's does.
     func queryChanged() {
+        if !query.isEmpty { sendOutcome = nil }
         refreshRows()
         touch()
     }
@@ -422,6 +462,11 @@ final class SelectionScopeModel: ObservableObject {
             run(first)
             return true
         }
+        // A typed send command is sent, never asked of the AI.
+        if let first = rows.first, first.id == SelectionShare.intentRowID {
+            run(first)
+            return true
+        }
         return submit()
     }
 
@@ -443,6 +488,8 @@ final class SelectionScopeModel: ObservableObject {
         case .share:
             if row.id == SelectionShare.entryRowID {
                 openShare(items: SelectionShare.items(for: snapshot), fromAnswer: false)
+            } else if row.id == SelectionShare.intentRowID {
+                sendTyped()
             } else {
                 share(row)
             }

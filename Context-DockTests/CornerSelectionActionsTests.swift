@@ -658,4 +658,76 @@ struct CornerSelectionActionsTests {
         #expect(!SelectionScopeModel.fieldHandlesEscape(keyboardOwner: .selection))
         #expect(SelectionScopeModel.fieldHandlesEscape(keyboardOwner: .none))
     }
+
+    // MARK: Typed "send to …" (the Dock's route 3)
+
+    @Test("A typed send command is read the Dock's way and says what Return will do")
+    func typedSendCommandRow() {
+        let intent = ShareIntentRouter.shared.parse("send this to gokula kannan j via messages")
+        #expect(intent?.channelHint == .messages)
+        #expect(intent?.recipientQuery == "gokula kannan j")
+        #expect(intent.flatMap(SelectionShare.intentRow(for:))?.title
+            == "Send to Gokula Kannan J via Messages")
+        #expect(SelectionShare.intentRow(for: ShareIntent(
+            rawQuery: "email this", channelHint: .mail, recipientQuery: nil))?.title
+            == "Send via Mail")
+        #expect(SelectionShare.intentRow(for: ShareIntent(
+            rawQuery: "share to notes", channelHint: .picker, recipientQuery: "notes"))?.title
+            == "Share to Notes")
+        // A bare "share" is the Share Selection row's job.
+        #expect(SelectionShare.intentRow(for: ShareIntent(
+            rawQuery: "share", channelHint: .picker, recipientQuery: nil)) == nil)
+    }
+
+    @Test("Return sends a typed command on the captured selection and never asks the AI")
+    func returnSendsTheTypedCommand() async {
+        let model = card(text, dock: FakeDock())
+        var asked: [SelectionAskRequest] = []
+        var sent: [(String, SelectionSnapshot)] = []
+        model.askHandler = { asked.append($0) }
+        model.runSendCommand = { intent, snapshot, _ in
+            sent.append((intent.recipientQuery ?? "", snapshot))
+            return "✅ Sent text to Gokula Kannan J via Messages"
+        }
+        model.query = "send this to gokula kannan j via messages"
+        model.queryChanged()
+        #expect(model.rows.first?.id == SelectionShare.intentRowID)
+
+        model.returnPressed()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(asked.isEmpty)
+        #expect(sent.map(\.0) == ["gokula kannan j"])
+        #expect(sent.first?.1 == text)
+        #expect(model.sendOutcome == "✅ Sent text to Gokula Kannan J via Messages")
+        #expect(model.query.isEmpty)
+        #expect(SelectionScopeMetrics.size(rows: 3, sendOutcome: true).height
+            == SelectionScopeMetrics.size(rows: 3).height + SelectionScopeMetrics.sendOutcomeHeight)
+    }
+
+    @Test("A send command that needs the destinations opens them in the card")
+    func sendCommandOpensDestinationsHere() async {
+        let model = sharingCard(text) { _, _ in }
+        model.runSendCommand = { _, _, openDestinations in
+            openDestinations([self.text.text])
+            return "✅ Opening share sheet…"
+        }
+        model.query = "share this to notes"
+        model.queryChanged()
+        model.returnPressed()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(model.isSharing)
+        #expect(!model.rows.isEmpty)
+    }
+
+    @Test("An ordinary question still goes to the AI")
+    func aQuestionIsNotASendCommand() {
+        let model = card(text, dock: FakeDock())
+        var asked: [String] = []
+        model.askHandler = { asked.append($0.prompt) }
+        model.query = "what does churn mean here"
+        model.queryChanged()
+        #expect(model.rows.first?.id != SelectionShare.intentRowID)
+        model.returnPressed()
+        #expect(asked == ["what does churn mean here"])
+    }
 }

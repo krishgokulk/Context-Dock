@@ -1,6 +1,6 @@
 # Corner Selection panel: one panel that does everything the Dock's Selection does
 
-> **Status: BUILDING (2026-09-25). Part A ✅ (checked on the app). A2 ✅ (a64e5a1; full suite 1949/1949). B ✅ route 1 (native destinations in the card, Share on answers); route 3 (typed "send to …") parked — see B note. B checked on the app (TextEdit: Share Selection → destinations with icons, typing narrows, Esc → actions → closed; a double-Esc bug found and fixed). Next: C (file preview), then D, E, F.** Written so work can resume exactly here
+> **Status: BUILDING (2026-09-25). Part A ✅ (checked on the app). A2 ✅ (a64e5a1; full suite 1949/1949). B ✅ route 1 (native destinations in the card, Share on answers); route 3 (typed "send to …") parked — see B note. B checked on the app (TextEdit: Share Selection → destinations with icons, typing narrows, Esc → actions → closed; a double-Esc bug found and fixed). Route 3 ✅ (sent live to the owner). Next: test every Selection row and result action on the app (owner asked), then C (file preview), D, E, F.** Written so work can resume exactly here
 > after any interruption. Spec: `docs/master/00-DOCK-AND-CORNER.md` §4a. Branch:
 > `claude/corner-parity`, PR #84 (open, all work so far committed and pushed).
 
@@ -100,8 +100,10 @@ F. Docs: §4a, inventory D10 (→ ✅ when Share and answers are in), `corner-sh
   `ShareActionCoordinator`, `SelectionShare` in `SelectionActions.swift`); Share on answers.
   *Route 2 not needed for a selection:* the payload is always the captured text or files, which
   the native destinations take; the app-menu route exists for sharing a *page* whose URL cannot
-  be read. *Route 3 parked:* the Dock's typed "send to …" answers into its own chat (`l2`); the
-  corner needs its own output for it — ask the owner whether it belongs in this PR.
+  be read. *Route 3 done* (owner: build it in this PR): a typed send command leads the list, Return
+  runs `ShareIntentRouter` on the captured selection, the card shows the outcome line.
+  Checked live: sent to the owner (Gokula Kannan J) via Messages, delivered. Owner rule: test
+  sends go only to Gokula Kannan J.
 - **C — File preview**, **D — look**, **E — test matrix**, **F — docs**, as above.
 
 ## Owner answers (2026-09-25)

@@ -27,12 +27,17 @@ enum SelectionScopeMetrics {
     static let resultActionsHeight: CGFloat = 36
     /// The Computer Use question, when a row needs it.
     static let consentHeight: CGFloat = 62
+    /// What a typed send command did.
+    static let sendOutcomeHeight: CGFloat = 30
 
     /// A pure function of state, like every other corner surface: the shell hit-tests this
     /// exact number.
-    static func size(rows: Int, answering: Bool = false, consent: Bool = false) -> CGSize {
+    static func size(
+        rows: Int, answering: Bool = false, consent: Bool = false, sendOutcome: Bool = false
+    ) -> CGSize {
         let base = sizeWithoutConsent(rows: rows, answering: answering)
-        return consent ? CGSize(width: base.width, height: base.height + consentHeight) : base
+        let extra = (consent ? consentHeight : 0) + (sendOutcome ? sendOutcomeHeight : 0)
+        return CGSize(width: base.width, height: base.height + extra)
     }
 
     private static func sizeWithoutConsent(rows: Int, answering: Bool) -> CGSize {
@@ -68,6 +73,7 @@ struct SelectionScopeCard: View {
                 rowList
             }
             if model.pendingConsent != nil { consentStrip }
+            if model.showsSendOutcome { sendOutcomeLine }
             field
         }
         .padding(.vertical, SelectionScopeMetrics.verticalPadding)
@@ -98,7 +104,26 @@ struct SelectionScopeCard: View {
     private var cardSize: CGSize {
         SelectionScopeMetrics.size(
             rows: model.rows.count, answering: model.isShowingAnswer,
-            consent: model.pendingConsent != nil)
+            consent: model.pendingConsent != nil, sendOutcome: model.showsSendOutcome)
+    }
+
+    /// What a typed "send to …" did — the router's own words, or that it is under way.
+    private var sendOutcomeLine: some View {
+        HStack(spacing: 6) {
+            if model.isSending {
+                ProgressView().controlSize(.small)
+                Text("Sending…")
+            } else if let outcome = model.sendOutcome {
+                Text(outcome)
+            }
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .truncationMode(.tail)
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: SelectionScopeMetrics.sendOutcomeHeight)
     }
 
     /// Asked in the card, before a row takes the screen (surface-cost spec, Step 4).
