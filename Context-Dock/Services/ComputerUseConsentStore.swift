@@ -148,6 +148,13 @@ final class ComputerUseConsentStore: ObservableObject {
         oneShot.contains(key(bundleID))
     }
 
+    /// Takes an app's standing grant away — Settings' Remove. The next action that needs it
+    /// asks again. A pending one-shot press goes with it.
+    func revoke(for bundleID: String) {
+        setMode(.off, for: bundleID)
+        oneShot.remove(key(bundleID))
+    }
+
     /// Apps the user has granted, for the Settings summary — a permission nobody can review is
     /// not a permission model.
     func grantedBundleIDs() -> [String] {

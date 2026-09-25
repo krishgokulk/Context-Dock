@@ -702,12 +702,13 @@ struct CornerSelectionActionsTests {
             rawQuery: "share", channelHint: .picker, recipientQuery: nil)) == nil)
     }
 
-    @Test("Return sends a typed command on the captured selection and never asks the AI")
-    func returnSendsTheTypedCommand() async {
+    @Test("A send shows who, how and the exact text, and sends only on Send — never the AI")
+    func aSendWaitsForConfirmation() async {
         let model = card(text, dock: FakeDock())
         var asked: [SelectionAskRequest] = []
         var sent: [(String, SelectionSnapshot)] = []
         model.askHandler = { asked.append($0) }
+        model.describeRecipient = { _ in "Gokula Kannan J · +91 00000 00000" }
         model.runSendCommand = { intent, snapshot, _ in
             sent.append((intent.recipientQuery ?? "", snapshot))
             return "✅ Sent text to Gokula Kannan J via Messages"
@@ -716,6 +717,17 @@ struct CornerSelectionActionsTests {
         model.queryChanged()
         #expect(model.rows.first?.id == SelectionShare.intentRowID)
 
+        // Choosing the row: the card asks. Nothing has gone anywhere.
+        model.returnPressed()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(sent.isEmpty)
+        #expect(model.pendingSend?.recipient == "Gokula Kannan J · +91 00000 00000")
+        #expect(model.pendingSend?.channel == "Messages")
+        #expect(model.pendingSend?.content == text.text)
+        #expect(SelectionScopeMetrics.size(rows: 3, sendConfirm: true).height
+            == SelectionScopeMetrics.size(rows: 3).height + SelectionScopeMetrics.sendConfirmHeight)
+
+        // Send (↩): the one way it leaves.
         model.returnPressed()
         for _ in 0..<20 { await Task.yield() }
         #expect(asked.isEmpty)
@@ -734,9 +746,11 @@ struct CornerSelectionActionsTests {
             openDestinations([self.text.text])
             return "✅ Opening share sheet…"
         }
+        model.describeRecipient = { _ in "Notes" }
         model.query = "share this to notes"
         model.queryChanged()
-        model.returnPressed()
+        model.returnPressed()  // shows what would be shared
+        model.returnPressed()  // Send
         for _ in 0..<20 { await Task.yield() }
         #expect(model.isSharing)
         #expect(!model.rows.isEmpty)
@@ -877,6 +891,76 @@ struct CornerSelectionActionsTests {
             == SelectionScopeMetrics.folderPreviewHeight - SelectionScopeMetrics.previewHeight)
         #expect(SelectionScopeMetrics.size(rows: 3, answering: true, folderPreview: true)
             == SelectionScopeMetrics.size(rows: 3, answering: true))
+    }
+
+    @Test("Nothing is sent without the confirmation: Esc, Cancel, closing, a new selection")
+    func nothingIsSentWithoutConfirmation() async {
+        var sent = 0
+        func prepared() -> SelectionScopeModel {
+            let model = card(text, dock: FakeDock())
+            model.describeRecipient = { _ in "Gokula Kannan J" }
+            model.runSendCommand = { _, _, _ in sent += 1; return "sent" }
+            model.query = "send this to gokula kannan j via messages"
+            model.queryChanged()
+            model.returnPressed()
+            return model
+        }
+        let escaped = prepared()
+        escaped.escapePressed()
+        #expect(escaped.pendingSend == nil && escaped.phase.isVisible)
+
+        let cancelled = prepared()
+        cancelled.cancelSend()
+
+        let closed = prepared()
+        closed.close()
+        #expect(closed.pendingSend == nil)
+        closed.confirmSend()
+
+        let replaced = prepared()
+        var other = AXContext(appName: "Notes", bundleId: "com.apple.Notes", pid: 2)
+        other.selectedText = "something else"
+        replaced.summon(from: other)
+        #expect(replaced.pendingSend == nil)
+        replaced.confirmSend()  // no pending send: does nothing
+
+        for _ in 0..<20 { await Task.yield() }
+        #expect(sent == 0)
+    }
+
+    @Test("A file send says the files' names")
+    func fileSendContent() {
+        #expect(SelectionScopeModel.sendContent(file) == "report.pdf")
+        #expect(SelectionScopeModel.sendContent(text) == text.text)
+    }
+
+    @Test("Always allow, then Remove in Settings: the next action asks again")
+    func removingAlwaysAllowAsksAgain() {
+        let suite = "corner-selection-consent-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = ComputerUseConsentStore(defaults: defaults)
+
+        let dock = FakeDock()
+        let model = card(file, dock: dock)
+        model.computerUseAllowed = { store.effectiveMode(for: $0).canOperate }
+        model.grantAlways = { store.grantFromChat(for: $0) }
+        model.grantOnce = { store.grantOnce(for: $0) }
+        model.consumeOnce = { store.consumeOneShotGrant(for: $0) }
+        let compress = model.rows.first { $0.id == "finder-menu-compress" }!
+
+        model.run(compress)
+        model.allowAlways()
+        #expect(store.grantedBundleIDs() == ["com.apple.finder"])
+        model.run(compress)  // granted: runs without asking
+        #expect(model.pendingConsent == nil)
+        #expect(dock.ran.count == 2)
+
+        store.revoke(for: "com.apple.finder")  // Settings' Remove
+        #expect(store.grantedBundleIDs().isEmpty)
+        model.run(compress)
+        #expect(model.pendingConsent?.bundleID == "com.apple.finder")
+        #expect(dock.ran.count == 2)
     }
 }
 

@@ -371,7 +371,8 @@ final class CornerDockController: NSObject {
                     rows: selection.rows.count, answering: selection.isShowingAnswer,
                     consent: selection.isAsking,
                     outcome: selection.showsOutcome,
-                    folderPreview: selection.showsFolderPreview) : nil,
+                    folderPreview: selection.showsFolderPreview,
+                    sendConfirm: selection.pendingSend != nil) : nil,
             list: showsExtensionPanel
                 ? ExtensionScopeMetrics.size
                 : (showsAppSnapshot
@@ -592,7 +593,8 @@ final class CornerDockController: NSObject {
                     rows: selection.rows.count, answering: selection.isShowingAnswer,
                     consent: selection.isAsking,
                     outcome: selection.showsOutcome,
-                    folderPreview: selection.showsFolderPreview) : nil,
+                    folderPreview: selection.showsFolderPreview,
+                    sendConfirm: selection.pendingSend != nil) : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width

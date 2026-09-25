@@ -25,6 +25,12 @@ struct AIProvidersSettingsPage: View {
         return "Granted: " + names.sorted().joined(separator: ", ")
     }
 
+    private static func appName(_ bundleID: String) -> String {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { FileManager.default.displayName(atPath: $0.path) }?
+            .replacingOccurrences(of: ".app", with: "") ?? bundleID
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             AIProviderSettingsView()
@@ -74,10 +80,25 @@ struct AIProvidersSettingsPage: View {
                         if !computerUse.grantedBundleIDs().isEmpty {
                             Button("Turn All Off") {
                                 for bundleID in computerUse.grantedBundleIDs() {
-                                    computerUse.setMode(.off, for: bundleID)
+                                    computerUse.revoke(for: bundleID)
                                 }
                             }
                             .controlSize(.small)
+                        }
+                    }
+                    // Each standing grant — including "Always for …" chosen in the corner's
+                    // Selection card — with its own Remove. After removing, the next action that
+                    // needs the app asks again.
+                    ForEach(computerUse.grantedBundleIDs(), id: \.self) { bundleID in
+                        Divider()
+                        SettingsPageRow(
+                            icon: "hand.tap",
+                            iconColor: .orange,
+                            title: Self.appName(bundleID),
+                            subtitle: computerUse.mode(for: bundleID).title
+                        ) {
+                            Button("Remove") { computerUse.revoke(for: bundleID) }
+                                .controlSize(.small)
                         }
                     }
                 }

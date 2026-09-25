@@ -29,6 +29,8 @@ enum SelectionScopeMetrics {
     static let resultActionsHeight: CGFloat = 36
     /// The Computer Use question, when a row needs it.
     static let consentHeight: CGFloat = 62
+    /// A send waiting on the user's word: recipient, channel, the text, Send / Cancel.
+    static let sendConfirmHeight: CGFloat = 132
     /// What a typed send command did.
     static let outcomeHeight: CGFloat = 30
 
@@ -36,11 +38,12 @@ enum SelectionScopeMetrics {
     /// exact number.
     static func size(
         rows: Int, answering: Bool = false, consent: Bool = false, outcome: Bool = false,
-        folderPreview: Bool = false
+        folderPreview: Bool = false, sendConfirm: Bool = false
     ) -> CGSize {
         let base = sizeWithoutConsent(
             rows: rows, answering: answering, folderPreview: folderPreview)
-        let extra = (consent ? consentHeight : 0) + (outcome ? outcomeHeight : 0)
+        let asking = sendConfirm ? sendConfirmHeight : (consent ? consentHeight : 0)
+        let extra = asking + (outcome ? outcomeHeight : 0)
         return CGSize(width: base.width, height: base.height + extra)
     }
 
@@ -81,6 +84,7 @@ struct SelectionScopeCard: View {
             }
             if model.pendingConsent != nil { consentStrip }
             if let row = model.pendingApproval { approvalStrip(row) }
+            if let pending = model.pendingSend { sendConfirmStrip(pending) }
             if model.showsOutcome { outcomeLine }
             field
         }
@@ -124,7 +128,39 @@ struct SelectionScopeCard: View {
         SelectionScopeMetrics.size(
             rows: model.rows.count, answering: model.isShowingAnswer,
             consent: model.isAsking, outcome: model.showsOutcome,
-            folderPreview: model.showsFolderPreview)
+            folderPreview: model.showsFolderPreview, sendConfirm: model.pendingSend != nil)
+    }
+
+    /// A send says exactly who, how and what before anything leaves the Mac.
+    private func sendConfirmStrip(_ pending: SelectionScopeModel.PendingSend) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text("To").foregroundStyle(.secondary)
+                Text(pending.recipient).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
+                Text("· via \(pending.channel)").foregroundStyle(.secondary).lineLimit(1)
+            }
+            .font(.system(size: 12))
+            ScrollView {
+                Text(pending.content)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(height: 50)
+            .padding(6)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
+            HStack(spacing: 8) {
+                resultButton("Send  ↩", "paperplane.fill") { model.confirmSend() }
+                Spacer(minLength: 0)
+                Button("Cancel") { model.cancelSend() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.sendConfirmHeight, alignment: .center)
     }
 
     /// An extension that may change things asks first — here, where the keys already are.

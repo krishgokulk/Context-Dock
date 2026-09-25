@@ -67,7 +67,7 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | General Chat | ✅ | ✅ | **Moved** — parity tasks 1, 2, 3, 6, 8 done | `[code]` CLAUDE.md current sequence |
 | Frontmost app's menu commands + actions | ✅ | 🟡 | **In progress** — plan 2026-09-08 Phases 1–2 done (ranking extracted to `FrontmostMenuMatcher`; actions and menus ranked together by `AppChatRowRanker`). Phase 3 (retire the Dock's copy) and Phase 4 (scope pills) not started: the Dock still builds its own `contextMenuPills` | `[code]` checked 2026-09-24 |
 | Clipboard | ✅ | ✅ | **Moved** — ambient pill + card. The Dock still keeps its own copy of the pasteboard rules (`LauncherView+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardPreviewCard` |
-| Selection | ✅ | 🟡 | **Partial — see §4a** | `[code]` `SelectionScopeCard` |
+| Selection | ✅ | ✅ | **Moved**, and beyond the Dock — see §4a (#84) | `[code]` `SelectionScopeCard`, `CornerSelectionActionsTests` |
 | Drop shelf | — | ✅ | **Corner-only** | `[code]` `DropShelfWindow` |
 | Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[code]` corner rows run the Dock's `executeGlobalAppSearchResult` → `activateGlobalInlineScope`; `[plan]` 2026-09-10 scope stack, "plan only" |
 | CLI tools as a scope (+ terminal) | ✅ | ❌ | **Not moved** — same hand-off | `[plan]` 2026-09-10 Phases 3–4 |
@@ -83,7 +83,13 @@ boxes.
 
 ---
 
-## 4a. Selection in the Corner — only half moved (owner report, 2026-09-24)
+## 4a. Selection in the Corner — moved (#84, 2026-09-25); the report that started it (2026-09-24)
+
+**Status 2026-09-25: done.** All five acceptance points below are met (PR #84), and the card goes
+beyond the Dock on the owner's asks: answers inside the card (never a second card), Share inside the
+card, typed "send to …" with a confirmation, Save to Quick Note, file preview, and the Computer Use
+rule for rows that drive another app. Details and tests: inventory D10 and "Corner-only (beyond the
+Dock)". Still owed: #83, the extraction of `SelectionActionSource`, before the Dock retires.
 
 **Correction to §4:** the Selection row says "Moved". It is **partial** `[owner]` `[code]`.
 

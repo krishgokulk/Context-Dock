@@ -136,7 +136,9 @@ final class SelectionScopeModel: ObservableObject {
     /// Esc: the share destinations step back to where Share was chosen; an answer steps back
     /// to the rows; the rows close the card.
     func escapePressed() {
-        if pendingApproval != nil {
+        if pendingSend != nil {
+            cancelSend()
+        } else if pendingApproval != nil {
             cancelApproval()
         } else if pendingConsent != nil {
             cancelConsent()
@@ -220,10 +222,69 @@ final class SelectionScopeModel: ObservableObject {
     @Published private(set) var isSending = false
     var showsOutcome: Bool { isSending || outcome != nil }
 
-    private func sendTyped() {
-        guard let intent = parseSendCommand(query) else { return }
+    /// A send waiting on the user's word: who it goes to, how, and exactly what. Nothing
+    /// leaves the Mac until Send (↩ or a click) — a message sent to the wrong person, or
+    /// with the wrong text, cannot be taken back.
+    struct PendingSend {
+        let intent: ShareIntent
+        let snapshot: SelectionSnapshot
+        var recipient: String
+        let channel: String
+        /// Exactly what is sent: the captured text, or the files' names.
+        let content: String
+    }
+    @Published private(set) var pendingSend: PendingSend?
+
+    /// Who a send goes to, as the contact lookup names it. Tests replace it.
+    var describeRecipient: (ShareIntent) async -> String = { intent in
+        await SelectionShare.recipientDescription(for: intent)
+    }
+
+    /// Pure: what a send carries, word for word.
+    static func sendContent(_ snapshot: SelectionSnapshot) -> String {
+        if !snapshot.filePaths.isEmpty {
+            return snapshot.filePaths.map { URL(fileURLWithPath: $0).lastPathComponent }
+                .joined(separator: ", ")
+        }
+        return snapshot.text
+    }
+
+    /// Choosing a send row: show who, how and what, and wait for Send.
+    private func prepareSend() {
+        guard let intent = parseSendCommand(query),
+            let row = SelectionShare.intentRow(for: intent)
+        else { return }
         let captured = snapshot
+        let typed = intent.recipientQuery?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .capitalized ?? ""
+        pendingSend = PendingSend(
+            intent: intent, snapshot: captured,
+            recipient: typed.isEmpty ? "Choose in the share sheet" : typed,
+            channel: SelectionShare.channelName(intent.channelHint) ?? row.title,
+            content: Self.sendContent(captured))
         query = ""
+        touch()
+        Task { @MainActor [weak self] in
+            guard let self, intent.recipientQuery != nil else { return }
+            let named = await self.describeRecipient(intent)
+            guard self.pendingSend?.intent.rawQuery == intent.rawQuery, !named.isEmpty else { return }
+            self.pendingSend?.recipient = named
+        }
+    }
+
+    /// Send (↩ or the button): the one place a send leaves the Mac.
+    func confirmSend() {
+        guard let pending = pendingSend else { return }
+        pendingSend = nil
+        send(pending.intent, captured: pending.snapshot)
+    }
+
+    func cancelSend() {
+        pendingSend = nil
+        touch()
+    }
+
+    private func send(_ intent: ShareIntent, captured: SelectionSnapshot) {
         isSending = true
         outcome = nil
         touch()
@@ -431,6 +492,7 @@ final class SelectionScopeModel: ObservableObject {
         sharePayload = []
         outcome = nil
         isSending = false
+        pendingSend = nil
         set(.showing)
         refreshRows()
         arm(after: Self.idleDwell)
@@ -529,7 +591,11 @@ final class SelectionScopeModel: ObservableObject {
     /// Return asks the follow-up.
     @discardableResult
     func returnPressed() -> Bool {
-        // A question in the card is answered by Return: Run, or Allow once.
+        // A question in the card is answered by Return: Send, Run, or Allow once.
+        if pendingSend != nil {
+            confirmSend()
+            return true
+        }
         if pendingApproval != nil {
             approveRun()
             return true
@@ -576,7 +642,7 @@ final class SelectionScopeModel: ObservableObject {
             if row.id == SelectionShare.entryRowID {
                 openShare(items: SelectionShare.items(for: snapshot), fromAnswer: false)
             } else if row.id == SelectionShare.intentRowID {
-                sendTyped()
+                prepareSend()
             } else {
                 share(row)
             }
@@ -655,7 +721,7 @@ final class SelectionScopeModel: ObservableObject {
     private var approvedRowID: String?
 
     /// The card asks a question (Computer Use or an extension's approval) above its field.
-    var isAsking: Bool { pendingConsent != nil || pendingApproval != nil }
+    var isAsking: Bool { pendingConsent != nil || pendingApproval != nil || pendingSend != nil }
 
     func approveRun() {
         guard let row = pendingApproval else { return }
@@ -790,6 +856,8 @@ final class SelectionScopeModel: ObservableObject {
     }
 
     func dismiss() {
+        // A send waiting on its confirmation never outlives the card that asked.
+        pendingSend = nil
         cancel()
         isPinned = false
         hasAsked = false

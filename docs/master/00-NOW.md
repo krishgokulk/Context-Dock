@@ -10,9 +10,8 @@
 
 ## In progress
 
-**1. Selection in the Corner** (inventory D10, `00-DOCK-AND-CORNER.md` §4a) — Mac session.
-Approach B with conditions (see decisions 2026-09-25). Also removes the `#if DEBUG` "Temporary
-trace" in `CornerChatPresentation.showFrontmostApp` that writes to `/tmp/dorax-trace.log`.
+*None.* Task 1 (Selection in the Corner) is done in #84, waiting for the owner to try it and merge.
+Task 2 starts after #84 merges.
 
 ## Next, in order
 
@@ -68,6 +67,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-24 | Corner fixes (restore, folder preview, pins, Dock navigation) | #79 |
 | 2026-09-25 | One-shell dock; → never runs a system command (D4); ↑ reaches Global (F2) | #80, #81 |
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
+| 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 
 ## Owner decisions (append-only)
 

@@ -273,6 +273,26 @@ enum SelectionShare {
             kind: .share)
     }
 
+    /// Pure: a channel's name as the card says it.
+    static func channelName(_ hint: ShareChannelHint) -> String? {
+        switch hint {
+        case .messages: "Messages"
+        case .mail: "Mail"
+        case .airDrop: "AirDrop"
+        case .picker: nil
+        }
+    }
+
+    /// Who a send goes to, as the contact lookup resolves it: "Gokula Kannan J · +91…".
+    static func recipientDescription(for intent: ShareIntent) async -> String {
+        let resolution = await ShareIntentRouter.shared.resolve(intent)
+        let name = resolution.recipientDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let handle = resolution.recipientHandle, !handle.isEmpty, handle != name else {
+            return name
+        }
+        return name.isEmpty ? handle : "\(name) · \(handle)"
+    }
+
     /// Runs a typed send command on the captured selection, through the Dock's router: the
     /// contact is looked up, then Messages or Mail sends it (or composes it), or the share
     /// destinations open. Returns the router's own one-line outcome.
