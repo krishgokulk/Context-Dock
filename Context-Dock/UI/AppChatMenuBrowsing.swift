@@ -246,6 +246,21 @@ extension AppChatPromptModel {
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
         let running = Self.pillIcons(excluding: appBundleID)
+        setGlobalTyping(
+            top: typed.isEmpty
+                ? nil
+                : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
+            running: running,
+            fieldCapacity: Self.pillFieldCapacity)
+    }
+
+    /// How many running apps the field shows before the rest become `+N`.
+    ///
+    /// As many as the field can grow to hold on this screen. Four was the count that fits a
+    /// 372-point field, and the field is no longer fixed at 372. The pins take their room
+    /// first; they are never the ones cut. It depends on the screen and on what is pinned,
+    /// so the tests read it from here rather than assuming four.
+    static var pillFieldCapacity: Int {
         // The strip's pins stay at the field's trailing end, each a full dock icon — about
         // two small pills' room apiece, plus the divider.
         let otherPins = DockPinStore.shared.pins.filter {
@@ -253,16 +268,8 @@ extension AppChatPromptModel {
             return true
         }
         let pinSlots = otherPins.isEmpty ? 0 : otherPins.count * 2 + 1
-        setGlobalTyping(
-            top: typed.isEmpty
-                ? nil
-                : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
-            running: running,
-            // As many as the field can grow to hold on this screen. Four was the count
-            // that fits a 372-point field, and the field is no longer fixed at 372.
-            // The pins take their room first; they are never the ones cut.
-            fieldCapacity: AppChatPromptMetrics.matchIconCapacity(
-                maximumWidth: DockStripPlan.screenBudget) - pinSlots)
+        return AppChatPromptMetrics.matchIconCapacity(
+            maximumWidth: DockStripPlan.screenBudget) - pinSlots
     }
 
     /// The pills: what is running, and the clipboard when it is holding something.

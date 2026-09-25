@@ -25,11 +25,16 @@ struct CornerFrontmostAppPillsTests {
 
         model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
 
-        // Read live, from the same source the model itself reads — this asserts the
-        // mechanism ran, not a specific machine's set of running apps.
+        // Read live, from the same sources the model itself reads — this asserts the
+        // mechanism ran, not a specific machine's set of running apps. The field's capacity
+        // grows with the screen and shrinks with the non-app pins, so it is read too rather
+        // than assumed to be four: a pinned folder changed it once and failed this test on
+        // one Mac with the code unchanged.
         let expected = AppChatPromptModel.pillIcons(excluding: "com.microsoft.VSCode")
+        let shown = min(expected.count, max(1, AppChatPromptModel.pillFieldCapacity))
         #expect(!model.globalMatchIcons.contains { $0.id == "seed" })
-        #expect(model.globalMatchIcons.count == min(expected.count, AppChatPromptModel.matchIconLimit))
+        #expect(model.globalMatchIcons.map(\.id) == expected.prefix(shown).map(\.id))
+        #expect(model.globalOverflowCount == expected.count - shown)
     }
 
     /// The field takes four icons and says `+N`; the strip takes them all and lets its own
