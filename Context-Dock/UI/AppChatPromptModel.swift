@@ -222,6 +222,13 @@ final class AppChatPromptModel: ObservableObject {
     private var hasPresentedConversation = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
+    /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
+    var tabSource: () -> [SafariTab] = { SafariTabManager.shared.cachedTabs(maxAge: 45) }
+    /// Reads Safari's tabs again, then calls back. Tests replace it so they never script
+    /// the user's Safari.
+    var refreshTabCache: (@escaping @MainActor () -> Void) -> Void = { done in
+        SafariTabManager.shared.refreshCachedTabsIfNeeded { _ in done() }
+    }
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
     private var messagesObservation: AnyCancellable?

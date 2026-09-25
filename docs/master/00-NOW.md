@@ -10,24 +10,9 @@
 
 ## In progress
 
-*None.* Task 2 is done (#88); task 3 dropped by the owner (decision below); task 4 is next.
+*None.* Task 4 is done (PR waiting for the owner); item 5 (the inventory's own order) is next.
 
 ## Next, in order
-
-**4. Safari tabs in the Corner** (inventory D13).
-The Corner shows the shared hint "tabs, page cmds, menu cmds" (`UI/AppChatListCard.swift:184` via
-`Search/AppScopeHint.swift`) but loads no tabs; only the Dock does (`LauncherView.swift:3627`
-`loadSafariTabs()`, drawn at `LauncherView+LivePanel.swift:1392`).
-
-```
-Task: Safari tabs in the Corner (inventory D13). Own worktree from origin/general-chat-agent.
-- Reuse the Dock's tab loading: move it out of LauncherView into a shared type both shells call. No second copy.
-- Corner Safari scope lists the tabs like the Dock; ↩ switches to the tab; typing filters them.
-- Until tabs show, the Corner hint must not say "tabs".
-- Also check Chrome/Arc if the Dock handles them.
-- Tests: the Corner Safari scope lists tabs from the shared loader; filtering; the hint matches what is shown.
-- Inventory D13 → ✅ with the test names. check.sh green, one PR, one MEMORY.md line, move this task to Done in 00-NOW.md.
-```
 
 **5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
 remaining scopes → owner decisions D9 / D11 / D12.
@@ -42,6 +27,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
+| 2026-09-25 | Safari tabs in the Corner (D13) | this PR |
 
 ## Owner decisions (append-only)
 

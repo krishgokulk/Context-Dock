@@ -82,7 +82,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D10 | Selection Scope with actions | ✅ | #84, checked on the app row by row 2026-09-25 (TextEdit, Finder). The Dock's rows through `SelectionActionProviding` on the captured selection (`theDocksOwnRowsReachTheCard`, `aRowRunsOnTheCapturedSelection`, `keysChooseAndRun`, `closeAndEscapeClose`); answers inside the card (`theAnswerIsDrawnInTheCard`, `followUpsAndEscape`); Share (`shareSelectionInTheCard`). Extraction still owed: #83 |
 | D11 | Quick Note split editor (list + editor, ⌘N new note, ↩ asks AI into the note) | ❌ | Dock-only (`NotepadScopeView`); the Quick Note hotkey opens a separate floating note |
 | D12 | Mail find actions | ❌ | No Corner code found |
-| D13 | Safari page actions | ❌ | Tabs: Corner shows the "tabs, page cmds, menu cmds" hint (`AppChatListCard.swift:184`) but loads no tabs — only the Dock does (`LauncherView.swift:3627` `loadSafariTabs`). Checked from code 2026-09-25; task 4 in `00-NOW.md` |
+| D13 | Safari page actions | ✅ | Tabs: the Corner's Safari scope lists the open tabs (current first, typing filters, ↩ switches), from the Dock's loader (`SafariTabManager`) through the shared `BrowserTabList` the Dock's tab strip now uses too. The hint says "tabs" only for Safari; Chrome/Arc list none in either shell. Checked on the app 2026-09-25. `CornerSafariTabsTests` (`theSafariScopeListsTabs`, `typingFiltersTabs`, `currentTabFirst`, `onlySafariListsTabs`, `theHintMatchesWhatIsShown`, `aTabRowSwitches`) |
 | D14 | Share actions | ❓ | Not verified |
 
 ## E. Chat
@@ -126,9 +126,9 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 
 | | ✅ | 🟡 | ❌ | ❓ | — |
 |---|---:|---:|---:|---:|---:|
-| Rows (52) | 20 | 12 | 9 | 7 | 4 |
+| Rows (52) | 21 | 12 | 8 | 7 | 4 |
 
-*2026-09-25: D10 🟡 → ✅ (#84).*
+*2026-09-25: D10 🟡 → ✅ (#84); D13 ❌ → ✅.*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,

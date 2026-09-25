@@ -1069,15 +1069,7 @@ extension LauncherView {
             : safariTabPickerTabs
         guard !tabs.isEmpty else { return [] }
         let currentURLKey = normalizedBrowserTabURLKey(currentBrowserPageURL()?.absoluteString)
-        let ordered = tabs.sorted { lhs, rhs in
-            if let currentURLKey {
-                let lhsIsCurrent = normalizedBrowserTabURLKey(lhs.url) == currentURLKey
-                let rhsIsCurrent = normalizedBrowserTabURLKey(rhs.url) == currentURLKey
-                if lhsIsCurrent != rhsIsCurrent { return lhsIsCurrent }
-            }
-            if lhs.windowIndex != rhs.windowIndex { return lhs.windowIndex < rhs.windowIndex }
-            return lhs.tabIndex < rhs.tabIndex
-        }
+        let ordered = BrowserTabList.ordered(tabs, currentURL: currentBrowserPageURL()?.absoluteString)
         let visible = ordered.filter { tab in
             guard isContextDockChatConnected else { return true }
             guard let currentURLKey else { return true }
@@ -1087,15 +1079,7 @@ extension LauncherView {
     }
 
     func normalizedBrowserTabURLKey(_ raw: String?) -> String? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !raw.isEmpty,
-            let url = URL(string: raw)
-        else { return nil }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.fragment = nil
-        var key = (components?.url ?? url).absoluteString.lowercased()
-        while key.hasSuffix("/") { key.removeLast() }
-        return key
+        BrowserTabList.normalizedURLKey(raw)
     }
 
     var connectedBrowserPageGhostTitle: String? {

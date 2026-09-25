@@ -54,6 +54,7 @@ extension AppChatPromptModel {
             .actions.filter { !$0.name.isEmpty } ?? []
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
+        refreshTabs()
 
         // The AX read walks the whole menu bar, so it happens after the surface is up
         // rather than in front of it. Live items go first: where both have a row, the live
@@ -116,7 +117,7 @@ extension AppChatPromptModel {
         }
         if returnsToGlobalScope, !typed.isEmpty,
             let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName) {
-            rows = scoped.map(AppChatRow.dock)
+            rows = tabRows(for: typed) + scoped.map(AppChatRow.dock)
             menuMatches = []
             focusedMenuIndex = nil
             syncListPhase()
@@ -136,6 +137,8 @@ extension AppChatPromptModel {
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
+        // Safari's open tabs lead its scope, as the Dock shows them; typing filters them.
+        rows = tabRows(for: typed) + rows
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -144,6 +147,33 @@ extension AppChatPromptModel {
         // A new list is a new offer: nothing is chosen until the user arrows into it.
         focusedMenuIndex = nil
         syncListPhase()
+    }
+
+    /// How many tabs the scope lists before the app's own commands.
+    static let tabRowLimit = 8
+
+    /// The open tabs of the scoped browser, current page first, filtered by what is typed —
+    /// the shared `BrowserTabList`, fed from `SafariTabManager`'s cache (refreshed when the
+    /// scope opens). Empty for browsers whose tabs cannot be listed.
+    func tabRows(for typed: String) -> [AppChatRow] {
+        guard BrowserTabList.listsTabs(bundleID: appBundleID) else { return [] }
+        let tabs = BrowserTabList.matching(
+            BrowserTabList.ordered(
+                tabSource(), currentURL: SafariTabManager.shared.lastSelectedTab()?.url),
+            query: typed)
+        return tabs.prefix(Self.tabRowLimit).map { tab in
+            .dock(BrowserTabList.pill(for: tab) { [weak self] in self?.dismiss() })
+        }
+    }
+
+    /// Reads the tabs again and redraws the list when they land.
+    func refreshTabs() {
+        guard BrowserTabList.listsTabs(bundleID: appBundleID) else { return }
+        let bundleID = appBundleID
+        refreshTabCache { [weak self] in
+            guard let self, self.appBundleID == bundleID else { return }
+            self.updateMenuMatches()
+        }
     }
 
     func localGlobalQuitRows(for query: String) -> [DockPill]? {
