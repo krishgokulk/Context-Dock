@@ -82,7 +82,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D10 | Selection Scope with actions | ✅ | #84, checked on the app row by row 2026-09-25 (TextEdit, Finder). The Dock's rows through `SelectionActionProviding` on the captured selection (`theDocksOwnRowsReachTheCard`, `aRowRunsOnTheCapturedSelection`, `keysChooseAndRun`, `closeAndEscapeClose`); answers inside the card (`theAnswerIsDrawnInTheCard`, `followUpsAndEscape`); Share (`shareSelectionInTheCard`). Extraction still owed: #83 |
 | D11 | Quick Note split editor (list + editor, ⌘N new note, ↩ asks AI into the note) | ❌ | Dock-only (`NotepadScopeView`); the Quick Note hotkey opens a separate floating note |
 | D12 | Mail find actions | ❌ | No Corner code found |
-| D13 | Safari page actions | ❌ | Tabs: Corner shows the "tabs, page cmds, menu cmds" hint (`AppChatListCard.swift:184`) but loads no tabs — only the Dock does (`LauncherView.swift:3627` `loadSafariTabs`). Checked from code 2026-09-25; task 4 in `00-NOW.md` |
+| D13 | Safari page actions | ✅ | Tabs, in Safari's **Context Dock** (owner 2026-09-25): the field folds away at rest — on idle or hovering its pill — into a bar of the app's own things, its open tabs (no Global pins or tools), the way Global Context folds into its running apps; typing or the app icon expands it back; the field carries the tabs as a small pill, "+N" past what fits; a click on a tab (big or small) switches Safari. Same shell and height as Global. From the Dock's loader (`SafariTabManager`) through the shared `BrowserTabList`. Pinned actions and pinned tabs: task 5 in `00-NOW.md`. Checked on the app 2026-09-25. `CornerSafariTabsTests` |
 | D14 | Share actions | ❓ | Not verified |
 
 ## E. Chat
@@ -126,9 +126,9 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 
 | | ✅ | 🟡 | ❌ | ❓ | — |
 |---|---:|---:|---:|---:|---:|
-| Rows (52) | 20 | 12 | 9 | 7 | 4 |
+| Rows (52) | 21 | 12 | 8 | 7 | 4 |
 
-*2026-09-25: D10 🟡 → ✅ (#84).*
+*2026-09-25: D10 🟡 → ✅ (#84); D13 ❌ → ✅.*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,

@@ -159,7 +159,39 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalOverflowCount = 0
     /// What the field widens for: its running-app pills. The pins are not in the field —
     /// they are the strip's trailing region, which stays on screen while the field is up.
-    var promptIconCount: Int { globalMatchIcons.count }
+    /// The icons the field holds beside it: Safari's tab pills in a Safari scope, else the
+    /// running apps. What the field's width is sized for.
+    /// The icons the field keeps room for. In a Safari scope the field leads with the app's
+    /// chip rather than the magnifier, and that chip is counted as pill slots too.
+    var promptIconCount: Int {
+        globalMatchIcons.count + (showsTabBar ? AppChatPromptMetrics.appFieldChromeSlots : 0)
+    }
+    /// The tabs behind the Safari scope's icons, by icon id.
+    var tabsByIconID: [String: SafariTab] = [:]
+
+    /// A Safari scope: its open tabs take the running apps' place in the Global shell — the
+    /// strip of big icons at rest, the small pill in the field (owner 2026-09-25: "exactly
+    /// like Global").
+    var showsTabBar: Bool {
+        !isGlobalScope && BrowserTabList.listsTabs(bundleID: appBundleID)
+    }
+    /// The pins the strip shows: Global's, never a Safari scope's — its bar is the app's own
+    /// things (open tabs today; its pinned actions and tabs are task 5 in 00-NOW.md).
+    var stripPins: [DockPin] { showsTabBar ? [] : DockPinStore.shared.pins }
+    /// The Global shell — its height, its fold into a dock and back — is Global Context's,
+    /// and a Safari scope's.
+    var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The frontmost app's own chat — its Context Dock, Finder's included — rather than
+    /// Global, a CLI tool or an extension's panel.
+    var isAppContextDock: Bool {
+        !isGlobalScope && !appBundleID.isEmpty && !isCLIScope
+            && scopedExtension == nil && scopedCommand == nil
+    }
+    /// Global's height: Global Context and every app's Context Dock are one bar (owner
+    /// 2026-09-25: "why is the Context Dock smaller than Global Context?").
+    var usesDockHeight: Bool { isGlobalScope || isAppContextDock }
+    /// The field carries the small pill of the strip's icons.
+    var showsFieldPills: Bool { isSearchField || showsTabBar }
     /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
     /// list trimmed to what fits beside the field.
     @Published private(set) var allRunningIcons: [MatchDockIcon] = []
@@ -222,6 +254,21 @@ final class AppChatPromptModel: ObservableObject {
     private var hasPresentedConversation = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
+    /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
+    var tabSource: () -> [SafariTab] = {
+        // A quit Safari has no tabs, whatever the cache last held.
+        NSRunningApplication.runningApplications(withBundleIdentifier: BrowserTabList.safariBundleID)
+            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: 45)
+    }
+    /// The page Safari is showing, which leads the pills. Tests replace it.
+    var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
+    /// Shows a tab in Safari. Tests replace it so they never script the user's Safari.
+    var switchTab: (SafariTab) -> Void = { SafariTabManager.shared.switchTo($0) }
+    /// Reads Safari's tabs again, then calls back. Tests replace it so they never script
+    /// the user's Safari.
+    var refreshTabCache: (@escaping @MainActor () -> Void) -> Void = { done in
+        SafariTabManager.shared.refreshCachedTabsIfNeeded { _ in done() }
+    }
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
     private var messagesObservation: AnyCancellable?
@@ -763,7 +810,7 @@ final class AppChatPromptModel: ObservableObject {
 
     /// An empty Global field with the setting on is the only thing that rests as a dock.
     var canRestAsDock: Bool {
-        isGlobalScope
+        usesDockShell
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && autoShrinkEnabled()
     }
@@ -784,7 +831,10 @@ final class AppChatPromptModel: ObservableObject {
     /// happened, the selection when there is one, the result of an action for a few seconds
     /// after it ran. Same rules as the field's own row.
     func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
-        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
+        // A Safari scope's bar is its tabs alone (owner 2026-09-25): the Context Dock's
+        // own things, not Global's.
+        guard !showsTabBar else { return 0 }
+        return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 
     /// The first printable character brings the field back and lands in it. Anything the

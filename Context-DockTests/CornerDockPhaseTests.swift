@@ -41,9 +41,11 @@ struct CornerDockPhaseTests {
         #expect(model.phase == .hidden)
     }
 
+    /// Any app but Safari: a Safari scope rests as a dock of its tabs, like Global
+    /// (owner 2026-09-25, `CornerSafariTabsTests`).
     @Test func aScopedChatNeverDocks() {
         let (model, _) = globalModel()
-        model.scopeIntoApp(name: "Safari", bundleID: "com.apple.Safari")
+        model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         model.set(.prompt)
         model.standDown()
         #expect(model.phase == .mini)
@@ -144,7 +146,7 @@ struct CornerDockPhaseTests {
         let (off, _) = globalModel(autoShrink: false)
         #expect(!off.foldToDock())
         let (scoped, _) = globalModel()
-        scoped.scopeIntoApp(name: "Safari", bundleID: "com.apple.Safari")
+        scoped.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         scoped.set(.prompt)
         #expect(!scoped.foldToDock())
     }

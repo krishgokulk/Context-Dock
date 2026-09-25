@@ -10,22 +10,7 @@
 
 ## In progress
 
-**4. Safari tabs in the Corner** (inventory D13) — PR #89, **reworked 2026-09-25**: the first build
-put the tabs in the result *list*; the owner wants them as **pills in the Corner's strip, next to the
-input field**, the way the Dock shows open tabs. The shared `BrowserTabList` loader in #89 stays.
-
-```
-Rework PR #89 (Safari tabs, D13). Keep BrowserTabList / the shared loader. Change where tabs show:
-- The owner's spec: open Safari tabs appear as pills in the Corner's strip NEXT TO THE INPUT FIELD (the space
-  where the pinned app icons sit today), the way the Dock UI shows open tabs. Look at how the Dock draws its tab
-  strip (LauncherView+LivePanel.swift safariTabListView) and match it; reuse, no second copy.
-- The strip sizes itself to what it shows (auto width, overflow → "+N" like running apps), never clipped.
-- Click / ↩ on a tab pill switches to that tab. Typing still filters.
-- Fix the CI race first: a late refresh must never overwrite a newer result (refresh generation), tests use only
-  the injected source; check whether it explains the first switch that did nothing on the app.
-- Tests: tabs render as strip pills from the shared loader; overflow; switch; stale refresh dropped.
-End with the AGENTS.md hand-off.
-```
+*None.* Task 4 (Safari tabs, D13) is done in #89; task 4b is next.
 
 ## Next, in order
 
@@ -60,6 +45,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
 | 2026-09-25 | Menu safety list (4a): whole words; History ▸ Forward is navigation; Reopen Last Closed Window / Recently Closed stay in results; page rows still open by URL; unsure stays gated | #91 |
+| 2026-09-25 | Safari tabs in the Corner (D13): Context Dock folds into its tab bar | #89 |
 
 ## Owner decisions (append-only)
 
@@ -80,6 +66,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Quick Note: a Save-to-Quick-Note action on answers; the knowledge graph gets no action. |
 | 2026-09-25 | Test sends go only to the owner (Gokula Kannan J). |
 | 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
+| 2026-09-25 | The Context Dock (frontmost-app chat) folds its field away at rest into a bar of the app's own things — pinned actions, open tabs, pinned tabs — like Global Context's running apps; not Global's pins. Open tabs in #89; pins are task 5. |
 | 2026-09-25 | ⌥⌥ opens the **Dock**, ⌘⌘ opens the **Corner** — fixed, no setting. Task 3 ("⌥⌥ opens Dock / Corner" setting) is dropped. |
 | 2026-09-25 | Chat Window hotkey stays **⌃C** (advised ⌃⌥C). Known cost: a global hotkey takes the key from every app, so ⌃C no longer interrupts a running command in Terminal (or reaches any other app) while DoraX runs. Revisit if that bites. |
 | 2026-09-25 | Safari tabs show as **pills in the Corner's strip next to the input**, like the Dock's tab strip — not as rows in the result list. The strip auto-sizes. |

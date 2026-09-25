@@ -77,6 +77,18 @@ enum AppChatPromptMetrics {
 
     // MARK: The field's row of running apps
 
+    /// The app field's chip ("Safari"), in pill slots: `fieldMinimumWidth` is measured for
+    /// the Global field, which leads with a 22-point magnifier instead.
+    static let appFieldChromeSlots = 3
+
+    /// What the app field draws after its pill — "+" always, send once something is typed
+    /// — which the strip's pill must end before. Global's field has neither, so there the
+    /// pill ends at the strip's trailing region; in a Context Dock it sat over both buttons.
+    static func appFieldTrailingReserve(typed: Bool) -> CGFloat {
+        // "+" is a 22-point control, send a 26-point circle, 10 of row spacing before each.
+        typed ? 68 : 32
+    }
+
     /// How many icons the 372-point field was built to hold. Past this it grows.
     static let matchIconBaseCount = 4
     /// What one more icon costs the field: `ContextMatchDock` draws an 18-point icon with
@@ -244,6 +256,10 @@ enum AppChatPromptMetrics {
         promptIcons: Int = 0,
         /// The Global field's height — the strip's — or the composer's own.
         fieldHeight: CGFloat = inputHeight,
+        /// The field has no strip to line up with (an app with nothing to show beside it):
+        /// the shell fits the field instead of the Global strip's width, which left glass
+        /// standing empty past the field's own end.
+        fitsContent: Bool = false,
         /// The width the row was planned against. The shell and the row are two readings
         /// of one number and must be given the same budget, or the row overflows the glass
         /// it is drawn in and the leading magnifier is what gets clipped.
@@ -254,6 +270,9 @@ enum AppChatPromptMetrics {
         switch phase {
         case .hidden, .mini:
             return miniSize
+        // `where` binds to one pattern only: both are spelled out.
+        case .prompt where fitsContent, .suggesting where fitsContent:
+            return CGSize(width: width, height: fieldHeight + sheet)
         case .dock, .prompt, .suggesting:
             // One width for the strip and the field it opens into, so the magnifier opening
             // is the only thing that moves: the wider of the row's own width and what the
@@ -292,13 +311,13 @@ struct AppChatPromptPill: View {
     /// field's magnifier on the strip's, and its trailing region is kept clear. Nil outside
     /// Global and in chat, where the field is the composer and nothing is shared.
     private var globalStrip: AppChatPromptMetrics.DockLayout? {
-        guard model.isGlobalScope, model.phase != .chat else { return nil }
+        guard model.usesDockShell, model.phase != .chat else { return nil }
         return stripPlan.layout
     }
 
     private var stripPlan: DockStripPlan {
         DockStripPlan.make(
-            running: model.stripIcons, pins: DockPinStore.shared.pins,
+            running: model.stripIcons, pins: model.stripPins,
             tools: stripToolCount, fieldIcons: model.promptIconCount)
     }
 
@@ -315,7 +334,7 @@ struct AppChatPromptPill: View {
             clipboardVisible: clipboard.phase.isVisible,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
-            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools)
+            running: model.stripIcons, pins: model.stripPins, tools: tools)
         let composition = plan.composition
         return AppChatPromptMetrics.size(
             for: phase,
@@ -330,7 +349,8 @@ struct AppChatPromptPill: View {
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: tools,
             promptIcons: model.promptIconCount,
-            fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.isGlobalScope),
+            fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
+            fitsContent: !model.usesDockShell,
             maximumWidth: DockStripPlan.screenBudget)
     }
 
@@ -359,7 +379,7 @@ struct AppChatPromptPill: View {
 
     var body: some View {
         Group {
-            if model.isGlobalScope {
+            if model.usesDockShell {
                 globalBody
             } else {
                 legacyBody
@@ -526,18 +546,26 @@ struct AppChatPromptPill: View {
                 .animation(.easeIn(duration: 0.16).delay(0.06), value: model.phase)
         }
         .frame(width: size.width, height: size.height, alignment: .bottomLeading)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                 .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
+                .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
+    }
+
+    /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
+    /// with a sheet over it keeps the 22-point card.
+    private var legacyRadius: CGFloat {
+        model.usesDockHeight && [.prompt, .suggesting].contains(model.phase)
+            && size.height <= AppChatPromptMetrics.dockHeight
+            ? AppChatPromptMetrics.dockHeight / 2 : 22
     }
 
     private func syncFocus() {
@@ -831,11 +859,14 @@ struct AppChatPromptPill: View {
             // matched, and two answers to one question is the clutter the dock avoids. An
             // untyped field is not that case — there the pills are the only thing offering
             // anywhere to go, so they stay through a scope change.
-            if model.isSearchField,
-                model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            // Safari's tabs stay while a question is typed (owner 2026-09-25); the running
+            // apps step aside, as the Dock's do.
+            if model.showsFieldPills,
+                model.showsTabBar
+                    || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                if model.isGlobalScope {
+                if model.usesDockShell {
                     // The strip's own icons shrink into this spot and are the pill, so the
                     // field only keeps the room — drawing a second set here is what showed
                     // every app twice while the first set was still travelling.
@@ -976,7 +1007,8 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat, !model.isGlobalScope {
+            // Not in the dock shell: its trailing end is the strip's, as in Global.
+            if pointerInside, model.phase != .chat, !model.usesDockShell {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -991,7 +1023,7 @@ struct AppChatPromptPill: View {
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
         .padding(.trailing, globalStrip == nil ? 14 : 0)
-        .frame(height: AppChatPromptMetrics.fieldHeight(global: model.isGlobalScope))
+        .frame(height: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight))
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
