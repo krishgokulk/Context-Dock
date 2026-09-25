@@ -27,10 +27,28 @@ final class AppMenuConsentStore {
     }
 
     /// Words that mark a menu command as destroying something local.
-    private static let destructiveNeedles: [String] = [
+    ///
+    /// Matched as whole words. This was a substring check, so "Closed" read as "Close":
+    /// `History ▸ Reopen Last Closed Window` prompted like closing one, and every page under
+    /// `History ▸ Recently Closed` was dropped from results as destructive.
+    private static let destructiveWords: Set<String> = [
         "close", "quit", "delete", "remove", "trash", "erase", "reset", "clear",
-        "discard", "revert", "empty", "uninstall", "sign out", "log out",
+        "discard", "revert", "empty", "uninstall", "logout", "signout",
     ]
+
+    /// Two-word destructive commands, matched as consecutive words.
+    private static let destructivePhrases: [(String, String)] = [
+        ("sign", "out"), ("log", "out"),
+    ]
+
+    /// The only endings that turn a destructive word into a description of something
+    /// ("Closed", "Deleted", "Cleared"), not a command. Any other ending ("Closing",
+    /// "Resets") is a form the list cannot call safe, so it stays gated.
+    private static let descriptiveEndings: Set<String> = ["ed"]
+
+    /// Top-level menus where "Forward" moves through pages rather than sending a message:
+    /// the browsers' History menu and Finder's Go menu.
+    private static let navigationMenus: Set<String> = ["history", "go"]
 
     /// Words that mark a menu command as putting something in front of another person.
     ///
@@ -49,10 +67,38 @@ final class AppMenuConsentStore {
 
     /// True when this menu path should be gated before the AI runs it unattended.
     func isDestructive(path: [String]) -> Bool {
-        let hay = path.joined(separator: " ").lowercased()
-        if Self.destructiveNeedles.contains(where: { hay.contains($0) }) { return true }
-        let words = hay.split(whereSeparator: { !$0.isLetter }).map(String.init)
-        return words.contains { Self.outboundNeedles.contains($0) }
+        let words = Self.words(path.joined(separator: " "))
+        if words.contains(where: Self.isDestructiveWord) { return true }
+        if zip(words, words.dropFirst()).contains(where: { pair in
+            Self.destructivePhrases.contains { $0 == pair }
+        }) { return true }
+        guard words.contains(where: { Self.outboundNeedles.contains($0) }) else { return false }
+        return !Self.isPageNavigation(path)
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: { !$0.isLetter }).map(String.init)
+    }
+
+    /// A destructive word itself, or any form of one that is not plainly descriptive.
+    ///
+    /// Forms are read off the root with a final "e" dropped, so "Closing" is caught the same
+    /// way "Resetting" is, and "Closed" and "Cleared" both end in "ed".
+    private static func isDestructiveWord(_ word: String) -> Bool {
+        if destructiveWords.contains(word) { return true }
+        return destructiveWords.contains { stem in
+            let root = stem.hasSuffix("e") ? String(stem.dropLast()) : stem
+            guard word.hasPrefix(root) else { return false }
+            return !descriptiveEndings.contains(String(word.dropFirst(root.count)))
+        }
+    }
+
+    /// `History ▸ Forward` or `Go ▸ Forward`, and nothing else. A bare "Forward" with no menu
+    /// to say which kind it is stays outbound.
+    private static func isPageNavigation(_ path: [String]) -> Bool {
+        guard path.count == 2 else { return false }
+        return navigationMenus.contains(words(path[0]).joined(separator: " "))
+            && words(path[1]) == ["forward"]
     }
 
     /// True when the user has already granted "allow always" for this exact command.

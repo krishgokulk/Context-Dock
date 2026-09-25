@@ -10,23 +10,28 @@
 
 ## In progress
 
-*None.* Task 4 is done (PR waiting for the owner); item 5 (the inventory's own order) is next.
+*None.* Task 4 (Safari tabs, D13) is done in #89; task 4b is next.
 
 ## Next, in order
 
-**5. Pinned actions and pinned tabs in the Context Dock** (owner 2026-09-25).
-The Context Dock's folded bar (#89: open tabs today) also carries the app's pinned items.
+**4b. Pins in the Corner strip** (owner 2026-09-25, after 4 merges). The Corner's context dock uses
+the strip beside the input for things the user pins, per app: tabs, menu commands, app actions
+(Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI), and the user's own actions.
 
 ```
-Task: pinned actions + pinned tabs in the Context Dock. Own worktree from origin/general-chat-agent.
-- Pin per app: right-click an app's action or menu command in the Context Dock → "Pin"; it stays in that app's bar. Stored per app (bundle id), removable the same way.
-- Pinned tabs: right-click a tab icon → "Pin"; it stays first in Safari's bar and reopens its page if the tab was closed.
-- Bar order: pinned tabs, open tabs, then pinned actions (divider like Global's pins).
-- Tests: pin/unpin per app, persistence, a pinned closed tab reopens its URL, bar composition.
-- Inventory + 00-DOCK-AND-CORNER.md. check.sh green, one PR, one MEMORY.md line, move to Done.
+Task 4b: pins in the Corner strip. Own worktree from origin/general-chat-agent, after #89 merges.
+- Any row in the Corner's app list (menu command, app action, extension, the user's own action) and any tab can be
+  pinned for that app; pins show in the strip beside the input, before live tabs, and run with one click / ↩.
+- Reuse the Dock's pin store (DockPinStore, inventory F4) — per-app pins, same storage; no second store.
+- Safari actions: first check which of Add to Bookmarks / Export as PDF / Save as Markdown / Ask AI already exist
+  as actions in the Dock; reuse those; list any that don't exist in the PR and ask before building them.
+- Strip auto-sizes; unpin from the pill's context menu; order is the user's (drag) or pin order.
+- Actions that are destructive/outbound keep their consent step even when pinned.
+- Tests: pin/unpin per app, strip order, a pinned destructive action still asks, overflow.
+End with the AGENTS.md hand-off.
 ```
 
-**6. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
+**5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
 remaining scopes → owner decisions D9 / D11 / D12.
 
 ## Done
@@ -39,6 +44,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
+| 2026-09-25 | Menu safety list (4a): whole words; History ▸ Forward is navigation; Reopen Last Closed Window / Recently Closed stay in results; page rows still open by URL; unsure stays gated | #91 |
 | 2026-09-25 | Safari tabs in the Corner (D13): Context Dock folds into its tab bar | #89 |
 
 ## Owner decisions (append-only)
@@ -62,9 +68,11 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
 | 2026-09-25 | The Context Dock (frontmost-app chat) folds its field away at rest into a bar of the app's own things — pinned actions, open tabs, pinned tabs — like Global Context's running apps; not Global's pins. Open tabs in #89; pins are task 5. |
 | 2026-09-25 | ⌥⌥ opens the **Dock**, ⌘⌘ opens the **Corner** — fixed, no setting. Task 3 ("⌥⌥ opens Dock / Corner" setting) is dropped. |
+| 2026-09-25 | Chat Window hotkey stays **⌃C** (advised ⌃⌥C). Known cost: a global hotkey takes the key from every app, so ⌃C no longer interrupts a running command in Terminal (or reaches any other app) while DoraX runs. Revisit if that bites. |
+| 2026-09-25 | Safari tabs show as **pills in the Corner's strip next to the input**, like the Dock's tab strip — not as rows in the result list. The strip auto-sizes. |
+| 2026-09-25 | The Corner's strip holds the user's **pins per app**: tabs, menu commands, app actions (e.g. Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI) and the user's own actions. |
 
 ## Open decisions (owner)
 
-- Chat Window hotkey: ⌃C clashes with Terminal's interrupt — advised ⌃⌥C.
 - What ⌥⌥ opens once the Dock retires (A1 end state). Until then: ⌥⌥ Dock, ⌘⌘ Corner (2026-09-25).
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?

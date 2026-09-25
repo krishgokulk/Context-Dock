@@ -1325,6 +1325,7 @@ struct LauncherView: View {
     func isVolatileCachedMenuPath(_ path: [String]) -> Bool {
         let normalized = path.map(normalizedDockPillText)
         guard !normalized.isEmpty else { return false }
+        if let title = path.last, BrowserStableMenuCommand.isStable(title: title) { return false }
         let volatileBranches: Set<String> = [
             "history",
             "bookmarks",
