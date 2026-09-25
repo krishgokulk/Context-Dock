@@ -83,6 +83,11 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Selection Share rows left out of the Corner for now; D10 stays 🟡 ("Share missing") until they return. |
 | 2026-09-25 | The Corner captures the selection when it builds its list and runs every row on that copy, never on the live Dock payload. |
 | 2026-09-25 | New bug-fix sessions wait until the Selection PR merges. |
+| 2026-09-25 | Replaces "Share left out": the Selection card does everything the Dock's Selection does **inside one panel** — answers (never a second card), Share (the app's own share routes: native destinations, typed "send to …"), file preview, all extensions. D10 → ✅ when these ship. |
+| 2026-09-25 | AX-driven work (menus, Writing Tools, writing into another app) runs only with Computer Use on for that app; otherwise the user's AI provider does it (surface-cost spec). |
+| 2026-09-25 | Quick Note: a Save-to-Quick-Note action on answers; the knowledge graph gets no action. |
+| 2026-09-25 | Test sends go only to the owner (Gokula Kannan J). |
+| 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
 
 ## Open decisions (owner)
 
