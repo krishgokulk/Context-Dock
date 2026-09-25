@@ -120,6 +120,8 @@ extension LauncherView {
         if !frozenSelection.isEmpty {
             return isDismissedFinderSelection(frozenSelection) ? [] : frozenSelection
         }
+        // A corner build or run: the captured selection is the whole truth, never the live one.
+        if SelectionActions.isScopedToCapturedSelection { return [] }
 
         let liveSelection = canonicalExistingURLs(
             axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }

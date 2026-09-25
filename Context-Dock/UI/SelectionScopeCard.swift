@@ -17,13 +17,17 @@ enum SelectionScopeMetrics {
     /// reader. The card is for choosing a subject, not for reading the document.
     static let previewHeight: CGFloat = 62
     static let verticalPadding: CGFloat = 10
+    /// The Dock's Selection rows, above the field. Past this many the list scrolls.
+    static let maxVisibleRows = 6
+    static var rowHeight: CGFloat { AppChatListMetrics.rowHeight }
 
     /// A pure function of state, like every other corner surface: the shell hit-tests this
     /// exact number.
-    static var size: CGSize {
-        CGSize(
+    static func size(rows: Int) -> CGSize {
+        let listed = CGFloat(min(max(rows, 0), maxVisibleRows)) * rowHeight
+        return CGSize(
             width: width,
-            height: headerHeight + previewHeight + inputHeight + verticalPadding * 2)
+            height: headerHeight + previewHeight + listed + inputHeight + verticalPadding * 2)
     }
 }
 
@@ -36,12 +40,13 @@ struct SelectionScopeCard: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             preview
+            rowList
             field
         }
         .padding(.vertical, SelectionScopeMetrics.verticalPadding)
         .frame(
-            width: SelectionScopeMetrics.size.width,
-            height: SelectionScopeMetrics.size.height,
+            width: SelectionScopeMetrics.size(rows: model.rows.count).width,
+            height: SelectionScopeMetrics.size(rows: model.rows.count).height,
             alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
@@ -86,6 +91,17 @@ struct SelectionScopeCard: View {
             }
             .buttonStyle(.plain)
             .help(model.isPinned ? "Unpin" : "Keep this open")
+            // A visible way out. Esc was the only one, and nobody knew it (§4a).
+            Button { model.close() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Close (Esc)")
+            .accessibilityLabel("Close")
         }
         .padding(.horizontal, 16)
         .frame(height: SelectionScopeMetrics.headerHeight)
@@ -103,6 +119,56 @@ struct SelectionScopeCard: View {
             .padding(.horizontal, 16)
     }
 
+    /// What can be done with the selection — the Dock's Selection rows, filtered as the field
+    /// is typed into, the way the clipboard's preview sits above its input.
+    @ViewBuilder
+    private var rowList: some View {
+        if !model.rows.isEmpty {
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: model.rows.count > SelectionScopeMetrics.maxVisibleRows) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                            rowView(row, isFocused: index == model.focusedIndex)
+                                .id(row.id)
+                        }
+                    }
+                }
+                .frame(height: SelectionScopeMetrics.size(rows: model.rows.count).height
+                    - SelectionScopeMetrics.size(rows: 0).height)
+                .onChange(of: model.focusedIndex) { _, index in
+                    guard let index, model.rows.indices.contains(index) else { return }
+                    proxy.scrollTo(model.rows[index].id)
+                }
+            }
+        }
+    }
+
+    private func rowView(_ row: SelectionActionRow, isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: row.icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                if let badge = row.badge, !badge.isEmpty {
+                    Text(badge).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Image(systemName: "return").font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.rowHeight)
+        .background { CornerListRowBackground(isFocused: isFocused) }
+        .contentShape(Rectangle())
+        .onTapGesture { model.run(row) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+
     private var field: some View {
         HStack(spacing: 8) {
             ZStack(alignment: .leading) {
@@ -115,14 +181,16 @@ struct SelectionScopeCard: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .medium))
                     .focused($fieldFocused)
-                    .onChange(of: model.query) { _, _ in model.touch() }
-                    .onSubmit { model.submit() }
+                    .onChange(of: model.query) { _, _ in model.queryChanged() }
+                    .onSubmit { model.returnPressed() }
+                    .onKeyPress(.downArrow) { model.moveFocus(by: 1) ? .handled : .ignored }
+                    .onKeyPress(.upArrow) { model.moveFocus(by: -1) ? .handled : .ignored }
                     .onKeyPress(.escape) {
-                        model.dismiss()
+                        model.close()
                         return .handled
                     }
             }
-            Button { model.submit() } label: {
+            Button { model.returnPressed() } label: {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 20))
                     .foregroundStyle(

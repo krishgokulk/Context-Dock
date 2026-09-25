@@ -366,7 +366,8 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
+            selection: selection.phase.isVisible
+                ? SelectionScopeMetrics.size(rows: selection.rows.count) : nil,
             list: showsExtensionPanel
                 ? ExtensionScopeMetrics.size
                 : (showsAppSnapshot
@@ -582,7 +583,8 @@ final class CornerDockController: NSObject {
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
+            selection: selection.phase.isVisible
+                ? SelectionScopeMetrics.size(rows: selection.rows.count) : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width

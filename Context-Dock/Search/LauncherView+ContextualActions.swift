@@ -4433,6 +4433,54 @@ extension LauncherView {
         )
     }
 
+    /// The Selection Scope list — the Dock's, and through `SelectionActionProviding` the
+    /// corner's. Stable order, never empty: Ask AI is its floor row.
+    func buildSelectionScopePills(query q: String) -> [DockPill] {
+        let finderFilePills = buildFinderFilePills(query: q)
+        let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
+        let macOSExtensionPills = buildMacOSExtensionActionPills(
+            query: q,
+            excludingTitles: finderMenuTitleSet
+        )
+        let extensionTitleSet = finderMenuTitleSet.union(
+            macOSExtensionPills.map { normalizedDockPillText($0.name) }
+        )
+        let finderMenuPills = buildFinderSelectionMenuPills(
+            query: q,
+            excludingTitles: extensionTitleSet,
+            allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
+        )
+        var sel: [DockPill] = []
+        sel.append(selectionScopeAskAIPill(query: q))
+        sel.append(contentsOf: selectionScopeCopyPill(query: q))
+        sel.append(contentsOf: buildCustomSelectionExtensionPills(query: q, excludingTitles: extensionTitleSet))
+        sel.append(contentsOf: selectionScopeBuiltInWorkflowPills(query: q))
+        sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
+        sel.append(contentsOf: finderFilePills)
+        sel.append(contentsOf: macOSExtensionPills)
+        sel.append(contentsOf: finderMenuPills)
+        sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
+        sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
+        let rankedSelection = dedupeRankedDockPills(
+            rankDockPills(
+                sel,
+                rawQuery: q,
+                rankingQuery: q,
+                scopedBundleId: "com.apple.finder",
+                scopedAppName: "Finder",
+                isExplicitAppScope: false,
+                includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
+        )
+        // Ask AI is the floor row of this scope, not a search result: ranking dropped it for
+        // any query whose words it doesn't carry ("what", "about this file"), which left an
+        // expanded-but-empty sheet. Re-seat it whenever ranking filtered it out.
+        if rankedSelection.contains(where: { $0.rankingKind == "selectionAI" }) {
+            return rankedSelection
+        }
+        return [selectionScopeAskAIPill(query: q)] + rankedSelection
+    }
+
     /// Build the ordered list of visible pills for the current dock state.
     /// This is the single source of truth for both rendering and keyboard navigation.
     func buildDockPills(query q: String) -> [DockPill] {
@@ -4446,51 +4494,7 @@ extension LauncherView {
         // Selection Scope FIRST — dedicated to the selection. Runs before the question-style
         // short-circuit so a question like "what is this about?" still shows Ask AI (the whole
         // point is to ask the AI about the selection). Never empty → stable result sheet.
-        if hasSelectionScopeSurface {
-            let finderFilePills = buildFinderFilePills(query: q)
-            let finderMenuTitleSet = Set(finderFilePills.map { normalizedDockPillText($0.name) })
-            let macOSExtensionPills = buildMacOSExtensionActionPills(
-                query: q,
-                excludingTitles: finderMenuTitleSet
-            )
-            let extensionTitleSet = finderMenuTitleSet.union(
-                macOSExtensionPills.map { normalizedDockPillText($0.name) }
-            )
-            let finderMenuPills = buildFinderSelectionMenuPills(
-                query: q,
-                excludingTitles: extensionTitleSet,
-                allowedRootNames: ["file", "quick actions", "services", "open with", "tags"]
-            )
-            var sel: [DockPill] = []
-            sel.append(selectionScopeAskAIPill(query: q))
-            sel.append(contentsOf: selectionScopeCopyPill(query: q))
-            sel.append(contentsOf: buildCustomSelectionExtensionPills(query: q, excludingTitles: extensionTitleSet))
-            sel.append(contentsOf: selectionScopeBuiltInWorkflowPills(query: q))
-            sel.append(contentsOf: buildContextDockSelectionAIPills(query: q))
-            sel.append(contentsOf: finderFilePills)
-            sel.append(contentsOf: macOSExtensionPills)
-            sel.append(contentsOf: finderMenuPills)
-            sel.append(contentsOf: buildGlobalSelectionSharePills(query: q))
-            sel.append(contentsOf: buildShareQueryDestinationPills(query: q))
-            let rankedSelection = dedupeRankedDockPills(
-                rankDockPills(
-                    sel,
-                    rawQuery: q,
-                    rankingQuery: q,
-                    scopedBundleId: "com.apple.finder",
-                    scopedAppName: "Finder",
-                    isExplicitAppScope: false,
-                    includeNonMatching: q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                )
-            )
-            // Ask AI is the floor row of this scope, not a search result: ranking dropped it for
-            // any query whose words it doesn't carry ("what", "about this file"), which left an
-            // expanded-but-empty sheet. Re-seat it whenever ranking filtered it out.
-            if rankedSelection.contains(where: { $0.rankingKind == "selectionAI" }) {
-                return rankedSelection
-            }
-            return [selectionScopeAskAIPill(query: q)] + rankedSelection
-        }
+        if hasSelectionScopeSurface { return buildSelectionScopePills(query: q) }
 
         if isQuestionStyleDockQuery(q) { return [] }
         if isContextDockChatRoutingLocked { return [] }

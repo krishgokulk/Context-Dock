@@ -258,6 +258,8 @@ extension LauncherView {
         if !frozenSelection.isEmpty {
             return isDismissedFinderSelection(frozenSelection) ? [] : frozenSelection
         }
+        // A corner build or run: the captured selection is the whole truth, never the live one.
+        if SelectionActions.isScopedToCapturedSelection { return [] }
 
         let liveSelection = canonicalExistingURLs(
             axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
@@ -2446,14 +2448,29 @@ extension LauncherView {
     /// message in this session carries the selection, so the AI always answers about the
     /// user's current work — webpage, document, files. Submits `initialQuery` if given,
     /// otherwise greets with an open prompt.
+    /// The selection the Dock's selection chat is about, in the shared form. A frozen Selection
+    /// Scope payload is the whole truth; the live context fills in only when there is none.
+    var dockSelectionSnapshot: SelectionSnapshot {
+        let ctx = effectiveAXContextForConversation()
+        if let payload = selectionScopePayload {
+            return SelectionSnapshot.fromFrozen(
+                payload, appName: ctx.appName, bundleID: ctx.bundleId)
+        }
+        let text: String = {
+            if case .text(let t) = effectiveSelectionForScope, !t.isEmpty { return t }
+            return ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        }()
+        return SelectionSnapshot(
+            text: text, filePaths: effectiveSelectedFileURLsForConversation().map(\.path),
+            appName: ctx.appName, bundleID: ctx.bundleId)
+    }
+
     func enterSelectionChat(initialQuery: String) {
         let ctx = effectiveAXContextForConversation()
-        let text: String? = {
-            if case .text(let t) = effectiveSelectionForScope, !t.isEmpty { return t }
-            return ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        }()
-        aiMode.selectionText = (text?.isEmpty == false) ? text : nil
-        aiMode.selectionFiles = effectiveSelectedFileURLsForConversation()
+        // The same request the corner's ask path builds for this selection and prompt.
+        let request = SelectionAskRequest.make(prompt: initialQuery, snapshot: dockSelectionSnapshot)
+        aiMode.selectionText = request.selectedText
+        aiMode.selectionFiles = request.filePaths.map { URL(fileURLWithPath: $0) }
         aiMode.selectionURL = ctx.currentURL?.isEmpty == false ? ctx.currentURL : nil
 
         globalContextActivation = nil
@@ -2461,7 +2478,7 @@ extension LauncherView {
         hasUserSentMessageInCurrentSession = true
         searchState.query = ""
 
-        let q = initialQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let q = request.prompt
         if q.isEmpty {
             aiMode.messages.append(
                 AIChatMessage(
@@ -2491,6 +2508,7 @@ extension LauncherView {
             badge: "Selection",
             execute: { enterSelectionChat(initialQuery: typed) }
         )
+        pill.selectionAIPrompt = typed
         pill.rankingKind = "selectionAI"
         pill.rankingScore = 100_000  // always first
         pill.trackingIdentifier = "selection-ask-ai"
@@ -2598,14 +2616,16 @@ extension LauncherView {
         let normalizedQuery = normalizedDockPillText(q)
         let searchable = normalizedDockPillText("\(action.name) \(action.prompt) \(action.terms)")
         guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+        let prompt = action.prompt
         var pill = DockPill(
             id: "selection-workflow-ai-\(action.id)",
             name: action.name,
             icon: action.icon,
             accentColorName: "purple",
             badge: badge,
-            execute: { enterSelectionChat(initialQuery: action.prompt) }
+            execute: { enterSelectionChat(initialQuery: prompt) }
         )
+        pill.selectionAIPrompt = prompt
         pill.rankingKind = "selectionWorkflow"
         pill.rankingScore = 94_000
         pill.trackingIdentifier = "selection-workflow-ai:\(action.id)"
@@ -2923,6 +2943,7 @@ extension LauncherView {
         let chatPills = actions.compactMap { action -> DockPill? in
             let searchable = normalizedDockPillText("\(action.name) \(action.prompt)")
             guard normalizedQuery.isEmpty || searchable.contains(normalizedQuery) else { return nil }
+            let prompt = action.prompt
             var pill = DockPill(
                 id: "context-selection-ai-\(action.name.lowercased())",
                 name: action.name,
@@ -2931,8 +2952,9 @@ extension LauncherView {
                 badge: badge,
                 // Enter selection-grounded chat with this instruction — the session keeps the
                 // selection (text or files), so follow-ups ("now send it to mail") still work.
-                execute: { enterSelectionChat(initialQuery: action.prompt) }
+                execute: { enterSelectionChat(initialQuery: prompt) }
             )
+            pill.selectionAIPrompt = prompt
             pill.rankingKind = "selectionAI"
             pill.sourceBundleId = axContext.bundleId
             pill.sourceAppName = axContext.appName

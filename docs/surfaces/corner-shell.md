@@ -11,3 +11,4 @@
 - 2026-09-24 · → on a focused row steps in (command panel, extension, CLI tool, app scope) and never runs a one-shot row — it put the Mac to sleep from "Sleep" (inventory D4) · `CornerRightArrowTests`
 - 2026-09-24 · ↑ on an empty field with nothing highlighted goes up a layer before opening a list, so the app scope reaches Global by key (inventory F2) · `CornerRightArrowTests`
 - 2026-09-25 · Typing from the resting strip keeps every letter: the field's focus no longer leaves the first one selected (shared `FieldCaret`, the Dock's old fix), and keys typed before it takes focus go into it · `FieldCaretTests`
+- 2026-09-25 · The Selection card lists and runs the Dock's Selection rows (less Share) above its field, through `SelectionActionProviding` on the selection it captured; ↑/↓/↩, a visible ✕, AI rows answer in the corner chat · `CornerSelectionActionsTests`

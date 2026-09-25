@@ -79,7 +79,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ❓ | `AppChatPromptModel` has Finder search; browse & attach not verified |
 | D8 | Clipboard as a scope | ✅ | Separate Corner pill + card (`CornerDockLayoutTests`, `CornerKeyboardOwnerTests`) |
 | D9 | Notifications compact scope | ❌ | No Corner code found |
-| D10 | Selection Scope with actions | 🟡 | Card + ask only — `00-DOCK-AND-CORNER.md` §4a; being fixed in task `corner-parity` |
+| D10 | Selection Scope with actions | 🟡 | Card lists and runs the Dock's Selection rows via bridge (`SelectionActionProviding`, `CornerSelectionActionsTests`), ✕ closes. Share missing — #83 |
 | D11 | Quick Note split editor (list + editor, ⌘N new note, ↩ asks AI into the note) | ❌ | Dock-only (`NotepadScopeView`); the Quick Note hotkey opens a separate floating note |
 | D12 | Mail find actions | ❌ | No Corner code found |
 | D13 | Safari page actions | ❓ | A few Corner mentions; not verified |

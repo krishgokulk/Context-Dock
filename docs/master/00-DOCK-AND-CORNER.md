@@ -107,6 +107,8 @@ surface lost its one job ("selection-aware action engine", `docs/architecture/SE
 4. A visible ✕ closes the card; Esc still does too.
 5. Reuse the Dock's action source — do not write a second ranking (§3 rule 1). If it is locked inside
    `LauncherView`, extract it first, as the 2026-09-08 plan did for menu matching.
+   **Interim (owner 2026-09-25):** Corner uses the Dock's Selection rows through
+   `SelectionActionProviding`; extraction tracked in #83, must land before the Dock retires.
 
 **Related bug found while testing:** the Selection Scope hotkey was recorded as **⇧S**. A Shift-only
 global hotkey captures every capital S typed anywhere, so typing "S" in TextEdit opened this card.

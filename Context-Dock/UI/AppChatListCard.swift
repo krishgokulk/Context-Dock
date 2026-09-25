@@ -390,15 +390,7 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChatListMetrics.rowHeight)
-        .background {
-            RoundedRectangle(cornerRadius: 18)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18)
-                        .strokeBorder(Color.primary.opacity(isFocused ? 0.2 : 0), lineWidth: 1)
-                }
-                .padding(.horizontal, 8)
-        }
+        .background { CornerListRowBackground(isFocused: isFocused) }
         .opacity(pill.isEnabled ? 1 : 0.45)
         .contentShape(Rectangle())
         .onTapGesture { model.run(.dock(pill)) }
@@ -484,5 +476,21 @@ private struct CornerResultIcon: View {
         .task(id: url) {
             if let url { favicons.fetchIfNeeded(for: url) }
         }
+    }
+}
+
+/// The highlight behind a focused row in the corner's lists — one drawing for every card
+/// that lists rows (App Chat, Selection), so the two cannot drift apart.
+struct CornerListRowBackground: View {
+    let isFocused: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 18)
+            .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .strokeBorder(Color.primary.opacity(isFocused ? 0.2 : 0), lineWidth: 1)
+            }
+            .padding(.horizontal, 8)
     }
 }

@@ -85,6 +85,9 @@ extension LauncherView {
         contentLayout
             .onAppear {
                 handleContentAppear()
+                // The corner's Selection card asks the Dock's rows through this. It appears
+                // at launch with the launcher window, before ⌥⌥ is ever pressed.
+                SelectionActions.provider = self
             }
             .onChange(of: searchState.results.isEmpty) { _, isEmpty in
                 handleSearchResultsEmptyChange(isEmpty)
