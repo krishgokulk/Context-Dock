@@ -351,6 +351,49 @@ final class SelectionScopeModel: ObservableObject {
         return AppChatSelectionScope(kind: .text(characters: text.count))
     }
 
+    /// How the selection is previewed in the card.
+    enum PreviewKind: Equatable {
+        case text
+        case file(URL)
+        case files([URL])
+        case folder(URL)
+    }
+
+    /// Pure: text reads as text; one file shows itself; several show a strip; one folder
+    /// opens its listing — the view the pinned-folder card uses.
+    static func previewKind(files: [URL], isDirectory: (URL) -> Bool) -> PreviewKind {
+        guard let first = files.first else { return .text }
+        if files.count > 1 { return .files(files) }
+        return isDirectory(first) ? .folder(first) : .file(first)
+    }
+
+    /// The card is showing a folder's listing — it takes more room.
+    var showsFolderPreview: Bool {
+        guard !isShowingAnswer, !isSharing, case .folder = previewKind else { return false }
+        return true
+    }
+
+    var previewKind: PreviewKind {
+        Self.previewKind(files: files) { url in
+            (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+    }
+
+    /// Opens the selected files in the app's own preview window (Quick Look inside DoraX),
+    /// stepping through all of them. Tests replace it.
+    var presentPreview: (_ url: URL, _ siblings: [URL]) -> Void = { url, siblings in
+        PreviewController.shared.present(url: url, siblings: siblings, toggleIfSame: true)
+    }
+
+    /// Space on an empty field, or a click on the preview. False when there is no file.
+    @discardableResult
+    func quickLook(_ url: URL? = nil) -> Bool {
+        guard let target = url ?? files.first else { return false }
+        touch()
+        presentPreview(target, files)
+        return true
+    }
+
     /// One line of what was selected, for the card's body.
     var preview: String {
         if isSharingAnswer, let answer = latestAnswer { return answer }

@@ -16,6 +16,8 @@ enum SelectionScopeMetrics {
     /// Three lines of the selection, which is enough to recognise it without becoming a
     /// reader. The card is for choosing a subject, not for reading the document.
     static let previewHeight: CGFloat = 62
+    /// A selected folder shows its listing — enough rows to recognise it and walk it.
+    static let folderPreviewHeight: CGFloat = 168
     static let verticalPadding: CGFloat = 10
     /// The Dock's Selection rows, above the field. Past this many the list scrolls.
     static let maxVisibleRows = 6
@@ -33,14 +35,18 @@ enum SelectionScopeMetrics {
     /// A pure function of state, like every other corner surface: the shell hit-tests this
     /// exact number.
     static func size(
-        rows: Int, answering: Bool = false, consent: Bool = false, outcome: Bool = false
+        rows: Int, answering: Bool = false, consent: Bool = false, outcome: Bool = false,
+        folderPreview: Bool = false
     ) -> CGSize {
-        let base = sizeWithoutConsent(rows: rows, answering: answering)
+        let base = sizeWithoutConsent(
+            rows: rows, answering: answering, folderPreview: folderPreview)
         let extra = (consent ? consentHeight : 0) + (outcome ? outcomeHeight : 0)
         return CGSize(width: base.width, height: base.height + extra)
     }
 
-    private static func sizeWithoutConsent(rows: Int, answering: Bool) -> CGSize {
+    private static func sizeWithoutConsent(rows: Int, answering: Bool, folderPreview: Bool)
+        -> CGSize
+    {
         if answering {
             return CGSize(
                 width: width,
@@ -50,7 +56,8 @@ enum SelectionScopeMetrics {
         let listed = CGFloat(min(max(rows, 0), maxVisibleRows)) * rowHeight
         return CGSize(
             width: width,
-            height: headerHeight + previewHeight + listed + inputHeight + verticalPadding * 2)
+            height: headerHeight + (folderPreview ? folderPreviewHeight : previewHeight) + listed
+                + inputHeight + verticalPadding * 2)
     }
 }
 
@@ -116,7 +123,8 @@ struct SelectionScopeCard: View {
     private var cardSize: CGSize {
         SelectionScopeMetrics.size(
             rows: model.rows.count, answering: model.isShowingAnswer,
-            consent: model.isAsking, outcome: model.showsOutcome)
+            consent: model.isAsking, outcome: model.showsOutcome,
+            folderPreview: model.showsFolderPreview)
     }
 
     /// An extension that may change things asks first — here, where the keys already are.
@@ -281,7 +289,7 @@ struct SelectionScopeCard: View {
     /// selection is the failure this surface exists to prevent.
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: model.isSharing ? "square.and.arrow.up" : (model.scope?.icon ?? "text.cursor"))
+            Image(systemName: headerIcon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
             Text(headerTitle)
@@ -330,13 +338,96 @@ struct SelectionScopeCard: View {
         .frame(height: SelectionScopeMetrics.headerHeight)
     }
 
+    private var headerIcon: String {
+        if model.isSharing { return "square.and.arrow.up" }
+        if case .folder = model.previewKind { return "folder" }
+        return model.scope?.icon ?? "text.cursor"
+    }
+
     private var headerTitle: String {
-        let subject = model.scope?.label ?? "Selection"
+        let subject: String = {
+            if case .folder(let url) = model.previewKind { return url.lastPathComponent }
+            return model.scope?.label ?? "Selection"
+        }()
         guard model.isSharing else { return subject }
         return model.isSharingAnswer ? "Share the answer" : "Share \(subject)"
     }
 
+    /// What was selected: text as text; files as themselves — a thumbnail, a strip, or a
+    /// folder's listing. Clicking a file, or Space on the empty field, previews it.
+    @ViewBuilder
     private var preview: some View {
+        switch model.isSharing ? .text : model.previewKind {
+        case .text:
+            textPreview
+        case .file(let url):
+            filePreview(url)
+        case .files(let urls):
+            filesPreview(urls)
+        case .folder(let url):
+            PreviewFolderBrowser(url: url)
+                .frame(height: SelectionScopeMetrics.folderPreviewHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .padding(.horizontal, 12)
+        }
+    }
+
+    private func filePreview(_ url: URL) -> some View {
+        HStack(spacing: 10) {
+            SelectionFileThumbnail(url: url, side: 48)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(url.lastPathComponent)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(Self.fileDetail(url))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            Text("Space")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .frame(height: 18)
+                .background(Capsule().strokeBorder(Color.secondary.opacity(0.35)))
+                .help("Space previews the file")
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { model.quickLook(url) }
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.previewHeight)
+    }
+
+    private func filesPreview(_ urls: [URL]) -> some View {
+        let shown = Array(urls.prefix(6))
+        return HStack(spacing: 6) {
+            ForEach(shown, id: \.self) { url in
+                SelectionFileThumbnail(url: url, side: 44)
+                    .help(url.lastPathComponent)
+                    .onTapGesture { model.quickLook(url) }
+            }
+            if urls.count > shown.count {
+                Text("+\(urls.count - shown.count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.previewHeight)
+    }
+
+    /// "PDF document · 1.2 MB".
+    static func fileDetail(_ url: URL) -> String {
+        let values = try? url.resourceValues(forKeys: [.localizedTypeDescriptionKey, .fileSizeKey])
+        let kind = values?.localizedTypeDescription ?? url.pathExtension.uppercased()
+        guard let size = values?.fileSize else { return kind }
+        return "\(kind) · \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))"
+    }
+
+    private var textPreview: some View {
         Text(model.preview)
             .font(.system(size: 12))
             .foregroundStyle(.primary.opacity(0.82))
@@ -428,6 +519,12 @@ struct SelectionScopeCard: View {
                     .onSubmit { model.returnPressed() }
                     .onKeyPress(.downArrow) { model.moveFocus(by: 1) ? .handled : .ignored }
                     .onKeyPress(.upArrow) { model.moveFocus(by: -1) ? .handled : .ignored }
+                    // Space on an empty field previews the selected file, the way Space does
+                    // in Finder. With text in the field it is just a space.
+                    .onKeyPress(.space) {
+                        guard model.query.isEmpty, !model.isShowingAnswer else { return .ignored }
+                        return model.quickLook() ? .handled : .ignored
+                    }
                     .onKeyPress(.escape) {
                         // The corner's key monitor already stepped back for this press.
                         if SelectionScopeModel.fieldHandlesEscape(keyboardOwner: keyboardState.owner) {
@@ -447,5 +544,33 @@ struct SelectionScopeCard: View {
         }
         .padding(.horizontal, 16)
         .frame(height: SelectionScopeMetrics.inputHeight)
+    }
+}
+
+/// A selected file as itself: the Quick Look thumbnail when the type has one (the shared
+/// thumbnail cache), else the Finder icon while it loads or when it has none.
+struct SelectionFileThumbnail: View {
+    let url: URL
+    let side: CGFloat
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().scaledToFit()
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        let cache = FileThumbnailCache.shared
+        image = cache.thumbnail(for: url.path, size: side) {
+            image = cache.thumbnail(for: url.path, size: side) {}
+        }
     }
 }

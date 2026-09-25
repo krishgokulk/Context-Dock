@@ -24,3 +24,4 @@
 - 2026-09-25 · The Selection card's answer stays until closed, and its thread is found by the question asked (switching to the app's session loaded older chat and the answer went blank); the way back to the actions moved to the header · `CornerSelectionActionsTests`
 - 2026-09-25 · A row that runs says so in the card ("✓ Search on YouTube") · `CornerSelectionActionsTests`
 - 2026-09-25 · The Selection card's field takes the caret back when the answer appears, so a typed follow-up reaches it (it went nowhere); the answer opens on its latest reply; Copy, Quick Note and Replace say what they did inside the card · `CornerSelectionActionsTests`
+- 2026-09-25 · The Selection card previews files: one file as its thumbnail with kind and size, several as a strip, a folder as its listing (shared `PreviewFolderBrowser`); Space on the empty field or a click opens the app's preview · `CornerSelectionActionsTests`

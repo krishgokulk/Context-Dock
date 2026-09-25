@@ -839,5 +839,44 @@ struct CornerSelectionActionsTests {
         model.queryChanged()
         #expect(model.outcome == nil)
     }
+
+    // MARK: File preview in the card (part C)
+
+    @Test("Text reads as text; one file shows itself; several a strip; a folder its listing")
+    func previewKindFollowsTheSelection() {
+        let pdf = URL(fileURLWithPath: "/tmp/report.pdf")
+        let png = URL(fileURLWithPath: "/tmp/shot.png")
+        let dir = URL(fileURLWithPath: "/tmp/Photos")
+        let isDir: (URL) -> Bool = { $0 == dir }
+        #expect(SelectionScopeModel.previewKind(files: [], isDirectory: isDir) == .text)
+        #expect(SelectionScopeModel.previewKind(files: [pdf], isDirectory: isDir) == .file(pdf))
+        #expect(SelectionScopeModel.previewKind(files: [pdf, png], isDirectory: isDir)
+            == .files([pdf, png]))
+        #expect(SelectionScopeModel.previewKind(files: [dir], isDirectory: isDir) == .folder(dir))
+    }
+
+    @Test("Space previews the selected files in the app's preview; text has nothing to preview")
+    func spacePreviewsTheFiles() {
+        let model = card(file, dock: FakeDock())
+        var shown: [(URL, [URL])] = []
+        model.presentPreview = { shown.append(($0, $1)) }
+        #expect(model.quickLook())
+        #expect(shown.first?.0 == URL(fileURLWithPath: "/tmp/report.pdf"))
+        #expect(shown.first?.1 == [URL(fileURLWithPath: "/tmp/report.pdf")])
+
+        let textCard = card(text, dock: FakeDock())
+        textCard.presentPreview = { _, _ in Issue.record("text has no file to preview") }
+        #expect(!textCard.quickLook())
+    }
+
+    @Test("A folder's listing makes the card taller, and only while the rows show")
+    func folderPreviewSize() {
+        let plain = SelectionScopeMetrics.size(rows: 3)
+        let folder = SelectionScopeMetrics.size(rows: 3, folderPreview: true)
+        #expect(folder.height - plain.height
+            == SelectionScopeMetrics.folderPreviewHeight - SelectionScopeMetrics.previewHeight)
+        #expect(SelectionScopeMetrics.size(rows: 3, answering: true, folderPreview: true)
+            == SelectionScopeMetrics.size(rows: 3, answering: true))
+    }
 }
 
