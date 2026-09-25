@@ -302,7 +302,13 @@ struct AppChatListCard: View {
     /// One rule (`DockPinKind(row:)`) decides, the same one the strip's drop uses.
     @ViewBuilder
     private func pinMenu(for row: AppChatRow) -> some View {
-        if let kind = DockPinKind(row: row) {
+        // In an app's Context Dock a row pins for that app: to its bar, not Global's.
+        if model.canPinToApp(row) {
+            Button(model.isPinnedToApp(row) ? "Unpin from \(model.appName)" : "Pin to \(model.appName)") {
+                model.toggleAppPin(row)
+                model.updateTabStrip()
+            }
+        } else if let kind = DockPinKind(row: row) {
             if DockPinStore.shared.isPinned(kind) {
                 Button("Unpin from Dock") {
                     if let pin = DockPinStore.shared.pins.first(where: { $0.kind == kind }) {

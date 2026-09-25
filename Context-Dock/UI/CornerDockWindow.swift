@@ -445,7 +445,7 @@ final class CornerDockController: NSObject {
     var pluginCardPin: (pin: DockPin, manifest: PluginManifest)? {
         CornerPluginCardRouting.cardPin(
             open: prompt.pluginCardPinID, hovered: prompt.previewPinID,
-            pins: DockPinStore.shared.pins,
+            pins: DockPinStore.shared.pins + DockPinStore.shared.appPins,
             manifest: { PluginRegistry.shared.plugin(id: $0)?.manifest })
     }
 
@@ -497,7 +497,7 @@ final class CornerDockController: NSObject {
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
-            fieldIcons: prompt.promptIconCount
+            fieldIcons: prompt.promptIconCount, pinsLead: prompt.stripPinsLead
         ).iconCenterOffset(for: target)
     }
 
@@ -511,7 +511,7 @@ final class CornerDockController: NSObject {
 
     var hoveredPin: DockPin? {
         guard let id = prompt.previewPinID else { return nil }
-        return DockPinStore.shared.pins.first { $0.id == id }
+        return DockPinStore.shared.pin(withID: id)
     }
 
     private var pinPreviewSize: CGSize {
@@ -563,7 +563,8 @@ final class CornerDockController: NSObject {
         // icon there, so it must be one icon wide here.
         let composition = DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil)
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            pinsLead: prompt.stripPinsLead
         ).composition
         return AppChatPromptMetrics.size(
             for: prompt.phase,

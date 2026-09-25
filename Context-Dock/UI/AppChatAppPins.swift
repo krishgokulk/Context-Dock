@@ -1,0 +1,195 @@
+// AppChatAppPins.swift
+// Context-Dock
+//
+// Pins in an app's Context Dock (00-NOW task 4b; owner 2026-09-25). Any row in the app's
+// list — a menu command, an adapter action, an extension, the user's own action — and any
+// tab can be pinned for that app. Its pins lead the bar beside the field, before the live
+// tabs, and run with one click.
+//
+// One store: these are `DockPinStore` pins with the app's bundle id on them, saved in the
+// same file as Global's. Pinning changes where a command is reached, never how it runs — a
+// pinned menu command passes the same consent gate any menu click does, and a pinned action
+// runs through AppAdapterManager, where its approval already lives.
+
+import AppKit
+import Foundation
+
+extension AppChatPromptModel {
+
+    // MARK: Pinning
+
+    /// Whether a list row can be pinned in this app's Context Dock.
+    func canPinToApp(_ row: AppChatRow) -> Bool {
+        isAppContextDock && DockPinKind(appRow: row) != nil
+    }
+
+    func isPinnedToApp(_ row: AppChatRow) -> Bool {
+        guard let kind = DockPinKind(appRow: row) else { return false }
+        return pinStore.isPinned(kind, app: appBundleID)
+    }
+
+    /// Pins a row for this app, or unpins it when it already is.
+    func toggleAppPin(_ row: AppChatRow) {
+        guard isAppContextDock, let kind = DockPinKind(appRow: row) else { return }
+        if let pin = pinStore.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
+            pinStore.unpin(pin.id)
+            return
+        }
+        let documentID: String? = {
+            if case .global(let doc) = row { return doc.id }
+            return nil
+        }()
+        pinStore.pin(kind, title: row.title, documentID: documentID, app: appBundleID)
+    }
+
+    /// The tab behind a strip icon, as a pin kind.
+    func tabPinKind(forIconID id: String) -> DockPinKind? {
+        tabsByIconID[id].map { .tab(url: $0.url) }
+    }
+
+    func isTabPinned(iconID id: String) -> Bool {
+        guard let kind = tabPinKind(forIconID: id) else { return false }
+        return pinStore.isPinned(kind, app: appBundleID)
+    }
+
+    /// Pins the tab behind a strip icon for this app, or unpins it.
+    func toggleTabPin(iconID id: String) {
+        guard let tab = tabsByIconID[id], !appBundleID.isEmpty else { return }
+        let kind = DockPinKind.tab(url: tab.url)
+        if let pin = pinStore.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
+            pinStore.unpin(pin.id)
+        } else {
+            pinStore.pin(kind, title: tab.title.isEmpty ? tab.domain : tab.title, app: appBundleID)
+        }
+        updateTabStrip()
+    }
+
+    // MARK: Running
+
+    /// A click on one of this app's pins: the tab shows or reloads, the action runs through
+    /// its adapter, and a menu command asks first when it is destructive or outbound.
+    func openAppPin(_ pin: DockPin) {
+        touch()
+        switch pin.kind {
+        case .tab(let url):
+            if let tab = AppPinRun.openTab(for: url, among: tabSource()) {
+                switchTab(tab)
+            } else if let page = URL(string: url) {
+                openPage(page, pin.appBundleID ?? appBundleID)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.refreshTabs()
+            }
+        case .appAction(let id):
+            guard let action = adapterActions.first(where: { $0.id == id })
+                ?? AppAdapterManager.shared.adapter(for: appBundleID)?.actions
+                    .first(where: { $0.id == id })
+            else { return }
+            runAdapterAction(action)
+        case .menuCommand(let path):
+            let bundleID = pin.appBundleID ?? appBundleID
+            let name = appName
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                // A pinned command is one click from being run without its name being read
+                // again, so the gate that guards every AI menu click guards this one too.
+                guard await self.askMenuConsent(path, bundleID, name) else { return }
+                self.runPinnedMenuPath(path)
+            }
+        case .app, .globalCommand, .cliTool, .file, .folder:
+            break  // the strip opens these itself, as it does Global's
+        }
+    }
+
+    /// Runs a menu path through the dock's own execution path, the one a list row uses.
+    private func runPinnedMenuPath(_ path: [String]) {
+        if let performMenuPath {
+            performMenuPath(path)
+            return
+        }
+        guard let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == appBundleID && !$0.isTerminated
+        }) else { return }
+        let known = allMenuItems.first { $0.path == path }
+        let request = MenuExecutionCoordinator.DockMenuActionRequest(
+            sourcePID: app.processIdentifier,
+            path: path,
+            shortcutChar: known?.shortcutChar,
+            shortcutModifiers: known?.shortcutModifiers ?? 0,
+            knownMenuItems: allMenuItems,
+            isGlobalContextActive: false,
+            hasActiveDockContextSelection: false,
+            keepsDockFloating: true)
+        MenuExecutionCoordinator.shared.executeDockMenuAction(
+            request: request,
+            callbacks: MenuExecutionCoordinator.DockMenuActionCallbacks(
+                hideBeforeExecution: {},
+                refreshRunningApps: {},
+                scheduleTerminationRefresh: { _ in },
+                reloadMenu: { _ in },
+                clearLiveDockMenuState: {},
+                refocusDockInput: {}))
+    }
+
+    // MARK: Drawing
+
+    /// The picture on one of this app's pins: the tab's favicon, the menu item's own image.
+    func appPinImage(_ pin: DockPin) -> NSImage? {
+        switch pin.kind {
+        case .tab(let url):
+            guard let page = URL(string: url) else { return nil }
+            if let icon = FaviconStore.shared.icon(for: page) { return icon }
+            FaviconStore.shared.fetchIfNeeded(for: page)
+            return nil
+        case .menuCommand(let path):
+            return allMenuItems.first { $0.path == path }?.image
+        default:
+            return nil
+        }
+    }
+
+    /// The symbol a pin falls back to: the menu command's own, the action's icon.
+    func appPinSymbol(_ pin: DockPin) -> String? {
+        switch pin.kind {
+        case .menuCommand(let path):
+            return SFSymbolResolver.menuSymbol(
+                title: path.last ?? pin.title, path: path, isAppleMenu: false)
+        case .appAction(let id):
+            return adapterActions.first { $0.id == id }?.icon
+        default:
+            return nil
+        }
+    }
+}
+
+/// The pure half of running an app's pins, kept apart so it can be tested without an app.
+enum AppPinRun {
+    /// The open tab a pinned tab stands for, matched on the address rather than the title.
+    static func openTab(for url: String, among tabs: [SafariTab]) -> SafariTab? {
+        guard let key = BrowserTabList.normalizedURLKey(url) else { return nil }
+        return tabs.first { BrowserTabList.normalizedURLKey($0.url) == key }
+    }
+
+    /// The live tabs left once the pinned ones are taken out: a pinned tab that is open is
+    /// one icon, at the pin's place, never a second copy among the live ones.
+    static func unpinnedTabs(_ tabs: [SafariTab], pins: [DockPin]) -> [SafariTab] {
+        let pinned = Set(pins.compactMap { pin -> String? in
+            guard case .tab(let url) = pin.kind else { return nil }
+            return BrowserTabList.normalizedURLKey(url)
+        })
+        guard !pinned.isEmpty else { return tabs }
+        return tabs.filter { tab in
+            guard let key = BrowserTabList.normalizedURLKey(tab.url) else { return true }
+            return !pinned.contains(key)
+        }
+    }
+
+    /// Whether a pinned menu command will ask before it runs: destructive or outbound, and
+    /// not already allowed for this app.
+    @MainActor
+    static func menuAsksFirst(path: [String], bundleID: String) -> Bool {
+        let consent = AppMenuConsentStore.shared
+        return consent.isDestructive(path: path)
+            && !consent.isAllowed(bundleId: bundleID, path: path)
+    }
+}

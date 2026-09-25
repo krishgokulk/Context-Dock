@@ -169,15 +169,22 @@ final class AppChatPromptModel: ObservableObject {
     /// The tabs behind the Safari scope's icons, by icon id.
     var tabsByIconID: [String: SafariTab] = [:]
 
-    /// A Safari scope: its open tabs take the running apps' place in the Global shell — the
-    /// strip of big icons at rest, the small pill in the field (owner 2026-09-25: "exactly
-    /// like Global").
+    /// The app's own bar: a Safari scope's open tabs take the running apps' place in the
+    /// Global shell — the strip of big icons at rest, the small pill in the field (owner
+    /// 2026-09-25: "exactly like Global"). Any other app's Context Dock gets the same bar
+    /// once it has pins (task 4b): the bar is the app's own things, and those are its pins.
     var showsTabBar: Bool {
-        !isGlobalScope && BrowserTabList.listsTabs(bundleID: appBundleID)
+        guard !isGlobalScope else { return false }
+        if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
+        return isAppContextDock && !pinStore.pins(forApp: appBundleID).isEmpty
     }
-    /// The pins the strip shows: Global's, never a Safari scope's — its bar is the app's own
-    /// things (open tabs today; its pinned actions and tabs are task 5 in 00-NOW.md).
-    var stripPins: [DockPin] { showsTabBar ? [] : DockPinStore.shared.pins }
+    /// The pins the strip shows: Global's in Global, the app's own in its Context Dock —
+    /// never Global's there, since that bar is the app's own things.
+    var stripPins: [DockPin] {
+        showsTabBar ? pinStore.pins(forApp: appBundleID) : pinStore.pins
+    }
+    /// An app's pins lead its live tabs; Global's pins follow its running apps.
+    var stripPinsLead: Bool { showsTabBar }
     /// The Global shell — its height, its fold into a dock and back — is Global Context's,
     /// and a Safari scope's.
     var usesDockShell: Bool { isGlobalScope || showsTabBar }
@@ -264,6 +271,24 @@ final class AppChatPromptModel: ObservableObject {
     var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
     /// Shows a tab in Safari. Tests replace it so they never script the user's Safari.
     var switchTab: (SafariTab) -> Void = { SafariTabManager.shared.switchTo($0) }
+    /// Where pins live. Tests hand in their own so they never touch the user's pins.
+    var pinStore: DockPinStore = .shared
+    /// Loads a page in the app a pinned tab belongs to, when that tab is no longer open.
+    /// Tests replace it.
+    var openPage: (URL, String) -> Void = { url, bundleID in
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { NSWorkspace.shared.open(url); return }
+        NSWorkspace.shared.open(
+            [url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+    /// The consent gate a pinned menu command passes before it runs — the same one every
+    /// menu click the AI makes goes through. Tests replace it.
+    var askMenuConsent: ([String], String, String) async -> Bool = { path, bundleID, name in
+        await AppAdapterManager.shared.ensureMenuConsent(
+            path: path, targetBundleId: bundleID, appName: name)
+    }
+    /// Runs a menu path in this scope's app once consent is settled. Tests replace it.
+    var performMenuPath: (([String]) -> Void)? = nil
     /// Reads Safari's tabs again, then calls back. Tests replace it so they never script
     /// the user's Safari.
     var refreshTabCache: (@escaping @MainActor () -> Void) -> Void = { done in

@@ -318,7 +318,8 @@ struct AppChatPromptPill: View {
     private var stripPlan: DockStripPlan {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins,
-            tools: stripToolCount, fieldIcons: model.promptIconCount)
+            tools: stripToolCount, fieldIcons: model.promptIconCount,
+            pinsLead: model.stripPinsLead)
     }
 
     private var stripToolCount: Int {
@@ -334,7 +335,8 @@ struct AppChatPromptPill: View {
             clipboardVisible: clipboard.phase.isVisible,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
-            running: model.stripIcons, pins: model.stripPins, tools: tools)
+            running: model.stripIcons, pins: model.stripPins, tools: tools,
+            pinsLead: model.stripPinsLead)
         let composition = plan.composition
         return AppChatPromptMetrics.size(
             for: phase,

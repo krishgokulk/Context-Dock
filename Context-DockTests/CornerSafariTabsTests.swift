@@ -27,6 +27,10 @@ struct CornerSafariTabsTests {
         bundleID: String = "com.apple.Safari", name: String = "Safari"
     ) -> AppChatPromptModel {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        // Its own pins: the test host shares the developer's, and a Safari pin of theirs
+        // would put something in this bar that the tests did not.
+        model.pinStore = DockPinStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("dock-pins-\(UUID().uuidString).json"))
         let source = tabs ?? self.tabs
         model.tabSource = { source }
         model.refreshTabCache = { _ in }
@@ -70,7 +74,7 @@ struct CornerSafariTabsTests {
         #expect(model.stripPins.isEmpty)
         #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 0)
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
-        #expect(chrome.stripPins.count == DockPinStore.shared.pins.count)
+        #expect(chrome.stripPins.count == chrome.pinStore.pins.count)
     }
 
     @Test("The field's pill holds what fits; the rest are +N")

@@ -161,9 +161,17 @@ extension AppChatPromptModel {
         updateGlobalTyping(for: query)
     }
 
-    /// Safari's open tabs as the strip's icons, current page first.
+    /// Safari's open tabs as the strip's icons, current page first. A pinned tab is not
+    /// among them: it has its place with the pins, ahead of these.
     func tabStripIcons() -> [MatchDockIcon] {
-        let tabs = BrowserTabList.ordered(tabSource(), currentURL: currentTabURL())
+        // An app with pins but no tabs has the bar for its pins alone.
+        guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
+            tabsByIconID = [:]
+            return []
+        }
+        let tabs = AppPinRun.unpinnedTabs(
+            BrowserTabList.ordered(tabSource(), currentURL: currentTabURL()),
+            pins: pinStore.pins(forApp: appBundleID))
         tabsByIconID = Dictionary(
             tabs.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
         return tabs.map(BrowserTabList.icon(for:))
@@ -298,7 +306,7 @@ extension AppChatPromptModel {
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
             running: running,
-            // A Safari scope's bar has no pins to keep room for.
+            // The app's pins are not in the field's pill, so it keeps no room for them.
             fieldCapacity: showsTabBar
                 ? AppChatPromptMetrics.matchIconCapacity(maximumWidth: DockStripPlan.screenBudget)
                     - AppChatPromptMetrics.appFieldChromeSlots

@@ -40,6 +40,8 @@ final class DockPinPreviewService: ObservableObject {
             return
         case .app:
             return  // apps answer with their windows, not with a card
+        case .menuCommand, .appAction, .tab:
+            return  // an app's own command or tab: its name is the tooltip
         case .file, .folder:
             break
         }
@@ -121,7 +123,7 @@ final class DockPinPreviewService: ObservableObject {
                 // Only that it is there. The browser reads what is in it.
                 return .folder(
                     DockPinPreview.FolderDetail(path: path, name: url.lastPathComponent))
-            case .app, .globalCommand, .cliTool:
+            case .app, .globalCommand, .cliTool, .menuCommand, .appAction, .tab:
                 return .missing(name: "", reason: "")
             }
         }.value
