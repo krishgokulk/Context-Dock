@@ -1,6 +1,6 @@
 # Corner Selection panel: one panel that does everything the Dock's Selection does
 
-> **Status: BUILDING (2026-09-25). Part A in progress.** Written so work can resume exactly here
+> **Status: BUILDING (2026-09-25). Part A ✅ done and checked on the app (answer in the card, table, Replace→copy without Computer Use, follow-up, Esc). Next: A2 (surfaces and consent on rows), then B, C, D, E, F.** Written so work can resume exactly here
 > after any interruption. Spec: `docs/master/00-DOCK-AND-CORNER.md` §4a. Branch:
 > `claude/corner-parity`, PR #84 (open, all work so far committed and pushed).
 
