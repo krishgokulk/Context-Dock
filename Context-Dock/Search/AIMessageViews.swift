@@ -2788,13 +2788,28 @@ struct MarkdownTableView: View {
     }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        // At its natural width when that fits; otherwise the cells wrap to the width there is.
+        // It used to scroll sideways with no indicator, so a narrow surface (the corner's
+        // cards) showed the last column cut off — "3 this qua…" — with nothing saying more
+        // was there.
+        ViewThatFits(in: .horizontal) {
+            grid.fixedSize(horizontal: true, vertical: false)
+            grid
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color.primary.opacity(0.05)))
+        .textSelection(.enabled)
+    }
+
+    private var grid: some View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 6) {
                 GridRow {
                     ForEach(0..<columnCount, id: \.self) { column in
                         Text(cell(header, column))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Divider().gridCellUnsizedAxes(.horizontal)
@@ -2804,17 +2819,15 @@ struct MarkdownTableView: View {
                             Text(inline(cell(rows[index], column)))
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
+                                // Wrap, never truncate: a cut cell hides the part of the
+                                // answer the user asked for.
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 10)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.05)))
-        .textSelection(.enabled)
     }
 
     private func cell(_ row: [String], _ column: Int) -> String {

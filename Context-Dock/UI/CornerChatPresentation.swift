@@ -188,18 +188,6 @@ final class CornerChatPresentation: ObservableObject {
     }
 
     func showFrontmostApp(target: CornerChatTarget) {
-        #if DEBUG
-        // Temporary trace: who brings the app chat up while the selection card is showing.
-        let trace = "\(Date()) showFrontmostApp(\(target.name))\n"
-            + Thread.callStackSymbols.prefix(14).joined(separator: "\n") + "\n\n"
-        if let data = trace.data(using: .utf8),
-            let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/dorax-trace.log"))
-        {
-            handle.seekToEndOfFile(); handle.write(data); try? handle.close()
-        } else {
-            try? trace.write(toFile: "/tmp/dorax-trace.log", atomically: true, encoding: .utf8)
-        }
-        #endif
         latestTarget = target
         cancelGeneralStandDown()
         mode = .frontmostApp

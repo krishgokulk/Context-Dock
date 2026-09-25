@@ -3698,8 +3698,8 @@ extension LauncherView {
     }
 
     /// Called when MenuIntentRouter found no menu match — skips menu routing to avoid recursion.
-    func handleL2QuerySkippingMenuRouter(_ query: String) {
-        handleL2Query(query, skipMenuRouter: true)
+    func handleL2QuerySkippingMenuRouter(_ query: String, isSelectionQuestion: Bool = false) {
+        handleL2Query(query, skipMenuRouter: true, isSelectionQuestion: isSelectionQuestion)
     }
 
     /// Closes the offered capability gap, then re-runs the request that exposed it — so the user
@@ -4079,7 +4079,20 @@ extension LauncherView {
         }
     }
 
-    func handleL2Query(_ query: String, skipMenuRouter: Bool) {
+    /// Pure: whether a query is tried as a saved trigger rule or a system command before it
+    /// reaches the AI. A question about a selection never is: its words are an instruction
+    /// for the model ("Convert this into a clean Markdown table…"), not a command's name.
+    /// (It is not auto-run as an installed extension either — see the extension step below.)
+    static func triesCommandRouting(
+        isSelectionQuestion: Bool, looksLikeQuestion: Bool, scopedHasLinkedCLI: Bool
+    ) -> Bool {
+        !isSelectionQuestion && !looksLikeQuestion && !scopedHasLinkedCLI
+    }
+
+    /// Pure: whether a query may start an installed extension whose trigger words it matches.
+    static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
+
+    func handleL2Query(_ query: String, skipMenuRouter: Bool, isSelectionQuestion: Bool = false) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
         // The launcher becomes key while the user types, so NSWorkspace/frontmost can now be
@@ -4287,8 +4300,14 @@ extension LauncherView {
             && !dockScope.isGlobalScope
             && !isGlobalContextActive
 
-        if !looksLikeQuestion && !scopedHasLinkedCLI, tryExecuteTriggerRuleByName(query) { return }
-        if trySystemCommand(query) { return }
+        if Self.triesCommandRouting(
+            isSelectionQuestion: isSelectionQuestion, looksLikeQuestion: looksLikeQuestion,
+            scopedHasLinkedCLI: scopedHasLinkedCLI),
+            tryExecuteTriggerRuleByName(query)
+        {
+            return
+        }
+        if !isSelectionQuestion, trySystemCommand(query) { return }
         if let existingTask = l2.currentTask {
             existingTask.cancel()
             l2.currentTask = nil
@@ -4569,7 +4588,11 @@ extension LauncherView {
                         !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                             .isEmpty
                     else { return }
-                    self.handleL2Query(fullQueryForRerun)
+                    // The re-run is the same question: it keeps how it was asked. Dropping
+                    // these made a Selection card question a command again on the re-run.
+                    self.handleL2Query(
+                        fullQueryForRerun, skipMenuRouter: skipMenuRouter,
+                        isSelectionQuestion: isSelectionQuestion)
                 }
                 return
             }
@@ -4797,7 +4820,13 @@ extension LauncherView {
             return
         }
 
-        if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
+        // A question about a selection is never taken for an extension's trigger words:
+        // "Convert this into a clean Markdown table…" ran an installed extension that opened
+        // an unrelated Finder folder instead of answering.
+        if Self.mayAutoRunExtension(isSelectionQuestion: isSelectionQuestion),
+            let top = matches.first,
+            shouldAutoRunL2Extension(query: query, ext: top.ilExtension)
+        {
             l2.currentTask = Task {
                 await executeL2Extension(top.ilExtension, context: scopedConversationContext)
                 await MainActor.run { finishL2AIRequest(l2RequestID) }

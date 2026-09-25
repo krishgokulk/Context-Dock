@@ -79,7 +79,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ❓ | `AppChatPromptModel` has Finder search; browse & attach not verified |
 | D8 | Clipboard as a scope | ✅ | Separate Corner pill + card (`CornerDockLayoutTests`, `CornerKeyboardOwnerTests`) |
 | D9 | Notifications compact scope | ❌ | No Corner code found |
-| D10 | Selection Scope with actions | 🟡 | Card + ask only — `00-DOCK-AND-CORNER.md` §4a; being fixed in task `corner-parity` |
+| D10 | Selection Scope with actions | ✅ | #84, checked on the app row by row 2026-09-25 (TextEdit, Finder). The Dock's rows through `SelectionActionProviding` on the captured selection (`theDocksOwnRowsReachTheCard`, `aRowRunsOnTheCapturedSelection`, `keysChooseAndRun`, `closeAndEscapeClose`); answers inside the card (`theAnswerIsDrawnInTheCard`, `followUpsAndEscape`); Share (`shareSelectionInTheCard`). Extraction still owed: #83 |
 | D11 | Quick Note split editor (list + editor, ⌘N new note, ↩ asks AI into the note) | ❌ | Dock-only (`NotepadScopeView`); the Quick Note hotkey opens a separate floating note |
 | D12 | Mail find actions | ❌ | No Corner code found |
 | D13 | Safari page actions | ❌ | Tabs: Corner shows the "tabs, page cmds, menu cmds" hint (`AppChatListCard.swift:184`) but loads no tabs — only the Dock does (`LauncherView.swift:3627` `loadSafariTabs`). Checked from code 2026-09-25; task 4 in `00-NOW.md` |
@@ -107,13 +107,28 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | F4 | Pinned results | ✅ | Corner dock strip pins (`DockPinStoreTests`, `pinsAreNeverOverflowed`) |
 | F5 | Running apps shown and switchable | ✅ | `removedRunningAppsLeaveTheStrip`, `runningOverflowsIntoAPlusPill` |
 
+## Corner-only (beyond the Dock)
+
+What the Corner's Selection card does that the Dock's Selection never did (#84, owner
+2026-09-25). Each has its test, all in `CornerSelectionActionsTests`.
+
+| # | Behaviour | Test |
+|---|---|---|
+| X1 | **Share inside the card**: "Share Selection" lists the Mac's share destinations in the card (every share extension, the Dock's frecency order, typing narrows); Share at the end of an answer shares the answer | `shareSelectionInTheCard`, `typingNarrowsTheDestinations`, `shareTheAnswer`, `destinationsRankTheDocksWay` |
+| X2 | **Typed "send to …"**: the card shows the recipient (as the contact lookup resolves it), the channel and the exact text, and sends only on Send (↩ or a click); Esc / Cancel / closing sends nothing | `aSendWaitsForConfirmation`, `nothingIsSentWithoutConfirmation`, `filteringIsNotSending` |
+| X3 | **Save to Quick Note** on an answer | `copyAndSaveTheAnswer` |
+| X4 | **File preview**: one file as its thumbnail with kind and size, several as a strip, a folder as its listing; Space or a click opens the app's preview | `previewKindFollowsTheSelection`, `spacePreviewsTheFiles`, `folderPreviewSize` |
+| X5 | **Computer Use consent rule**: rows that drive an app's UI run only with Computer Use for that app (Writing Tools hide without it; Finder menu rows ask Allow once / Always in the card); Replace copies without it; "Always" is listed in Settings with Remove, after which the next action asks again | `screenRowsFollowComputerUse`, `consentIsAskedInTheCard`, `allowAlwaysGrants`, `replaceFollowsComputerUse`, `removingAlwaysAllowAsksAgain` |
+
 ---
 
 ## Summary (2026-09-24)
 
 | | ✅ | 🟡 | ❌ | ❓ | — |
 |---|---:|---:|---:|---:|---:|
-| Rows (52) | 19 | 13 | 9 | 7 | 4 |
+| Rows (52) | 20 | 12 | 9 | 7 | 4 |
+
+*2026-09-25: D10 🟡 → ✅ (#84).*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,
