@@ -52,6 +52,111 @@ final class SelectionScopeModel: ObservableObject {
     /// The row ↑/↓ landed on. Nil: Return asks the typed question.
     @Published private(set) var focusedIndex: Int?
 
+    // MARK: Answering in place
+
+    /// The conversation the answer is written into — the one App Chat shows too. The card
+    /// shows the part of it that this card asked, in place of its rows.
+    let conversation: AppChatConversation
+    /// The card is showing an answer (owner, 2026-09-25: answers belong in the Selection
+    /// card, not a second card stacked on it).
+    @Published private(set) var isShowingAnswer = false
+    /// The first question this card asked, once it is in the conversation. Everything from it
+    /// on is this card's thread; what came before belongs to the app's earlier chat.
+    @Published private(set) var answerAnchorID: UUID?
+    private var messageIDsBeforeAsking: Set<UUID> = []
+    private var conversationSink: AnyCancellable?
+
+    /// Whether Computer Use is on for an app — what lets Replace write into it.
+    var computerUseAllowed: (String) -> Bool = { bundleID in
+        ComputerUseConsentStore.shared.effectiveMode(for: bundleID).canOperate
+    }
+
+    init(conversation: AppChatConversation = .shared) {
+        self.conversation = conversation
+    }
+
+    /// This card's thread: from its first question to now.
+    var answerMessages: [AIChatMessage] {
+        guard let anchor = answerAnchorID,
+            let start = conversation.messages.firstIndex(where: { $0.id == anchor })
+        else { return [] }
+        return Array(conversation.messages[start...])
+    }
+
+    /// The latest answer — what the end-of-result actions act on.
+    var latestAnswer: String? {
+        answerMessages.last(where: { $0.role == .assistant && !$0.isError })?.content
+    }
+
+    var isAnswering: Bool { isShowingAnswer && conversation.isLoading }
+
+    /// Pure: the first user message in `messages` that was not there before the question —
+    /// the question itself, even when the app's earlier chat was loaded in around it.
+    static func anchor(in messages: [AIChatMessage], before: Set<UUID>) -> UUID? {
+        messages.last(where: { $0.role == .user && !before.contains($0.id) })?.id
+    }
+
+    private func watchForAnchor() {
+        conversationSink = conversation.$messages.sink { [weak self] messages in
+            guard let self, self.answerAnchorID == nil else { return }
+            self.answerAnchorID = Self.anchor(in: messages, before: self.messageIDsBeforeAsking)
+        }
+    }
+
+    /// Esc: an answer steps back to the rows; the rows close the card.
+    func escapePressed() {
+        if isShowingAnswer {
+            isShowingAnswer = false
+            touch()
+        } else {
+            close()
+        }
+    }
+
+    // MARK: End-of-result actions
+
+    /// Where Copy puts the answer, and where Quick Note saves it. Tests replace both so they
+    /// never touch the user's clipboard or notes.
+    var copyText: (String) -> Void = { text in
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+    var saveNote: (String) -> Bool = { QuickNotesStore.shared.add($0) }
+
+    func copyAnswer() {
+        guard let answer = latestAnswer else { return }
+        copyText(answer)
+        reportResult("Copied", true)
+    }
+
+    func saveAnswerToQuickNote() {
+        guard let answer = latestAnswer else { return }
+        let saved = saveNote(answer)
+        reportResult(saved ? "Saved to Quick Note" : "Could not save the note", saved)
+    }
+
+    var replaceRoute: SelectionActions.ReplaceRoute {
+        SelectionActions.replaceRoute(
+            snapshot: snapshot, computerUseAllowed: computerUseAllowed(snapshot.bundleID))
+    }
+
+    /// Replace the selection with the answer where Computer Use allows it; otherwise copy it
+    /// and say what would let it replace in place.
+    func replaceWithAnswer() {
+        guard let answer = latestAnswer else { return }
+        switch replaceRoute {
+        case .replaceInPlace:
+            let done = provider?.replaceSelection(with: answer, for: snapshot) ?? false
+            reportResult(done ? "Replaced in \(snapshot.appName)" : "Could not replace", done)
+        case .copyInstead:
+            copyText(answer)
+            reportResult(
+                "Copied — turn on Computer Use for \(snapshot.appName) to replace in place", true)
+        case .unavailable:
+            break
+        }
+    }
+
     /// Where the rows come from. Nil in production means "whoever is registered" — the Dock,
     /// today; a test gives its own.
     var providerOverride: (any SelectionActionProviding)?
@@ -137,6 +242,9 @@ final class SelectionScopeModel: ObservableObject {
             appName: context.appName, bundleID: context.bundleId)
         rows = []
         focusedIndex = nil
+        isShowingAnswer = false
+        answerAnchorID = nil
+        conversationSink = nil
         set(.showing)
         refreshRows()
         arm(after: Self.idleDwell)
@@ -218,9 +326,11 @@ final class SelectionScopeModel: ObservableObject {
         focusedIndex.flatMap { rows.indices.contains($0) ? rows[$0] : nil }
     }
 
-    /// Return: the chosen row, or the typed question when none is chosen.
+    /// Return: the chosen row, or the typed question when none is chosen. With an answer up,
+    /// Return asks the follow-up.
     @discardableResult
     func returnPressed() -> Bool {
+        if isShowingAnswer { return submit() }
         if let row = focusedRow {
             run(row)
             return true
@@ -291,6 +401,13 @@ final class SelectionScopeModel: ObservableObject {
 
     /// Hands a question about the captured selection to the chat, and shows the answer here.
     private func ask(_ request: SelectionAskRequest) {
+        if answerAnchorID == nil {
+            // The first question of this card: remember what the conversation already held,
+            // so the thread starts at this question and not at the app's older chat.
+            messageIDsBeforeAsking = Set(conversation.messages.map(\.id))
+            watchForAnchor()
+        }
+        isShowingAnswer = true
         if let askHandler {
             askHandler(request)
         } else {
@@ -314,10 +431,8 @@ final class SelectionScopeModel: ObservableObject {
         // This surface chooses a subject; the corner's chat is where an answer is shown. It
         // used to hide itself here and hand over to a chat that was not on screen, so the
         // answer arrived nowhere and pressing Return looked like it had done nothing.
-        if askHandler == nil {
-            CornerDockController.shared.chatPresentation.presentAnswer(
-                forSelectionIn: request.appName, bundleID: request.bundleID)
-        }
+        // The answer is drawn in this card. The App Chat card is not raised for it: two cards
+        // for one question was the owner's report (2026-09-25).
         // Stay up while the turn runs: the card is what says which selection this is about.
         cancel()
     }
@@ -350,6 +465,9 @@ final class SelectionScopeModel: ObservableObject {
         cancel()
         isPinned = false
         hasAsked = false
+        isShowingAnswer = false
+        answerAnchorID = nil
+        conversationSink = nil
         set(.hidden)
     }
 
@@ -359,7 +477,8 @@ final class SelectionScopeModel: ObservableObject {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, let self else { return }
             guard Self.mayStandDown(
-                isPinned: self.isPinned, pointerInside: self.pointerInside, inUse: self.isInUse())
+                isPinned: self.isPinned, pointerInside: self.pointerInside,
+                inUse: self.isInUse() || self.isAnswering)
             else {
                 // Still in use: look again later rather than closing under the user.
                 self.arm(after: Self.idleDwell)

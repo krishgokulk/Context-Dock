@@ -45,6 +45,18 @@ extension LauncherView: SelectionActionProviding {
         }
     }
 
+    @discardableResult
+    func replaceSelection(with text: String, for snapshot: SelectionSnapshot) -> Bool {
+        guard !text.isEmpty, !snapshot.text.isEmpty,
+            let app = NSRunningApplication.runningApplications(
+                withBundleIdentifier: snapshot.bundleID
+            ).first(where: { !$0.isTerminated })
+        else { return false }
+        // The Dock's own paste-back, unchanged: the source app forward, then the text in.
+        pasteNativeWritingToolOutput(text, sourcePID: app.processIdentifier)
+        return true
+    }
+
     private func withCapturedSelection<Result>(
         _ snapshot: SelectionSnapshot, _ body: () -> Result
     ) -> Result {

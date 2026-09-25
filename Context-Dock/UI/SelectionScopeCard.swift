@@ -21,9 +21,20 @@ enum SelectionScopeMetrics {
     static let maxVisibleRows = 6
     static var rowHeight: CGFloat { AppChatListMetrics.rowHeight }
 
+    /// Answering: the selection shrinks to one line, the answer takes the room the rows had.
+    static let compactPreviewHeight: CGFloat = 22
+    static let answerHeight: CGFloat = 300
+    static let resultActionsHeight: CGFloat = 36
+
     /// A pure function of state, like every other corner surface: the shell hit-tests this
     /// exact number.
-    static func size(rows: Int) -> CGSize {
+    static func size(rows: Int, answering: Bool = false) -> CGSize {
+        if answering {
+            return CGSize(
+                width: width,
+                height: headerHeight + compactPreviewHeight + answerHeight + resultActionsHeight
+                    + inputHeight + verticalPadding * 2)
+        }
         let listed = CGFloat(min(max(rows, 0), maxVisibleRows)) * rowHeight
         return CGSize(
             width: width,
@@ -33,20 +44,28 @@ enum SelectionScopeMetrics {
 
 struct SelectionScopeCard: View {
     @ObservedObject var model: SelectionScopeModel
+    /// Observed so the answer redraws as it streams in.
+    @ObservedObject private var conversation = AppChatConversation.shared
     @ObservedObject private var keyboardState = CornerDockController.shared.keyboardState
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            preview
-            rowList
+            if model.isShowingAnswer {
+                compactPreview
+                answer
+                resultActions
+            } else {
+                preview
+                rowList
+            }
             field
         }
         .padding(.vertical, SelectionScopeMetrics.verticalPadding)
         .frame(
-            width: SelectionScopeMetrics.size(rows: model.rows.count).width,
-            height: SelectionScopeMetrics.size(rows: model.rows.count).height,
+            width: cardSize.width,
+            height: cardSize.height,
             alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
@@ -66,6 +85,84 @@ struct SelectionScopeCard: View {
         .onChange(of: keyboardState.focusRequestToken) { _, _ in
             fieldFocused = keyboardState.owner == .selection
         }
+    }
+
+    private var cardSize: CGSize {
+        SelectionScopeMetrics.size(rows: model.rows.count, answering: model.isShowingAnswer)
+    }
+
+    /// The selection, one line: still says what the answer is about.
+    private var compactPreview: some View {
+        Text(model.preview)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(
+                maxWidth: .infinity, minHeight: SelectionScopeMetrics.compactPreviewHeight,
+                maxHeight: SelectionScopeMetrics.compactPreviewHeight, alignment: .leading)
+            .padding(.horizontal, 16)
+    }
+
+    /// The answer, drawn by the corner's one transcript view — tables, links, files, images and
+    /// result cards exactly as App Chat and the Dock draw them.
+    private var answer: some View {
+        CornerTranscript(
+            messages: model.answerMessages,
+            isAnswering: model.isAnswering,
+            liveSteps: conversation.liveSteps,
+            appName: model.appName,
+            appBundleID: model.appBundleID,
+            appIcon: appIcon)
+            .frame(height: SelectionScopeMetrics.answerHeight)
+    }
+
+    /// What can be done with the answer, at its end.
+    private var resultActions: some View {
+        HStack(spacing: 8) {
+            switch model.replaceRoute {
+            case .replaceInPlace:
+                resultButton("Replace", "arrow.left.arrow.right") { model.replaceWithAnswer() }
+            case .copyInstead:
+                resultButton("Replace", "arrow.left.arrow.right") { model.replaceWithAnswer() }
+                    .help("Copies the answer. Turn on Computer Use for \(model.appName) to replace in place.")
+            case .unavailable:
+                EmptyView()
+            }
+            resultButton("Copy", "doc.on.doc") { model.copyAnswer() }
+            resultButton("Quick Note", "note.text.badge.plus") { model.saveAnswerToQuickNote() }
+            Spacer(minLength: 0)
+            Button { model.escapePressed() } label: {
+                Label("Actions", systemImage: "list.bullet")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Back to the actions (Esc)")
+        }
+        .disabled(model.latestAnswer == nil || model.isAnswering)
+        .opacity(model.latestAnswer == nil || model.isAnswering ? 0.45 : 1)
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.resultActionsHeight)
+    }
+
+    private func resultButton(
+        _ title: String, _ symbol: String, _ action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(Capsule().fill(Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var appIcon: NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: model.appBundleID)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     /// What was selected and where it came from — said plainly, because acting on the wrong
@@ -173,7 +270,7 @@ struct SelectionScopeCard: View {
         HStack(spacing: 8) {
             ZStack(alignment: .leading) {
                 if model.query.isEmpty {
-                    Text("Ask about this selection…")
+                    Text(model.isShowingAnswer ? "Ask a follow-up…" : "Ask about this selection…")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.secondary.opacity(0.6))
                 }
@@ -186,7 +283,7 @@ struct SelectionScopeCard: View {
                     .onKeyPress(.downArrow) { model.moveFocus(by: 1) ? .handled : .ignored }
                     .onKeyPress(.upArrow) { model.moveFocus(by: -1) ? .handled : .ignored }
                     .onKeyPress(.escape) {
-                        model.close()
+                        model.escapePressed()
                         return .handled
                     }
             }

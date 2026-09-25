@@ -31,6 +31,12 @@ private final class FakeDock: SelectionActionProviding {
         return true
     }
 
+    private(set) var replaced: [(text: String, snapshot: SelectionSnapshot)] = []
+    func replaceSelection(with text: String, for snapshot: SelectionSnapshot) -> Bool {
+        replaced.append((text, snapshot))
+        return true
+    }
+
     /// The Dock's Selection list for a text and a file selection, in the Dock's order.
     static func rows(for snapshot: SelectionSnapshot) -> [SelectionActionRow] {
         func row(_ id: String, _ title: String, _ kind: SelectionActionRow.Kind) -> SelectionActionRow {
@@ -339,5 +345,124 @@ struct CornerSelectionActionsTests {
         model.toggle(from: AXContext(appName: "Mail", bundleId: "com.apple.mail", pid: 1))
         #expect(model.phase == .hidden)
         #expect(said == ["Mail"])
+    }
+
+    // MARK: The answer in the card
+
+    private func answeringCard(
+        _ snapshot: SelectionSnapshot, dock: FakeDock, conversation: AppChatConversation
+    ) -> SelectionScopeModel {
+        let model = SelectionScopeModel(conversation: conversation)
+        model.providerOverride = dock
+        model.reportResult = { _, _ in }
+        model.scheduleRowBuild = { $0() }
+        model.askHandler = { request in
+            // Stands in for the Dock's turn: the question lands in the conversation.
+            conversation.messages.append(AIChatMessage(role: .user, content: request.prompt))
+        }
+        var context = AXContext(appName: snapshot.appName, bundleId: snapshot.bundleID, pid: 1)
+        context.selectedText = snapshot.text.isEmpty ? nil : snapshot.text
+        context.selectedFilePaths = snapshot.filePaths
+        model.summon(from: context)
+        return model
+    }
+
+    @Test("An AI row answers in the card, from its own question on")
+    func theAnswerIsDrawnInTheCard() {
+        let conversation = AppChatConversation()
+        // The app's earlier chat is already in the conversation; it is not this card's.
+        conversation.messages = [
+            AIChatMessage(role: .user, content: "an older question"),
+            AIChatMessage(role: .assistant, content: "an older answer"),
+        ]
+        let model = answeringCard(text, dock: FakeDock(), conversation: conversation)
+        model.run(model.rows.first { $0.id == "selection-workflow-ai-rewrite" }!)
+        #expect(model.isShowingAnswer)
+        conversation.messages.append(AIChatMessage(role: .assistant, content: "The rewrite."))
+        #expect(model.answerMessages.map(\.content)
+            == ["Rewrite this clearly. Return only the replacement text.", "The rewrite."])
+        #expect(model.latestAnswer == "The rewrite.")
+    }
+
+    @Test("The thread starts at the question even when older chat loads in around it")
+    func theAnchorIsTheNewQuestion() {
+        let old = AIChatMessage(role: .user, content: "old")
+        let new = AIChatMessage(role: .user, content: "new")
+        let reply = AIChatMessage(role: .assistant, content: "reply")
+        #expect(SelectionScopeModel.anchor(in: [old, reply, new], before: [old.id]) == new.id)
+        #expect(SelectionScopeModel.anchor(in: [old, reply], before: [old.id]) == nil)
+    }
+
+    @Test("Return asks a follow-up; Esc goes answer → actions → closed")
+    func followUpsAndEscape() {
+        let conversation = AppChatConversation()
+        let model = answeringCard(text, dock: FakeDock(), conversation: conversation)
+        model.query = "first"
+        model.returnPressed()
+        model.query = "and shorter?"
+        #expect(model.returnPressed())
+        #expect(conversation.messages.map(\.content) == ["first", "and shorter?"])
+        #expect(model.answerMessages.count == 2)
+
+        model.escapePressed()
+        #expect(!model.isShowingAnswer)
+        #expect(model.phase == .showing)
+        model.escapePressed()
+        #expect(model.phase == .hidden)
+    }
+
+    @Test("Replace writes back only with Computer Use; otherwise it copies and says why")
+    func replaceFollowsComputerUse() {
+        #expect(SelectionActions.replaceRoute(snapshot: text, computerUseAllowed: true)
+            == .replaceInPlace)
+        #expect(SelectionActions.replaceRoute(snapshot: text, computerUseAllowed: false)
+            == .copyInstead)
+        #expect(SelectionActions.replaceRoute(snapshot: file, computerUseAllowed: true)
+            == .unavailable)
+
+        for allowed in [true, false] {
+            let conversation = AppChatConversation()
+            let dock = FakeDock()
+            let model = answeringCard(text, dock: dock, conversation: conversation)
+            var copied: [String] = []
+            model.copyText = { copied.append($0) }
+            model.computerUseAllowed = { _ in allowed }
+            model.query = "fix grammar"
+            model.returnPressed()
+            conversation.messages.append(AIChatMessage(role: .assistant, content: "Fixed."))
+            model.replaceWithAnswer()
+            if allowed {
+                #expect(dock.replaced.map(\.text) == ["Fixed."])
+                #expect(dock.replaced.first?.snapshot == text)
+                #expect(copied.isEmpty)
+            } else {
+                #expect(dock.replaced.isEmpty)
+                #expect(copied == ["Fixed."])
+            }
+        }
+    }
+
+    @Test("Copy and Quick Note act on the latest answer")
+    func copyAndSaveTheAnswer() {
+        let conversation = AppChatConversation()
+        let model = answeringCard(text, dock: FakeDock(), conversation: conversation)
+        var copied: [String] = []
+        var saved: [String] = []
+        model.copyText = { copied.append($0) }
+        model.saveNote = { saved.append($0); return true }
+        model.query = "summarise"
+        model.returnPressed()
+        conversation.messages.append(AIChatMessage(role: .assistant, content: "Summary."))
+        model.copyAnswer()
+        model.saveAnswerToQuickNote()
+        #expect(copied == ["Summary."])
+        #expect(saved == ["Summary."])
+    }
+
+    @Test("Answering, the card has room for the answer and its actions")
+    func theAnsweringCardSize() {
+        let answering = SelectionScopeMetrics.size(rows: 6, answering: true)
+        #expect(answering.height > SelectionScopeMetrics.size(rows: 6).height)
+        #expect(answering == SelectionScopeMetrics.size(rows: 0, answering: true))
     }
 }

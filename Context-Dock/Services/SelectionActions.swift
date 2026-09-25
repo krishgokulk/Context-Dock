@@ -108,6 +108,10 @@ protocol SelectionActionProviding {
     /// Runs the row with this id, rebuilt for `snapshot`. False when the row is not there.
     @discardableResult
     func runSelectionRow(id: String, query: String, for snapshot: SelectionSnapshot) -> Bool
+    /// Put `text` in place of the selection in the app it came from. Takes the screen (the
+    /// source app comes forward and is pasted into), so callers gate it on Computer Use.
+    @discardableResult
+    func replaceSelection(with text: String, for snapshot: SelectionSnapshot) -> Bool
 }
 
 @MainActor
@@ -124,6 +128,16 @@ enum SelectionActions {
     /// Pure: the corner's list is the Dock's, in the Dock's order, less Share.
     static func cornerRows(_ rows: [SelectionActionRow]) -> [SelectionActionRow] {
         rows.filter { $0.kind != .share }
+    }
+
+    /// Pure: what the end-of-answer Replace does. Replacing writes into another app through its
+    /// UI — the `takesScreen` surface (surface-cost spec) — so it runs only when Computer Use is
+    /// on for that app; otherwise the answer is copied and the card says why.
+    enum ReplaceRoute: Equatable { case replaceInPlace, copyInstead, unavailable }
+
+    static func replaceRoute(snapshot: SelectionSnapshot, computerUseAllowed: Bool) -> ReplaceRoute {
+        guard !snapshot.text.isEmpty, snapshot.filePaths.isEmpty else { return .unavailable }
+        return computerUseAllowed ? .replaceInPlace : .copyInstead
     }
 
     /// Pure: whether Finder's live selection must be set back to the captured files before a

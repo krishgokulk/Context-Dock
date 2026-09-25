@@ -62,44 +62,30 @@ struct SelectionScopeSubmitTests {
         #expect(ours?["bundleId"] as? String == "com.microsoft.VSCode")
     }
 
-    @Test("Asking hands the keyboard to the chat the answer is in")
-    func theCardStopsClaimingTheCaret() {
+    @Test("Asking keeps the keyboard in the card, where the follow-up is typed")
+    func theCardKeepsTheCaretForFollowUps() {
+        // Owner, 2026-09-25: the answer is drawn in the Selection card and follow-ups are
+        // asked there, so the card does not hand the keyboard to the App Chat card any more.
         let model = summoned()
+        model.askHandler = { _ in }
         model.query = "explain this"
-
-        // Before asking, the card owns the keyboard: it was summoned by hotkey and it has
-        // the field the user is typing into.
-        #expect(
-            CornerKeyboardOwner.owner(
-                clipboardArmed: false,
-                selectionWantsKeyboard: model.phase.isVisible && !model.hasAsked,
-                chatShowsInput: true) == .selection)
-
         #expect(model.submit())
-
-        // After, the card is still on screen as the subject of the answer — but a follow-up
-        // must be typeable in the chat without dismissing it first.
         #expect(model.hasAsked)
         #expect(model.phase == .showing)
         #expect(
             CornerKeyboardOwner.owner(
                 clipboardArmed: false,
-                selectionWantsKeyboard: model.phase.isVisible && !model.hasAsked,
-                chatShowsInput: true) == .chat)
+                selectionWantsKeyboard: model.phase.isVisible,
+                chatShowsInput: true) == .selection)
     }
 
-    @Test("Asking opens somewhere for the answer to appear")
-    func anAnswerSurfaceIsOpened() {
+    @Test("The answer is shown in the card itself")
+    func theAnswerIsInTheCard() {
         let model = summoned()
+        model.askHandler = { _ in }
         model.query = "explain this"
         #expect(model.submit())
-
-        let presentation = CornerDockController.shared.chatPresentation
-        #expect(presentation.isVisible)
-        #expect(presentation.mode == .frontmostApp)
-        // Waiting, not resting: the dock clears the session when it retargets, and a
-        // transcript that treated that empty publish as "nothing here" would drop straight
-        // back to a field before the answer arrived.
-        #expect(presentation.appChat.phase == .chat)
+        #expect(model.isShowingAnswer)
+        #expect(model.phase == .showing)
     }
 }
