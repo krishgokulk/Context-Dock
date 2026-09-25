@@ -175,6 +175,9 @@ final class AppChatPromptModel: ObservableObject {
     var showsTabBar: Bool {
         !isGlobalScope && BrowserTabList.listsTabs(bundleID: appBundleID)
     }
+    /// The pins the strip shows: Global's, never a Safari scope's — its bar is the app's own
+    /// things (open tabs today; its pinned actions and tabs are task 5 in 00-NOW.md).
+    var stripPins: [DockPin] { showsTabBar ? [] : DockPinStore.shared.pins }
     /// The Global shell — its height, its fold into a dock and back — is Global Context's,
     /// and a Safari scope's.
     var usesDockShell: Bool { isGlobalScope || showsTabBar }
@@ -819,7 +822,10 @@ final class AppChatPromptModel: ObservableObject {
     /// happened, the selection when there is one, the result of an action for a few seconds
     /// after it ran. Same rules as the field's own row.
     func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
-        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
+        // A Safari scope's bar is its tabs alone (owner 2026-09-25): the Context Dock's
+        // own things, not Global's.
+        guard !showsTabBar else { return 0 }
+        return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 
     /// The first printable character brings the field back and lands in it. Anything the

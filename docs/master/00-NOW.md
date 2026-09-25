@@ -14,7 +14,19 @@
 
 ## Next, in order
 
-**5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
+**5. Pinned actions and pinned tabs in the Context Dock** (owner 2026-09-25).
+The Context Dock's folded bar (#89: open tabs today) also carries the app's pinned items.
+
+```
+Task: pinned actions + pinned tabs in the Context Dock. Own worktree from origin/general-chat-agent.
+- Pin per app: right-click an app's action or menu command in the Context Dock → "Pin"; it stays in that app's bar. Stored per app (bundle id), removable the same way.
+- Pinned tabs: right-click a tab icon → "Pin"; it stays first in Safari's bar and reopens its page if the tab was closed.
+- Bar order: pinned tabs, open tabs, then pinned actions (divider like Global's pins).
+- Tests: pin/unpin per app, persistence, a pinned closed tab reopens its URL, bar composition.
+- Inventory + 00-DOCK-AND-CORNER.md. check.sh green, one PR, one MEMORY.md line, move to Done.
+```
+
+**6. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
 remaining scopes → owner decisions D9 / D11 / D12.
 
 ## Done
@@ -27,7 +39,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
-| 2026-09-25 | Safari tabs in the Corner (D13) | #89 |
+| 2026-09-25 | Safari tabs in the Corner (D13): Context Dock folds into its tab bar | #89 |
 
 ## Owner decisions (append-only)
 
@@ -48,6 +60,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Quick Note: a Save-to-Quick-Note action on answers; the knowledge graph gets no action. |
 | 2026-09-25 | Test sends go only to the owner (Gokula Kannan J). |
 | 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
+| 2026-09-25 | The Context Dock (frontmost-app chat) folds its field away at rest into a bar of the app's own things — pinned actions, open tabs, pinned tabs — like Global Context's running apps; not Global's pins. Open tabs in #89; pins are task 5. |
 | 2026-09-25 | ⌥⌥ opens the **Dock**, ⌘⌘ opens the **Corner** — fixed, no setting. Task 3 ("⌥⌥ opens Dock / Corner" setting) is dropped. |
 
 ## Open decisions (owner)

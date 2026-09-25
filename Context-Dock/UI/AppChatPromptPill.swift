@@ -302,7 +302,7 @@ struct AppChatPromptPill: View {
 
     private var stripPlan: DockStripPlan {
         DockStripPlan.make(
-            running: model.stripIcons, pins: DockPinStore.shared.pins,
+            running: model.stripIcons, pins: model.stripPins,
             tools: stripToolCount, fieldIcons: model.promptIconCount)
     }
 
@@ -319,7 +319,7 @@ struct AppChatPromptPill: View {
             clipboardVisible: clipboard.phase.isVisible,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
-            running: model.stripIcons, pins: DockPinStore.shared.pins, tools: tools)
+            running: model.stripIcons, pins: model.stripPins, tools: tools)
         let composition = plan.composition
         return AppChatPromptMetrics.size(
             for: phase,
@@ -872,7 +872,7 @@ struct AppChatPromptPill: View {
                 // current as a fresh one. Same transient signal as the composer's own.
                 // In Global the strip's own clipboard icon stays on screen in its trailing
                 // region, so the field does not draw a second one beside it.
-                if clipboard.phase.isVisible, !model.usesDockShell {
+                if clipboard.phase.isVisible, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
@@ -882,14 +882,14 @@ struct AppChatPromptPill: View {
             // This lived only in the composer's own branch below, so Global Context and
             // the scopes reached from it never had a way to see or reach the selection at
             // all, whatever the frontmost app's AX tree actually reported.
-            if model.isSearchField, model.selection != nil, !model.usesDockShell {
+            if model.isSearchField, model.selection != nil, !model.isGlobalScope {
                 selectionScopeButton
             }
 
             // What the last action came to, beside the field for a few seconds — the
             // dock's inline result, carried here so a result reaches the surface the user
             // is on. Same transient lifetime as the clipboard's own icon.
-            if let result = actionFeedback.glyph, !model.usesDockShell {
+            if let result = actionFeedback.glyph, !model.isGlobalScope {
                 ActionFeedbackGlyph(feedback: result)
                     .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
@@ -980,7 +980,7 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat, !model.usesDockShell {
+            if pointerInside, model.phase != .chat, !model.isGlobalScope {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }

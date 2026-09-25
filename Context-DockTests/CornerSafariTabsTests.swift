@@ -1,8 +1,8 @@
 // Context-DockTests/CornerSafariTabsTests.swift
 //
-// Safari's open tabs in the Corner's Safari scope (inventory D13), exactly like Global
-// Context's running apps (owner 2026-09-25): the same shell and height, a strip of big tab
-// icons at rest that folds into a small pill in the field, "+N" for the rest. From the loader
+// Safari's open tabs in its Context Dock (inventory D13; owner 2026-09-25): the field folds
+// away at rest into a bar of the app's own things — its open tabs, never Global's pins — the
+// way Global Context folds into its running apps, and expands back; "+N" for the rest. From the loader
 // the Dock uses (`SafariTabManager`) through the shared `BrowserTabList`.
 //
 // Nothing here depends on Safari running: the tab source, refresh and switch are injected. (The first version read the scope's rows only after a running-app check, and so
@@ -36,7 +36,7 @@ struct CornerSafariTabsTests {
         return model
     }
 
-    @Test("A Safari scope uses Global Context's shell: its height, and it rests as a dock")
+    @Test("Safari's Context Dock uses the Global shell: its height, and it folds away at rest")
     func theSafariScopeUsesTheGlobalShell() {
         let model = scope()
         #expect(model.showsTabBar && model.usesDockShell && model.showsFieldPills)
@@ -51,7 +51,7 @@ struct CornerSafariTabsTests {
         }
     }
 
-    @Test("The tabs take the running apps' place: all of them in the strip, in order")
+    @Test("The open tabs are the bar's icons, all of them, in order")
     func theTabsAreTheStripIcons() {
         let model = scope()
         #expect(model.stripIcons.map(\.title) == ["Inbox", "Pull requests", "Swift Forums"])
@@ -64,13 +64,23 @@ struct CornerSafariTabsTests {
         })
     }
 
-    @Test("The field's pill holds what Global's holds; the rest are +N")
+    @Test("The bar is the app's own: no Global pins, no Global tools")
+    func theBarIsTheAppsOwn() {
+        let model = scope()
+        #expect(model.stripPins.isEmpty)
+        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 0)
+        let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
+        #expect(chrome.stripPins.count == DockPinStore.shared.pins.count)
+    }
+
+    @Test("The field's pill holds what fits; the rest are +N")
     func overflowGoesToPlusN() {
         let many = (1...60).map {
             SafariTab(title: "Tab \($0)", url: "https://example.com/\($0)", windowIndex: 1, tabIndex: $0)
         }
         let model = scope(tabs: many)
-        let capacity = AppChatPromptModel.pillFieldCapacity
+        let capacity = AppChatPromptMetrics.matchIconCapacity(maximumWidth: DockStripPlan.screenBudget)
+            - AppChatPromptMetrics.appFieldChromeSlots
         #expect(model.globalMatchIcons.count == max(1, capacity))
         #expect(model.globalOverflowCount == 60 - model.globalMatchIcons.count)
         #expect(model.stripIcons.count == 60)

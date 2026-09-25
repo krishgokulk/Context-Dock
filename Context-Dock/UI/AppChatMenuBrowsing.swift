@@ -298,7 +298,11 @@ extension AppChatPromptModel {
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
             running: running,
-            fieldCapacity: Self.pillFieldCapacity)
+            // A Safari scope's bar has no pins to keep room for.
+            fieldCapacity: showsTabBar
+                ? AppChatPromptMetrics.matchIconCapacity(maximumWidth: DockStripPlan.screenBudget)
+                    - AppChatPromptMetrics.appFieldChromeSlots
+                : Self.pillFieldCapacity)
     }
 
     /// How many running apps the field shows before the rest become `+N`.

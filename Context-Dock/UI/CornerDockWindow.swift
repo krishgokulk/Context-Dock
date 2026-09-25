@@ -495,7 +495,7 @@ final class CornerDockController: NSObject {
         }
         guard let target else { return nil }
         return DockStripPlan.make(
-            running: prompt.stripIcons, pins: DockPinStore.shared.pins,
+            running: prompt.stripIcons, pins: prompt.stripPins,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
             fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
@@ -562,7 +562,7 @@ final class CornerDockController: NSObject {
         // The same composition the strip draws from: a pinned app that is running is one
         // icon there, so it must be one icon wide here.
         let composition = DockStripPlan.make(
-            running: prompt.stripIcons, pins: DockPinStore.shared.pins,
+            running: prompt.stripIcons, pins: prompt.stripPins,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil)
         ).composition
         return AppChatPromptMetrics.size(

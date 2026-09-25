@@ -105,7 +105,7 @@ struct CornerDockStrip: View {
     /// running or both.
     private var plan: DockStripPlan {
         DockStripPlan.make(
-            running: model.stripIcons, pins: pins.pins,
+            running: model.stripIcons, pins: model.stripPins,
             tools: model.dockToolCount(
                 clipboardVisible: clipboard.phase.isVisible,
                 feedbackVisible: feedback.glyph != nil),
@@ -116,7 +116,9 @@ struct CornerDockStrip: View {
         HStack(spacing: M.dockIconGap) {
             // The field, folded: the first item in the strip. Hovering it, or clicking
             // it, widens it back.
-            toolIcon("magnifyingglass", title: "Search") { expandField() }
+            // The field, folded: the magnifier in Global, the app's own icon in its Context
+            // Dock — what the field says it is about when it opens.
+            foldedField { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
                 // The hairline between the field, folded, and the apps — the same one the
@@ -407,6 +409,26 @@ struct CornerDockStrip: View {
         }
         .accessibilityLabel(pin.title)
         .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private func foldedField(action: @escaping () -> Void) -> some View {
+        if model.showsTabBar,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: model.appBundleID)
+        {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 24, height: 24)
+                .frame(width: M.dockIconSize, height: M.dockIconSize)
+                .contentShape(Rectangle())
+                .onTapGesture(perform: action)
+                .help("Ask \(model.appName)")
+                .accessibilityLabel("Ask \(model.appName)")
+                .accessibilityAddTraits(.isButton)
+        } else {
+            toolIcon("magnifyingglass", title: "Search", action: action)
+        }
     }
 
     private func toolIcon(_ symbol: String, title: String, action: @escaping () -> Void)
