@@ -10,23 +10,9 @@
 
 ## In progress
 
-*None.* Task 2 is done (docs PR); task 3 is next.
+*None.* Task 2 is done (#88); task 3 dropped by the owner (decision below); task 4 is next.
 
 ## Next, in order
-
-**3. ⌥⌥ opens Dock / Corner setting** (inventory A1).
-Today ⌥⌥ → `toggleLauncher()` (Dock, centre); ⌘⌘ → `activateGlobalContextScope()` (Corner). The
-Corner's frontmost-app mode is `activateAppChatPrompt()`, reachable only by the App Chat hotkey
-(unset by default) — so no gesture opens the Corner in Context Dock mode.
-
-```
-Task: ⌥⌥ target setting (inventory A1). Own worktree from origin/general-chat-agent.
-- Setting "⌥⌥ opens: Dock / Corner" on the Hotkeys page (default Dock).
-- Corner: ⌥⌥ → activateAppChatPrompt() (frontmost-app mode); ⌥⌥ again puts it away; ⌘⌘ while it's up switches to Global Context and ⌥⌥ switches back — same as the Dock.
-- Tests: each setting routes ⌥⌥ to the right shell; ⌥⌥ toggles; ⌘⌘ ↔ ⌥⌥ switch modes in the Corner.
-- Update inventory A1 and 00-DOCK-AND-CORNER.md §5 ("interim: user-selectable, default Dock").
-check.sh green, one PR, one MEMORY.md line, move this task to Done in 00-NOW.md.
-```
 
 **4. Safari tabs in the Corner** (inventory D13).
 The Corner shows the shared hint "tabs, page cmds, menu cmds" (`UI/AppChatListCard.swift:184` via
@@ -76,9 +62,10 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Quick Note: a Save-to-Quick-Note action on answers; the knowledge graph gets no action. |
 | 2026-09-25 | Test sends go only to the owner (Gokula Kannan J). |
 | 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
+| 2026-09-25 | ⌥⌥ opens the **Dock**, ⌘⌘ opens the **Corner** — fixed, no setting. Task 3 ("⌥⌥ opens Dock / Corner" setting) is dropped. |
 
 ## Open decisions (owner)
 
 - Chat Window hotkey: ⌃C clashes with Terminal's interrupt — advised ⌃⌥C.
-- What ⌥⌥ opens once the Dock retires (A1 end state; task 3 is the interim).
+- What ⌥⌥ opens once the Dock retires (A1 end state). Until then: ⌥⌥ Dock, ⌘⌘ Corner (2026-09-25).
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?
