@@ -50,6 +50,12 @@ struct CornerTranscript: View {
                 guard let last = messages.last else { return }
                 withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
             }
+            // Drawn again (the Selection card coming back from its actions or Share): open on
+            // the latest reply, not the top of the thread.
+            .onAppear {
+                guard let last = messages.last else { return }
+                DispatchQueue.main.async { proxy.scrollTo(last.id, anchor: .bottom) }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

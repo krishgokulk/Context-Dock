@@ -127,6 +127,12 @@ final class SelectionScopeModel: ObservableObject {
         keyboardOwner != .selection
     }
 
+    /// Pure: whether the card's field takes the caret back after the card changes what it
+    /// shows — only while the card holds the corner's keyboard.
+    static func fieldTakesFocus(keyboardOwner: CornerKeyboardClaimant) -> Bool {
+        keyboardOwner == .selection
+    }
+
     /// Esc: the share destinations step back to where Share was chosen; an answer steps back
     /// to the rows; the rows close the card.
     func escapePressed() {
@@ -157,13 +163,20 @@ final class SelectionScopeModel: ObservableObject {
     func copyAnswer() {
         guard let answer = latestAnswer else { return }
         copyText(answer)
-        reportResult("Copied", true)
+        say("Copied", true)
+    }
+
+    /// Reports an outcome both ways: the corner's feedback, and the line in the card that the
+    /// user is looking at.
+    private func say(_ line: String, _ success: Bool) {
+        reportResult(line, success)
+        outcome = success ? "✓ \(line)" : line
     }
 
     func saveAnswerToQuickNote() {
         guard let answer = latestAnswer else { return }
         let saved = saveNote(answer)
-        reportResult(saved ? "Saved to Quick Note" : "Could not save the note", saved)
+        say(saved ? "Saved to Quick Note" : "Could not save the note", saved)
     }
 
     /// Share the answer: the destinations open in the card, and Esc comes back to the answer.
@@ -272,11 +285,10 @@ final class SelectionScopeModel: ObservableObject {
         switch replaceRoute {
         case .replaceInPlace:
             let done = provider?.replaceSelection(with: answer, for: snapshot) ?? false
-            reportResult(done ? "Replaced in \(snapshot.appName)" : "Could not replace", done)
+            say(done ? "Replaced in \(snapshot.appName)" : "Could not replace", done)
         case .copyInstead:
             copyText(answer)
-            reportResult(
-                "Copied — turn on Computer Use for \(snapshot.appName) to replace in place", true)
+            say("Copied — Computer Use is off for \(snapshot.appName)", true)
         case .unavailable:
             break
         }
@@ -640,8 +652,7 @@ final class SelectionScopeModel: ObservableObject {
             SelectionActions.runApprovedInCard = approved
             defer { SelectionActions.runApprovedInCard = wasApproved }
             let ran = self.provider?.runSelectionRow(id: row.id, query: query, for: captured) ?? false
-            self.reportResult(ran ? row.title : "\(row.title) is not available", ran)
-            self.outcome = ran ? "✓ \(row.title)" : "\(row.title) is not available"
+            self.say(ran ? row.title : "\(row.title) is not available", ran)
         }
         if SelectionActions.mustReselectInFinder(row, snapshot: captured) {
             // A Finder menu command acts on what Finder has selected when it runs: put the
@@ -675,6 +686,7 @@ final class SelectionScopeModel: ObservableObject {
             watchForAnchor()
         }
         isShowingAnswer = true
+        outcome = nil
         if let askHandler {
             askHandler(request)
         } else {

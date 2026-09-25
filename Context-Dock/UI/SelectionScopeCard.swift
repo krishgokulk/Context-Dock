@@ -100,6 +100,17 @@ struct SelectionScopeCard: View {
         .onChange(of: keyboardState.focusRequestToken) { _, _ in
             fieldFocused = keyboardState.owner == .selection
         }
+        // The rows giving way to the answer, and the answer arriving, rebuild what sits above
+        // the field, and the field lost the caret: the window kept the keys, so a typed
+        // follow-up went nowhere. Take it back each time the card changes what it shows.
+        .onChange(of: model.isShowingAnswer) { _, _ in refocusField() }
+        .onChange(of: model.isAnswering) { _, _ in refocusField() }
+        .onChange(of: model.isSharing) { _, _ in refocusField() }
+    }
+
+    private func refocusField() {
+        guard SelectionScopeModel.fieldTakesFocus(keyboardOwner: keyboardState.owner) else { return }
+        DispatchQueue.main.async { fieldFocused = true }
     }
 
     private var cardSize: CGSize {

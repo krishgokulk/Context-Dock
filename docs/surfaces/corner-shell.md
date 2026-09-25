@@ -23,3 +23,4 @@
 - 2026-09-25 · A Selection card question goes to the AI, never to a saved rule, system command or an installed extension's trigger words ("Make table" had run a HEIC-conversion extension that opened a Finder folder); the flag survives the pipeline's scope re-run · `CornerSelectionActionsTests`, `SelectionScopeSubmitTests`
 - 2026-09-25 · The Selection card's answer stays until closed, and its thread is found by the question asked (switching to the app's session loaded older chat and the answer went blank); the way back to the actions moved to the header · `CornerSelectionActionsTests`
 - 2026-09-25 · A row that runs says so in the card ("✓ Search on YouTube") · `CornerSelectionActionsTests`
+- 2026-09-25 · The Selection card's field takes the caret back when the answer appears, so a typed follow-up reaches it (it went nowhere); the answer opens on its latest reply; Copy, Quick Note and Replace say what they did inside the card · `CornerSelectionActionsTests`

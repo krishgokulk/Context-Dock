@@ -482,6 +482,7 @@ struct CornerSelectionActionsTests {
         model.saveAnswerToQuickNote()
         #expect(copied == ["Summary."])
         #expect(saved == ["Summary."])
+        #expect(model.outcome == "✓ Saved to Quick Note")
     }
 
     @Test("Answering, the card has room for the answer and its actions")
@@ -675,6 +676,10 @@ struct CornerSelectionActionsTests {
     func oneEscapeStepsBackOnce() {
         #expect(!SelectionScopeModel.fieldHandlesEscape(keyboardOwner: .selection))
         #expect(SelectionScopeModel.fieldHandlesEscape(keyboardOwner: .none))
+        // The field takes the caret back after the answer appears — only while the card has
+        // the keys.
+        #expect(SelectionScopeModel.fieldTakesFocus(keyboardOwner: .selection))
+        #expect(!SelectionScopeModel.fieldTakesFocus(keyboardOwner: .chat))
     }
 
     // MARK: Typed "send to …" (the Dock's route 3)
