@@ -161,16 +161,25 @@ final class AppChatPromptModel: ObservableObject {
     /// they are the strip's trailing region, which stays on screen while the field is up.
     /// The icons the field holds beside it: Safari's tab pills in a Safari scope, else the
     /// running apps. What the field's width is sized for.
-    /// With tab pills, the app field's chip and buttons are counted as slots too.
+    /// The icons the field keeps room for. In a Safari scope the field leads with the app's
+    /// chip rather than the magnifier, and that chip is counted as pill slots too.
     var promptIconCount: Int {
-        guard !tabIcons.isEmpty || tabOverflowCount > 0 else { return globalMatchIcons.count }
-        return tabIcons.count + (tabOverflowCount > 0 ? 1 : 0)
-            + AppChatPromptMetrics.appFieldChromeSlots
+        globalMatchIcons.count + (showsTabBar ? AppChatPromptMetrics.appFieldChromeSlots : 0)
     }
-    /// Safari's open tabs as pills beside the field (inventory D13), and how many did not fit.
-    @Published var tabIcons: [MatchDockIcon] = []
-    @Published var tabOverflowCount = 0
+    /// The tabs behind the Safari scope's icons, by icon id.
     var tabsByIconID: [String: SafariTab] = [:]
+
+    /// A Safari scope: its open tabs take the running apps' place in the Global shell — the
+    /// strip of big icons at rest, the small pill in the field (owner 2026-09-25: "exactly
+    /// like Global").
+    var showsTabBar: Bool {
+        !isGlobalScope && BrowserTabList.listsTabs(bundleID: appBundleID)
+    }
+    /// The Global shell — its height, its fold into a dock and back — is Global Context's,
+    /// and a Safari scope's.
+    var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The field carries the small pill of the strip's icons.
+    var showsFieldPills: Bool { isSearchField || showsTabBar }
     /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
     /// list trimmed to what fits beside the field.
     @Published private(set) var allRunningIcons: [MatchDockIcon] = []
@@ -238,10 +247,6 @@ final class AppChatPromptModel: ObservableObject {
         // A quit Safari has no tabs, whatever the cache last held.
         NSRunningApplication.runningApplications(withBundleIdentifier: BrowserTabList.safariBundleID)
             .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: 45)
-    }
-    /// How many tab pills fit beside the field on this screen. Tests pin it.
-    var tabCapacity: () -> Int = {
-        AppChatPromptMetrics.tabCapacity(maximumWidth: DockStripPlan.screenBudget)
     }
     /// The page Safari is showing, which leads the pills. Tests replace it.
     var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
@@ -793,7 +798,7 @@ final class AppChatPromptModel: ObservableObject {
 
     /// An empty Global field with the setting on is the only thing that rests as a dock.
     var canRestAsDock: Bool {
-        isGlobalScope
+        usesDockShell
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && autoShrinkEnabled()
     }

@@ -154,27 +154,23 @@ extension AppChatPromptModel {
 
     // MARK: Safari's tabs, as pills beside the field (inventory D13)
 
-    /// Rebuilds the tab pills for the scoped browser: current page first, filtered by what is
-    /// typed, as many as the field can grow to hold on this screen, the rest a "+N" — the
-    /// same capacity rule the running-app pills use. Empty outside a Safari scope.
+    /// Rebuilds the strip's icons for this scope: Safari's tabs in a Safari scope, the running
+    /// apps otherwise — through `updateGlobalTyping`, so the strip, the field's pill and the
+    /// fold between them are Global's own.
     func updateTabStrip() {
-        guard !isGlobalScope, BrowserTabList.listsTabs(bundleID: appBundleID) else {
-            setTabStrip([])
-            return
-        }
-        let tabs = BrowserTabList.matching(
-            BrowserTabList.ordered(tabSource(), currentURL: currentTabURL()),
-            query: query.trimmingCharacters(in: .whitespacesAndNewlines))
-        setTabStrip(tabs)
+        updateGlobalTyping(for: query)
     }
 
-    func setTabStrip(_ tabs: [SafariTab]) {
-        let split = BrowserTabList.strip(tabs, capacity: tabCapacity())
+    /// Safari's open tabs as the strip's icons, current page first.
+    func tabStripIcons() -> [MatchDockIcon] {
+        let tabs = BrowserTabList.ordered(tabSource(), currentURL: currentTabURL())
         tabsByIconID = Dictionary(
-            split.shown.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
-        tabIcons = split.shown.map(BrowserTabList.icon(for:))
-        tabOverflowCount = split.overflow
+            tabs.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
+        return tabs.map(BrowserTabList.icon(for:))
     }
+
+    /// Whether an icon in the strip or the pill is one of Safari's tabs.
+    func isTabIcon(_ id: String) -> Bool { tabsByIconID[id] != nil }
 
     /// Reads the tabs again and redraws the pills when they land.
     func refreshTabs() {
@@ -296,7 +292,7 @@ extension AppChatPromptModel {
         // The pills are what is running, the way the dock's global bar shows them — they
         // are ambient, not a second copy of the results. The top match still comes from the
         // index, because that is what Tab takes.
-        let running = Self.pillIcons(excluding: appBundleID)
+        let running = showsTabBar ? tabStripIcons() : Self.pillIcons(excluding: appBundleID)
         setGlobalTyping(
             top: typed.isEmpty
                 ? nil
@@ -789,6 +785,10 @@ extension AppChatPromptModel {
     }
 
     func openGlobalMatchIcon(_ icon: MatchDockIcon) {
+        if isTabIcon(icon.id) {
+            openTabIcon(icon)
+            return
+        }
         touch()
         if icon.id == Self.clipboardPillID {
             ClipboardPanelController.shared.show()

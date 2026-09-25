@@ -54,15 +54,6 @@ enum BrowserTabList {
         }
     }
 
-    /// Pure: the tabs that fit beside the field, and how many become "+N".
-    static func strip(_ tabs: [SafariTab], capacity: Int) -> (shown: [SafariTab], overflow: Int) {
-        let room = max(capacity, 0)
-        guard tabs.count > room else { return (tabs, 0) }
-        // The "+N" takes a slot of its own, as the running-app pills' does.
-        let shown = Array(tabs.prefix(max(room - 1, 0)))
-        return (shown, tabs.count - shown.count)
-    }
-
     static func iconID(for tab: SafariTab) -> String { "safari-tab:\(tab.id)" }
 
     /// A tab's site icon — the favicon store the Dock's strip reads, Safari's own icon while it
@@ -81,7 +72,8 @@ enum BrowserTabList {
         let safari = NSWorkspace.shared.urlForApplication(withBundleIdentifier: safariBundleID)
             .map { NSWorkspace.shared.icon(forFile: $0.path) } ?? NSImage()
         return MatchDockIcon(
-            id: iconID(for: tab), bundleID: nil,
+            // The strip and the pill key their icons by bundle id; a tab's is its own id.
+            id: iconID(for: tab), bundleID: iconID(for: tab),
             title: tab.title.isEmpty ? tab.domain : tab.title,
             icon: favicon(for: tab) ?? safari,
             isRunning: false, isExpandable: false, score: 0, isExactAppPrefix: false)

@@ -51,7 +51,7 @@ struct CornerDockStrip: View {
     /// The field is up and showing its pill: the strip's apps are that pill, shrunk into
     /// the room the field keeps for it. Typing hides it, as it hid the field's own.
     private var isPill: Bool {
-        [.prompt, .suggesting].contains(model.phase) && model.isSearchField
+        [.prompt, .suggesting].contains(model.phase) && model.showsFieldPills
             && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -321,11 +321,16 @@ struct CornerDockStrip: View {
             // the pointer choosing it. Leaving is always honoured, so nothing sticks.
             if inside, Date() < hoverSettlesAt { return }
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
+            // A tab has no app window to preview.
+            guard !model.isTabIcon(slot.bundleID) else { return }
             model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
+            // A tab, big or in the pill: Safari shows it.
+            if model.isTabIcon(slot.bundleID), let icon = slot.running {
+                model.openTabIcon(icon)
             // As the pill, a click scopes the field into the app, as the pill always has.
-            if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
+            } else if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
                 model.openGlobalMatchIcon(icon)
             } else {
                 openApp(slot)
@@ -334,7 +339,8 @@ struct CornerDockStrip: View {
         // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
         // and a running app nobody pinned has no place to be moved to.
         .modifier(DockPinDrag(pinID: slot.pin?.id, dragging: $draggingPinID))
-        .overlay(RightClickReporter { menuID = id })
+        // An app's menu (Quit, Hide, Show in Finder) means nothing for a tab.
+        .overlay(RightClickReporter { if !model.isTabIcon(slot.bundleID) { menuID = id } })
         .popover(isPresented: menuBinding(id), arrowEdge: .top) {
             DockIconMenu(items: appMenuItems(slot))
         }

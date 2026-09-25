@@ -63,14 +63,15 @@ struct AppChatPromptTests {
 
     /// Idle shrinks to the app's own icon — the surface stays identifiable as being
     /// about that app rather than becoming a generic dot.
+    /// Any app but Safari, whose scope rests as a dock of its tabs (`CornerSafariTabsTests`).
     @Test func anIdlePromptShrinksToTheAppIcon() {
         let model = AppChatPromptModel()
-        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
 
         model.standDown()
 
         #expect(model.phase == .mini)
-        #expect(model.appBundleID == "com.apple.Safari")
+        #expect(model.appBundleID == "com.apple.TextEdit")
     }
 
     /// A half-written question survives the shrink; it is the thing worth keeping.

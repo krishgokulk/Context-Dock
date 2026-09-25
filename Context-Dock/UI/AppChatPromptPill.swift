@@ -77,16 +77,9 @@ enum AppChatPromptMetrics {
 
     // MARK: The field's row of running apps
 
-    /// The app field's chip ("Safari") and its trailing buttons (+, expand, pin), in pill
-    /// slots. `fieldMinimumWidth` is measured for the Global field, whose only leading chrome is
-    /// a 22-point magnifier; the app field carries about 180 points more, and without them its
-    /// text was crushed to "…" by a row of tab pills.
-    static let appFieldChromeSlots = 8
-
-    /// How many tab pills fit beside the app field on a screen this wide.
-    static func tabCapacity(maximumWidth: CGFloat = dockMaximumWidth) -> Int {
-        max(0, matchIconCapacity(maximumWidth: maximumWidth) - appFieldChromeSlots)
-    }
+    /// The app field's chip ("Safari"), in pill slots: `fieldMinimumWidth` is measured for
+    /// the Global field, which leads with a 22-point magnifier instead.
+    static let appFieldChromeSlots = 3
 
     /// How many icons the 372-point field was built to hold. Past this it grows.
     static let matchIconBaseCount = 4
@@ -303,7 +296,7 @@ struct AppChatPromptPill: View {
     /// field's magnifier on the strip's, and its trailing region is kept clear. Nil outside
     /// Global and in chat, where the field is the composer and nothing is shared.
     private var globalStrip: AppChatPromptMetrics.DockLayout? {
-        guard model.isGlobalScope, model.phase != .chat else { return nil }
+        guard model.usesDockShell, model.phase != .chat else { return nil }
         return stripPlan.layout
     }
 
@@ -341,7 +334,7 @@ struct AppChatPromptPill: View {
             pinnedExtraWidth: composition.widgetExtraWidth,
             tools: tools,
             promptIcons: model.promptIconCount,
-            fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.isGlobalScope),
+            fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.usesDockShell),
             maximumWidth: DockStripPlan.screenBudget)
     }
 
@@ -370,7 +363,7 @@ struct AppChatPromptPill: View {
 
     var body: some View {
         Group {
-            if model.isGlobalScope {
+            if model.usesDockShell {
                 globalBody
             } else {
                 legacyBody
@@ -525,12 +518,8 @@ struct AppChatPromptPill: View {
     /// already invisible by the time the pill is narrow enough to slice it.
     private var legacyBody: some View {
         ZStack(alignment: .bottomLeading) {
-            // At least the 372-point stack (what the collapse to the badge relies on), wider
-            // when the shell is — Safari's tab pills grow it, and a stack held at 372 inside
-            // a wider shell crushed the field's own text.
             inputStack
-                .frame(
-                    width: max(AppChatPromptMetrics.width, size.width), alignment: .bottomLeading)
+                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
                 .opacity(model.phase.showsInput ? 1 : 0)
                 .allowsHitTesting(model.phase.showsInput)
                 .animation(.easeOut(duration: 0.11), value: model.phase)
@@ -846,22 +835,11 @@ struct AppChatPromptPill: View {
             // matched, and two answers to one question is the clutter the dock avoids. An
             // untyped field is not that case — there the pills are the only thing offering
             // anywhere to go, so they stay through a scope change.
-            // Safari's open tabs, beside the field in a Safari scope — the Dock's tab strip,
-            // drawn with the same pill as the running apps and taking their place here. Typing
-            // narrows them; the field grows to hold them, and the rest are "+N".
-            if !model.tabIcons.isEmpty || model.tabOverflowCount > 0 {
-                ContextMatchDock(
-                    phase: .idle,
-                    icons: model.tabIcons,
-                    overflowCount: model.tabOverflowCount,
-                    isSearching: false,
-                    onSelect: { icon in model.openTabIcon(icon) })
-                    .transition(.opacity)
-            } else if model.isSearchField,
+            if model.showsFieldPills,
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                if model.isGlobalScope {
+                if model.usesDockShell {
                     // The strip's own icons shrink into this spot and are the pill, so the
                     // field only keeps the room — drawing a second set here is what showed
                     // every app twice while the first set was still travelling.
@@ -894,7 +872,7 @@ struct AppChatPromptPill: View {
                 // current as a fresh one. Same transient signal as the composer's own.
                 // In Global the strip's own clipboard icon stays on screen in its trailing
                 // region, so the field does not draw a second one beside it.
-                if clipboard.phase.isVisible, !model.isGlobalScope {
+                if clipboard.phase.isVisible, !model.usesDockShell {
                     clipboardTrailingButton
                 }
             }
@@ -904,14 +882,14 @@ struct AppChatPromptPill: View {
             // This lived only in the composer's own branch below, so Global Context and
             // the scopes reached from it never had a way to see or reach the selection at
             // all, whatever the frontmost app's AX tree actually reported.
-            if model.isSearchField, model.selection != nil, !model.isGlobalScope {
+            if model.isSearchField, model.selection != nil, !model.usesDockShell {
                 selectionScopeButton
             }
 
             // What the last action came to, beside the field for a few seconds — the
             // dock's inline result, carried here so a result reaches the surface the user
             // is on. Same transient lifetime as the clipboard's own icon.
-            if let result = actionFeedback.glyph, !model.isGlobalScope {
+            if let result = actionFeedback.glyph, !model.usesDockShell {
                 ActionFeedbackGlyph(feedback: result)
                     .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
@@ -1002,7 +980,7 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat, !model.isGlobalScope {
+            if pointerInside, model.phase != .chat, !model.usesDockShell {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -1017,7 +995,7 @@ struct AppChatPromptPill: View {
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
         .padding(.trailing, globalStrip == nil ? 14 : 0)
-        .frame(height: AppChatPromptMetrics.fieldHeight(global: model.isGlobalScope))
+        .frame(height: AppChatPromptMetrics.fieldHeight(global: model.usesDockShell))
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
