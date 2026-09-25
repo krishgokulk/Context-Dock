@@ -1,6 +1,6 @@
 # Corner Selection panel: one panel that does everything the Dock's Selection does
 
-> **Status: PLAN, awaiting owner approval (2026-09-25).** Written so work can resume exactly here
+> **Status: PLAN, questions answered (2026-09-25); Share route to be confirmed, then build A→F.** Written so work can resume exactly here
 > after any interruption. Spec: `docs/master/00-DOCK-AND-CORNER.md` §4a. Branch:
 > `claude/corner-parity`, PR #84 (open, all work so far committed and pushed).
 
@@ -72,11 +72,27 @@ E. **Test matrix, on the app by the agent** (System Events + screen capture; mem
    to the confirmation step only, never sent. Hand checks asked only for what cannot be driven.
 F. Docs: §4a, inventory D10 (→ ✅ when Share and answers are in), `corner-shell.md`, #83 note.
 
-## Open questions for the owner (answer before A starts)
+## Owner answers (2026-09-25)
 
-- **Q1.** Follow-ups: once an answer is in the card, the card is a small chat about the
-  selection. OK that it stays a Selection card (not App Chat) until closed?
-- **Q2.** "Quick notes and knowledge graph": do you mean (a) Selection rows that **save** the
-  selection to a Quick Note / the knowledge graph, or (b) testing ⌃S **inside** those apps?
-- **Q3.** Share from the card: the standard macOS share picker (recommended, native, works from
-  any window), or the Dock's own share destinations list drawn inside the card?
+- **Q1 — yes.** An answer keeps the card a Selection card (a small chat about the selection)
+  until it is closed; it never turns into App Chat.
+- **Q2 — use what exists, skip what does not.** Quick Note: a **Save to Quick Note** Selection
+  row (text → new note via `QuickNotesStore.add`; files → `attachFiles`), added to the Dock's
+  Selection builders so both shells get it; and **Save answer to Quick Note** on an answer in
+  the card. Notes mirror into memory (`QuickNoteMemoryMirror`), so they become findable.
+  Knowledge graph: no action — it is a view of past conversations; card answers appear in it
+  on their own.
+- **Q3 — reuse the app's share routes, confirmed from code before starting:**
+  1. *Native inline destinations* — `ShareActionCoordinator.shareDestinations(items:)`: every
+     NSSharingService incl. installed share extensions, real icons, frecency-ranked; run with
+     `performDirectShare` (gives extensions a host window); payload resolved at tap
+     (`liveShareItems`, e.g. the live Safari URL). The Dock deliberately does *not* bounce to
+     NSSharingServicePicker.
+  2. *App Share menu via AX* — apps whose File ▸ Share children AX captures (e.g. DuckDuckGo)
+     share through those menu items so the app supplies the page; the native list does not
+     duplicate them (`frontmostAppHasShareMenu`).
+  3. *Direct routes* — `ShareIntentRouter`: "send to <person> via Messages/Mail" with contact
+     lookup, falling back to the native service.
+  Part B therefore = a Share row that opens route 1 **inside the card**, route 2 where the app
+  has it, route 3 for typed "send to …"; built from `ShareActionCoordinator` with the captured
+  selection. NSSharingServicePicker is not used. **Awaiting the owner's go for this before B.**
