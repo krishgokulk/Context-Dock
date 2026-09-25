@@ -105,6 +105,12 @@ updates a PR must say, in this order: the PR link; what the owner should try by 
 merging (a short checklist); and the next task from `docs/master/00-NOW.md` with its paste block.
 Never end on an open question the plan already answers — if `00-NOW.md` names the next task, say it.
 
+**UI work is checked by eye, not only by tests.** Any change a user can see is not done until the
+agent has launched the app (`./scripts/dev-run.sh`), taken screenshots of the changed surface **and of
+its reference** — the Dock for Corner parity, Global Context for other Corner scopes — and compared
+them: shell width and height, padding, field size, pill and icon size, strip style, alignment, nothing
+clipped or truncated. Differences are fixed or listed in the PR; the screenshots go in the PR.
+
 ## Codebase navigation
 
 Before grepping or reading raw source, ask the knowledge graph:
