@@ -327,6 +327,9 @@ struct CornerSelectionActionsTests {
         #expect(!SelectionScopeModel.mayStandDown(isPinned: true, pointerInside: false, inUse: false))
         #expect(!SelectionScopeModel.mayStandDown(isPinned: false, pointerInside: true, inUse: false))
         #expect(!SelectionScopeModel.mayStandDown(isPinned: false, pointerInside: false, inUse: true))
+        // An answer on the card stays until it is closed.
+        #expect(!SelectionScopeModel.mayStandDown(
+            isPinned: false, pointerInside: false, inUse: false, holdsAnswer: true))
     }
 
     @Test("The hotkey closes the card only for the same selection; a new one replaces it")
@@ -402,8 +405,17 @@ struct CornerSelectionActionsTests {
         let old = AIChatMessage(role: .user, content: "old")
         let new = AIChatMessage(role: .user, content: "new")
         let reply = AIChatMessage(role: .assistant, content: "reply")
-        #expect(SelectionScopeModel.anchor(in: [old, reply, new], before: [old.id]) == new.id)
-        #expect(SelectionScopeModel.anchor(in: [old, reply], before: [old.id]) == nil)
+        #expect(SelectionScopeModel.anchor(
+            in: [old, reply, new], before: [old.id], question: "new") == new.id)
+        #expect(SelectionScopeModel.anchor(in: [old, reply], before: [old.id], question: "new") == nil)
+        // The app's earlier chat, loaded when asking switched sessions: its older question is
+        // new to the card, but it is not the card's question.
+        let loaded = AIChatMessage(role: .user, content: "Summarize this")
+        #expect(SelectionScopeModel.anchor(
+            in: [loaded, reply], before: [], question: "Make a table") == nil)
+        let asked = AIChatMessage(role: .user, content: "Make a table")
+        #expect(SelectionScopeModel.anchor(
+            in: [loaded, reply, asked], before: [], question: "Make a table") == asked.id)
     }
 
     @Test("Return asks a follow-up; Esc goes answer → actions → closed")
@@ -704,10 +716,10 @@ struct CornerSelectionActionsTests {
         #expect(asked.isEmpty)
         #expect(sent.map(\.0) == ["gokula kannan j"])
         #expect(sent.first?.1 == text)
-        #expect(model.sendOutcome == "✅ Sent text to Gokula Kannan J via Messages")
+        #expect(model.outcome == "✅ Sent text to Gokula Kannan J via Messages")
         #expect(model.query.isEmpty)
-        #expect(SelectionScopeMetrics.size(rows: 3, sendOutcome: true).height
-            == SelectionScopeMetrics.size(rows: 3).height + SelectionScopeMetrics.sendOutcomeHeight)
+        #expect(SelectionScopeMetrics.size(rows: 3, outcome: true).height
+            == SelectionScopeMetrics.size(rows: 3).height + SelectionScopeMetrics.outcomeHeight)
     }
 
     @Test("A send command that needs the destinations opens them in the card")
@@ -748,15 +760,16 @@ struct CornerSelectionActionsTests {
         #expect(model.parseSendCommand("send this to gokula kannan j via messages") != nil)
     }
 
-    @Test("A trigger rule asked about a captured selection sees that selection")
-    func triggerRulesSeeTheCapturedSelection() {
-        let live = AXContext(appName: "Context Dock", bundleId: "com.krishgokul.ContextDock", pid: 1)
-        #expect(LauncherView.triggerRuleContext(live, capturedText: text.text).selectedText == text.text)
-        #expect(LauncherView.triggerRuleContext(live, capturedText: nil).selectedText == nil)
-        var selecting = live
-        selecting.selectedText = "live words"
-        #expect(LauncherView.triggerRuleContext(selecting, capturedText: text.text).selectedText
-            == "live words")
+    @Test("A question about a selection goes to the AI, never to a saved rule, command or extension")
+    func selectionQuestionsSkipCommandRouting() {
+        #expect(!LauncherView.triesCommandRouting(
+            isSelectionQuestion: true, looksLikeQuestion: false, scopedHasLinkedCLI: false))
+        #expect(LauncherView.triesCommandRouting(
+            isSelectionQuestion: false, looksLikeQuestion: false, scopedHasLinkedCLI: false))
+        #expect(!LauncherView.triesCommandRouting(
+            isSelectionQuestion: false, looksLikeQuestion: true, scopedHasLinkedCLI: false))
+        #expect(!LauncherView.mayAutoRunExtension(isSelectionQuestion: true))
+        #expect(LauncherView.mayAutoRunExtension(isSelectionQuestion: false))
     }
 
     // MARK: Asking inside the card
@@ -809,6 +822,17 @@ struct CornerSelectionActionsTests {
         model.run(compress)
         model.returnPressed()
         #expect(dock.ran.map(\.id) == ["finder-menu-compress"])
+    }
+
+    @Test("A row that runs says so in the card")
+    func aRunRowSaysSo() {
+        let model = card(text, dock: FakeDock())
+        model.run(model.rows.first { $0.id == "selection-copy" }!)
+        #expect(model.outcome == "✓ Copy Text")
+        #expect(model.showsOutcome)
+        model.query = "x"
+        model.queryChanged()
+        #expect(model.outcome == nil)
     }
 }
 

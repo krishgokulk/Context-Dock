@@ -3698,8 +3698,8 @@ extension LauncherView {
     }
 
     /// Called when MenuIntentRouter found no menu match — skips menu routing to avoid recursion.
-    func handleL2QuerySkippingMenuRouter(_ query: String) {
-        handleL2Query(query, skipMenuRouter: true)
+    func handleL2QuerySkippingMenuRouter(_ query: String, isSelectionQuestion: Bool = false) {
+        handleL2Query(query, skipMenuRouter: true, isSelectionQuestion: isSelectionQuestion)
     }
 
     /// Closes the offered capability gap, then re-runs the request that exposed it — so the user
@@ -3806,19 +3806,6 @@ extension LauncherView {
     ///   - conditions fail  → show a contextual hint about what's needed
     /// Returns true if the query was handled (caller should return immediately).
     @discardableResult
-    /// Pure: the context a trigger rule is checked against. A question asked about a captured
-    /// selection (the corner's Selection card) carries that text; by the time the turn runs
-    /// the card is in front and the live selection reads empty, so a "Copy Text" rule said it
-    /// needed text selected while the text was right there.
-    static func triggerRuleContext(_ live: AXContext, capturedText: String?) -> AXContext {
-        var context = live
-        let captured = capturedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if (context.selectedText ?? "").isEmpty, !captured.isEmpty {
-            context.selectedText = captured
-        }
-        return context
-    }
-
     func tryExecuteTriggerRuleByName(_ query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard q.count >= 3 else { return false }
@@ -3870,7 +3857,6 @@ extension LauncherView {
             ctx.currentURL = bCtx.url
             ctx.windowTitle = ctx.windowTitle ?? bCtx.title
         }
-        ctx = Self.triggerRuleContext(ctx, capturedText: contextDockChatCapturedText)
 
         let resolved = AXTriggerRuleEngine.shared.evaluate(rule: bestRule, context: ctx)
 
@@ -4093,7 +4079,20 @@ extension LauncherView {
         }
     }
 
-    func handleL2Query(_ query: String, skipMenuRouter: Bool) {
+    /// Pure: whether a query is tried as a saved trigger rule or a system command before it
+    /// reaches the AI. A question about a selection never is: its words are an instruction
+    /// for the model ("Convert this into a clean Markdown table…"), not a command's name.
+    /// (It is not auto-run as an installed extension either — see the extension step below.)
+    static func triesCommandRouting(
+        isSelectionQuestion: Bool, looksLikeQuestion: Bool, scopedHasLinkedCLI: Bool
+    ) -> Bool {
+        !isSelectionQuestion && !looksLikeQuestion && !scopedHasLinkedCLI
+    }
+
+    /// Pure: whether a query may start an installed extension whose trigger words it matches.
+    static func mayAutoRunExtension(isSelectionQuestion: Bool) -> Bool { !isSelectionQuestion }
+
+    func handleL2Query(_ query: String, skipMenuRouter: Bool, isSelectionQuestion: Bool = false) {
         guard !query.isEmpty else { return }
         let wasContextDockChatActive = l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty
         // The launcher becomes key while the user types, so NSWorkspace/frontmost can now be
@@ -4301,8 +4300,14 @@ extension LauncherView {
             && !dockScope.isGlobalScope
             && !isGlobalContextActive
 
-        if !looksLikeQuestion && !scopedHasLinkedCLI, tryExecuteTriggerRuleByName(query) { return }
-        if trySystemCommand(query) { return }
+        if Self.triesCommandRouting(
+            isSelectionQuestion: isSelectionQuestion, looksLikeQuestion: looksLikeQuestion,
+            scopedHasLinkedCLI: scopedHasLinkedCLI),
+            tryExecuteTriggerRuleByName(query)
+        {
+            return
+        }
+        if !isSelectionQuestion, trySystemCommand(query) { return }
         if let existingTask = l2.currentTask {
             existingTask.cancel()
             l2.currentTask = nil
@@ -4583,7 +4588,11 @@ extension LauncherView {
                         !self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
                             .isEmpty
                     else { return }
-                    self.handleL2Query(fullQueryForRerun)
+                    // The re-run is the same question: it keeps how it was asked. Dropping
+                    // these made a Selection card question a command again on the re-run.
+                    self.handleL2Query(
+                        fullQueryForRerun, skipMenuRouter: skipMenuRouter,
+                        isSelectionQuestion: isSelectionQuestion)
                 }
                 return
             }
@@ -4811,7 +4820,13 @@ extension LauncherView {
             return
         }
 
-        if let top = matches.first, shouldAutoRunL2Extension(query: query, ext: top.ilExtension) {
+        // A question about a selection is never taken for an extension's trigger words:
+        // "Convert this into a clean Markdown table…" ran an installed extension that opened
+        // an unrelated Finder folder instead of answering.
+        if Self.mayAutoRunExtension(isSelectionQuestion: isSelectionQuestion),
+            let top = matches.first,
+            shouldAutoRunL2Extension(query: query, ext: top.ilExtension)
+        {
             l2.currentTask = Task {
                 await executeL2Extension(top.ilExtension, context: scopedConversationContext)
                 await MainActor.run { finishL2AIRequest(l2RequestID) }

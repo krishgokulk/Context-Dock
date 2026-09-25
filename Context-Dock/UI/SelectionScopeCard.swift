@@ -28,15 +28,15 @@ enum SelectionScopeMetrics {
     /// The Computer Use question, when a row needs it.
     static let consentHeight: CGFloat = 62
     /// What a typed send command did.
-    static let sendOutcomeHeight: CGFloat = 30
+    static let outcomeHeight: CGFloat = 30
 
     /// A pure function of state, like every other corner surface: the shell hit-tests this
     /// exact number.
     static func size(
-        rows: Int, answering: Bool = false, consent: Bool = false, sendOutcome: Bool = false
+        rows: Int, answering: Bool = false, consent: Bool = false, outcome: Bool = false
     ) -> CGSize {
         let base = sizeWithoutConsent(rows: rows, answering: answering)
-        let extra = (consent ? consentHeight : 0) + (sendOutcome ? sendOutcomeHeight : 0)
+        let extra = (consent ? consentHeight : 0) + (outcome ? outcomeHeight : 0)
         return CGSize(width: base.width, height: base.height + extra)
     }
 
@@ -74,7 +74,7 @@ struct SelectionScopeCard: View {
             }
             if model.pendingConsent != nil { consentStrip }
             if let row = model.pendingApproval { approvalStrip(row) }
-            if model.showsSendOutcome { sendOutcomeLine }
+            if model.showsOutcome { outcomeLine }
             field
         }
         .padding(.vertical, SelectionScopeMetrics.verticalPadding)
@@ -105,7 +105,7 @@ struct SelectionScopeCard: View {
     private var cardSize: CGSize {
         SelectionScopeMetrics.size(
             rows: model.rows.count, answering: model.isShowingAnswer,
-            consent: model.isAsking, sendOutcome: model.showsSendOutcome)
+            consent: model.isAsking, outcome: model.showsOutcome)
     }
 
     /// An extension that may change things asks first — here, where the keys already are.
@@ -129,12 +129,12 @@ struct SelectionScopeCard: View {
     }
 
     /// What a typed "send to …" did — the router's own words, or that it is under way.
-    private var sendOutcomeLine: some View {
+    private var outcomeLine: some View {
         HStack(spacing: 6) {
             if model.isSending {
                 ProgressView().controlSize(.small)
                 Text("Sending…")
-            } else if let outcome = model.sendOutcome {
+            } else if let outcome = model.outcome {
                 Text(outcome)
             }
         }
@@ -144,7 +144,7 @@ struct SelectionScopeCard: View {
         .truncationMode(.tail)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: SelectionScopeMetrics.sendOutcomeHeight)
+        .frame(height: SelectionScopeMetrics.outcomeHeight)
     }
 
     /// Asked in the card, before a row takes the screen (surface-cost spec, Step 4).
@@ -200,21 +200,12 @@ struct SelectionScopeCard: View {
     /// icons alone when it does not — five actions ran off the card's edge (Share cut, the
     /// way back hidden).
     private var resultActions: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 0) {
             ViewThatFits(in: .horizontal) {
                 resultButtons(labelled: true)
                 resultButtons(labelled: false)
             }
             Spacer(minLength: 0)
-            Button { model.escapePressed() } label: {
-                Image(systemName: "list.bullet")
-                    .font(.system(size: 11, weight: .medium))
-                    .frame(width: 24, height: 24)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help("Back to the actions (Esc)")
         }
         .disabled(model.latestAnswer == nil || model.isAnswering)
         .opacity(model.latestAnswer == nil || model.isAnswering ? 0.45 : 1)
@@ -261,7 +252,7 @@ struct SelectionScopeCard: View {
             .font(.system(size: 11, weight: .medium))
             .lineLimit(1)
             .fixedSize()
-            .padding(.horizontal, labelled ? 9 : 8)
+            .padding(.horizontal, 8)
             .frame(height: 24)
             .background(Capsule().fill(Color.primary.opacity(0.08)))
         }
@@ -291,6 +282,20 @@ struct SelectionScopeCard: View {
                     .foregroundStyle(.secondary.opacity(0.7))
             }
             Spacer(minLength: 4)
+            if model.isShowingAnswer {
+                // The way back to the actions (Esc does the same). Up here, so the answer's
+                // own actions keep their labels in the row below.
+                Button { model.escapePressed() } label: {
+                    Image(systemName: "list.bullet")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back to the actions (Esc)")
+                .accessibilityLabel("Back to the actions")
+            }
             Button { model.togglePin() } label: {
                 Image(systemName: model.isPinned ? "pin.fill" : "pin")
                     .font(.system(size: 10, weight: .semibold))

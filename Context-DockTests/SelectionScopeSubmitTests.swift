@@ -59,6 +59,7 @@ struct SelectionScopeSubmitTests {
         // By the time the turn runs, the frontmost app is Context Dock and the live
         // selection is gone — so the text has to be carried, not re-read.
         #expect(ours?["selectedText"] as? String == "the paragraph the user highlighted")
+        #expect(ours?["selectionQuestion"] as? Bool == true)
         #expect(ours?["bundleId"] as? String == "com.microsoft.VSCode")
     }
 

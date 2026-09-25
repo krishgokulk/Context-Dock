@@ -64,6 +64,8 @@ final class SelectionScopeModel: ObservableObject {
     /// on is this card's thread; what came before belongs to the app's earlier chat.
     @Published private(set) var answerAnchorID: UUID?
     private var messageIDsBeforeAsking: Set<UUID> = []
+    /// The card's first question, as asked — what its thread is found by.
+    private var firstQuestion = ""
     private var conversationSink: AnyCancellable?
 
     /// Whether Computer Use is on for an app — what lets Replace write into it.
@@ -90,16 +92,30 @@ final class SelectionScopeModel: ObservableObject {
 
     var isAnswering: Bool { isShowingAnswer && conversation.isLoading }
 
-    /// Pure: the first user message in `messages` that was not there before the question —
-    /// the question itself, even when the app's earlier chat was loaded in around it.
-    static func anchor(in messages: [AIChatMessage], before: Set<UUID>) -> UUID? {
-        messages.last(where: { $0.role == .user && !before.contains($0.id) })?.id
+    /// Pure: the card's question in `messages` — a user message that was not there before it
+    /// was asked and says what was asked. Matching the words matters: asking can switch the
+    /// Dock to the app's own session, which loads that app's earlier chat — its older
+    /// questions are "new" to the card too, and the thread latched onto one of them, then
+    /// went blank when the session was swapped again.
+    static func anchor(in messages: [AIChatMessage], before: Set<UUID>, question: String)
+        -> UUID?
+    {
+        let asked = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        return messages.last(where: {
+            $0.role == .user && !before.contains($0.id)
+                && $0.content.trimmingCharacters(in: .whitespacesAndNewlines) == asked
+        })?.id
     }
 
     private func watchForAnchor() {
         conversationSink = conversation.$messages.sink { [weak self] messages in
-            guard let self, self.answerAnchorID == nil else { return }
-            self.answerAnchorID = Self.anchor(in: messages, before: self.messageIDsBeforeAsking)
+            guard let self else { return }
+            // Found once, kept — unless a session swap took it away; then it is found again.
+            if let anchor = self.answerAnchorID, messages.contains(where: { $0.id == anchor }) {
+                return
+            }
+            self.answerAnchorID = Self.anchor(
+                in: messages, before: self.messageIDsBeforeAsking, question: self.firstQuestion)
         }
     }
 
@@ -185,17 +201,18 @@ final class SelectionScopeModel: ObservableObject {
     ) async -> String = { intent, snapshot, openDestinations in
         await SelectionShare.send(intent, snapshot: snapshot, openDestinations: openDestinations)
     }
-    /// What the last send command did, said in the card.
-    @Published private(set) var sendOutcome: String?
+    /// What the last row or send command did, said in the card — the card is where the user
+    /// is looking, and a row that ran with no word back read as nothing having happened.
+    @Published private(set) var outcome: String?
     @Published private(set) var isSending = false
-    var showsSendOutcome: Bool { isSending || sendOutcome != nil }
+    var showsOutcome: Bool { isSending || outcome != nil }
 
     private func sendTyped() {
         guard let intent = parseSendCommand(query) else { return }
         let captured = snapshot
         query = ""
         isSending = true
-        sendOutcome = nil
+        outcome = nil
         touch()
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -205,7 +222,7 @@ final class SelectionScopeModel: ObservableObject {
             }
             self.isSending = false
             guard captured == self.snapshot, self.phase.isVisible else { return }
-            self.sendOutcome = outcome
+            self.outcome = outcome
             self.touch()
         }
     }
@@ -357,7 +374,7 @@ final class SelectionScopeModel: ObservableObject {
         isSharing = false
         isSharingAnswer = false
         sharePayload = []
-        sendOutcome = nil
+        outcome = nil
         isSending = false
         set(.showing)
         refreshRows()
@@ -430,7 +447,7 @@ final class SelectionScopeModel: ObservableObject {
 
     /// The field changed: the list narrows the way the Dock's does.
     func queryChanged() {
-        if !query.isEmpty { sendOutcome = nil }
+        if !query.isEmpty { outcome = nil }
         refreshRows()
         touch()
     }
@@ -624,6 +641,7 @@ final class SelectionScopeModel: ObservableObject {
             defer { SelectionActions.runApprovedInCard = wasApproved }
             let ran = self.provider?.runSelectionRow(id: row.id, query: query, for: captured) ?? false
             self.reportResult(ran ? row.title : "\(row.title) is not available", ran)
+            self.outcome = ran ? "✓ \(row.title)" : "\(row.title) is not available"
         }
         if SelectionActions.mustReselectInFinder(row, snapshot: captured) {
             // A Finder menu command acts on what Finder has selected when it runs: put the
@@ -653,6 +671,7 @@ final class SelectionScopeModel: ObservableObject {
             // The first question of this card: remember what the conversation already held,
             // so the thread starts at this question and not at the app's older chat.
             messageIDsBeforeAsking = Set(conversation.messages.map(\.id))
+            firstQuestion = request.prompt
             watchForAnchor()
         }
         isShowingAnswer = true
@@ -672,6 +691,7 @@ final class SelectionScopeModel: ObservableObject {
                     "query": request.prompt,
                     "attachments": request.filePaths,
                     "selectedText": request.selectedText ?? "",
+                    "selectionQuestion": true,
                 ])
         }
         query = ""
@@ -705,8 +725,13 @@ final class SelectionScopeModel: ObservableObject {
     /// Pure: whether the idle clock may put the card away. Never while it is pinned, being
     /// pointed at, or typed into — it used to close after eight seconds while the user was
     /// still reading its rows.
-    static func mayStandDown(isPinned: Bool, pointerInside: Bool, inUse: Bool) -> Bool {
-        !isPinned && !pointerInside && !inUse
+    /// `holdsAnswer`: an answer is on the card, or it is asking the user something. Neither
+    /// closes by itself — the answer went away eight seconds after it arrived, while it was
+    /// being read (the card does not take the app's focus, so reading it is not "in use").
+    static func mayStandDown(
+        isPinned: Bool, pointerInside: Bool, inUse: Bool, holdsAnswer: Bool = false
+    ) -> Bool {
+        !isPinned && !pointerInside && !inUse && !holdsAnswer
     }
 
     func dismiss() {
@@ -726,7 +751,8 @@ final class SelectionScopeModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             guard Self.mayStandDown(
                 isPinned: self.isPinned, pointerInside: self.pointerInside,
-                inUse: self.isInUse() || self.isAnswering)
+                inUse: self.isInUse() || self.isAnswering,
+                holdsAnswer: self.isShowingAnswer || self.isAsking)
             else {
                 // Still in use: look again later rather than closing under the user.
                 self.arm(after: Self.idleDwell)

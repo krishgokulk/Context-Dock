@@ -1855,7 +1855,9 @@ extension LauncherView {
             return
         }
         dismissMediaLayer()
-        handleL2QuerySkippingMenuRouter(query)
+        // The Selection card's questions are for the AI, never a command to route.
+        handleL2QuerySkippingMenuRouter(
+            query, isSelectionQuestion: info["selectionQuestion"] as? Bool ?? false)
     }
 
     /// The corner picked one of the answer's offered routes.
