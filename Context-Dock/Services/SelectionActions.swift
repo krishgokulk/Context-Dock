@@ -99,6 +99,15 @@ struct SelectionActionRow: Identifiable, Equatable {
     var actsOnFinderSelection: Bool { id.hasPrefix("finder-") }
     /// Writing Tools: acts on the source app's live text selection.
     var actsOnLiveTextSelection: Bool { id.hasPrefix("selection-writing-tool-") }
+
+    /// The app whose UI this row drives — clicking its menu over Accessibility. That is the
+    /// `takesScreen` surface of the surface-cost spec; nil for everything else (scripts,
+    /// clipboard, the AI provider, opening a URL).
+    func screenApp(for snapshot: SelectionSnapshot) -> String? {
+        if actsOnFinderSelection { return "com.apple.finder" }
+        if actsOnLiveTextSelection { return snapshot.bundleID }
+        return nil
+    }
 }
 
 /// Rows for a selection, and running one. LauncherView conforms today.
@@ -124,6 +133,22 @@ enum SelectionActions {
     /// Dock's helpers stop falling back to the live Accessibility selection while it is: the
     /// captured copy is the whole truth for that call.
     static var isScopedToCapturedSelection = false
+
+    /// What a row may do given Computer Use for the app it drives (surface-cost spec §3):
+    /// run it, offer the consent first, or leave it out because a cheaper path does the job.
+    enum ScreenGate: Equatable { case run, needsConsent(bundleID: String), hidden }
+
+    /// Pure. Rows that take the screen run only with Computer Use for their app. Without it,
+    /// Writing Tools are left out — the AI rows do the same work through the user's provider
+    /// with no screen taken — and Finder's menu commands stay, marked, offering the consent:
+    /// for some (Open With, Tags, Services) the menu is the only way.
+    static func screenGate(
+        _ row: SelectionActionRow, snapshot: SelectionSnapshot, computerUseAllowed: (String) -> Bool
+    ) -> ScreenGate {
+        guard let app = row.screenApp(for: snapshot) else { return .run }
+        if computerUseAllowed(app) { return .run }
+        return row.actsOnLiveTextSelection ? .hidden : .needsConsent(bundleID: app)
+    }
 
     /// Pure: the corner's list is the Dock's, in the Dock's order, less Share.
     static func cornerRows(_ rows: [SelectionActionRow]) -> [SelectionActionRow] {

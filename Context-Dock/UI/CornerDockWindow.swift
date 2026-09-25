@@ -368,7 +368,8 @@ final class CornerDockController: NSObject {
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             selection: selection.phase.isVisible
                 ? SelectionScopeMetrics.size(
-                    rows: selection.rows.count, answering: selection.isShowingAnswer) : nil,
+                    rows: selection.rows.count, answering: selection.isShowingAnswer,
+                    consent: selection.pendingConsent != nil) : nil,
             list: showsExtensionPanel
                 ? ExtensionScopeMetrics.size
                 : (showsAppSnapshot
@@ -586,7 +587,8 @@ final class CornerDockController: NSObject {
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
             selection: selection.phase.isVisible
                 ? SelectionScopeMetrics.size(
-                    rows: selection.rows.count, answering: selection.isShowingAnswer) : nil,
+                    rows: selection.rows.count, answering: selection.isShowingAnswer,
+                    consent: selection.pendingConsent != nil) : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width

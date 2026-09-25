@@ -80,6 +80,8 @@ struct CornerSelectionActionsTests {
         model.providerOverride = dock
         model.reportResult = { _, _ in }
         model.scheduleRowBuild = { $0() }
+        model.computerUseAllowed = { _ in false }
+        model.reselectInFinder = { _, then in then() }
         var context = AXContext(appName: snapshot.appName, bundleId: snapshot.bundleID, pid: 1)
         context.selectedText = snapshot.text.isEmpty ? nil : snapshot.text
         context.selectedFilePaths = snapshot.filePaths
@@ -185,6 +187,8 @@ struct CornerSelectionActionsTests {
         var reported: [(String, Bool)] = []
         model.reportResult = { reported.append(($0, $1)) }
         model.liveSelectedText = { _ in "a different paragraph" }
+        // Computer Use is on for the app: what stops the row is the changed selection.
+        model.computerUseAllowed = { _ in true }
         model.run(SelectionActionRow(
             id: "selection-writing-tool-1-proofread", title: "Proofread", icon: "pencil",
             badge: nil, accentColorName: nil, kind: .perform))
@@ -464,5 +468,66 @@ struct CornerSelectionActionsTests {
         let answering = SelectionScopeMetrics.size(rows: 6, answering: true)
         #expect(answering.height > SelectionScopeMetrics.size(rows: 6).height)
         #expect(answering == SelectionScopeMetrics.size(rows: 0, answering: true))
+    }
+
+    // MARK: Screen-taking rows and Computer Use (surface-cost spec)
+
+    private func row(_ id: String) -> SelectionActionRow {
+        SelectionActionRow(
+            id: id, title: id, icon: "", badge: nil, accentColorName: nil, kind: .perform)
+    }
+
+    @Test("Rows that drive an app's UI run only with Computer Use for that app")
+    func screenRowsFollowComputerUse() {
+        let off: (String) -> Bool = { _ in false }
+        let on: (String) -> Bool = { _ in true }
+        let finderRow = row("finder-menu-compress")
+        let writing = row("selection-writing-tool-42-proofread")
+        #expect(SelectionActions.screenGate(finderRow, snapshot: file, computerUseAllowed: on) == .run)
+        #expect(SelectionActions.screenGate(finderRow, snapshot: file, computerUseAllowed: off)
+            == .needsConsent(bundleID: "com.apple.finder"))
+        // Writing Tools without Computer Use: the provider's AI rows do the same job.
+        #expect(SelectionActions.screenGate(writing, snapshot: text, computerUseAllowed: off) == .hidden)
+        #expect(SelectionActions.screenGate(writing, snapshot: text, computerUseAllowed: on) == .run)
+        #expect(SelectionActions.screenGate(row("selection-copy"), snapshot: text, computerUseAllowed: off)
+            == .run)
+        #expect(writing.screenApp(for: text) == "com.apple.TextEdit")
+    }
+
+    @Test("Without Computer Use a Finder menu row asks first; Allow once runs it once")
+    func consentIsAskedInTheCard() {
+        let dock = FakeDock()
+        let model = card(file, dock: dock)
+        var once: Set<String> = []
+        model.grantOnce = { once.insert($0) }
+        model.consumeOnce = { once.remove($0) != nil }
+        let compress = model.rows.first { $0.id == "finder-menu-compress" }!
+
+        model.run(compress)
+        #expect(dock.ran.isEmpty)
+        #expect(model.pendingConsent?.bundleID == "com.apple.finder")
+
+        model.allowOnce()
+        #expect(model.pendingConsent == nil)
+        #expect(dock.ran.map(\.id) == ["finder-menu-compress"])
+        #expect(once.isEmpty)  // spent
+
+        model.run(compress)  // asked again: once was once
+        #expect(model.pendingConsent != nil)
+        model.cancelConsent()
+        #expect(dock.ran.count == 1)
+    }
+
+    @Test("Allow always grants the app and runs the row")
+    func allowAlwaysGrants() {
+        let dock = FakeDock()
+        let model = card(file, dock: dock)
+        var always: [String] = []
+        model.grantAlways = { always.append($0) }
+        model.run(model.rows.first { $0.id == "finder-menu-compress" }!)
+        model.computerUseAllowed = { _ in !always.isEmpty }
+        model.allowAlways()
+        #expect(always == ["com.apple.finder"])
+        #expect(dock.ran.map(\.id) == ["finder-menu-compress"])
     }
 }

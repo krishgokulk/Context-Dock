@@ -295,7 +295,11 @@ final class SelectionScopeModel: ObservableObject {
                 captured == self.snapshot
             else { return }
             let built = SelectionActions.cornerRows(
-                self.provider?.selectionRows(for: captured, query: typed) ?? [])
+                self.provider?.selectionRows(for: captured, query: typed) ?? []
+            ).filter {
+                SelectionActions.screenGate(
+                    $0, snapshot: captured, computerUseAllowed: self.computerUseAllowed) != .hidden
+            }
             guard generation == self.rowBuildGeneration else { return }
             self.rows = built
             self.isBuildingRows = false
@@ -358,7 +362,73 @@ final class SelectionScopeModel: ObservableObject {
         }
     }
 
+    /// Makes the captured files Finder's selection again, then runs `then`. Tests replace it
+    /// so they never drive Finder.
+    var reselectInFinder: ([URL], @escaping () -> Void) -> Void = { urls, then in
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { then() }
+    }
+
+    // MARK: Computer Use consent
+
+    func screenGate(for row: SelectionActionRow) -> SelectionActions.ScreenGate {
+        SelectionActions.screenGate(row, snapshot: snapshot, computerUseAllowed: computerUseAllowed)
+    }
+
+    /// A row that needs Computer Use for its app, waiting on the user's answer in the card.
+    @Published private(set) var pendingConsent: (row: SelectionActionRow, bundleID: String)?
+    var grantOnce: (String) -> Void = { ComputerUseConsentStore.shared.grantOnce(for: $0) }
+    var grantAlways: (String) -> Void = { ComputerUseConsentStore.shared.grantFromChat(for: $0) }
+    /// Spends a one-shot grant; true when there was one.
+    var consumeOnce: (String) -> Bool = {
+        ComputerUseConsentStore.shared.consumeOneShotGrant(for: $0)
+    }
+
+    /// The app name a consent prompt is about.
+    var pendingConsentAppName: String {
+        guard let bundleID = pendingConsent?.bundleID else { return "" }
+        if bundleID == snapshot.bundleID { return snapshot.appName }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+            .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") }
+            ?? bundleID
+    }
+
+    func allowOnce() {
+        guard let pending = pendingConsent else { return }
+        pendingConsent = nil
+        grantOnce(pending.bundleID)
+        run(pending.row)
+    }
+
+    func allowAlways() {
+        guard let pending = pendingConsent else { return }
+        pendingConsent = nil
+        grantAlways(pending.bundleID)
+        run(pending.row)
+    }
+
+    func cancelConsent() {
+        pendingConsent = nil
+        touch()
+    }
+
+    /// Whether this row may take the screen now — spending a one-shot grant if that is what
+    /// allows it.
+    private func mayTakeScreen(_ row: SelectionActionRow) -> Bool {
+        switch SelectionActions.screenGate(
+            row, snapshot: snapshot, computerUseAllowed: computerUseAllowed)
+        {
+        case .run: return true
+        case .hidden: return false
+        case .needsConsent(let bundleID):
+            if consumeOnce(bundleID) { return true }
+            pendingConsent = (row, bundleID)
+            return false
+        }
+    }
+
     private func perform(_ row: SelectionActionRow) {
+        guard mayTakeScreen(row) else { return }
         let captured = snapshot
         let query = self.query
         if row.actsOnLiveTextSelection,
@@ -378,9 +448,7 @@ final class SelectionScopeModel: ObservableObject {
         if SelectionActions.mustReselectInFinder(row, snapshot: captured) {
             // A Finder menu command acts on what Finder has selected when it runs: put the
             // captured files back as that selection first.
-            NSWorkspace.shared.activateFileViewerSelecting(
-                captured.filePaths.map { URL(fileURLWithPath: $0) })
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { runIt() }
+            reselectInFinder(captured.filePaths.map { URL(fileURLWithPath: $0) }, runIt)
         } else {
             runIt()
         }

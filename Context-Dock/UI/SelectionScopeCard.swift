@@ -25,10 +25,17 @@ enum SelectionScopeMetrics {
     static let compactPreviewHeight: CGFloat = 22
     static let answerHeight: CGFloat = 300
     static let resultActionsHeight: CGFloat = 36
+    /// The Computer Use question, when a row needs it.
+    static let consentHeight: CGFloat = 62
 
     /// A pure function of state, like every other corner surface: the shell hit-tests this
     /// exact number.
-    static func size(rows: Int, answering: Bool = false) -> CGSize {
+    static func size(rows: Int, answering: Bool = false, consent: Bool = false) -> CGSize {
+        let base = sizeWithoutConsent(rows: rows, answering: answering)
+        return consent ? CGSize(width: base.width, height: base.height + consentHeight) : base
+    }
+
+    private static func sizeWithoutConsent(rows: Int, answering: Bool) -> CGSize {
         if answering {
             return CGSize(
                 width: width,
@@ -60,6 +67,7 @@ struct SelectionScopeCard: View {
                 preview
                 rowList
             }
+            if model.pendingConsent != nil { consentStrip }
             field
         }
         .padding(.vertical, SelectionScopeMetrics.verticalPadding)
@@ -88,7 +96,32 @@ struct SelectionScopeCard: View {
     }
 
     private var cardSize: CGSize {
-        SelectionScopeMetrics.size(rows: model.rows.count, answering: model.isShowingAnswer)
+        SelectionScopeMetrics.size(
+            rows: model.rows.count, answering: model.isShowingAnswer,
+            consent: model.pendingConsent != nil)
+    }
+
+    /// Asked in the card, before a row takes the screen (surface-cost spec, Step 4).
+    private var consentStrip: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("This uses \(model.pendingConsentAppName)'s menu — DoraX would press it for you.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                resultButton("Allow once", "hand.tap") { model.allowOnce() }
+                resultButton("Always for \(model.pendingConsentAppName)", "checkmark.shield") {
+                    model.allowAlways()
+                }
+                Spacer(minLength: 0)
+                Button("Cancel") { model.cancelConsent() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.consentHeight, alignment: .center)
     }
 
     /// The selection, one line: still says what the answer is about.
@@ -253,7 +286,10 @@ struct SelectionScopeCard: View {
                 .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.title).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                if let badge = row.badge, !badge.isEmpty {
+                if case .needsConsent = model.screenGate(for: row) {
+                    Text("Needs Computer Use · \(row.badge ?? "Finder")")
+                        .font(.system(size: 11)).foregroundStyle(.orange.opacity(0.85)).lineLimit(1)
+                } else if let badge = row.badge, !badge.isEmpty {
                     Text(badge).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
