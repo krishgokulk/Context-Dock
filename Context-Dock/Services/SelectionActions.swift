@@ -97,6 +97,9 @@ struct SelectionActionRow: Identifiable, Equatable {
     let kind: Kind
     /// The destination's own icon, for share destinations; everything else draws `icon`.
     var image: NSImage? = nil
+    /// What running this row may do, when it asks first (a Selection extension with side
+    /// effects). The card asks inside itself.
+    var approval: String? = nil
 
     /// A Finder menu command: it acts on whatever Finder has selected when it runs.
     var actsOnFinderSelection: Bool { id.hasPrefix("finder-") }
@@ -136,6 +139,10 @@ enum SelectionActions {
     /// Dock's helpers stop falling back to the live Accessibility selection while it is: the
     /// captured copy is the whole truth for that call.
     static var isScopedToCapturedSelection = false
+
+    /// True while the corner runs a row the user approved in its card, so the Dock's own
+    /// confirmation alert is not asked a second time.
+    static var runApprovedInCard = false
 
     /// What a row may do given Computer Use for the app it drives (surface-cost spec §3):
     /// run it, offer the consent first, or leave it out because a cheaper path does the job.
@@ -226,6 +233,16 @@ enum SelectionShare {
 
     /// The row a typed send command shows, saying what Return will do.
     static let intentRowID = "selection-share-intent"
+
+    /// Pure: whether what is typed starts like a send command. The router's parser alone reads
+    /// "copy text" as texting someone ("text" is a channel and a payload word), and the card's
+    /// field is where rows are filtered — so the card asks for a send verb first.
+    static func startsLikeSendCommand(_ typed: String) -> Bool {
+        let first = typed.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            .split(separator: " ").first.map(String.init) ?? ""
+        return ["send", "share", "email", "mail", "message", "imessage", "text", "sms", "airdrop"]
+            .contains(first)
+    }
 
     /// Pure: the row for a parsed send command, or nil when it names no channel or person —
     /// a bare "share" is what the Share Selection row already does.

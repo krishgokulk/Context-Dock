@@ -79,7 +79,7 @@ extension LauncherView: SelectionActionProviding {
         }
         return SelectionActionRow(
             id: pill.id, title: pill.name, icon: pill.icon, badge: pill.badge,
-            accentColorName: pill.accentColorName, kind: kind)
+            accentColorName: pill.accentColorName, kind: kind, approval: pill.runApproval)
     }
 
     static func isShareRowID(_ id: String) -> Bool {

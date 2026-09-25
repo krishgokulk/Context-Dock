@@ -73,6 +73,7 @@ struct SelectionScopeCard: View {
                 rowList
             }
             if model.pendingConsent != nil { consentStrip }
+            if let row = model.pendingApproval { approvalStrip(row) }
             if model.showsSendOutcome { sendOutcomeLine }
             field
         }
@@ -104,7 +105,27 @@ struct SelectionScopeCard: View {
     private var cardSize: CGSize {
         SelectionScopeMetrics.size(
             rows: model.rows.count, answering: model.isShowingAnswer,
-            consent: model.pendingConsent != nil, sendOutcome: model.showsSendOutcome)
+            consent: model.isAsking, sendOutcome: model.showsSendOutcome)
+    }
+
+    /// An extension that may change things asks first — here, where the keys already are.
+    private func approvalStrip(_ row: SelectionActionRow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("\(row.title) may \(row.approval ?? "change things"). It gets only this selection.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            HStack(spacing: 8) {
+                resultButton("Run  ↩", "play.fill") { model.approveRun() }
+                Spacer(minLength: 0)
+                Button("Cancel") { model.cancelApproval() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: SelectionScopeMetrics.consentHeight, alignment: .center)
     }
 
     /// What a typed "send to …" did — the router's own words, or that it is under way.
@@ -175,23 +196,15 @@ struct SelectionScopeCard: View {
             .frame(height: SelectionScopeMetrics.answerHeight)
     }
 
-    /// What can be done with the answer, at its end.
+    /// What can be done with the answer, at its end. Labelled when the row fits the card,
+    /// icons alone when it does not — five actions ran off the card's edge (Share cut, the
+    /// way back hidden).
     private var resultActions: some View {
-        HStack(spacing: 8) {
-            switch model.replaceRoute {
-            case .replaceInPlace:
-                resultButton("Replace", "arrow.left.arrow.right") { model.replaceWithAnswer() }
-            case .copyInstead:
-                resultButton("Replace", "arrow.left.arrow.right") { model.replaceWithAnswer() }
-                    .help("Copies the answer. Turn on Computer Use for \(model.appName) to replace in place.")
-            case .unavailable:
-                EmptyView()
+        HStack(spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                resultButtons(labelled: true)
+                resultButtons(labelled: false)
             }
-            resultButton("Copy", "doc.on.doc") { model.copyAnswer() }
-            resultButton("Quick Note", "note.text.badge.plus") { model.saveAnswerToQuickNote() }
-                .help("Save the answer to a Quick Note")
-            resultButton("Share", "square.and.arrow.up") { model.shareAnswer() }
-                .help("Share the answer")
             Spacer(minLength: 0)
             Button { model.escapePressed() } label: {
                 Image(systemName: "list.bullet")
@@ -209,19 +222,51 @@ struct SelectionScopeCard: View {
         .frame(height: SelectionScopeMetrics.resultActionsHeight)
     }
 
+    private func resultButtons(labelled: Bool) -> some View {
+        HStack(spacing: 6) {
+            switch model.replaceRoute {
+            case .replaceInPlace:
+                resultButton("Replace", "arrow.left.arrow.right", labelled: labelled) {
+                    model.replaceWithAnswer()
+                }
+            case .copyInstead:
+                resultButton("Replace", "arrow.left.arrow.right", labelled: labelled) {
+                    model.replaceWithAnswer()
+                }
+                .help("Copies the answer. Turn on Computer Use for \(model.appName) to replace in place.")
+            case .unavailable:
+                EmptyView()
+            }
+            resultButton("Copy", "doc.on.doc", labelled: labelled) { model.copyAnswer() }
+            resultButton("Note", "note.text.badge.plus", labelled: labelled) {
+                model.saveAnswerToQuickNote()
+            }
+            .help("Save the answer to a Quick Note")
+            resultButton("Share", "square.and.arrow.up", labelled: labelled) { model.shareAnswer() }
+                .help("Share the answer")
+        }
+    }
+
     private func resultButton(
-        _ title: String, _ symbol: String, _ action: @escaping () -> Void
+        _ title: String, _ symbol: String, labelled: Bool = true, _ action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: symbol)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .fixedSize()
-                .padding(.horizontal, 10)
-                .frame(height: 24)
-                .background(Capsule().fill(Color.primary.opacity(0.08)))
+            Group {
+                if labelled {
+                    Label(title, systemImage: symbol)
+                } else {
+                    Image(systemName: symbol)
+                }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, labelled ? 9 : 8)
+            .frame(height: 24)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 
     private var appIcon: NSImage? {

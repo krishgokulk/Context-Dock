@@ -114,7 +114,11 @@ final class SelectionScopeModel: ObservableObject {
     /// Esc: the share destinations step back to where Share was chosen; an answer steps back
     /// to the rows; the rows close the card.
     func escapePressed() {
-        if isSharing {
+        if pendingApproval != nil {
+            cancelApproval()
+        } else if pendingConsent != nil {
+            cancelConsent()
+        } else if isSharing {
             leaveShare()
         } else if isShowingAnswer {
             isShowingAnswer = false
@@ -172,7 +176,9 @@ final class SelectionScopeModel: ObservableObject {
     // MARK: Typed "send to …"
 
     /// Reads what is typed as a send command. Tests replace it.
-    var parseSendCommand: (String) -> ShareIntent? = { ShareIntentRouter.shared.parse($0) }
+    var parseSendCommand: (String) -> ShareIntent? = { typed in
+        SelectionShare.startsLikeSendCommand(typed) ? ShareIntentRouter.shared.parse(typed) : nil
+    }
     /// Runs a send command on the captured selection. Tests replace it so nothing is sent.
     var runSendCommand: (
         ShareIntent, SelectionSnapshot, @escaping ([Any]) -> Void
@@ -451,6 +457,15 @@ final class SelectionScopeModel: ObservableObject {
     /// Return asks the follow-up.
     @discardableResult
     func returnPressed() -> Bool {
+        // A question in the card is answered by Return: Run, or Allow once.
+        if pendingApproval != nil {
+            approveRun()
+            return true
+        }
+        if pendingConsent != nil {
+            allowOnce()
+            return true
+        }
         if isShowingAnswer { return submit() }
         if let row = focusedRow {
             run(row)
@@ -561,7 +576,35 @@ final class SelectionScopeModel: ObservableObject {
         }
     }
 
+    // MARK: Approval for extensions with side effects
+
+    /// A row waiting on "Run" in the card — the Dock's confirmation, asked here.
+    @Published private(set) var pendingApproval: SelectionActionRow?
+    private var approvedRowID: String?
+
+    /// The card asks a question (Computer Use or an extension's approval) above its field.
+    var isAsking: Bool { pendingConsent != nil || pendingApproval != nil }
+
+    func approveRun() {
+        guard let row = pendingApproval else { return }
+        pendingApproval = nil
+        approvedRowID = row.id
+        perform(row)
+    }
+
+    func cancelApproval() {
+        pendingApproval = nil
+        touch()
+    }
+
     private func perform(_ row: SelectionActionRow) {
+        if row.approval != nil, approvedRowID != row.id {
+            pendingApproval = row
+            touch()
+            return
+        }
+        let approved = approvedRowID == row.id
+        approvedRowID = nil
         guard mayTakeScreen(row) else { return }
         let captured = snapshot
         let query = self.query
@@ -576,6 +619,9 @@ final class SelectionScopeModel: ObservableObject {
         }
         let runIt = { [weak self] in
             guard let self else { return }
+            let wasApproved = SelectionActions.runApprovedInCard
+            SelectionActions.runApprovedInCard = approved
+            defer { SelectionActions.runApprovedInCard = wasApproved }
             let ran = self.provider?.runSelectionRow(id: row.id, query: query, for: captured) ?? false
             self.reportResult(ran ? row.title : "\(row.title) is not available", ran)
         }

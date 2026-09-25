@@ -19,6 +19,9 @@ struct DockPill: Identifiable {
     /// corner's ask path both send this text (SelectionAskRequest), so a preset is never
     /// written twice.
     var selectionAIPrompt: String? = nil
+    /// Set when running this row asks the user first (a Selection extension with side
+    /// effects): what it may do, in the words the question uses.
+    var runApproval: String? = nil
     var rankingKind: String = ""
     var trackingIdentifier: String = ""
     var searchTerms: [String] = []

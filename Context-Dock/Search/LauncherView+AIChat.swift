@@ -3806,6 +3806,19 @@ extension LauncherView {
     ///   - conditions fail  → show a contextual hint about what's needed
     /// Returns true if the query was handled (caller should return immediately).
     @discardableResult
+    /// Pure: the context a trigger rule is checked against. A question asked about a captured
+    /// selection (the corner's Selection card) carries that text; by the time the turn runs
+    /// the card is in front and the live selection reads empty, so a "Copy Text" rule said it
+    /// needed text selected while the text was right there.
+    static func triggerRuleContext(_ live: AXContext, capturedText: String?) -> AXContext {
+        var context = live
+        let captured = capturedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if (context.selectedText ?? "").isEmpty, !captured.isEmpty {
+            context.selectedText = captured
+        }
+        return context
+    }
+
     func tryExecuteTriggerRuleByName(_ query: String) -> Bool {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard q.count >= 3 else { return false }
@@ -3857,6 +3870,7 @@ extension LauncherView {
             ctx.currentURL = bCtx.url
             ctx.windowTitle = ctx.windowTitle ?? bCtx.title
         }
+        ctx = Self.triggerRuleContext(ctx, capturedText: contextDockChatCapturedText)
 
         let resolved = AXTriggerRuleEngine.shared.evaluate(rule: bestRule, context: ctx)
 

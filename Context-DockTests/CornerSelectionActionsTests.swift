@@ -26,8 +26,10 @@ private final class FakeDock: SelectionActionProviding {
         }
     }
 
+    private(set) var approvedAtRun: [Bool] = []
     func runSelectionRow(id: String, query: String, for snapshot: SelectionSnapshot) -> Bool {
         ran.append((id, snapshot))
+        approvedAtRun.append(SelectionActions.runApprovedInCard)
         return true
     }
 
@@ -52,6 +54,10 @@ private final class FakeDock: SelectionActionProviding {
                     .ask(prompt: "Rewrite this clearly. Return only the replacement text.")),
                 row("selection-share", "Share…", .share),
                 row("shortcut-action-make-gif", "Make GIF", .perform),
+                SelectionActionRow(
+                    id: "custom-selection-ext-plain", title: "Copy as Plain Text",
+                    icon: "doc.on.clipboard", badge: "Extension", accentColorName: nil,
+                    kind: .perform, approval: "change files, the clipboard, or another app"),
                 row("share-dest-messages", "Messages", .share),
             ]
         }
@@ -99,7 +105,7 @@ struct CornerSelectionActionsTests {
         #expect(model.rows == SelectionActions.cornerRows(FakeDock.rows(for: text)))
         #expect(model.rows.map(\.id)
             == ["selection-ask-ai", "selection-copy", "selection-workflow-ai-rewrite",
-                "selection-share", "shortcut-action-make-gif"])
+                "selection-share", "shortcut-action-make-gif", "custom-selection-ext-plain"])
     }
 
     @Test("A Finder file selection lists the Dock's rows, in order; Share is one row")
@@ -311,7 +317,7 @@ struct CornerSelectionActionsTests {
         model.queryChanged()
         pending.forEach { $0() }
         #expect(dock.builtFor.count == 1)
-        #expect(model.rows.map(\.id) == ["selection-copy"])
+        #expect(model.rows.map(\.id) == ["selection-copy", "custom-selection-ext-plain"])
         #expect(!model.isBuildingRows)
     }
 
@@ -730,4 +736,79 @@ struct CornerSelectionActionsTests {
         model.returnPressed()
         #expect(asked == ["what does churn mean here"])
     }
+
+    @Test("Filtering the rows is not a send command: \"copy text\" copies")
+    func filteringIsNotSending() {
+        #expect(!SelectionShare.startsLikeSendCommand("copy text"))
+        #expect(!SelectionShare.startsLikeSendCommand("copy as plain text"))
+        #expect(SelectionShare.startsLikeSendCommand("text this to mom"))
+        #expect(SelectionShare.startsLikeSendCommand("Send this to gokula via messages"))
+        let model = SelectionScopeModel()
+        #expect(model.parseSendCommand("copy text") == nil)
+        #expect(model.parseSendCommand("send this to gokula kannan j via messages") != nil)
+    }
+
+    @Test("A trigger rule asked about a captured selection sees that selection")
+    func triggerRulesSeeTheCapturedSelection() {
+        let live = AXContext(appName: "Context Dock", bundleId: "com.krishgokul.ContextDock", pid: 1)
+        #expect(LauncherView.triggerRuleContext(live, capturedText: text.text).selectedText == text.text)
+        #expect(LauncherView.triggerRuleContext(live, capturedText: nil).selectedText == nil)
+        var selecting = live
+        selecting.selectedText = "live words"
+        #expect(LauncherView.triggerRuleContext(selecting, capturedText: text.text).selectedText
+            == "live words")
+    }
+
+    // MARK: Asking inside the card
+
+    @Test("An extension that may change things asks in the card; Return runs it, approved once")
+    func extensionApprovalIsAskedInTheCard() {
+        let dock = FakeDock()
+        let model = card(text, dock: dock)
+        let plain = model.rows.first { $0.id == "custom-selection-ext-plain" }!
+        model.run(plain)
+        #expect(dock.ran.isEmpty)
+        #expect(model.pendingApproval?.id == plain.id)
+        #expect(model.isAsking)
+
+        model.returnPressed()
+        #expect(model.pendingApproval == nil)
+        #expect(dock.ran.map(\.id) == [plain.id])
+        #expect(dock.approvedAtRun == [true])
+        #expect(!SelectionActions.runApprovedInCard)  // only for that one run
+
+        model.run(plain)  // asked again next time
+        #expect(model.pendingApproval != nil)
+        model.escapePressed()
+        #expect(model.pendingApproval == nil)
+        #expect(model.phase.isVisible)
+        #expect(dock.ran.count == 1)
+    }
+
+    @Test("Rows without side effects run at once, unapproved")
+    func plainRowsDoNotAsk() {
+        let dock = FakeDock()
+        let model = card(text, dock: dock)
+        model.run(model.rows.first { $0.id == "selection-copy" }!)
+        #expect(model.pendingApproval == nil)
+        #expect(dock.approvedAtRun == [false])
+    }
+
+    @Test("Return answers the Computer Use question with Allow once; Esc cancels it")
+    func consentAnswersFromTheKeyboard() {
+        let dock = FakeDock()
+        let model = card(file, dock: dock)
+        model.grantOnce = { _ in }
+        var once = false
+        model.grantOnce = { _ in once = true }
+        model.consumeOnce = { _ in defer { once = false }; return once }
+        let compress = model.rows.first { $0.id == "finder-menu-compress" }!
+        model.run(compress)
+        model.escapePressed()
+        #expect(model.pendingConsent == nil && model.phase.isVisible)
+        model.run(compress)
+        model.returnPressed()
+        #expect(dock.ran.map(\.id) == ["finder-menu-compress"])
+    }
 }
+

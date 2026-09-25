@@ -369,7 +369,7 @@ final class CornerDockController: NSObject {
             selection: selection.phase.isVisible
                 ? SelectionScopeMetrics.size(
                     rows: selection.rows.count, answering: selection.isShowingAnswer,
-                    consent: selection.pendingConsent != nil,
+                    consent: selection.isAsking,
                     sendOutcome: selection.showsSendOutcome) : nil,
             list: showsExtensionPanel
                 ? ExtensionScopeMetrics.size
@@ -589,7 +589,7 @@ final class CornerDockController: NSObject {
             selection: selection.phase.isVisible
                 ? SelectionScopeMetrics.size(
                     rows: selection.rows.count, answering: selection.isShowingAnswer,
-                    consent: selection.pendingConsent != nil,
+                    consent: selection.isAsking,
                     sendOutcome: selection.showsSendOutcome) : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
