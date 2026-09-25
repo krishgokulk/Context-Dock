@@ -821,10 +821,32 @@ final class CornerDockController: NSObject {
                             && !CharacterSet.newlines.contains($0)
                     })
                 else { return event }
-                prompt.expandFromDock(seeding: text)
+                // Through the field, once it has focus: a seeded model did not reach it.
+                prompt.expandFromDock(seeding: nil)
                 requestComposerFocus()
+                FieldCaret.typeWhenFocused(text, in: panel)
                 return nil
             }
+        }
+
+        // The field is back but has not taken focus yet — SwiftUI hands it over a turn
+        // later. A letter typed in that moment went nowhere, so typing fast from the dock
+        // lost whole words. Carry it into the field's text instead.
+        if let panel, event.window === panel,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput, prompt.phase != .chat,
+            // Behind a queue that is still waiting, every key joins it — even once the field
+            // has focus — or it overtakes the letters ahead of it ("safari" → "afaris").
+            FieldCaret.isWaitingForFocus
+                || (keyboardState.owner == .chat && !(panel.firstResponder is NSTextView)),
+            FieldCaret.carriesTextIntoUnfocusedField(
+                characters: event.characters,
+                hasCommandControlOrOption: !event.modifierFlags
+                    .intersection([.command, .control, .option]).isEmpty)
+        {
+            requestComposerFocus()
+            FieldCaret.typeWhenFocused(event.characters ?? "", in: panel)
+            return nil
         }
 
         // Backspace on an empty field leaves the scope. Like Tab, the field's own handler

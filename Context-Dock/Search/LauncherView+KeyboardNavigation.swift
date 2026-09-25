@@ -1596,20 +1596,9 @@ extension LauncherView {
             self.lastAppliedGlobalTypingPhase = globalPhase
 
             // SwiftUI's @FocusState reconciliation fires asynchronously after setFrame and
-            // calls becomeFirstResponder → selectAll on the NSTextField.
-            // Two DispatchQueue.main.async ticks puts us after that reconciliation pass so
-            // we can collapse any unwanted selection to an insertion point at the end.
-            DispatchQueue.main.async {
-                DispatchQueue.main.async {
-                    guard let fe = window.fieldEditor(false, for: nil) as? NSTextView else {
-                        return
-                    }
-                    let len = (fe.string as NSString).length
-                    if fe.selectedRange().length > 0, len > 0 {
-                        fe.setSelectedRange(NSRange(location: len, length: 0))
-                    }
-                }
-            }
+            // calls becomeFirstResponder → selectAll on the NSTextField. Shared with the
+            // corner's field, which lost its first letter the same way.
+            FieldCaret.collapseSelectionToEndAfterFocus(in: window)
         }
     }
 
