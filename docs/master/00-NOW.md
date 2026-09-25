@@ -10,22 +10,9 @@
 
 ## In progress
 
-*None.* Task 1 (Selection in the Corner) is done in #84, waiting for the owner to try it and merge.
-Task 2 starts after #84 merges.
+*None.* Task 2 is done (docs PR); task 3 is next.
 
 ## Next, in order
-
-**2. AGENTS.md: Dock/Corner rule** — docs only, after 1 merges.
-
-```
-Small docs-only PR to general-chat-agent. In AGENTS.md, under "DoraX architecture rule", add:
-
-Before touching any Dock (LauncherView*) or Corner (AppChat*, Corner*, SelectionScope*) code, read docs/master/00-DOCK-AND-CORNER.md and docs/master/00-DOCK-PARITY-INVENTORY.md.
-- The Dock is the reference behaviour; the Corner must match it. Reuse Dock code; never write a second copy.
-- A bug fixed in one shell: check the other shell for the same bug in the same PR, and update the matching inventory row.
-
-Also add docs/master/00-NOW.md to "Start here". Keep AGENTS.md under 150 lines. Stage only AGENTS.md, one MEMORY.md line, open the PR. Move this task to Done in 00-NOW.md.
-```
 
 **3. ⌥⌥ opens Dock / Corner setting** (inventory A1).
 Today ⌥⌥ → `toggleLauncher()` (Dock, centre); ⌘⌘ → `activateGlobalContextScope()` (Corner). The
@@ -68,6 +55,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | One-shell dock; → never runs a system command (D4); ↑ reaches Global (F2) | #80, #81 |
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
+| 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | this PR |
 
 ## Owner decisions (append-only)
 
