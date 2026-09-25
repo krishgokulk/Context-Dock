@@ -29,26 +29,6 @@ End with the AGENTS.md hand-off.
 
 ## Next, in order
 
-**4a. Menu safety list blocks harmless commands** (bug, owner 2026-09-25) — can run in a second
-session alongside 4: different files. `AppMenuConsentStore.isDestructive` matches "close" as a
-*substring*, so **History ▸ Reopen Last Closed Window** and **Recently Closed** count as destructive
-and App Chat refuses them. "forward" as an outbound word also catches **History ▸ Forward** (navigation,
-not Mail's Forward). Separately, `AppMenuCapabilityCache` treats History / Recently Closed as a
-volatile branch, so "Recently Closed" never shows in menu results.
-
-```
-Task 4a: menu safety list false positives. Own worktree from origin/general-chat-agent.
-Files: Services/AppMenuConsentStore.swift (destructiveNeedles / outboundNeedles / isDestructive),
-Services/AppMenuCapabilityCache.swift (isVolatileMenuPath, privateDynamicBranches).
-- Match destructive words as whole words on the item title, not substrings of the whole path: "Close Tab",
-  "Close Window", "Clear History…" stay gated; "Reopen Last Closed Window", "Recently Closed" are not.
-- "Forward"/"Back" under a browser's History menu are navigation, not outbound. Mail/Messages ▸ Forward stays gated.
-- Stable browser commands (Reopen Last Closed Window, Reopen All Windows from Last Session, Recently Closed
-  submenu) appear in menu search results in both shells; the per-URL rows keep their current handling.
-- Tests, one per case above, both directions (still gated / now allowed). Safety first: when unsure, stay gated.
-End with the AGENTS.md hand-off.
-```
-
 **4b. Pins in the Corner strip** (owner 2026-09-25, after 4 merges). The Corner's context dock uses
 the strip beside the input for things the user pins, per app: tabs, menu commands, app actions
 (Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI), and the user's own actions.
@@ -79,6 +59,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
 | 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
+| 2026-09-25 | Menu safety list (4a): whole words; History ▸ Forward is navigation; Reopen Last Closed Window / Recently Closed stay in results; page rows still open by URL; unsure stays gated | #91 |
 
 ## Owner decisions (append-only)
 
