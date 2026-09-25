@@ -10,23 +10,60 @@
 
 ## In progress
 
-*None.* Task 2 is done (#88); task 3 dropped by the owner (decision below); task 4 is next.
+**4. Safari tabs in the Corner** (inventory D13) — PR #89, **reworked 2026-09-25**: the first build
+put the tabs in the result *list*; the owner wants them as **pills in the Corner's strip, next to the
+input field**, the way the Dock shows open tabs. The shared `BrowserTabList` loader in #89 stays.
+
+```
+Rework PR #89 (Safari tabs, D13). Keep BrowserTabList / the shared loader. Change where tabs show:
+- The owner's spec: open Safari tabs appear as pills in the Corner's strip NEXT TO THE INPUT FIELD (the space
+  where the pinned app icons sit today), the way the Dock UI shows open tabs. Look at how the Dock draws its tab
+  strip (LauncherView+LivePanel.swift safariTabListView) and match it; reuse, no second copy.
+- The strip sizes itself to what it shows (auto width, overflow → "+N" like running apps), never clipped.
+- Click / ↩ on a tab pill switches to that tab. Typing still filters.
+- Fix the CI race first: a late refresh must never overwrite a newer result (refresh generation), tests use only
+  the injected source; check whether it explains the first switch that did nothing on the app.
+- Tests: tabs render as strip pills from the shared loader; overflow; switch; stale refresh dropped.
+End with the AGENTS.md hand-off.
+```
 
 ## Next, in order
 
-**4. Safari tabs in the Corner** (inventory D13).
-The Corner shows the shared hint "tabs, page cmds, menu cmds" (`UI/AppChatListCard.swift:184` via
-`Search/AppScopeHint.swift`) but loads no tabs; only the Dock does (`LauncherView.swift:3627`
-`loadSafariTabs()`, drawn at `LauncherView+LivePanel.swift:1392`).
+**4a. Menu safety list blocks harmless commands** (bug, owner 2026-09-25) — can run in a second
+session alongside 4: different files. `AppMenuConsentStore.isDestructive` matches "close" as a
+*substring*, so **History ▸ Reopen Last Closed Window** and **Recently Closed** count as destructive
+and App Chat refuses them. "forward" as an outbound word also catches **History ▸ Forward** (navigation,
+not Mail's Forward). Separately, `AppMenuCapabilityCache` treats History / Recently Closed as a
+volatile branch, so "Recently Closed" never shows in menu results.
 
 ```
-Task: Safari tabs in the Corner (inventory D13). Own worktree from origin/general-chat-agent.
-- Reuse the Dock's tab loading: move it out of LauncherView into a shared type both shells call. No second copy.
-- Corner Safari scope lists the tabs like the Dock; ↩ switches to the tab; typing filters them.
-- Until tabs show, the Corner hint must not say "tabs".
-- Also check Chrome/Arc if the Dock handles them.
-- Tests: the Corner Safari scope lists tabs from the shared loader; filtering; the hint matches what is shown.
-- Inventory D13 → ✅ with the test names. check.sh green, one PR, one MEMORY.md line, move this task to Done in 00-NOW.md.
+Task 4a: menu safety list false positives. Own worktree from origin/general-chat-agent.
+Files: Services/AppMenuConsentStore.swift (destructiveNeedles / outboundNeedles / isDestructive),
+Services/AppMenuCapabilityCache.swift (isVolatileMenuPath, privateDynamicBranches).
+- Match destructive words as whole words on the item title, not substrings of the whole path: "Close Tab",
+  "Close Window", "Clear History…" stay gated; "Reopen Last Closed Window", "Recently Closed" are not.
+- "Forward"/"Back" under a browser's History menu are navigation, not outbound. Mail/Messages ▸ Forward stays gated.
+- Stable browser commands (Reopen Last Closed Window, Reopen All Windows from Last Session, Recently Closed
+  submenu) appear in menu search results in both shells; the per-URL rows keep their current handling.
+- Tests, one per case above, both directions (still gated / now allowed). Safety first: when unsure, stay gated.
+End with the AGENTS.md hand-off.
+```
+
+**4b. Pins in the Corner strip** (owner 2026-09-25, after 4 merges). The Corner's context dock uses
+the strip beside the input for things the user pins, per app: tabs, menu commands, app actions
+(Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI), and the user's own actions.
+
+```
+Task 4b: pins in the Corner strip. Own worktree from origin/general-chat-agent, after #89 merges.
+- Any row in the Corner's app list (menu command, app action, extension, the user's own action) and any tab can be
+  pinned for that app; pins show in the strip beside the input, before live tabs, and run with one click / ↩.
+- Reuse the Dock's pin store (DockPinStore, inventory F4) — per-app pins, same storage; no second store.
+- Safari actions: first check which of Add to Bookmarks / Export as PDF / Save as Markdown / Ask AI already exist
+  as actions in the Dock; reuse those; list any that don't exist in the PR and ask before building them.
+- Strip auto-sizes; unpin from the pill's context menu; order is the user's (drag) or pin order.
+- Actions that are destructive/outbound keep their consent step even when pinned.
+- Tests: pin/unpin per app, strip order, a pinned destructive action still asks, overflow.
+End with the AGENTS.md hand-off.
 ```
 
 **5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
@@ -64,6 +101,8 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
 | 2026-09-25 | ⌥⌥ opens the **Dock**, ⌘⌘ opens the **Corner** — fixed, no setting. Task 3 ("⌥⌥ opens Dock / Corner" setting) is dropped. |
 | 2026-09-25 | Chat Window hotkey stays **⌃C** (advised ⌃⌥C). Known cost: a global hotkey takes the key from every app, so ⌃C no longer interrupts a running command in Terminal (or reaches any other app) while DoraX runs. Revisit if that bites. |
+| 2026-09-25 | Safari tabs show as **pills in the Corner's strip next to the input**, like the Dock's tab strip — not as rows in the result list. The strip auto-sizes. |
+| 2026-09-25 | The Corner's strip holds the user's **pins per app**: tabs, menu commands, app actions (e.g. Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI) and the user's own actions. |
 
 ## Open decisions (owner)
 
