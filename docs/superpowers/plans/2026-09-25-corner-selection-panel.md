@@ -1,6 +1,6 @@
 # Corner Selection panel: one panel that does everything the Dock's Selection does
 
-> **Status: PLAN, questions answered (2026-09-25); Share route to be confirmed, then build A→F.** Written so work can resume exactly here
+> **Status: BUILDING (2026-09-25). Part A in progress.** Written so work can resume exactly here
 > after any interruption. Spec: `docs/master/00-DOCK-AND-CORNER.md` §4a. Branch:
 > `claude/corner-parity`, PR #84 (open, all work so far committed and pushed).
 
@@ -71,6 +71,32 @@ E. **Test matrix, on the app by the agent** (System Events + screen capture; mem
    Rows that run commands with side effects (Share sending, Services that write) are checked up
    to the confirmation step only, never sent. Hand checks asked only for what cannot be driven.
 F. Docs: §4a, inventory D10 (→ ✅ when Share and answers are in), `corner-shell.md`, #83 note.
+
+## Owner rules (2026-09-25, second message) — these govern every part
+
+1. **Follow `docs/superpowers/specs/2026-09-23-surface-cost-and-computer-use.md`.** Every row
+   has a surface — `headless` < `opensApp` < `takesScreen`. **AX-driven work (clicking a
+   menu, Writing Tools, setting text in another app) is `takesScreen`: it runs only when
+   Computer Use is enabled for that app** (`ComputerUseConsentStore.effectiveMode(for:)`).
+   Otherwise the cheapest able path runs — a headless route, or **the AI provider the user
+   selected** (e.g. Rewrite / Proofread through the provider, not Writing Tools via AX). Where
+   the UI is the only way, the row says so and offers the consent (spec §3 Step 4: Allow once ·
+   Allow always), never a silent failure.
+2. **The result sheet is the answer surface and must be complete**: markdown, **tables**,
+   **links**, files / documents / **images** rendered in the card (the shared
+   `AIChatMessageView`, the one renderer the Dock and App Chat use), and **actions at the end of
+   a result**: Replace selection (only with Computer Use for the source app — otherwise Copy,
+   with the reason shown), Copy, Save to Quick Note, Share.
+
+## Build order (revised)
+
+- **A — Answer in the card** + result actions (rule 2). Card state *answering*: transcript from
+  `AppChatConversation.shared` via `AIChatMessageView` and `LiveAgentProgressView`; follow-ups in
+  the card's field; Esc answer → rows → close; the App Chat card is not raised.
+- **A2 — Surfaces and consent on rows** (rule 1): Finder-menu, app Share-menu and Writing Tools
+  rows are `takesScreen`; with Computer Use off they show the consent offer instead of running.
+- **B — Share** (routes 1–3 above, route 2 only with Computer Use).
+- **C — File preview**, **D — look**, **E — test matrix**, **F — docs**, as above.
 
 ## Owner answers (2026-09-25)
 
