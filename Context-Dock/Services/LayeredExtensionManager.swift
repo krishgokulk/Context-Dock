@@ -215,14 +215,31 @@ class LayeredExtensionManager: ObservableObject {
         return discovered
     }
 
+    /// The script an extension runs: its script file when it names one that can be read,
+    /// otherwise the script embedded in its metadata. An empty `scriptPath` named the
+    /// extension's own folder, which "exists", fails to read as text, and replaced the
+    /// embedded script with nothing — "Save Selection to Downloads" ran and did nothing.
+    nonisolated static func scriptContent(
+        embedded: String?, scriptPath: String, folder: URL
+    ) -> String? {
+        let path = scriptPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return embedded }
+        let scriptURL = folder.appendingPathComponent(path)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: scriptURL.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue,
+            let fromFile = try? String(contentsOf: scriptURL, encoding: .utf8)
+        else { return embedded }
+        return fromFile
+    }
+
     private nonisolated static func loadExtensionFromMetadata(_ metadataURL: URL) -> ILExtension? {
         do {
             let data = try Data(contentsOf: metadataURL)
             var ext = try JSONDecoder().decode(ILExtension.self, from: data)
-            let scriptURL = metadataURL.deletingLastPathComponent().appendingPathComponent(ext.scriptPath)
-            if FileManager.default.fileExists(atPath: scriptURL.path) {
-                ext.scriptContent = try? String(contentsOf: scriptURL)
-            }
+            ext.scriptContent = scriptContent(
+                embedded: ext.scriptContent, scriptPath: ext.scriptPath,
+                folder: metadataURL.deletingLastPathComponent())
             return ext
         } catch {
             #if DEBUG

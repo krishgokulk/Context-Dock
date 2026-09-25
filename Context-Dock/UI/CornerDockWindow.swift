@@ -366,7 +366,13 @@ final class CornerDockController: NSObject {
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
+            selection: selection.phase.isVisible
+                ? SelectionScopeMetrics.size(
+                    rows: selection.rows.count, answering: selection.isShowingAnswer,
+                    consent: selection.isAsking,
+                    outcome: selection.showsOutcome,
+                    folderPreview: selection.showsFolderPreview,
+                    sendConfirm: selection.pendingSend != nil) : nil,
             list: showsExtensionPanel
                 ? ExtensionScopeMetrics.size
                 : (showsAppSnapshot
@@ -582,7 +588,13 @@ final class CornerDockController: NSObject {
             shelf: DropShelfMetrics.collapsedSize,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible ? SelectionScopeMetrics.size : nil,
+            selection: selection.phase.isVisible
+                ? SelectionScopeMetrics.size(
+                    rows: selection.rows.count, answering: selection.isShowingAnswer,
+                    consent: selection.isAsking,
+                    outcome: selection.showsOutcome,
+                    folderPreview: selection.showsFolderPreview,
+                    sendConfirm: selection.pendingSend != nil) : nil,
             list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width
@@ -613,7 +625,7 @@ final class CornerDockController: NSObject {
     func publishKeyboardOwner() {
         keyboardState.ownerChanged(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-            selectionWantsKeyboard: selection.phase.isVisible && !selection.hasAsked,
+            selectionWantsKeyboard: selection.phase.isVisible,
             chatShowsInput: prompt.phase.showsInput,
             pluginEditing: PluginKeyboardClaim.shared.isEditing)
     }
@@ -627,7 +639,7 @@ final class CornerDockController: NSObject {
         guard
             CornerKeyboardOwner.owner(
                 clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-                selectionWantsKeyboard: selection.phase.isVisible && !selection.hasAsked,
+                selectionWantsKeyboard: selection.phase.isVisible,
                 chatShowsInput: prompt.phase.showsInput) == .chat
         else { return }
         chatPresentation.composerInteracted()
@@ -641,7 +653,7 @@ final class CornerDockController: NSObject {
     func syncPanelKeyboard() {
         if CornerKeyboardOwner.panelHoldsKeyboard(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
-            selectionWantsKeyboard: selection.phase.isVisible && !selection.hasAsked,
+            selectionWantsKeyboard: selection.phase.isVisible,
             chatShowsInput: prompt.phase.showsInput,
             pluginEditing: PluginKeyboardClaim.shared.isEditing)
         {
@@ -782,6 +794,19 @@ final class CornerDockController: NSObject {
             keyboardState.owner == .selection
         {
             selection.dismiss()
+            return nil
+        }
+
+        // Esc on the selection card steps back one layer — answer → actions → closed. Taken
+        // here, like Backspace above, because with an answer up the key did not reach the
+        // field's own handler and Esc did nothing.
+        if event.keyCode == 53,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            selection.phase.isVisible,
+            keyboardState.owner == .selection
+        {
+            selection.escapePressed()
             return nil
         }
 

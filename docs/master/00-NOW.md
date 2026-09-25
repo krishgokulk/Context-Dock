@@ -10,37 +10,9 @@
 
 ## In progress
 
-**1. Selection in the Corner** (inventory D10, `00-DOCK-AND-CORNER.md` §4a) — Mac session.
-Approach B with conditions (see decisions 2026-09-25). Also removes the `#if DEBUG` "Temporary
-trace" in `CornerChatPresentation.showFrontmostApp` that writes to `/tmp/dorax-trace.log`.
+*None.* Task 2 is done (#88); task 3 dropped by the owner (decision below); task 4 is next.
 
 ## Next, in order
-
-**2. AGENTS.md: Dock/Corner rule** — docs only, after 1 merges.
-
-```
-Small docs-only PR to general-chat-agent. In AGENTS.md, under "DoraX architecture rule", add:
-
-Before touching any Dock (LauncherView*) or Corner (AppChat*, Corner*, SelectionScope*) code, read docs/master/00-DOCK-AND-CORNER.md and docs/master/00-DOCK-PARITY-INVENTORY.md.
-- The Dock is the reference behaviour; the Corner must match it. Reuse Dock code; never write a second copy.
-- A bug fixed in one shell: check the other shell for the same bug in the same PR, and update the matching inventory row.
-
-Also add docs/master/00-NOW.md to "Start here". Keep AGENTS.md under 150 lines. Stage only AGENTS.md, one MEMORY.md line, open the PR. Move this task to Done in 00-NOW.md.
-```
-
-**3. ⌥⌥ opens Dock / Corner setting** (inventory A1).
-Today ⌥⌥ → `toggleLauncher()` (Dock, centre); ⌘⌘ → `activateGlobalContextScope()` (Corner). The
-Corner's frontmost-app mode is `activateAppChatPrompt()`, reachable only by the App Chat hotkey
-(unset by default) — so no gesture opens the Corner in Context Dock mode.
-
-```
-Task: ⌥⌥ target setting (inventory A1). Own worktree from origin/general-chat-agent.
-- Setting "⌥⌥ opens: Dock / Corner" on the Hotkeys page (default Dock).
-- Corner: ⌥⌥ → activateAppChatPrompt() (frontmost-app mode); ⌥⌥ again puts it away; ⌘⌘ while it's up switches to Global Context and ⌥⌥ switches back — same as the Dock.
-- Tests: each setting routes ⌥⌥ to the right shell; ⌥⌥ toggles; ⌘⌘ ↔ ⌥⌥ switch modes in the Corner.
-- Update inventory A1 and 00-DOCK-AND-CORNER.md §5 ("interim: user-selectable, default Dock").
-check.sh green, one PR, one MEMORY.md line, move this task to Done in 00-NOW.md.
-```
 
 **4. Safari tabs in the Corner** (inventory D13).
 The Corner shows the shared hint "tabs, page cmds, menu cmds" (`UI/AppChatListCard.swift:184` via
@@ -68,6 +40,8 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-24 | Corner fixes (restore, folder preview, pins, Dock navigation) | #79 |
 | 2026-09-25 | One-shell dock; → never runs a system command (D4); ↑ reaches Global (F2) | #80, #81 |
 | 2026-09-25 | First letter typed from the resting strip no longer lost (B5) | #82 |
+| 2026-09-25 | Selection in the Corner (D10 ✅): the Dock's rows on the captured selection, answers in the card, Share, "send to …" with confirmation, Quick Note, file preview, Computer Use rule | #84 |
+| 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
 
 ## Owner decisions (append-only)
 
@@ -83,9 +57,15 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | Selection Share rows left out of the Corner for now; D10 stays 🟡 ("Share missing") until they return. |
 | 2026-09-25 | The Corner captures the selection when it builds its list and runs every row on that copy, never on the live Dock payload. |
 | 2026-09-25 | New bug-fix sessions wait until the Selection PR merges. |
+| 2026-09-25 | Replaces "Share left out": the Selection card does everything the Dock's Selection does **inside one panel** — answers (never a second card), Share (the app's own share routes: native destinations, typed "send to …"), file preview, all extensions. D10 → ✅ when these ship. |
+| 2026-09-25 | AX-driven work (menus, Writing Tools, writing into another app) runs only with Computer Use on for that app; otherwise the user's AI provider does it (surface-cost spec). |
+| 2026-09-25 | Quick Note: a Save-to-Quick-Note action on answers; the knowledge graph gets no action. |
+| 2026-09-25 | Test sends go only to the owner (Gokula Kannan J). |
+| 2026-09-25 | Selection test matrix: Safari is checked like the other apps, not in depth. |
+| 2026-09-25 | ⌥⌥ opens the **Dock**, ⌘⌘ opens the **Corner** — fixed, no setting. Task 3 ("⌥⌥ opens Dock / Corner" setting) is dropped. |
 | 2026-09-25 | Chat Window hotkey stays **⌃C** (advised ⌃⌥C). Known cost: a global hotkey takes the key from every app, so ⌃C no longer interrupts a running command in Terminal (or reaches any other app) while DoraX runs. Revisit if that bites. |
 
 ## Open decisions (owner)
 
-- What ⌥⌥ opens once the Dock retires (A1 end state; task 3 is the interim).
+- What ⌥⌥ opens once the Dock retires (A1 end state). Until then: ⌥⌥ Dock, ⌘⌘ Corner (2026-09-25).
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?

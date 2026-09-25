@@ -50,7 +50,8 @@ extension LauncherView {
 
     func buildMacOSExtensionActionPills(
         query rawQuery: String,
-        excludingTitles: Set<String> = []
+        excludingTitles: Set<String> = [],
+        includeSharing: Bool = true
     ) -> [DockPill] {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         let services = buildServicesActionSourcePills(
@@ -67,10 +68,9 @@ extension LauncherView {
         let finderTitles = serviceTitles.union(
             finderQuickActions.map { normalizedDockPillText($0.name) }
         )
-        let sharing = buildSharingActionSourcePills(
-            query: query,
-            excludingTitles: finderTitles
-        )
+        let sharing = includeSharing
+            ? buildSharingActionSourcePills(query: query, excludingTitles: finderTitles)
+            : []
         let shortcutTitles = finderTitles.union(
             sharing.map { normalizedDockPillText($0.name) }
         )
@@ -379,6 +379,8 @@ extension LauncherView {
                 badge: "Extension",
                 execute: { self.runCustomSelectionExtension(ext) }
             )
+            pill.runApproval = SelectionScopeExtensionPolicy.needsApproval(ext)
+                ? SelectionScopeExtensionPolicy.approvalSummary(ext) : nil
             pill.rankingKind = "customSelectionExtension"
             pill.rankingScore = 92_000
             pill.trackingIdentifier = "custom-selection-ext:\(normalizedTitle)"
@@ -390,7 +392,11 @@ extension LauncherView {
     /// Run an imported selection extension against the frozen selection and toast its output.
     private func runCustomSelectionExtension(_ ext: ILExtension) {
         guard let rawScript = ext.scriptContent, !rawScript.isEmpty else { return }
-        if SelectionScopeExtensionPolicy.needsApproval(ext), !confirmSelectionExtensionRun(ext) {
+        // The corner's card asks this question inside itself before it runs the row; a system
+        // alert from a background app does not take the keys, so it could only be clicked.
+        if SelectionScopeExtensionPolicy.needsApproval(ext), !SelectionActions.runApprovedInCard,
+            !confirmSelectionExtensionRun(ext)
+        {
             AppToast.show("Cancelled \(ext.name)", icon: "xmark.circle", tint: .secondary)
             return
         }
