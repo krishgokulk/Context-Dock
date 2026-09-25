@@ -1,6 +1,6 @@
 # Corner Selection panel: one panel that does everything the Dock's Selection does
 
-> **Status: BUILDING (2026-09-25). Part A ✅ (checked on the app). A2 ✅ (a64e5a1; full suite 1949/1949). B ✅ route 1 (native destinations in the card, Share on answers); route 3 (typed "send to …") parked — see B note. Next: check B on the app, then C, D, E, F.** Written so work can resume exactly here
+> **Status: BUILDING (2026-09-25). Part A ✅ (checked on the app). A2 ✅ (a64e5a1; full suite 1949/1949). B ✅ route 1 (native destinations in the card, Share on answers); route 3 (typed "send to …") parked — see B note. B checked on the app (TextEdit: Share Selection → destinations with icons, typing narrows, Esc → actions → closed; a double-Esc bug found and fixed). Next: C (file preview), then D, E, F.** Written so work can resume exactly here
 > after any interruption. Spec: `docs/master/00-DOCK-AND-CORNER.md` §4a. Branch:
 > `claude/corner-parity`, PR #84 (open, all work so far committed and pushed).
 

@@ -652,4 +652,10 @@ struct CornerSelectionActionsTests {
         #expect(SelectionShare.rows(destinations, query: "ma").map(\.title) == ["Mail"])
         #expect(SelectionShare.rows(destinations, query: "").first?.id == "share-dest-messages")
     }
+
+    @Test("One Esc steps back once: the field leaves Esc to the corner's monitor while the card has the keys")
+    func oneEscapeStepsBackOnce() {
+        #expect(!SelectionScopeModel.fieldHandlesEscape(keyboardOwner: .selection))
+        #expect(SelectionScopeModel.fieldHandlesEscape(keyboardOwner: .none))
+    }
 }

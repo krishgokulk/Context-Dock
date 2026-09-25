@@ -103,6 +103,14 @@ final class SelectionScopeModel: ObservableObject {
         }
     }
 
+    /// Pure: whether the card's field acts on Esc itself. While the card holds the corner's
+    /// keyboard, the corner's key monitor takes Esc and calls `escapePressed` — and the field
+    /// saw the same key press as well, so one Esc stepped back twice: out of Share and then
+    /// closed the card.
+    static func fieldHandlesEscape(keyboardOwner: CornerKeyboardClaimant) -> Bool {
+        keyboardOwner != .selection
+    }
+
     /// Esc: the share destinations step back to where Share was chosen; an answer steps back
     /// to the rows; the rows close the card.
     func escapePressed() {

@@ -343,7 +343,10 @@ struct SelectionScopeCard: View {
                     .onKeyPress(.downArrow) { model.moveFocus(by: 1) ? .handled : .ignored }
                     .onKeyPress(.upArrow) { model.moveFocus(by: -1) ? .handled : .ignored }
                     .onKeyPress(.escape) {
-                        model.escapePressed()
+                        // The corner's key monitor already stepped back for this press.
+                        if SelectionScopeModel.fieldHandlesEscape(keyboardOwner: keyboardState.owner) {
+                            model.escapePressed()
+                        }
                         return .handled
                     }
             }
