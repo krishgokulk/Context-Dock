@@ -52,14 +52,17 @@ struct CornerDockStrip: View {
     /// the room the field keeps for it. Typing hides it, as it hid the field's own.
     private var isPill: Bool {
         [.prompt, .suggesting].contains(model.phase) && model.showsFieldPills
-            && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (model.showsTabBar
+                || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     /// Where the pill sits in the shell: ending where the strip's trailing region begins,
     /// exactly where the field keeps its room.
     private func pillSpan(_ plan: DockStripPlan) -> (start: CGFloat, end: CGFloat) {
         let layout = plan.layout
+        let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let end = layout.width - layout.leadingInset - layout.trailingRegion
+            - (model.showsTabBar ? M.appFieldTrailingReserve(typed: typed) : 0)
         let width = M.pillWidth(
             icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0)
         return (end - width, end)

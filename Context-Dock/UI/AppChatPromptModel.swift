@@ -181,6 +181,15 @@ final class AppChatPromptModel: ObservableObject {
     /// The Global shell — its height, its fold into a dock and back — is Global Context's,
     /// and a Safari scope's.
     var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The frontmost app's own chat — its Context Dock — rather than Global, a CLI tool,
+    /// Finder's search or an extension's panel.
+    var isAppContextDock: Bool {
+        !isGlobalScope && !appBundleID.isEmpty && !isCLIScope && !isFinderScope
+            && scopedExtension == nil && scopedCommand == nil
+    }
+    /// Global's height: Global Context and every app's Context Dock are one bar (owner
+    /// 2026-09-25: "why is the Context Dock smaller than Global Context?").
+    var usesDockHeight: Bool { isGlobalScope || isAppContextDock }
     /// The field carries the small pill of the strip's icons.
     var showsFieldPills: Bool { isSearchField || showsTabBar }
     /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this

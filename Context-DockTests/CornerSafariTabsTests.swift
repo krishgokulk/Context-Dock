@@ -120,4 +120,31 @@ struct CornerSafariTabsTests {
         #expect(AppScopeHint.hint(bundleId: "com.google.Chrome", appName: "Google Chrome")
             == "page cmds, menu cmds")
     }
+
+    @Test("Every app's Context Dock is Global's height; without tabs it fits its field")
+    func contextDockHeightAndFit() {
+        let textEdit = scope(bundleID: "com.apple.TextEdit", name: "TextEdit")
+        #expect(textEdit.usesDockHeight && !textEdit.usesDockShell)
+        let fitted = AppChatPromptMetrics.size(
+            for: .prompt, suggestions: 0, running: 12, pinned: 3,
+            fieldHeight: AppChatPromptMetrics.dockHeight, fitsContent: true)
+        #expect(fitted.width == AppChatPromptMetrics.width)
+        #expect(fitted.height == AppChatPromptMetrics.dockHeight)
+        // Not fitted, the same counts take the Global strip's width.
+        let strip = AppChatPromptMetrics.size(
+            for: .prompt, suggestions: 0, running: 12, pinned: 3,
+            fieldHeight: AppChatPromptMetrics.dockHeight)
+        #expect(strip.width > fitted.width)
+    }
+
+    @Test("Typing keeps the tabs, and their pill ends before the field's + and send")
+    func typingKeepsTheTabs() {
+        let model = scope()
+        model.query = "summarise this"
+        model.queryChanged()
+        #expect(model.globalMatchIcons.map(\.title) == ["Inbox", "Pull requests", "Swift Forums"])
+        #expect(AppChatPromptMetrics.appFieldTrailingReserve(typed: true)
+            > AppChatPromptMetrics.appFieldTrailingReserve(typed: false))
+    }
 }
+
