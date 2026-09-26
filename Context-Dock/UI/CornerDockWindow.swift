@@ -394,21 +394,32 @@ final class CornerDockController: NSObject {
     /// Set while the dock stood aside for the selection card; the card's dismissal brings
     /// the dock back.
     private var dockStoodAsideForSelection = false
+    /// The scope the Selection card was opened from, so closing it comes back there — an
+    /// app's Context Dock, not always Global (owner 2026-09-26).
+    private var modeBeforeSelection: CornerChatMode?
 
     /// The dock's selection icon: the dock becomes the selection card. One shell, one place
     /// — the card takes the dock's slot rather than stacking over it, and Backspace on its
     /// empty field (or Esc) brings the dock back.
     func showSelectionScopeFromDock() {
+        let opener: CornerChatMode? = chatPresentation.isVisible ? chatPresentation.mode : nil
         AppDelegate.shared?.activateSelectionScope(sourceBundleID: nil)
         guard selection.phase.isVisible else { return }
         dockStoodAsideForSelection = true
+        modeBeforeSelection = opener
         chatPresentation.dismiss()
     }
 
     private func selectionPhaseDidChange(_ visible: Bool) {
         guard !visible, dockStoodAsideForSelection else { return }
         dockStoodAsideForSelection = false
-        chatPresentation.showGlobalContext()
+        let back = modeBeforeSelection
+        modeBeforeSelection = nil
+        if back == .frontmostApp {
+            chatPresentation.show(.frontmostApp)
+        } else {
+            chatPresentation.showGlobalContext()
+        }
         prompt.foldToDock()
     }
 

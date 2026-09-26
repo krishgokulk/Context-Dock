@@ -1113,16 +1113,15 @@ struct AppChatPromptPill: View {
     /// off the screen instead of picking a file.
     private var selectionScopeButton: some View {
         Button {
-            // In place, not a second card: this session already knows what is selected
-            // and already carries it on whatever question gets asked here, so opening the
-            // separate Selection Scope card on top of an already-open chat stacked one
-            // surface on another for something this one could just show itself.
-            model.toggleSelectionScope()
+            // The Selection card, the same one the dock's selection icon opens (owner
+            // 2026-09-26): attaching the text to this field instead left the user with a
+            // chip and none of the selection's actions. Closing it comes back here.
+            CornerDockController.shared.showSelectionScopeFromDock()
         } label: {
-            controlGlyph("text.cursor", tinted: model.isShowingSelectionScope)
+            controlGlyph("text.cursor")
         }
         .buttonStyle(.plain)
-        .help(model.isShowingSelectionScope ? "Back to \(model.appName)" : "Show the current selection")
+        .help("Show the current selection")
         .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 

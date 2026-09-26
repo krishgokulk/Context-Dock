@@ -273,12 +273,13 @@ struct CornerDockStrip: View {
                         controller.model.summon()
                     }
                 }
-                // An app bar carries only the clipboard (`dockToolCount`): drawing more than
-                // it counts would run past the width it was given.
-                if model.selection != nil, !model.showsTabBar {
+                // An app bar carries the clipboard and the selection, not action results
+                // (`dockToolCount`): drawing more than it counts would overrun its width.
+                if model.selection != nil {
                     toolIcon("text.cursor", title: "Selection") {
                         CornerDockController.shared.showSelectionScopeFromDock()
                     }
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
                 // What the last action came to, for a few seconds — the dock's inline
                 // result, in the corner's own idiom: the clipboard's slot and lifetime.
@@ -294,6 +295,7 @@ struct CornerDockStrip: View {
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
         .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
+        .animation(.smooth(duration: 0.25), value: model.selection != nil)
         .padding(.horizontal, plan.layout.leadingInset)
         .frame(height: M.dockHeight)
         // The pill's capsule, drawn behind the icons that became it — it arrives once they
