@@ -971,6 +971,14 @@ final class CornerDockController: NSObject {
         // ← on an empty Global field folds it into the dock, before the presentation's
         // own walk between scopes is considered.
         if chatPresentation.mode != .general, prompt.foldToDock() { return nil }
+        // ← out of a scope entered from Global goes back to Global — the field's own first
+        // rung, which this monitor runs ahead of. Without it an empty Finder field went
+        // straight to General Chat (owner, 2026-09-26); the Dock goes back to Global.
+        if chatPresentation.mode != .general, prompt.query.isEmpty,
+            prompt.leaveScopeForGlobal()
+        {
+            return nil
+        }
         return chatPresentation.handleLeftArrow(draft: prompt.query) ? nil : event
     }
 

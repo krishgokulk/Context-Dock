@@ -466,10 +466,10 @@ struct AppChatPromptPill: View {
         // branch is a new text field. `fieldFocused` was already true, so nothing gave it the
         // caret: Finder opened with no caret and the next → went nowhere (2026-09-26). Let go
         // and claim again, so the field that is on screen is the one that has it.
-        .onChange(of: model.usesDockShell) { _, _ in
-            fieldFocused = false
-            DispatchQueue.main.async { syncFocus() }
-        }
+        .onChange(of: model.usesDockShell) { _, _ in reclaimCaretAfterScopeChange() }
+        // The same for every app → walks into: Finder → Safari swaps the shell back, and an
+        // app after that keeps it, and each one opened without a caret until clicked.
+        .onChange(of: model.appBundleID) { _, _ in reclaimCaretAfterScopeChange() }
         // A panel minimised or restored changes the pills without anything being typed, so
         // the row has to be asked again rather than waiting for the next keystroke.
         .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in
@@ -652,6 +652,18 @@ struct AppChatPromptPill: View {
         model.usesDockHeight && [.prompt, .suggesting].contains(model.phase)
             && size.height <= AppChatPromptMetrics.dockHeight
             ? AppChatPromptMetrics.dockHeight / 2 : 22
+    }
+
+    /// What a click in the field does (`requestComposerFocus`), after the scope under the
+    /// field changed — only while the Corner already holds the keyboard, so an app the user
+    /// switched to themselves never loses its keys to this.
+    private func reclaimCaretAfterScopeChange() {
+        guard keyboardState.isArmed, model.phase.showsInput else { return }
+        fieldFocused = false
+        DispatchQueue.main.async {
+            CornerDockController.shared.requestComposerFocus()
+            syncFocus()
+        }
     }
 
     private func syncFocus() {
