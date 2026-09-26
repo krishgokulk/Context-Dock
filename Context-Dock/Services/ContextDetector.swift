@@ -1080,7 +1080,7 @@ class ContextDetector {
                     return nil
                 }
 
-                let output = scriptObject.executeAndReturnError(&error)
+                let output = scriptObject.executeSerialized(error: &error)
 
                 if let error = error {
                     #if DEBUG

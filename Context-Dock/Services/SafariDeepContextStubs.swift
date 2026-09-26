@@ -67,7 +67,7 @@ final class SafariDeepContextReader {
         """
         var error: NSDictionary?
         guard let appleScript = NSAppleScript(source: script),
-              let output = appleScript.executeAndReturnError(&error).stringValue
+              let output = appleScript.executeSerialized(error: &error).stringValue
         else { return [] }
 
         let q = query.lowercased()

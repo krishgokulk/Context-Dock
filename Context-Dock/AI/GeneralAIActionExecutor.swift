@@ -807,7 +807,7 @@ final class GeneralAIActionExecutor {
             return .init(success: false, message: "Couldn't compile the generated AppleScript.")
         }
         var error: NSDictionary?
-        let output = object.executeAndReturnError(&error)
+        let output = object.executeSerialized(error: &error)
         if let error {
             let msg = error[NSAppleScript.errorMessage] as? String ?? "AppleScript failed."
             return .init(success: false, message: "AppleScript error: \(msg)")

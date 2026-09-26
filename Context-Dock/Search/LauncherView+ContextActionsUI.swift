@@ -1567,7 +1567,7 @@ extension LauncherView {
             end tell
             """
         var error: NSDictionary?
-        NSAppleScript(source: script)?.executeAndReturnError(&error)
+        NSAppleScript(source: script)?.executeSerialized(error: &error)
         let ok = error == nil
         appendPanelMessage(
             AIChatMessage(
@@ -1776,7 +1776,7 @@ extension LauncherView {
                 PanelAction(icon: "terminal", label: "Open in Terminal") {
                     let script =
                         "tell application \"Terminal\" to do script \"cd '\(path)'\" activate"
-                    NSAppleScript(source: script)?.executeAndReturnError(nil)
+                    NSAppleScript(source: script)?.executeSerialized(error: nil)
                 },
                 PanelAction(icon: "eye", label: "Quick Look") {
                     PreviewController.shared.present(

@@ -346,7 +346,7 @@ final class SafariCommandBridge {
             end tell
             """
             var err: NSDictionary?
-            let count = NSAppleScript(source: script)?.executeAndReturnError(&err).int32Value ?? 0
+            let count = NSAppleScript(source: script)?.executeSerialized(error: &err).int32Value ?? 0
             if err == nil { return .answerInfo(message: "Safari has \(count) tab\(count == 1 ? "" : "s") open.") }
         }
 
@@ -538,7 +538,7 @@ final class SafariCommandBridge {
         end tell
         """
         var error: NSDictionary?
-        NSAppleScript(source: script)?.executeAndReturnError(&error)
+        NSAppleScript(source: script)?.executeSerialized(error: &error)
         if let err = error { return "Menu error: \(err)" }
         return "\(item) ✓"
     }

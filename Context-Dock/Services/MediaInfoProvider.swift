@@ -254,7 +254,7 @@ class MediaInfoProvider {
     private func runAppleScript(_ script: String) -> String? {
         var error: NSDictionary?
         if let scriptObject = NSAppleScript(source: script) {
-            let output = scriptObject.executeAndReturnError(&error)
+            let output = scriptObject.executeSerialized(error: &error)
             if error == nil, let result = output.stringValue {
                 return result
             }
