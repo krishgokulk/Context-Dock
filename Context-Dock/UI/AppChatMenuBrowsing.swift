@@ -161,20 +161,23 @@ extension AppChatPromptModel {
         updateGlobalTyping(for: query)
     }
 
-    /// Safari's open tabs as the strip's icons, current page first. A pinned tab is not
-    /// among them: it has its place with the pins, ahead of these.
+    /// The app bar's icons: the app's pins first, in the order the user put them, then
+    /// Safari's open tabs, current page first. A pinned tab is not among the tabs: it has its
+    /// place with the pins. Pins lead so that the cut for room — from the end — reaches the
+    /// tabs first and never a pin.
     func tabStripIcons() -> [MatchDockIcon] {
+        let pins = appPinIcons()
         // An app with pins but no tabs has the bar for its pins alone.
         guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
             tabsByIconID = [:]
-            return []
+            return pins
         }
         let tabs = AppPinRun.unpinnedTabs(
             BrowserTabList.ordered(tabSource(), currentURL: currentTabURL()),
-            pins: pinStore.pins(forApp: appBundleID))
+            pins: dockPins.pins(forApp: appBundleID))
         tabsByIconID = Dictionary(
             tabs.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
-        return tabs.map(BrowserTabList.icon(for:))
+        return pins + tabs.map(BrowserTabList.icon(for:))
     }
 
     /// Whether an icon in the strip or the pill is one of Safari's tabs.

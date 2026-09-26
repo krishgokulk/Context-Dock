@@ -52,10 +52,10 @@ struct CornerDockStrip: View {
     /// the room the field keeps for it. Typing hides it, as it hid the field's own.
     private var isPill: Bool {
         [.prompt, .suggesting].contains(model.phase) && model.showsFieldPills
-            // Nothing to gather — an app whose bar is only pins — draws no empty capsule.
             && (!model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0)
-            && (model.showsTabBar
-                || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            // Typing hides it everywhere — tabs and pins included (owner 2026-09-26: while
+            // typing the field is compact: attach, send, pin).
+            && model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Where the pill sits in the shell: ending where the strip's trailing region begins,
@@ -94,7 +94,6 @@ struct CornerDockStrip: View {
         let pills = model.globalMatchIcons
         let (pillStart, pillEnd) = pillSpan(plan)
         let from = layout.leadingInset + M.dockSearchStubSpan
-            + plan.composition.leadingPinsSpan
             + CGFloat(index + 1) * layout.appSpread
             + CGFloat(index) * (M.dockIconSize + M.dockIconGap) + M.dockIconSize / 2
         let to: CGFloat
@@ -115,7 +114,7 @@ struct CornerDockStrip: View {
             tools: model.dockToolCount(
                 clipboardVisible: clipboard.phase.isVisible,
                 feedbackVisible: feedback.glyph != nil),
-            fieldIcons: model.promptIconCount, pinsLead: model.stripPinsLead)
+            fieldIcons: model.promptIconCount)
     }
 
     var body: some View {
@@ -133,9 +132,7 @@ struct CornerDockStrip: View {
                 // slot — and Finder. It belongs to the magnifier and leaves with it.
                 .overlay(alignment: .center) {
                     let glyphEdge: CGFloat = 10
-                    let leadsWithPins = self.plan.composition.leadingPinsSpan > 0
-                    let appEdge = M.dockIconSize / 2 + M.dockIconGap
-                        + (leadsWithPins ? 0 : self.plan.layout.appSpread)
+                    let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
                     Rectangle()
                         .fill(Color.primary.opacity(0.18))
                         .frame(width: 1, height: M.dockIconSize * 0.7)
@@ -156,18 +153,6 @@ struct CornerDockStrip: View {
             // size — drawn there, not laid out there, so the row's geometry never moves
             // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
             let count = plan.composition.apps.count + (plan.layout.overflow > 0 ? 1 : 0)
-            // An app's Context Dock: its pins lead, then a hairline, then its live tabs.
-            if plan.composition.pinsLead, !plan.composition.otherPins.isEmpty {
-                pinsRegion(plan, ids: ids)
-                    // The pins are not in the field's pill: they go as the row folds into it.
-                    .opacity(isDock ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: isDock)
-                    .allowsHitTesting(isDock)
-                Rectangle()
-                    .fill(Color.primary.opacity(0.18))
-                    .frame(width: 1, height: M.dockIconSize * 0.7)
-                    .opacity(isDock ? 1 : 0)
-            }
             ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
                 let stays = isDock || (isPill && inPill(slot.bundleID))
                 appIcon(slot, ids: ids)
@@ -195,13 +180,29 @@ struct CornerDockStrip: View {
                     .allowsHitTesting(isDock)
                     .padding(.leading, plan.layout.appSpread)
             }
-            if !plan.composition.pinsLead, !plan.composition.otherPins.isEmpty {
+            if !plan.composition.otherPins.isEmpty {
                 // The HStack's own gap on each side of this hairline is the 17-point
                 // `dockDividerSpan` the metrics count.
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
-                pinsRegion(plan, ids: ids)
+                ForEach(plan.composition.otherPins) { pin in
+                    if plan.composition.widgetSlots[pin.id] != nil,
+                        let pluginID = pin.kind.pluginID,
+                        let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+                    {
+                        // A pinned plugin with a bar widget IS its widget here — a live
+                        // tile in the row, Phase 4's strip host.
+                        PluginStripTile(pin: pin, manifest: manifest, model: model)
+                            .modifier(DockPinDrag(pinID: pin.id, dragging: $draggingPinID))
+                            .overlay(RightClickReporter { menuID = pin.id.uuidString })
+                            .popover(isPresented: menuBinding(pin.id.uuidString), arrowEdge: .top) {
+                                DockIconMenu(items: pinnedMenuItems(pin))
+                            }
+                    } else {
+                        pinnedIcon(pin, ids: ids)
+                    }
+                }
             }
             if plan.layout.tools > 0 {
                 Rectangle()
@@ -280,6 +281,7 @@ struct CornerDockStrip: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     if draggingPinID == id, NSEvent.pressedMouseButtons == 0 {
                         DockPinStore.shared.unpin(id)
+                        model.updateTabStrip()
                         draggingPinID = nil
                     }
                 }
@@ -327,13 +329,16 @@ struct CornerDockStrip: View {
             // the pointer choosing it. Leaving is always honoured, so nothing sticks.
             if inside, Date() < hoverSettlesAt { return }
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
-            // A tab has no app window to preview.
-            guard !model.isTabIcon(slot.bundleID) else { return }
+            // A tab or an app's pin has no app window to preview.
+            guard !model.isTabIcon(slot.bundleID), !model.isAppPinIcon(slot.bundleID) else { return }
             model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
+            // One of the app's pins, big or in the pill: it runs, as its row would.
+            if let pin = model.appPin(forIconID: slot.bundleID) {
+                model.openAppPin(pin)
             // A tab, big or in the pill: Safari shows it.
-            if model.isTabIcon(slot.bundleID), let icon = slot.running {
+            } else if model.isTabIcon(slot.bundleID), let icon = slot.running {
                 model.openTabIcon(icon)
             // As the pill, a click scopes the field into the app, as the pill always has.
             } else if !isDock, let icon = model.globalMatchIcons.first(where: { $0.bundleID == slot.bundleID }) {
@@ -344,8 +349,12 @@ struct CornerDockStrip: View {
         }
         // Only a pinned app can be dragged: dragging is how the user reorders and unpins,
         // and a running app nobody pinned has no place to be moved to.
-        .modifier(DockPinDrag(pinID: slot.pin?.id, dragging: $draggingPinID))
-        // A tab's menu pins it; an app's menu (Quit, Hide, Show in Finder) means nothing there.
+        // An app's pin drags the same way: off the strip unpins it.
+        .modifier(DockPinDrag(
+            pinID: slot.pin?.id ?? model.appPin(forIconID: slot.bundleID)?.id,
+            dragging: $draggingPinID))
+        // A tab's menu pins it, a pin's unpins it; an app's menu (Quit, Hide, Show in
+        // Finder) is for apps.
         .overlay(RightClickReporter { menuID = id })
         .popover(isPresented: menuBinding(id), arrowEdge: .top) {
             DockIconMenu(items: appMenuItems(slot))
@@ -354,34 +363,11 @@ struct CornerDockStrip: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The pins that are not apps, in the order the user put them — after the running apps
-    /// in Global, ahead of the live tabs in an app's Context Dock.
-    @ViewBuilder
-    private func pinsRegion(_ plan: DockStripPlan, ids: [String]) -> some View {
-        ForEach(plan.composition.otherPins) { pin in
-            if plan.composition.widgetSlots[pin.id] != nil,
-                let pluginID = pin.kind.pluginID,
-                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
-            {
-                // A pinned plugin with a bar widget IS its widget here — a live
-                // tile in the row, Phase 4's strip host.
-                PluginStripTile(pin: pin, manifest: manifest, model: model)
-                    .modifier(DockPinDrag(pinID: pin.id, dragging: $draggingPinID))
-                    .overlay(RightClickReporter { menuID = pin.id.uuidString })
-                    .popover(isPresented: menuBinding(pin.id.uuidString), arrowEdge: .top) {
-                        DockIconMenu(items: pinnedMenuItems(pin))
-                    }
-            } else {
-                pinnedIcon(pin, ids: ids)
-            }
-        }
-    }
-
     /// A pin that is not an app — a command, a CLI tool, a file, a folder. Apps never come
     /// through here; they are slots in the app region, pinned or not.
     private func pinnedIcon(_ pin: DockPin, ids: [String]) -> some View {
         let document = pin.documentID.flatMap { GlobalSearchService.shared.document(withID: $0) }
-        let image = pin.kind.icon ?? document?.icon ?? model.appPinImage(pin)
+        let image = pin.kind.icon ?? document?.icon
         let available: Bool = {
             switch pin.kind {
             case .globalCommand, .cliTool: return document != nil
@@ -401,7 +387,7 @@ struct CornerDockStrip: View {
                 DockStripIcon(
                     image: image, title: pin.title, isRunning: false,
                     isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids),
-                    fallbackSymbol: model.appPinSymbol(pin) ?? pin.kind.fallbackSymbol
+                    fallbackSymbol: pin.kind.fallbackSymbol
                 )
             }
         }
@@ -414,8 +400,6 @@ struct CornerDockStrip: View {
                 peekWidget(pin.id, inside)
                 return
             }
-            // An app's own command or tab has no preview card; its name is the tooltip.
-            if pin.appBundleID != nil, pin.kind.runsInApp { return }
             // The same dwell the apps use, so a pinned file answers the pointer the way a
             // running app does.
             model.hoveredStripTarget = inside ? .pin(id: pin.id) : nil
@@ -516,6 +500,12 @@ struct CornerDockStrip: View {
     /// that is neither is not on the strip at all.
     private func appMenuItems(_ slot: DockAppSlot) -> [DockIconMenu.Item] {
         let bundleID = slot.bundleID
+        if let pin = model.appPin(forIconID: bundleID) {
+            return [.init(title: "Unpin") {
+                pins.unpin(pin.id)
+                model.updateTabStrip()
+            }]
+        }
         if model.isTabIcon(bundleID) {
             let pinned = model.isTabPinned(iconID: bundleID)
             return [.init(title: pinned ? "Unpin Tab" : "Pin Tab") {
@@ -656,7 +646,7 @@ struct CornerDockStrip: View {
                 NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
             }
         case .menuCommand, .appAction, .tab:
-            model.openAppPin(pin)
+            model.openAppPin(pin)  // an app's pin; Global's strip never holds one
         case .globalCommand, .cliTool:
             guard let document else { return }
             // A pinned plugin answers where it is: a one-shot runs from the dock, a plugin
@@ -698,6 +688,7 @@ struct CornerDockStrip: View {
                     // Dropped back on the strip: move to the end of its own pins, Global's or
                     // the app's. Per-slot targets are a refinement the user has not asked for.
                     DockPinStore.shared.moveToEnd(id)
+                    model.updateTabStrip()
                 }
             }
             accepted = true

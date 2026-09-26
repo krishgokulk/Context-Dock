@@ -25,21 +25,57 @@ extension AppChatPromptModel {
 
     func isPinnedToApp(_ row: AppChatRow) -> Bool {
         guard let kind = DockPinKind(appRow: row) else { return false }
-        return pinStore.isPinned(kind, app: appBundleID)
+        return dockPins.isPinned(kind, app: appBundleID)
     }
 
     /// Pins a row for this app, or unpins it when it already is.
     func toggleAppPin(_ row: AppChatRow) {
         guard isAppContextDock, let kind = DockPinKind(appRow: row) else { return }
-        if let pin = pinStore.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
-            pinStore.unpin(pin.id)
+        defer { updateTabStrip() }
+        if let pin = dockPins.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
+            dockPins.unpin(pin.id)
             return
         }
         let documentID: String? = {
             if case .global(let doc) = row { return doc.id }
             return nil
         }()
-        pinStore.pin(kind, title: row.title, documentID: documentID, app: appBundleID)
+        dockPins.pin(kind, title: row.title, documentID: documentID, app: appBundleID)
+    }
+
+    // MARK: The bar's leading icons
+
+    static func appPinIconID(_ pin: DockPin) -> String { "app-pin:\(pin.id.uuidString)" }
+
+    /// This app's pins as the bar's icons — the same icons the tabs are, so they fold into
+    /// the field's pill and back with them.
+    func appPinIcons() -> [MatchDockIcon] {
+        let pins = dockPins.pins(forApp: appBundleID)
+        appPinsByIconID = Dictionary(
+            pins.map { (Self.appPinIconID($0), $0) }, uniquingKeysWith: { a, _ in a })
+        return pins.map { pin in
+            let id = Self.appPinIconID(pin)
+            return MatchDockIcon(
+                id: id, bundleID: id, title: pin.title,
+                icon: appPinImage(pin) ?? Self.symbolImage(
+                    appPinSymbol(pin) ?? pin.kind.fallbackSymbol, title: pin.title),
+                isRunning: false, isExpandable: false, score: 0, isExactAppPrefix: false)
+        }
+    }
+
+    func isAppPinIcon(_ id: String) -> Bool { appPinsByIconID[id] != nil }
+
+    func appPin(forIconID id: String) -> DockPin? { appPinsByIconID[id] }
+
+    /// A symbol drawn light, for the corner's dark glass: a template image would come out
+    /// black where the view does not tint it.
+    private static func symbolImage(_ name: String, title: String) -> NSImage {
+        let config = NSImage.SymbolConfiguration(pointSize: 22, weight: .medium)
+            .applying(.init(paletteColors: [NSColor.white.withAlphaComponent(0.85)]))
+        return NSImage(systemSymbolName: name, accessibilityDescription: title)?
+            .withSymbolConfiguration(config)
+            ?? NSImage(systemSymbolName: "pin", accessibilityDescription: title)
+            ?? NSImage()
     }
 
     /// The tab behind a strip icon, as a pin kind.
@@ -49,17 +85,17 @@ extension AppChatPromptModel {
 
     func isTabPinned(iconID id: String) -> Bool {
         guard let kind = tabPinKind(forIconID: id) else { return false }
-        return pinStore.isPinned(kind, app: appBundleID)
+        return dockPins.isPinned(kind, app: appBundleID)
     }
 
     /// Pins the tab behind a strip icon for this app, or unpins it.
     func toggleTabPin(iconID id: String) {
         guard let tab = tabsByIconID[id], !appBundleID.isEmpty else { return }
         let kind = DockPinKind.tab(url: tab.url)
-        if let pin = pinStore.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
-            pinStore.unpin(pin.id)
+        if let pin = dockPins.pins(forApp: appBundleID).first(where: { $0.kind == kind }) {
+            dockPins.unpin(pin.id)
         } else {
-            pinStore.pin(kind, title: tab.title.isEmpty ? tab.domain : tab.title, app: appBundleID)
+            dockPins.pin(kind, title: tab.title.isEmpty ? tab.domain : tab.title, app: appBundleID)
         }
         updateTabStrip()
     }

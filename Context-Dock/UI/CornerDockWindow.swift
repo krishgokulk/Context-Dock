@@ -497,7 +497,7 @@ final class CornerDockController: NSObject {
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
-            fieldIcons: prompt.promptIconCount, pinsLead: prompt.stripPinsLead
+            fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
     }
 
@@ -563,8 +563,7 @@ final class CornerDockController: NSObject {
         // icon there, so it must be one icon wide here.
         let composition = DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
-            pinsLead: prompt.stripPinsLead
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil)
         ).composition
         return AppChatPromptMetrics.size(
             for: prompt.phase,

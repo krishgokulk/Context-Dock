@@ -306,7 +306,6 @@ struct AppChatListCard: View {
         if model.canPinToApp(row) {
             Button(model.isPinnedToApp(row) ? "Unpin from \(model.appName)" : "Pin to \(model.appName)") {
                 model.toggleAppPin(row)
-                model.updateTabStrip()
             }
         } else if let kind = DockPinKind(row: row) {
             if DockPinStore.shared.isPinned(kind) {

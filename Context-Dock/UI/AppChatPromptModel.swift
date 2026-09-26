@@ -168,6 +168,8 @@ final class AppChatPromptModel: ObservableObject {
     }
     /// The tabs behind the Safari scope's icons, by icon id.
     var tabsByIconID: [String: SafariTab] = [:]
+    /// The app's pins behind its bar's leading icons, by icon id.
+    var appPinsByIconID: [String: DockPin] = [:]
 
     /// The app's own bar: a Safari scope's open tabs take the running apps' place in the
     /// Global shell — the strip of big icons at rest, the small pill in the field (owner
@@ -176,15 +178,11 @@ final class AppChatPromptModel: ObservableObject {
     var showsTabBar: Bool {
         guard !isGlobalScope else { return false }
         if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
-        return isAppContextDock && !pinStore.pins(forApp: appBundleID).isEmpty
+        return isAppContextDock && !dockPins.pins(forApp: appBundleID).isEmpty
     }
-    /// The pins the strip shows: Global's in Global, the app's own in its Context Dock —
-    /// never Global's there, since that bar is the app's own things.
-    var stripPins: [DockPin] {
-        showsTabBar ? pinStore.pins(forApp: appBundleID) : pinStore.pins
-    }
-    /// An app's pins lead its live tabs; Global's pins follow its running apps.
-    var stripPinsLead: Bool { showsTabBar }
+    /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
+    /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
+    var stripPins: [DockPin] { showsTabBar ? [] : dockPins.pins }
     /// The Global shell — its height, its fold into a dock and back — is Global Context's,
     /// and a Safari scope's.
     var usesDockShell: Bool { isGlobalScope || showsTabBar }
@@ -272,7 +270,7 @@ final class AppChatPromptModel: ObservableObject {
     /// Shows a tab in Safari. Tests replace it so they never script the user's Safari.
     var switchTab: (SafariTab) -> Void = { SafariTabManager.shared.switchTo($0) }
     /// Where pins live. Tests hand in their own so they never touch the user's pins.
-    var pinStore: DockPinStore = .shared
+    var dockPins: DockPinStore = .shared
     /// Loads a page in the app a pinned tab belongs to, when that tab is no longer open.
     /// Tests replace it.
     var openPage: (URL, String) -> Void = { url, bundleID in

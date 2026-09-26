@@ -318,8 +318,7 @@ struct AppChatPromptPill: View {
     private var stripPlan: DockStripPlan {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins,
-            tools: stripToolCount, fieldIcons: model.promptIconCount,
-            pinsLead: model.stripPinsLead)
+            tools: stripToolCount, fieldIcons: model.promptIconCount)
     }
 
     private var stripToolCount: Int {
@@ -335,8 +334,7 @@ struct AppChatPromptPill: View {
             clipboardVisible: clipboard.phase.isVisible,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
-            running: model.stripIcons, pins: model.stripPins, tools: tools,
-            pinsLead: model.stripPinsLead)
+            running: model.stripIcons, pins: model.stripPins, tools: tools)
         let composition = plan.composition
         return AppChatPromptMetrics.size(
             for: phase,
@@ -863,9 +861,10 @@ struct AppChatPromptPill: View {
             // anywhere to go, so they stay through a scope change.
             // Safari's tabs stay while a question is typed (owner 2026-09-25); the running
             // apps step aside, as the Dock's do.
+            // Typing hides them in every scope, tabs and pins included (owner 2026-09-26:
+            // while typing the field is compact — attach, send, pin).
             if model.showsFieldPills,
-                model.showsTabBar
-                    || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 if model.usesDockShell {
@@ -1010,8 +1009,13 @@ struct AppChatPromptPill: View {
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
             // Not in the dock shell: its trailing end is the strip's, as in Global.
-            if pointerInside, model.phase != .chat, !model.usesDockShell {
-                surfaceControls
+            // While typing the field is compact in every Context Dock, the dock shell's
+            // included: attach, send and pin, and no expand (owner 2026-09-26).
+            if model.phase != .chat, !model.isSearchField, isTyping {
+                surfaceControls(expands: false)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            } else if pointerInside, model.phase != .chat, !model.usesDockShell {
+                surfaceControls(expands: true)
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
             // Room for the strip's pins and tools, which stay on screen over this end of
@@ -1192,15 +1196,21 @@ struct AppChatPromptPill: View {
 
     /// What acts on the surface rather than on the question: where it opens, and whether it
     /// stays. Attach and send are in the field itself, because they are part of asking.
-    private var surfaceControls: some View {
+    private var isTyping: Bool {
+        !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func surfaceControls(expands: Bool) -> some View {
         HStack(spacing: 8) {
-            Button {
-                model.openInDock()
-            } label: {
-                controlGlyph("arrow.up.left.and.arrow.down.right")
+            if expands {
+                Button {
+                    model.openInDock()
+                } label: {
+                    controlGlyph("arrow.up.left.and.arrow.down.right")
+                }
+                .buttonStyle(.plain)
+                .help("Open this conversation in the dock")
             }
-            .buttonStyle(.plain)
-            .help("Open this conversation in the dock")
 
             Button {
                 model.togglePin()

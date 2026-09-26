@@ -35,7 +35,7 @@ struct CornerAppPinsTests {
     ) -> AppChatPromptModel {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         let source = tabs
-        model.pinStore = store
+        model.dockPins = store
         model.tabSource = { source }
         model.refreshTabCache = { _ in }
         model.currentTabURL = { nil }
@@ -150,51 +150,68 @@ struct CornerAppPinsTests {
         let model = scope(store)
         let prs = model.stripIcons.first { $0.title == "Pull requests" }!
         model.toggleTabPin(iconID: prs.id)
-        #expect(model.stripPins.map(\.kind) == [.tab(url: "https://github.com/pulls")])
-        #expect(model.stripIcons.map(\.title) == ["Inbox"], "the pinned tab is drawn twice")
-        #expect(model.stripPinsLead)
+        // The pin is the bar's first icon — in the strip and in the field's pill alike —
+        // and the tab it stands for is not drawn a second time among the live ones.
+        #expect(model.stripIcons.map(\.title) == ["Pull requests", "Inbox"])
+        #expect(model.globalMatchIcons.map(\.title) == ["Pull requests", "Inbox"])
+        #expect(model.isAppPinIcon(model.stripIcons[0].id))
+        #expect(!model.isTabIcon(model.stripIcons[0].id))
+        // Never Global's pins in an app's bar.
+        #expect(model.stripPins.isEmpty)
     }
 
     // MARK: Order and room
 
-    @Test("An app's pins come before its live tabs, and the geometry agrees")
+    @Test("The app's pins lead its bar, in pin order, before the live tabs")
     func pinsLeadTheTabs() {
         let (store, _) = temporaryStore()
-        let pin = store.pin(.appAction(id: "a"), title: "A", app: "com.apple.Safari")!
-        let running = tabs.map(BrowserTabList.icon(for:))
-        let plan = DockStripPlan.make(
-            running: running, pins: store.pins(forApp: "com.apple.Safari"),
-            runningBundleIDs: [], tools: 0, pinsLead: true)
-        let pinCentre = plan.iconCenterOffset(for: .pin(id: pin.id))
-        let firstTab = plan.iconCenterOffset(for: .app(bundleID: running[0].bundleID!))
-        #expect(pinCentre != nil && firstTab != nil)
-        #expect(pinCentre! < firstTab!, "the pin should draw before the tabs")
-        // The first tab sits exactly one leading-pins span further along than it would with
-        // no pins in front of it.
-        let bare = DockStripPlan.make(
-            running: running, pins: [], runningBundleIDs: [], tools: 0, pinsLead: true)
-        let bareFirst = bare.iconCenterOffset(for: .app(bundleID: running[0].bundleID!))!
-        #expect(abs(firstTab! - bareFirst
-            - plan.composition.leadingPinsSpan
-            - (plan.layout.appSpread - bare.layout.appSpread)) < 0.5)
+        let model = scope(store)
+        store.pin(.appAction(id: "b"), title: "B", app: "com.apple.Safari")
+        store.pin(.menuCommand(path: ["File", "Export as PDF…"]), title: "Export as PDF…",
+            app: "com.apple.Safari")
+        model.updateTabStrip()
+        #expect(model.stripIcons.map(\.title) == ["B", "Export as PDF…", "Inbox", "Pull requests"])
+        // Each pin draws as something — its own image or a symbol, never an empty slot.
+        #expect(model.stripIcons.prefix(2).allSatisfy { $0.icon.size.width > 0 })
+    }
+
+    @Test("A click on a pin in the bar runs that pin")
+    func aPinIconRunsItsPin() {
+        let (store, _) = temporaryStore()
+        var opened: [URL] = []
+        let model = scope(store, opened: { opened.append($0) })
+        store.pin(.tab(url: "https://forums.swift.org/latest"), title: "Forums",
+            app: "com.apple.Safari")
+        model.updateTabStrip()
+        let icon = model.stripIcons[0]
+        let pin = try! #require(model.appPin(forIconID: icon.id))
+        model.openAppPin(pin)
+        #expect(opened == [URL(string: "https://forums.swift.org/latest")!])
     }
 
     @Test("Pins are never cut for room: the live tabs overflow into +N instead")
     func pinsNeverOverflow() {
         let (store, _) = temporaryStore()
+        let many = (1...80).map {
+            SafariTab(title: "Tab \($0)", url: "https://example.com/\($0)", windowIndex: 1, tabIndex: $0)
+        }
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.dockPins = store
+        model.tabSource = { many }
+        model.refreshTabCache = { _ in }
+        model.currentTabURL = { nil }
+        model.switchTab = { _ in }
         for i in 0..<3 {
             store.pin(.appAction(id: "a\(i)"), title: "A\(i)", app: "com.apple.Safari")
         }
-        let many = (1...80).map {
-            BrowserTabList.icon(for: SafariTab(
-                title: "Tab \($0)", url: "https://example.com/\($0)", windowIndex: 1, tabIndex: $0))
-        }
-        let plan = DockStripPlan.make(
-            running: many, pins: store.pins(forApp: "com.apple.Safari"),
-            runningBundleIDs: [], tools: 0, pinsLead: true)
-        #expect(plan.composition.otherPins.count == 3)
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        // The field's pill: what fits, cut from the end — the pins are all there.
+        #expect(Array(model.globalMatchIcons.prefix(3).map(\.title)) == ["A0", "A1", "A2"])
+        #expect(model.globalOverflowCount > 0)
+        // The strip: the same, and +N counts only tabs.
+        let plan = DockStripPlan.make(running: model.stripIcons, pins: [], tools: 0)
+        #expect(Array(plan.composition.apps.prefix(3).map(\.title)) == ["A0", "A1", "A2"])
         #expect(plan.layout.overflow > 0)
-        #expect(plan.composition.apps.count + plan.layout.overflow == 80)
     }
 
     @Test("Any app with pins gets the bar; one without keeps its plain field")
@@ -205,10 +222,9 @@ struct CornerAppPinsTests {
         store.pin(.menuCommand(path: ["Format", "Make Plain Text"]), title: "Make Plain Text",
             app: "com.apple.TextEdit")
         #expect(textEdit.showsTabBar)
-        #expect(textEdit.stripPins.count == 1)
         // No tabs outside Safari: the bar is the pins alone, never Safari's tabs.
         textEdit.updateTabStrip()
-        #expect(textEdit.stripIcons.isEmpty)
+        #expect(textEdit.stripIcons.map(\.title) == ["Make Plain Text"])
     }
 
     // MARK: Running
