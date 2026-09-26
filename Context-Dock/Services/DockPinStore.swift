@@ -234,6 +234,11 @@ extension DockPinKind {
             self.init(document: doc)
         case .file(let url):
             self.init(fileURL: url)
+        case .dock(let pill)
+        where ["appSwitch", "appLaunch"].contains(pill.rankingKind) && !pill.sourceBundleId.isEmpty:
+            // Another app, from this app's list ("saf" → Safari): pinned, it is one click
+            // back to that app from here.
+            self = .app(bundleID: pill.sourceBundleId)
         case .dock, .cliSuggestion:
             return nil
         }

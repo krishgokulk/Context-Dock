@@ -8,6 +8,7 @@
 // menu hooks: the test host shares the developer's Application Support, and nothing here
 // may touch their pins or script their Safari.
 
+import AppKit
 import ApplicationServices
 import Foundation
 import Testing
@@ -328,5 +329,25 @@ struct CornerAppPinsTests {
         #expect(field == base + pill + AppChatPromptMetrics.appBarPillSpacing)
         #expect(AppChatListMetrics.size(
             rows: 3, width: AppChatPromptMetrics.boardWidth(for: model)).width == field)
+    }
+
+    @Test("Another app in the list (\"saf\" → Safari) pins as that app, and its picture is the app's")
+    func anAppSwitchRowPinsAsTheApp() {
+        var pill = DockPill(
+            id: "corner-app-switch-com.apple.Safari", name: "Safari", icon: "app",
+            badge: "Switch", execute: {})
+        pill.sourceBundleId = "com.apple.Safari"
+        pill.rankingKind = "appSwitch"
+        pill.menuItemImage = NSImage(size: NSSize(width: 16, height: 16))
+        #expect(DockPinKind(appRow: .dock(pill)) == .app(bundleID: "com.apple.Safari"))
+
+        let (store, _) = temporaryStore()
+        let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
+        #expect(model.canPinToApp(.dock(pill)))
+        #expect(model.resultPinArt(.dock(pill)).image != nil)
+        // A quit row is not something to pin.
+        var quit = pill
+        quit.rankingKind = "runningAppQuit"
+        #expect(DockPinKind(appRow: .dock(quit)) == nil)
     }
 }

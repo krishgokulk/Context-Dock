@@ -103,7 +103,9 @@ extension AppChatPromptModel {
             return (doc.icon, GlobalContextRow.symbol(for: doc))
         case .file(let url):
             return (NSWorkspace.shared.icon(forFile: url.path), "doc")
-        case .dock, .cliSuggestion:
+        case .dock(let pill):
+            return (pill.menuItemImage, pill.icon.isEmpty ? "app" : pill.icon)
+        case .cliSuggestion:
             return (nil, "pin")
         }
     }
@@ -162,7 +164,9 @@ extension AppChatPromptModel {
                 guard await self.askMenuConsent(path, bundleID, name) else { return }
                 self.runPinnedMenuPath(path)
             }
-        case .app, .globalCommand, .cliTool, .file, .folder:
+        case .app(let bundleID):
+            AppActivation.bringForward(bundleID: bundleID, name: pin.title)
+        case .globalCommand, .cliTool, .file, .folder:
             break  // the strip opens these itself, as it does Global's
         }
     }
@@ -201,6 +205,7 @@ extension AppChatPromptModel {
 
     /// The picture on one of this app's pins: the tab's favicon, the menu item's own image.
     func appPinImage(_ pin: DockPin) -> NSImage? {
+        if let icon = pin.kind.icon { return icon }  // an app, a file, a folder
         switch pin.kind {
         case .tab(let url):
             guard let page = URL(string: url) else { return nil }

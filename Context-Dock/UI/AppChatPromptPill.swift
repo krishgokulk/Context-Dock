@@ -1274,34 +1274,26 @@ struct AppChatPromptPill: View {
         }
     }
 
+    /// The matching result's own picture, nothing added: a filled accent circle behind it
+    /// says it is pinned (owner 2026-09-26: "just the menu icon is fine").
     private func resultPinGlyph(_ row: AppChatRow, pinned: Bool) -> some View {
         let art = model.resultPinArt(row)
-        return ZStack(alignment: .bottomTrailing) {
-            Group {
-                if let image = art.image {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 15, height: 15)
-                        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
-                } else {
-                    Image(systemName: art.symbol)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(pinned ? Color.white : Color.secondary)
-                }
+        return Group {
+            if let image = art.image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else {
+                Image(systemName: art.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(pinned ? Color.white : Color.secondary)
             }
-            .frame(width: 26, height: 26)
-            .background(
-                pinned ? Color.accentColor.opacity(0.85) : Color.white.opacity(0.08),
-                in: Circle())
-            Image(systemName: pinned ? "pin.fill" : "pin")
-                .font(.system(size: 7, weight: .bold))
-                .foregroundStyle(pinned ? Color.white : Color.secondary)
-                .padding(2)
-                .background(
-                    pinned ? Color.accentColor : Color(white: 0.22), in: Circle())
-                .offset(x: 2, y: 2)
         }
+        .frame(width: 26, height: 26)
+        .background(
+            pinned ? Color.accentColor.opacity(0.85) : Color.white.opacity(0.08), in: Circle())
         .contentShape(Circle())
         .animation(.easeOut(duration: 0.15), value: pinned)
     }
