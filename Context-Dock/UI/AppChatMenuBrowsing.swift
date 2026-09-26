@@ -172,8 +172,11 @@ extension AppChatPromptModel {
             tabsByIconID = [:]
             return pins
         }
+        // Safari's own order, window by window, tab by tab — never the current page first:
+        // choosing a tab here made it the current page, and it jumped to the front under
+        // the pointer (owner 2026-09-26: "stay as it is").
         let tabs = AppPinRun.unpinnedTabs(
-            BrowserTabList.ordered(tabSource(), currentURL: currentTabURL()),
+            BrowserTabList.ordered(tabSource(), currentURL: nil),
             pins: dockPins.pins(forApp: appBundleID))
         tabsByIconID = Dictionary(
             tabs.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })

@@ -38,6 +38,8 @@ struct AppBarPill: View {
             Capsule(style: .continuous)
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7))
         .clipShape(Capsule(style: .continuous))
+        // Resting on the pill asks for the big bar of the same icons, as Global's does.
+        .onHover { inside in if inside { model.expandAppBar() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(model.appName) pins and tabs")
     }

@@ -350,4 +350,31 @@ struct CornerAppPinsTests {
         quit.rankingKind = "runningAppQuit"
         #expect(DockPinKind(appRow: .dock(quit)) == nil)
     }
+
+    // MARK: Hover and order
+
+    @Test("Resting on the pill opens the big bar, even with keep-open on; typed text keeps the field")
+    func hoverOnThePillOpensTheBigBar() {
+        let (store, _) = temporaryStore()
+        let model = scope(store)
+        model.set(.prompt)
+        #expect(model.expandAppBar())
+        #expect(model.phase == .dock)
+
+        let typing = scope(store)
+        typing.set(.prompt)
+        typing.query = "export"
+        #expect(!typing.expandAppBar())
+        #expect(typing.phase == .prompt)
+    }
+
+    @Test("Opening a tab does not move it: the bar keeps Safari's own order")
+    func tabsKeepTheirPlace() {
+        let (store, _) = temporaryStore()
+        let model = scope(store)
+        // Safari is showing the second tab — it must not jump to the front.
+        model.currentTabURL = { "https://github.com/pulls" }
+        model.updateTabStrip()
+        #expect(model.stripIcons.map(\.title) == ["Inbox", "Pull requests"])
+    }
 }
