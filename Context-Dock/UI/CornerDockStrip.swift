@@ -182,6 +182,16 @@ struct CornerDockStrip: View {
     }
 
     var body: some View {
+        stripRow
+            // An icon's menu is a popover of its own window, off the strip: auto-hide has to
+            // be told it is open, or the pointer on "Unpin" reads as having left the dock.
+            .onChange(of: menuID) { _, id in
+                CornerDockController.shared.stripMenuDidChange(open: id != nil)
+            }
+            .onDisappear { CornerDockController.shared.stripMenuDidChange(open: false) }
+    }
+
+    private var stripRow: some View {
         HStack(spacing: M.dockIconGap) {
             // The field, folded: the first item in the strip. Hovering it, or clicking
             // it, widens it back.

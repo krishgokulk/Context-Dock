@@ -69,6 +69,43 @@ final class CornerDockController: NSObject {
     /// act again.
     private var didActInCurrentSwipe = false
     private var sinks: Set<AnyCancellable> = []
+    /// Auto-hide has slid the shell below the bottom edge. The panel stays ordered in —
+    /// transparent and ignoring the mouse — so the hover monitors keep watching for the
+    /// pointer to come back to the edge.
+    private(set) var isAutoHidden = false
+    private var pendingAutoHide: DispatchWorkItem?
+    /// Where `position` last put the shell when shown, and the screen it did it on. Auto-hide
+    /// measures from these rather than from the live frame, which is elsewhere while hidden
+    /// and in between while sliding.
+    private var shownPanelOrigin: NSPoint = .zero
+    private var dockScreenFrame: CGRect = .zero
+    /// The pointer has been on the dock since it last came up. Leaving it then is the
+    /// macOS Dock's quick hide; never having come near it — the dock was raised by a hotkey —
+    /// waits out the idle delay instead.
+    private var pointerVisitedDock = false
+    /// The last span the shell drew, so the edge can be matched to it while nothing shows.
+    private var lastShownContentRect: CGRect = .zero
+    /// Watches the bottom edge while the shell is not on screen at all, so touching it can
+    /// bring the dock up. Installed only while auto-hide is on.
+    private var edgeMonitors: [Any] = []
+    /// The prompt's phase before its latest change, to tell a fold from the field apart.
+    private var lastPromptPhase: AppChatPromptPhase = .hidden
+    /// An edge summon passes through the field on its way to the strip; that is not the
+    /// user finishing with the keyboard, so the fold it makes keeps the keys.
+    private var edgeSummonKeepsKeys = false
+    /// Menus of this app being tracked right now. The corner's context menus are ordinary
+    /// NSMenus, so their tracking notifications say when one is open.
+    private var openMenuCount = 0
+    /// The strip's own icon menu — a SwiftUI popover, which posts no NSMenu tracking.
+    private var stripMenuOpen = false
+    /// When the field last folded into the strip, so the hide can wait for that morph.
+    private var foldedAt: Date?
+
+    func stripMenuDidChange(open: Bool) {
+        guard stripMenuOpen != open else { return }
+        stripMenuOpen = open
+        syncAutoHide()
+    }
 
     private var clipboardModel: ClipboardPanelModel { ClipboardPanelController.shared.model }
     /// The result of the last action the corner ran, for a few seconds. One more tool slot
@@ -222,7 +259,34 @@ final class CornerDockController: NSObject {
                 self.publishKeyboardOwner()
             }
         }.store(in: &sinks)
-        prompt.$phase.sink { [weak self] _ in
+        prompt.$phase.sink { [weak self] next in
+            Task { @MainActor in
+                guard let self else { return }
+                // The field folding into the resting strip ends the typing: like the macOS
+                // Dock, a dock at rest does not keep the keyboard from the app in front
+                // (owner 2026-09-26).
+                var folded = next == .dock && self.lastPromptPhase.showsInput
+                self.lastPromptPhase = next
+                if folded { self.foldedAt = Date() }
+                if folded, self.edgeSummonKeepsKeys {
+                    self.edgeSummonKeepsKeys = false
+                    folded = false
+                }
+                // A fold the pointer made — resting on the running apps' pill — is the user
+                // working the dock with the mouse, not done with it: the keys stay. An idle
+                // fold hands them back once its morph has landed, since taking the key status
+                // away re-orders the window and would cut the morph and the hover short.
+                if folded, !self.pointerIsOverDock {
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + AppChatPromptMetrics.dockMorphDuration + 0.05
+                    ) { [weak self] in
+                        guard let self, self.prompt.phase == .dock,
+                            !self.anySurfaceWantsKeyboard, !self.pointerIsOverDock
+                        else { return }
+                        self.giveKeyboardBack()
+                    }
+                }
+            }
             Task { @MainActor in
                 self?.refresh()
                 // The prompt is a text field the user asked for by name, so unlike the
@@ -235,8 +299,9 @@ final class CornerDockController: NSObject {
         }.store(in: &sinks)
         chatPresentation.$mode.sink { [weak self] _ in
             Task { @MainActor in
-                self?.refresh()
-                self?.requestComposerFocus()
+                guard let self else { return }
+                self.refresh()
+                self.requestComposerFocus()
             }
         }.store(in: &sinks)
         chatPresentation.$isVisible.sink { [weak self] _ in
@@ -249,8 +314,28 @@ final class CornerDockController: NSObject {
             DispatchQueue.main.async {
                 self?.position()
                 self?.refresh()
+                self?.syncEdgeWatch()
             }
         }.store(in: &sinks)
+        syncEdgeWatch()
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.openMenuCount += 1
+                self.syncAutoHide()
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.openMenuCount = max(0, self.openMenuCount - 1)
+                self.syncAutoHide()
+            }
+        }
         chatPresentation.generalChat.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.refresh() }
         }.store(in: &sinks)
@@ -311,13 +396,202 @@ final class CornerDockController: NSObject {
         case .left: x = visible.minX + margin - pad
         case .center: x = visible.minX + margin - pad
         }
-        panel.setFrameOrigin(NSPoint(x: x, y: visible.minY + margin - pad))
+        shownPanelOrigin = NSPoint(x: x, y: visible.minY + margin - pad)
+        dockScreenFrame = screen?.frame ?? visible
+        panel.setFrameOrigin(isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin)
+    }
+
+    // MARK: - Auto-hide
+
+    /// What the shell draws, in screen coordinates at its shown position.
+    private var shownContentRect: CGRect {
+        guard let rects = hostView?.interactiveRects, let first = rects.first else { return .zero }
+        return rects.dropFirst().reduce(first) { $0.union($1) }
+            .offsetBy(dx: shownPanelOrigin.x, dy: shownPanelOrigin.y)
+    }
+
+    private var hiddenPanelOrigin: NSPoint {
+        let content = shownContentRect
+        let top = content.isEmpty ? shownPanelOrigin.y + (panel?.frame.height ?? 0) : content.maxY
+        let distance = CornerDockAutoHide.hideDistance(
+            contentTop: top, screenMinY: dockScreenFrame.minY, shadow: CornerDockLayout.pad)
+        return NSPoint(x: shownPanelOrigin.x, y: shownPanelOrigin.y - distance)
+    }
+
+    /// Only the resting strip hides. Anything the user opened — or is typing into, or is
+    /// dragging onto — keeps the shell where it is.
+    private var restsForAutoHide: Bool {
+        CornerDockAutoHide.canHide(
+            enabled: AppSettings.shared.cornerDockAutoHide,
+            stripShowing: chatPresentation.isVisible && chatPresentation.mode != .general
+                && prompt.phase == .dock,
+            hoverCardShowing: showsHoverCard,
+            selectionShowing: selection.phase.isVisible,
+            clipboardExpanded: clipboardModel.phase == .expanded,
+            shelfNeedsAttention: shelf.phase == .inviting || shelf.phase == .expanded,
+            pluginEditing: PluginKeyboardClaim.shared.isEditing,
+            menuOpen: openMenuCount > 0 || stripMenuOpen)
+    }
+
+    private var pointerIsOverDock: Bool {
+        CornerDockAutoHide.pointerIsOver(
+            mouse: NSEvent.mouseLocation, screenFrame: dockScreenFrame,
+            content: shownContentRect, slack: ClipboardPillMetrics.hoverTolerance)
+    }
+
+    /// Bring what is on screen in line with the rule: reveal the moment the shell stops
+    /// resting, hide a beat after the pointer has left a resting one.
+    private func syncAutoHide() {
+        guard let panel, panel.isVisible else {
+            cancelPendingAutoHide()
+            if isAutoHidden {
+                // Ordered out while hidden: the next time it shows, it shows.
+                isAutoHidden = false
+                self.panel?.alphaValue = 1
+                self.panel?.ignoresMouseEvents = false
+            }
+            pointerVisitedDock = false
+            return
+        }
+        guard restsForAutoHide else {
+            cancelPendingAutoHide()
+            if isAutoHidden { setAutoHidden(false) }
+            return
+        }
+        if isAutoHidden || pointerIsOverDock {
+            if !isAutoHidden { pointerVisitedDock = true }
+            cancelPendingAutoHide()
+        } else if pendingAutoHide == nil {
+            let delay = CornerDockAutoHide.delay(
+                base: pointerVisitedDock
+                    ? CornerDockAutoHide.hideDelay : CornerDockAutoHide.idleDelay,
+                sinceFold: foldedAt.map { Date().timeIntervalSince($0) },
+                foldDuration: AppChatPromptMetrics.dockMorphDuration)
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.pendingAutoHide = nil
+                guard self.restsForAutoHide, !self.pointerIsOverDock else { return }
+                self.setAutoHidden(true)
+            }
+            pendingAutoHide = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    }
+
+    private func cancelPendingAutoHide() {
+        pendingAutoHide?.cancel()
+        pendingAutoHide = nil
+    }
+
+    /// Any key in the shell is the user working in it: the idle clock starts again.
+    private func restartAutoHideClock() {
+        guard AppSettings.shared.cornerDockAutoHide, pendingAutoHide != nil else { return }
+        cancelPendingAutoHide()
+        syncAutoHide()
+    }
+
+    private func syncEdgeWatch() {
+        let wanted = AppSettings.shared.cornerDockAutoHide
+        if wanted, edgeMonitors.isEmpty {
+            // Dragged too: carrying a file to the edge is the Dock's other way up, and a held
+            // button sends drags, never moves.
+            if let global = NSEvent.addGlobalMonitorForEvents(
+                matching: [.mouseMoved, .leftMouseDragged],
+                handler: { [weak self] _ in self?.edgeTouched() })
+            {
+                edgeMonitors.append(global)
+            }
+            if let local = NSEvent.addLocalMonitorForEvents(
+                matching: [.mouseMoved, .leftMouseDragged],
+                handler: { [weak self] event in
+                    self?.edgeTouched()
+                    return event
+                })
+            {
+                edgeMonitors.append(local)
+            }
+        } else if !wanted, !edgeMonitors.isEmpty {
+            edgeMonitors.forEach { NSEvent.removeMonitor($0) }
+            edgeMonitors.removeAll()
+        }
+    }
+
+    /// The pointer at the bottom edge with nothing of the shell on screen: bring the dock up,
+    /// at rest. A hidden-but-shown shell is the hover watch's to reveal, not this.
+    private func edgeTouched() {
+        guard AppSettings.shared.cornerDockAutoHide, panel != nil else { return }
+        // Slid away: the hover watch reveals it on a move, but it never sees a drag.
+        if isAutoHidden {
+            if CornerDockAutoHide.pointerReveals(
+                mouse: NSEvent.mouseLocation, screenFrame: dockScreenFrame,
+                content: shownContentRect)
+            {
+                summonFromEdge()
+            }
+            return
+        }
+        guard !chatPresentation.isVisible else { return }
+        let mouse = NSEvent.mouseLocation
+        guard
+            let screen = NSScreen.screens.first(where: {
+                NSMouseInRect(mouse, $0.frame, false)
+            })
+        else { return }
+        // Before the dock has ever been measured on this screen, the whole edge answers.
+        let span =
+            dockScreenFrame == screen.frame && !lastShownContentRect.isEmpty
+            ? lastShownContentRect : screen.frame
+        guard
+            CornerDockAutoHide.pointerReveals(
+                mouse: mouse, screenFrame: screen.frame, content: span)
+        else { return }
+        summonFromEdge()
+    }
+
+    /// The edge brings up the resting dock — the strip, not the field — holding the keys, so
+    /// the first letter typed opens the field with it (owner 2026-09-26). The keys go back
+    /// to the app in front when the strip hides again.
+    private func summonFromEdge() {
+        cancelPendingAutoHide()
+        pointerVisitedDock = true
+        if !(chatPresentation.isVisible && prompt.phase == .dock) {
+            edgeSummonKeepsKeys = true
+            chatPresentation.showGlobalContext()
+            if !prompt.restAsDockNow() { edgeSummonKeepsKeys = false }
+        }
+        armKeyboard()
+        setAutoHidden(false)
+    }
+
+    private func setAutoHidden(_ hidden: Bool) {
+        guard let panel, hidden != isAutoHidden else { return }
+        isAutoHidden = hidden
+        panel.ignoresMouseEvents = hidden
+        if hidden { pointerVisitedDock = false }
+        let target = hidden ? hiddenPanelOrigin : shownPanelOrigin
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = CornerDockAutoHide.slideDuration
+            context.timingFunction = CAMediaTimingFunction(
+                name: hidden ? .easeIn : .easeOut)
+            panel.animator().setFrame(
+                NSRect(origin: target, size: panel.frame.size), display: true)
+            panel.animator().alphaValue = hidden ? 0 : 1
+        } completionHandler: { [weak self] in
+            // A hotkey-raised dock can still hold the keys; give them back to the app the
+            // user is in, since a dock under the screen edge cannot be typed at. After the
+            // slide, where re-ordering the window is invisible.
+            MainActor.assumeIsolated {
+                guard let self, self.isAutoHidden else { return }
+                self.giveKeyboardBack()
+            }
+        }
     }
 
     // MARK: - Visibility
 
     func refresh() {
         guard let panel, let hostView else { return }
+        defer { syncAutoHide() }
         let slots = currentSlots()
         let rects = [
             slots.shelf, slots.preview, slots.clipboard, slots.selection, slots.list,
@@ -332,6 +606,7 @@ final class CornerDockController: NSObject {
             return
         }
         hostView.interactiveRects = rects
+        if !rects.isEmpty { lastShownContentRect = shownContentRect }
 
         let shouldShow = !rects.isEmpty
         if shouldShow {
@@ -689,11 +964,48 @@ final class CornerDockController: NSObject {
         // by accident, since macOS reactivates whichever real app owns the space you
         // land on — the same rescue this now does on purpose, immediately.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) { [weak self] in
-            guard self?.panel?.isKeyWindow != true else { return }
+            guard let self else { return }
+            if self.panel?.isKeyWindow == true {
+                // Still key with the chat gone and nothing else asking for keys: typing was
+                // landing in an empty corner instead of the app in front.
+                if !self.chatPresentation.isVisible, !self.anySurfaceWantsKeyboard {
+                    self.giveKeyboardBack()
+                }
+                return
+            }
+            // Nothing to give back when this app is not the active one — reactivating a
+            // remembered app then would pull the user out of whatever they switched to.
+            guard NSApp.isActive else { return }
             AppDelegate.shared?.previousFrontmostApp?.activate(options: [
                 .activateIgnoringOtherApps
             ])
         }
+    }
+
+    private var anySurfaceWantsKeyboard: Bool {
+        CornerKeyboardOwner.panelHoldsKeyboard(
+            clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
+            selectionWantsKeyboard: selection.phase.isVisible,
+            chatShowsInput: prompt.phase.showsInput,
+            pluginEditing: PluginKeyboardClaim.shared.isEditing)
+    }
+
+    /// Hand the keys to the app in front, now. A `.nonactivatingPanel` can stay the key
+    /// window while another app is active — that is what the style is for — so activating
+    /// that app is not enough on its own: the panel has to stop being key, which ordering it
+    /// out does. It goes straight back in front, unkeyed, when it still has something drawn.
+    private func giveKeyboardBack() {
+        guard let panel, panel.isKeyWindow else { return }
+        panel.styleMask = [.borderless, .nonactivatingPanel]
+        keyboardState.stoodDown()
+        if NSApp.isActive {
+            AppDelegate.shared?.previousFrontmostApp?.activate(options: [
+                .activateIgnoringOtherApps
+            ])
+        }
+        let wasShown = panel.isVisible
+        panel.orderOut(nil)
+        if wasShown { panel.orderFrontRegardless() }
     }
 
     // MARK: - Hover
@@ -793,6 +1105,7 @@ final class CornerDockController: NSObject {
     }
 
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
+        restartAutoHideClock()
         // A key pressed while Command is down means this was a shortcut, not a tap.
         commandTapStarted = nil
         pendingCommandSwitch?.cancel()
@@ -1013,6 +1326,17 @@ final class CornerDockController: NSObject {
     /// corner is one surface, not two competing ones.
     private func evaluateHover() {
         guard let panel else { return }
+        // Hidden, the only thing the pointer can do is come back to the edge under it.
+        if isAutoHidden {
+            if CornerDockAutoHide.pointerReveals(
+                mouse: NSEvent.mouseLocation, screenFrame: dockScreenFrame,
+                content: shownContentRect)
+            {
+                summonFromEdge()
+            }
+            return
+        }
+        defer { if AppSettings.shared.cornerDockAutoHide { syncAutoHide() } }
         if !panel.isVisible { position() }
         let origin = panel.frame.origin
         let mouse = NSEvent.mouseLocation
