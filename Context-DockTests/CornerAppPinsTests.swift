@@ -275,4 +275,34 @@ struct CornerAppPinsTests {
         #expect(switched == ["https://github.com/pulls"])
         #expect(opened == [URL(string: "https://forums.swift.org/latest")!])
     }
+
+    // MARK: The field's pin button
+
+    @Test("While typing, the pin button pins the matching result; with no match it is keep-open")
+    func thePinButtonPinsTheMatch() {
+        let (store, _) = temporaryStore()
+        let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
+        model.allMenuItems = [AXMenuItem(
+            title: "Centre", path: ["Window", "Centre"], isEnabled: true,
+            element: AXUIElementCreateSystemWide(), children: [])]
+        // Nothing typed: no result to pin — the button is the ordinary keep-open pin.
+        model.query = ""
+        model.updateMenuMatches()
+        #expect(model.pinnableResult == nil)
+
+        model.query = "cen"
+        model.updateMenuMatches()
+        let row = try! #require(model.pinnableResult)
+        #expect(row.title == "Centre")
+        #expect(!model.isPinnedToApp(row))
+        model.toggleAppPin(row)
+        #expect(model.isPinnedToApp(row), "the button's tint reads this")
+        #expect(store.pins(forApp: "com.anthropic.claudefordesktop").map(\.kind)
+            == [.menuCommand(path: ["Window", "Centre"])])
+
+        // Typed, but nothing matches: back to keep-open.
+        model.query = "zzzz-no-such-command"
+        model.updateMenuMatches()
+        #expect(model.pinnableResult == nil)
+    }
 }

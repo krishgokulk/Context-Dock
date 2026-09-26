@@ -78,6 +78,36 @@ extension AppChatPromptModel {
             ?? NSImage()
     }
 
+    /// The result the field's pin button acts on while typing: the row the arrows landed on,
+    /// or the top match. Nil when nothing typed matches — the button is then the plain
+    /// "keep open" pin (owner 2026-09-26).
+    var pinnableResult: AppChatRow? {
+        guard isAppContextDock,
+            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            let row = focusedRow ?? rows.first,
+            canPinToApp(row)
+        else { return nil }
+        return row
+    }
+
+    /// A row's picture, for the pin button that pins it: the menu item's own image, else the
+    /// symbol the list draws for it.
+    func resultPinArt(_ row: AppChatRow) -> (image: NSImage?, symbol: String) {
+        switch row {
+        case .command(let item):
+            return (item.image, SFSymbolResolver.menuSymbol(
+                title: item.title, path: item.path, isAppleMenu: item.isAppleMenu))
+        case .action(let action):
+            return (nil, action.icon.isEmpty ? "bolt" : action.icon)
+        case .global(let doc):
+            return (doc.icon, GlobalContextRow.symbol(for: doc))
+        case .file(let url):
+            return (NSWorkspace.shared.icon(forFile: url.path), "doc")
+        case .dock, .cliSuggestion:
+            return (nil, "pin")
+        }
+    }
+
     /// The tab behind a strip icon, as a pin kind.
     func tabPinKind(forIconID id: String) -> DockPinKind? {
         tabsByIconID[id].map { .tab(url: $0.url) }
