@@ -10,15 +10,18 @@
 
 ## In progress
 
-**Task 5 — keyboard rules (B/C/E4) into a shared tested type.** Branch `claude/keyboard-rules`.
-First slice: the ❌ rows C4–C7, C9, with C6's safety rule (Backspace on a focused row never quits an app).
+**Bug fix: `AppleScriptQueue` re-entrancy crash** (crash reports 2026-09-26 16:46, found testing #98),
+in the session that owns #95. `AppleScriptQueue.sync` guards by queue, not by thread: a script that
+starts on the main thread while another script there is waiting for its reply calls `shared.sync` on
+the queue its own thread already holds, and libdispatch traps. Trigger seen: the Dock's
+Finder-selection timer. **Done means the queue itself is fixed** (per-thread ownership, e.g. a
+recursive lock), not only that timer; the Dock's menu reader must not run the System Events fallback
+on the main thread (the Corner's is AX-only since #98). Tests: a nested call on one thread returns;
+two threads never run at once.
 
 ## Next, in order
 
-**5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
-remaining scopes → owner decisions D9 / D11 / D12.
-
-**6. Safari actions: Ask AI + Save as Markdown** (owner 2026-09-26, after 5). Both are new app
+**6. Safari actions: Ask AI + Save as Markdown** (owner 2026-09-26; after the queue fix). Both are new app
 actions for Safari, pinnable through #94's pins.
 
 ```
@@ -35,6 +38,9 @@ Task 6 in docs/master/00-NOW.md: two Safari actions. Claim with a draft PR first
 End with the AGENTS.md hand-off.
 ```
 
+**7. Then** the inventory's own order: remaining scopes → owner decisions D9 / D11 / D12.
+Follow-up from #98: the Dock never had ⌘R (re-read menus) though its Hotkeys page advertises it.
+
 ## Done
 
 | Date | Task | PR |
@@ -48,6 +54,8 @@ End with the AGENTS.md hand-off.
 | 2026-09-25 | Menu safety list (4a): whole words; History ▸ Forward is navigation; Reopen Last Closed Window / Recently Closed stay in results; page rows still open by URL; unsure stays gated | #91 |
 | 2026-09-25 | Safari tabs in the Corner (D13): Context Dock folds into its tab bar | #89 |
 | 2026-09-26 | Pins in the Corner strip (4b): per-app pins of menu commands, actions, extensions and tabs lead the app's bar; any app with pins gets the bar; pinned destructive commands still ask. Safari "Save as Markdown" / "Ask AI" actions not built (asked in PR) | #94 |
+| 2026-09-26 | AppleScript runs on one serial queue (fixes the Safari tab-click crash) | #95 |
+| 2026-09-26 | Keyboard rules (task 5) in the shared `DockKeyRules`: result focus, pill row, empty-field Backspace ladder, list arrows, Return, Space, Finder folders, ⌘R in the Corner; one key press, one handler; ←/→ walk the apps both ways | #96, #98 |
 
 ## Owner decisions (append-only)
 
@@ -77,6 +85,7 @@ End with the AGENTS.md hand-off.
 | 2026-09-25 | UI changes are checked by eye against a reference screenshot before a PR is called done (AGENTS.md); tests alone are not enough. |
 | 2026-09-26 | Build Safari **"Ask AI about this page"** and **"Save as Markdown"** as app actions (task 6, after task 5). |
 | 2026-09-26 | While typing, every Context Dock is compact: no tabs pill, no pinned pages, no extensions — just attach (+), send and pin; no expand. Replaces "Safari's tabs stay while a question is typed" (2026-09-25). An app's pins show in its bar and the field's pill at rest, ahead of the tabs. |
+| 2026-09-26 | B2 (Backspace into inline text pills) is "—" in the Corner: its scope is one chip outside the text; leaving it is B3. (Accepted by merging #98, which asked for it.) |
 
 ## Open decisions (owner)
 

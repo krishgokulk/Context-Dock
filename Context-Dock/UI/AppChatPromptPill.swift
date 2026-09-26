@@ -462,6 +462,14 @@ struct AppChatPromptPill: View {
         .onChange(of: model.phase) { _, _ in syncFocus() }
         .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
+        // Global → a scope swaps `globalBody` for `legacyBody`, and the field in the new
+        // branch is a new text field. `fieldFocused` was already true, so nothing gave it the
+        // caret: Finder opened with no caret and the next → went nowhere (2026-09-26). Let go
+        // and claim again, so the field that is on screen is the one that has it.
+        .onChange(of: model.usesDockShell) { _, _ in reclaimCaretAfterScopeChange() }
+        // The same for every app → walks into: Finder → Safari swaps the shell back, and an
+        // app after that keeps it, and each one opened without a caret until clicked.
+        .onChange(of: model.appBundleID) { _, _ in reclaimCaretAfterScopeChange() }
         // A panel minimised or restored changes the pills without anything being typed, so
         // the row has to be asked again rather than waiting for the next keystroke.
         .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in
@@ -644,6 +652,18 @@ struct AppChatPromptPill: View {
         model.usesDockHeight && [.prompt, .suggesting].contains(model.phase)
             && size.height <= AppChatPromptMetrics.dockHeight
             ? AppChatPromptMetrics.dockHeight / 2 : 22
+    }
+
+    /// What a click in the field does (`requestComposerFocus`), after the scope under the
+    /// field changed — only while the Corner already holds the keyboard, so an app the user
+    /// switched to themselves never loses its keys to this.
+    private func reclaimCaretAfterScopeChange() {
+        guard keyboardState.isArmed, model.phase.showsInput else { return }
+        fieldFocused = false
+        DispatchQueue.main.async {
+            CornerDockController.shared.requestComposerFocus()
+            syncFocus()
+        }
     }
 
     private func syncFocus() {
@@ -838,6 +858,8 @@ struct AppChatPromptPill: View {
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
+                        // The panel's key monitor already acted on this Return.
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return }
                         // A chosen row runs — a command or an adapter action. On a window
                         // snapshot with nothing typed, Return switches to that app, because
                         // that is what the switcher is for. Anything else is a question.
@@ -855,33 +877,44 @@ struct AppChatPromptPill: View {
                             return
                         }
                         if model.isSearchField {
-                            if let first = model.rows.first { model.run(first) }
+                            // The top row, the one the leading icon previews (C3).
+                            model.runReturnRow(runsTopRow: true)
                             return
                         }
                         model.submit()
                     }
                     .onKeyPress(.space) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Only once the user has arrowed into the list; with the caret in
                         // the field, a space is a space.
-                        model.previewFocusedRow() ? .handled : .ignored
+                        return model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // The row the arrows landed on first; the top match only when the
                         // user has not chosen one.
                         if model.enterFocusedRow() { return .handled }
                         return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
-                    .onKeyPress(.downArrow) { arrow(up: false) }
-                    .onKeyPress(.upArrow) { arrow(up: true) }
+                    .onKeyPress(.downArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        return arrow(up: false)
+                    }
+                    .onKeyPress(.upArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        return arrow(up: true)
+                    }
                     .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Backspace on an empty field leaves the scope — the dock's way out,
                         // and the one most people reach for before they find the "−". Both
                         // delete keys, because `.delete` alone did not match the backspace
                         // this field actually receives.
-                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
-                        return .ignored
+                        // The Dock's ladder: folder, selection, app chat, scope (B3, B4, E4).
+                        return model.applyEmptyBackspace() ? .handled : .ignored
                     }
                     .onKeyPress(.escape) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the
                         // user was waiting on and a question they had half-written, for
                         // one press of the key that usually means "step back".
@@ -899,13 +932,15 @@ struct AppChatPromptPill: View {
                         return .handled
                     }
                     .onKeyPress(.leftArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Left out of a scope entered from Global goes back to Global,
                         // before the walk between scopes is considered at all.
-                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
+                        if model.query.isEmpty, model.stepBackThroughRunningApps() { return .handled }
                         return CornerDockController.shared.chatPresentation
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
                     .onKeyPress(.rightArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // A chosen row is what the user is pointing at, so → steps into it
                         // before anything else — steps in, never runs (D4). Otherwise it takes
                         // the ghost completion, and on an empty field it steps into an app;
