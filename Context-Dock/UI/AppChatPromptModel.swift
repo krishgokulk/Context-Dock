@@ -170,6 +170,9 @@ final class AppChatPromptModel: ObservableObject {
     var tabsByIconID: [String: SafariTab] = [:]
     /// The app's pins behind its bar's leading icons, by icon id.
     var appPinsByIconID: [String: DockPin] = [:]
+    /// The text field's frame in the corner's hosting view (top-left origin). Not published:
+    /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
+    var inputFrame: CGRect = .zero
 
     /// The app's own bar: a Safari scope's open tabs take the running apps' place in the
     /// Global shell — the strip of big icons at rest, the small pill in the field (owner
@@ -183,9 +186,14 @@ final class AppChatPromptModel: ObservableObject {
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
     var stripPins: [DockPin] { showsTabBar ? [] : dockPins.pins }
-    /// The Global shell — its height, its fold into a dock and back — is Global Context's,
-    /// and a Safari scope's.
-    var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The Global shell — its fold into the big dock and back — is Global Context's alone.
+    /// An app's Context Dock stays compact, its bar a pill in the field (owner 2026-09-26:
+    /// "stay compact"; it used to fold into the big strip too, and looked small one moment
+    /// and large the next). Its height is Global's all the same, through `usesDockHeight`.
+    var usesDockShell: Bool { isGlobalScope }
+    /// How many of the app bar's icons the field makes room for; the rest scroll sideways
+    /// inside the pill rather than widening the field or becoming +N.
+    static let appBarVisibleIcons = 5
     /// The frontmost app's own chat — its Context Dock, Finder's included — rather than
     /// Global, a CLI tool or an extension's panel.
     var isAppContextDock: Bool {

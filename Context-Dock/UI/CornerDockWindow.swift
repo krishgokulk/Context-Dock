@@ -918,6 +918,17 @@ final class CornerDockController: NSObject {
               let promptRect = currentSlots().prompt,
               promptRect.contains(event.locationInWindow)
         else { return event }
+        // Over the text only (owner 2026-09-26): the pill beside it scrolls sideways, and a
+        // swipe over the chip or the buttons was switching to General Chat by accident. The
+        // field's frame is in the hosting view's top-left space; the event is bottom-left.
+        if let host = panel.contentView, !prompt.inputFrame.isEmpty {
+            let point = CGPoint(
+                x: event.locationInWindow.x,
+                y: host.bounds.height - event.locationInWindow.y)
+            guard prompt.inputFrame.insetBy(dx: -8, dy: -10).contains(point) else {
+                return event
+            }
+        }
 
         if event.phase == .began {
             accumulatedChatSwipeX = 0

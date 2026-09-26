@@ -751,6 +751,11 @@ struct AppChatPromptPill: View {
                 }
                 TextField("", text: $model.query)
                     .textFieldStyle(.plain)
+                    // Where the field is, for the swipe monitor: a swipe switches surfaces
+                    // only over the text, never over the pill beside it (owner 2026-09-26).
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        model.inputFrame = $0
+                    }
                     .font(.system(size: 14, weight: .medium))
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
@@ -867,7 +872,11 @@ struct AppChatPromptPill: View {
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                if model.usesDockShell {
+                if model.showsTabBar {
+                    // An app's bar: its pins, then its tabs, scrolling inside the pill.
+                    AppBarPill(model: model)
+                        .transition(.opacity)
+                } else if model.usesDockShell {
                     // The strip's own icons shrink into this spot and are the pill, so the
                     // field only keeps the room — drawing a second set here is what showed
                     // every app twice while the first set was still travelling.

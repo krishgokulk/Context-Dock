@@ -40,19 +40,18 @@ struct CornerSafariTabsTests {
         return model
     }
 
-    @Test("Safari's Context Dock uses the Global shell: its height, and it folds away at rest")
-    func theSafariScopeUsesTheGlobalShell() {
+    @Test("Safari's Context Dock stays compact: Global's height, its bar a pill, never the big fold")
+    func theSafariScopeStaysCompact() {
+        // Owner 2026-09-26: it used to fold into the big strip at rest and looked small one
+        // moment and large the next. It is the compact field, always.
         let model = scope()
-        #expect(model.showsTabBar && model.usesDockShell && model.showsFieldPills)
-        #expect(AppChatPromptMetrics.fieldHeight(global: model.usesDockShell)
+        #expect(model.showsTabBar && !model.usesDockShell && model.showsFieldPills)
+        #expect(AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight)
             == AppChatPromptMetrics.dockHeight)
-        #expect(model.canRestAsDock == model.autoShrinkEnabled())
-        // At rest it folds into the dock of tabs, as Global does, rather than the app badge.
-        if model.autoShrinkEnabled() {
-            model.set(.prompt)
-            #expect(model.foldToDock())
-            #expect(model.phase == .dock)
-        }
+        #expect(!model.canRestAsDock)
+        model.set(.prompt)
+        #expect(!model.foldToDock())
+        #expect(model.phase == .prompt)
     }
 
     @Test("The open tabs are the bar's icons, all of them, in order")
@@ -77,16 +76,16 @@ struct CornerSafariTabsTests {
         #expect(chrome.stripPins.count == chrome.dockPins.pins.count)
     }
 
-    @Test("The field's pill holds what fits; the rest are +N")
-    func overflowGoesToPlusN() {
+    @Test("The field keeps room for a few icons; the rest scroll inside the pill")
+    func theRestScroll() {
         let many = (1...60).map {
             SafariTab(title: "Tab \($0)", url: "https://example.com/\($0)", windowIndex: 1, tabIndex: $0)
         }
         let model = scope(tabs: many)
-        let capacity = AppChatPromptMetrics.matchIconCapacity(maximumWidth: DockStripPlan.screenBudget)
-            - AppChatPromptMetrics.appFieldChromeSlots
-        #expect(model.globalMatchIcons.count == max(1, capacity))
-        #expect(model.globalOverflowCount == 60 - model.globalMatchIcons.count)
+        // The room: a compact few, whatever the screen.
+        #expect(model.globalMatchIcons.count == AppChatPromptModel.appBarVisibleIcons)
+        // The content: every tab, which the pill scrolls through.
+        #expect(model.allRunningIcons.count == 60)
         #expect(model.stripIcons.count == 60)
         // The field keeps room for the Safari chip as well as the pill.
         #expect(model.promptIconCount
@@ -144,8 +143,8 @@ struct CornerSafariTabsTests {
         #expect(strip.width > fitted.width)
     }
 
-    @Test("Typing keeps the tabs, and their pill ends before the field's + and send")
-    func typingKeepsTheTabs() {
+    @Test("Typing hides the pill but keeps its icons loaded, so clearing the text brings it straight back")
+    func typingKeepsTheTabsLoaded() {
         let model = scope()
         model.query = "summarise this"
         model.queryChanged()

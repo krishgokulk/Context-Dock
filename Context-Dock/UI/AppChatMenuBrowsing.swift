@@ -180,6 +180,15 @@ extension AppChatPromptModel {
         return pins + tabs.map(BrowserTabList.icon(for:))
     }
 
+    /// A click on an icon in the app bar's pill: a pin runs, a tab shows.
+    func openBarIcon(_ icon: MatchDockIcon) {
+        if let pin = appPin(forIconID: icon.id) {
+            openAppPin(pin)
+        } else {
+            openGlobalMatchIcon(icon)
+        }
+    }
+
     /// Whether an icon in the strip or the pill is one of Safari's tabs.
     func isTabIcon(_ id: String) -> Bool { tabsByIconID[id] != nil }
 
@@ -309,11 +318,8 @@ extension AppChatPromptModel {
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
             running: running,
-            // The app's pins are not in the field's pill, so it keeps no room for them.
-            fieldCapacity: showsTabBar
-                ? AppChatPromptMetrics.matchIconCapacity(maximumWidth: DockStripPlan.screenBudget)
-                    - AppChatPromptMetrics.appFieldChromeSlots
-                : Self.pillFieldCapacity)
+            // The app bar keeps the field compact: a few icons' room, the rest scroll.
+            fieldCapacity: showsTabBar ? Self.appBarVisibleIcons : Self.pillFieldCapacity)
     }
 
     /// How many running apps the field shows before the rest become `+N`.
