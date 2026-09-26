@@ -792,7 +792,32 @@ final class CornerDockController: NSObject {
         return event
     }
 
+    /// The key event this panel's monitor last consumed.
+    ///
+    /// Returning nil from a local monitor does not stop SwiftUI's own key dispatch: the
+    /// field's `onKeyPress` still received the same press, so every key both handle ran twice
+    /// — → stepped two apps (Finder, then Code), ← went to Global and on to General Chat,
+    /// Esc on a highlighted row cleared the query it had just kept (traced 2026-09-26). The
+    /// field asks this first and stands down: one press, one handler.
+    private var consumedKeyEvent: (timestamp: TimeInterval, keyCode: UInt16)?
+
+    /// Whether the key event being dispatched right now was already taken by the monitor.
+    var monitorConsumedCurrentKey: Bool {
+        guard let event = NSApp.currentEvent, event.type == .keyDown,
+            let consumed = consumedKeyEvent
+        else { return false }
+        return event.timestamp == consumed.timestamp && event.keyCode == consumed.keyCode
+    }
+
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
+        let result = handleChatNavigationKeyBody(event)
+        if result == nil, event.type == .keyDown {
+            consumedKeyEvent = (event.timestamp, event.keyCode)
+        }
+        return result
+    }
+
+    private func handleChatNavigationKeyBody(_ event: NSEvent) -> NSEvent? {
         // A key pressed while Command is down means this was a shortcut, not a tap.
         commandTapStarted = nil
         pendingCommandSwitch?.cancel()
@@ -971,11 +996,11 @@ final class CornerDockController: NSObject {
         // ← on an empty Global field folds it into the dock, before the presentation's
         // own walk between scopes is considered.
         if chatPresentation.mode != .general, prompt.foldToDock() { return nil }
-        // ← out of a scope entered from Global goes back to Global — the field's own first
-        // rung, which this monitor runs ahead of. Without it an empty Finder field went
-        // straight to General Chat (owner, 2026-09-26); the Dock goes back to Global.
+        // ← inside a scope entered from Global walks back one app, and from the first home
+        // to Global — the mirror of →, as the Dock walks. Without it an empty Finder field
+        // went straight to General Chat (owner, 2026-09-26).
         if chatPresentation.mode != .general, prompt.query.isEmpty,
-            prompt.leaveScopeForGlobal()
+            prompt.stepBackThroughRunningApps()
         {
             return nil
         }

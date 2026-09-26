@@ -154,6 +154,27 @@ enum DockKeyRules {
         !command && hasFocusedRow && rowHasPreview
     }
 
+    // MARK: - Walking the running apps with ←/→ on an empty field
+
+    /// Where ←/→ go from the app at `current` (nil: Global Context) through `count` apps in
+    /// pill order. → steps into the first app, then the next, wrapping; ← steps back one app
+    /// at a time and, from the first, home to Global — the Dock's walk, in both directions.
+    enum AppWalk: Equatable {
+        case app(Int)
+        case global
+        case none
+    }
+
+    static func appWalk(forward: Bool, current: Int?, count: Int) -> AppWalk {
+        guard count > 0 else { return .none }
+        guard let current, current >= 0, current < count else {
+            // From Global: → enters the first app; ← is not the walk's (the field folds).
+            return forward ? .app(0) : .none
+        }
+        if forward { return .app((current + 1) % count) }
+        return current == 0 ? .global : .app(current - 1)
+    }
+
     // MARK: - Backspace on an empty field (B3, B4, E4)
 
     /// What Backspace on an empty field steps out of, innermost first.

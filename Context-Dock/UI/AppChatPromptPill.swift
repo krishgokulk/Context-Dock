@@ -858,6 +858,8 @@ struct AppChatPromptPill: View {
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
+                        // The panel's key monitor already acted on this Return.
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return }
                         // A chosen row runs — a command or an adapter action. On a window
                         // snapshot with nothing typed, Return switches to that app, because
                         // that is what the switcher is for. Anything else is a question.
@@ -882,19 +884,28 @@ struct AppChatPromptPill: View {
                         model.submit()
                     }
                     .onKeyPress(.space) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Only once the user has arrowed into the list; with the caret in
                         // the field, a space is a space.
-                        model.previewFocusedRow() ? .handled : .ignored
+                        return model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // The row the arrows landed on first; the top match only when the
                         // user has not chosen one.
                         if model.enterFocusedRow() { return .handled }
                         return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
-                    .onKeyPress(.downArrow) { arrow(up: false) }
-                    .onKeyPress(.upArrow) { arrow(up: true) }
+                    .onKeyPress(.downArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        return arrow(up: false)
+                    }
+                    .onKeyPress(.upArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        return arrow(up: true)
+                    }
                     .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Backspace on an empty field leaves the scope — the dock's way out,
                         // and the one most people reach for before they find the "−". Both
                         // delete keys, because `.delete` alone did not match the backspace
@@ -903,6 +914,7 @@ struct AppChatPromptPill: View {
                         return model.applyEmptyBackspace() ? .handled : .ignored
                     }
                     .onKeyPress(.escape) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the
                         // user was waiting on and a question they had half-written, for
                         // one press of the key that usually means "step back".
@@ -920,13 +932,15 @@ struct AppChatPromptPill: View {
                         return .handled
                     }
                     .onKeyPress(.leftArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // Left out of a scope entered from Global goes back to Global,
                         // before the walk between scopes is considered at all.
-                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
+                        if model.query.isEmpty, model.stepBackThroughRunningApps() { return .handled }
                         return CornerDockController.shared.chatPresentation
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
                     .onKeyPress(.rightArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
                         // A chosen row is what the user is pointing at, so → steps into it
                         // before anything else — steps in, never runs (D4). Otherwise it takes
                         // the ghost completion, and on an empty field it steps into an app;

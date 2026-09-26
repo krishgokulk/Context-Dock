@@ -504,22 +504,45 @@ extension AppChatPromptModel {
     func scopeIntoFirstRunningApp() -> Bool {
         guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let apps = Self.orderedAppPills()
-        guard !apps.isEmpty else { return false }
-
+        // From Global the first app; already inside one, the next — which is what makes this
+        // a switcher rather than a one-way door. ← walks the same list back
+        // (`stepBackThroughRunningApps`); both read `DockKeyRules.appWalk`.
+        let current: Int?
         if isGlobalScope {
-            guard let first = apps.first, let bundleID = first.bundleID else { return false }
-            scopeIntoApp(name: first.title, bundleID: bundleID)
-            return true
+            current = nil
+        } else {
+            guard returnsToGlobalScope,
+                let index = apps.firstIndex(where: { $0.bundleID == appBundleID })
+            else { return false }
+            current = index
         }
-        // Already inside one: walk to the next, which is what makes this a switcher rather
-        // than a one-way door.
-        guard returnsToGlobalScope,
-            let index = apps.firstIndex(where: { $0.bundleID == appBundleID })
+        guard case .app(let index) = DockKeyRules.appWalk(
+            forward: true, current: current, count: apps.count),
+            let bundleID = apps[index].bundleID
         else { return false }
-        let next = apps[(index + 1) % apps.count]
-        guard let bundleID = next.bundleID else { return false }
-        scopeIntoApp(name: next.title, bundleID: bundleID)
+        scopeIntoApp(name: apps[index].title, bundleID: bundleID)
         return true
+    }
+
+    /// ← on an empty field inside a scope entered from Global: back one app along the pills,
+    /// and from the first one home to Global — the mirror of → (`DockKeyRules.appWalk`).
+    @discardableResult
+    func stepBackThroughRunningApps() -> Bool {
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, returnsToGlobalScope
+        else { return false }
+        let apps = Self.orderedAppPills()
+        let current = apps.firstIndex { $0.bundleID == appBundleID }
+        switch DockKeyRules.appWalk(forward: false, current: current, count: apps.count) {
+        case .app(let index):
+            guard let bundleID = apps[index].bundleID else { return false }
+            scopeIntoApp(name: apps[index].title, bundleID: bundleID)
+            return true
+        case .global:
+            return leaveScopeForGlobal()
+        case .none:
+            // A scope the pills do not show (a CLI tool, a command): straight home.
+            return leaveScopeForGlobal()
+        }
     }
 
     /// Return, on a snapshot with nothing typed, switches to the app — the switcher's whole

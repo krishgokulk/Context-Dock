@@ -278,6 +278,19 @@ struct DockKeyRulesListTests {
         #expect(!R.spacePreviews(hasFocusedRow: true, rowHasPreview: true, command: true))
     }
 
+    @Test("←/→ walk the running apps: → in and onward (wrapping), ← back one and home from the first")
+    func appWalkBothWays() {
+        #expect(R.appWalk(forward: true, current: nil, count: 4) == .app(0))
+        #expect(R.appWalk(forward: true, current: 1, count: 4) == .app(2))
+        #expect(R.appWalk(forward: true, current: 3, count: 4) == .app(0))
+        #expect(R.appWalk(forward: false, current: 3, count: 4) == .app(2))
+        #expect(R.appWalk(forward: false, current: 1, count: 4) == .app(0))
+        #expect(R.appWalk(forward: false, current: 0, count: 4) == .global)
+        // From Global, ← is not the walk's: the field folds into the strip.
+        #expect(R.appWalk(forward: false, current: nil, count: 4) == .none)
+        #expect(R.appWalk(forward: true, current: nil, count: 0) == .none)
+    }
+
     @Test("Backspace on an empty field climbs out innermost first: folder, selection, chat, scope")
     func emptyBackspaceLadder() {
         #expect(
@@ -427,6 +440,23 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(model.appBundleID == apps[0].bundleID)
         #expect(model.scopeIntoFirstRunningApp())
         #expect(model.appBundleID == apps[1].bundleID)
+    }
+
+    @Test("← walks back the way → came, and from the first app home to Global")
+    func leftArrowWalksBack() {
+        let apps = AppChatPromptModel.orderedAppPills()
+        guard apps.count > 1 else { return }  // nothing to walk on this Mac
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        #expect(model.scopeIntoFirstRunningApp())
+        #expect(model.scopeIntoFirstRunningApp())
+        #expect(model.appBundleID == apps[1].bundleID)
+        #expect(model.stepBackThroughRunningApps())
+        #expect(model.appBundleID == apps[0].bundleID)
+        #expect(model.stepBackThroughRunningApps())
+        #expect(model.isGlobalScope)
+        // In Global, ← is not the walk's.
+        #expect(!model.stepBackThroughRunningApps())
     }
 
     @Test("An app bundle is a file, not a folder")
