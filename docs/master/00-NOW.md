@@ -10,7 +10,8 @@
 
 ## In progress
 
-*None.* Task 4b (pins in the Corner strip) is done in #94; task 5 is next.
+**Task 5 — keyboard rules (B/C/E4) into a shared tested type.** Branch `claude/keyboard-rules`.
+First slice: the ❌ rows C4–C7, C9, with C6's safety rule (Backspace on a focused row never quits an app).
 
 ## Next, in order
 

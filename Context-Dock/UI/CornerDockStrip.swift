@@ -415,6 +415,10 @@ struct CornerDockStrip: View {
             isAvailable: slot.pin.map { $0.kind.isAvailable } ?? true,
             scale: scale(for: id, among: ids)
         )
+        // As the field's pill, the one Tab and ←/→ have highlighted (`DockKeyRules`).
+        .dockKeyboardFocus(!isDock && model.focusedPill.map {
+            $0.bundleID == slot.bundleID || $0.id == slot.bundleID
+        } == true)
         .onHover { inside in
             // As the field's pill, resting on an app asks for the dock back, as the field's
             // own pill did.
@@ -865,6 +869,19 @@ struct DockStripIcon: View {
             width: AppChatPromptMetrics.dockIconSize, height: AppChatPromptMetrics.dockIconSize)
         .contentShape(Rectangle())
         .help(title)
+    }
+}
+
+extension View {
+    /// The highlight on a pill the keyboard is on — the Dock's pill focus, drawn the same
+    /// wherever a row of pills is walked by key.
+    func dockKeyboardFocus(_ isFocused: Bool) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(isFocused ? 0.16 : 0))
+                .padding(-3)
+                .animation(.easeOut(duration: 0.12), value: isFocused)
+        }
     }
 }
 

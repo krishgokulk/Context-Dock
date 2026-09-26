@@ -56,12 +56,12 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | C1 | **↓** first press expands the result sheet, then moves down | 🟡 | checked on the app 2026-09-24: the first ↓ opens the list **and** highlights row 1 in one press (Dock: first press opens, next moves) |
 | C2 | **↑ / ↓** move through grouped app/menu rows | ✅ | checked on the app 2026-09-24: ↓↓ walks the Global rows (Safari → Turn Off the Lights…) |
 | C3 | **↩** runs the focused row, or the top row if none is focused | 🟡 | `tabRunsTheDockActionAndDisabledRowsDoNotRun` covers Tab; ↩ ❓ |
-| C4 | **←** leaves result focus back to the field | ❌ | checked on the app 2026-09-24: ← with a row focused leaves the highlight on the row |
-| C5 | **Esc** collapses the sheet to compact typing, keeps the query | ❌ | checked on the app 2026-09-24: Esc with a row focused **clears the query** and closes the list (Dock keeps the query) |
-| C6 | **Backspace** on a focused row clears focus only (never quits an app) | ❌ | checked on the app 2026-09-24: Backspace with a row focused deletes a character and closes the list (Dock clears focus only). It never quits an app ✅ |
-| C7 | **Tab** enters / leaves app-pill navigation (and blocks macOS Full Keyboard Navigation) | ❌ | checked on the app 2026-09-24: Tab on an empty Global field shows no app-pill navigation |
+| C4 | **←** leaves result focus back to the field | ✅ | `DockKeyRules.resultFocus`, read by both shells (task 5, #96): `leftLeavesResultFocus`, `leftLeavesTheRow`. Hand check on the app owed |
+| C5 | **Esc** collapses the sheet to compact typing, keeps the query | ✅ | `DockKeyRules.resultFocus` (#96): `escapeCollapsesKeepingQuery`, `escapeKeepsTheQuery`. A Finder search's resting results are not a sheet Esc closes — there Esc still clears, then closes. Hand check owed |
+| C6 | **Backspace** on a focused row clears focus only (never quits an app) | ✅ | `DockKeyRules` (#96): on a row it lets go and deletes nothing (`backspaceOnlyClearsFocus`, `backspaceNeverQuits` — a focused "Quit Safari" row is not run); on a pill it lets go and stays in the scope (`backspaceAndEscapeLetGo`, `backspaceOnAPillStays`). Hand check owed |
+| C7 | **Tab** enters / leaves app-pill navigation (and blocks macOS Full Keyboard Navigation) | ✅ | `DockKeyRules.pillRow` (#96): `tabEntersAndLeaves`, `tabEntersPills`, `aFocusedRowOutranksThePills`. Corner: the field's pills (running apps; an app bar's pins and tabs), after a focused row and the top match. Hand check owed |
 | C8 | **→** on an app row scopes that app into a pill | ✅ | `rightArrowFromDockScopesLikeAnEmptyPromptDoes`, `steppingIntoAnotherAppTakesYouToThatAppsChat` |
-| C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ❌ | checked on the app 2026-09-24: after → into an app, →/← move no highlight along the running-app pills |
+| C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ✅ | `DockKeyRules.pillRow` (#96): `arrowsWalkAndWrap`, `separatorsAreSkipped`, `arrowsWalkThePills`; ↩ opens the pill as a click does (the Corner's click scopes into the app). Hand check owed |
 | C10 | **Space** = Quick Look on the focused file/row (only while navigating, never while typing) | 🟡 | `AppChatMenuBrowsing` toggles `FileQuickLookPanel`; Space binding not verified |
 | C11 | **→** on a folder row enters the folder | 🟡 | → on an app row scopes into the app instead of launching it (checked on the app 2026-09-25); folder rows not tried |
 | C12 | **⌘R** refreshes the front app's live menus | ❓ | Hotkeys page lists it for the Dock only |
@@ -129,6 +129,7 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 | Rows (52) | 21 | 12 | 8 | 7 | 4 |
 
 *2026-09-25: D10 🟡 → ✅ (#84); D13 ❌ → ✅.*
+*2026-09-26: C4, C5, C6, C7, C9 ❌ → ✅ (task 5, #96) — the rules now live in `DockKeyRules`, which the Dock's monitor and the Corner's both read.*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,

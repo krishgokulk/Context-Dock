@@ -136,6 +136,9 @@ final class AppChatPromptModel: ObservableObject {
     /// had typed a question — the list is an offer, and taking it should be something you
     /// do, not something that happens because you did not avoid it.
     @Published var focusedMenuIndex: Int?
+    /// Which of the field's pills Tab and ←/→ have highlighted, or nil while the caret is
+    /// the field's. An index into `globalMatchIcons`. See `DockKeyRules.pillRow`.
+    @Published var focusedPillIndex: Int?
     /// Every command the app offers, read once per app rather than per keystroke.
     var allMenuItems: [AXMenuItem] = []
     /// What this app's adapter declares it can do — curated, unlike the menus.
@@ -695,6 +698,8 @@ final class AppChatPromptModel: ObservableObject {
     /// It also puts the suggestion list away — a typed question is not a browse — and
     /// brings it back if the field is cleared again.
     func queryChanged() {
+        // Typing is the caret's: the pills leave the field while anything is typed.
+        focusedPillIndex = nil
         guard phase.isVisible else { return }
         updateMenuMatches()
         syncListPhase()
@@ -1097,6 +1102,8 @@ final class AppChatPromptModel: ObservableObject {
     func set(_ next: AppChatPromptPhase) {
         guard phase != next else { return }
         phase = next
+        // A highlight on the field's pills does not outlive the field.
+        if !next.showsInput || next == .chat { focusedPillIndex = nil }
         // A plugin's card belongs to the strip; leaving the dock takes it down with it.
         if next != .dock { pluginCardPinID = nil }
         // The bar opening or folding shows the tabs: read them again so what it shows is

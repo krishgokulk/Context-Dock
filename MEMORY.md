@@ -22,3 +22,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 2026-09-25 · mac-claude/claude/corner-parity · #84 feature-complete: send-to confirmation, Settings Remove for Computer Use grants, inventory Corner-only section, D10 ✅, task 1 → Done in 00-NOW.md; owner tries then merges.
 2026-09-25 · mac-claude/claude/agents-dock-corner-rule · task 2: AGENTS.md Dock/Corner rule + 00-NOW.md in Start here (docs only).
 2026-09-25 · mac-claude/claude/corner-safari-tabs · task 4: Safari tabs in the Corner (D13 ✅), shared BrowserTabList, checked on the app.
+- 2026-09-26 (claude/keyboard-rules, #96): task 5 slice 1 — `DockKeyRules` holds the Dock's result-focus and pill-row keys; Dock and Corner both read it. C4–C7, C9 ✅ by test; hand check owed.

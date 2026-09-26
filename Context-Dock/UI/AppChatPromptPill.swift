@@ -970,6 +970,7 @@ struct AppChatPromptPill: View {
                         icons: model.globalMatchIcons,
                         overflowCount: model.globalOverflowCount,
                         isSearching: false,
+                        focusedID: model.focusedPill?.id,
                         onSelect: { icon in model.openGlobalMatchIcon(icon) })
                         // Opacity only, for the same reason as the field above: this pill is
                         // a sibling of the TextField inside the focused subtree, and a
