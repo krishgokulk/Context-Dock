@@ -94,7 +94,7 @@ final class FinderActionService {
                 end tell
                 """
             var error: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&error)
+            NSAppleScript(source: script)?.executeSerialized(error: &error)
             if let error {
                 let message =
                     error[NSAppleScript.errorMessage] as? String
@@ -117,7 +117,7 @@ final class FinderActionService {
                 end tell
                 """
             var error: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&error)
+            NSAppleScript(source: script)?.executeSerialized(error: &error)
             if let error {
                 let message =
                     error[NSAppleScript.errorMessage] as? String
@@ -171,7 +171,7 @@ final class FinderActionService {
                 """
             var error: NSDictionary?
             guard
-                let value = NSAppleScript(source: script)?.executeAndReturnError(&error)
+                let value = NSAppleScript(source: script)?.executeSerialized(error: &error)
                     .stringValue,
                 error == nil
             else { return [] }

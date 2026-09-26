@@ -3775,8 +3775,8 @@ struct AutomationAdapterDetailView: View {
         delay 0.2
         tell application "System Events" to keystroke "," using command down
         """
-        DispatchQueue.global(qos: .userInitiated).async {
-            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        AppleScriptQueue.shared.async {
+            NSAppleScript(source: script)?.executeSerialized(error: nil)
         }
     }
 

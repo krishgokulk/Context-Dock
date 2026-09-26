@@ -1289,7 +1289,7 @@ extension LauncherView {
             return nil
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
         if error != nil {
             return nil
         }
@@ -1317,7 +1317,7 @@ extension LauncherView {
             return []
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
         if error != nil {
             return []
         }
@@ -1352,7 +1352,7 @@ extension LauncherView {
             return []
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
         if error != nil {
             return []
         }

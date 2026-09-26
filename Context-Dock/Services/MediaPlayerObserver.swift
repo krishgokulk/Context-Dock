@@ -469,10 +469,10 @@ class MediaPlayerObserver: ObservableObject {
     @discardableResult
     private func runAS(_ src: String) async -> String? {
         await withCheckedContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 var e: NSDictionary?
                 guard let s = NSAppleScript(source: src) else { cont.resume(returning: nil); return }
-                cont.resume(returning: s.executeAndReturnError(&e).stringValue)
+                cont.resume(returning: s.executeSerialized(error: &e).stringValue)
             }
         }
     }

@@ -1547,9 +1547,9 @@ extension LauncherView {
                 end if
             end tell
             """
-        DispatchQueue.global(qos: .userInitiated).async {
+        AppleScriptQueue.shared.async {
             var err: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&err)
+            NSAppleScript(source: script)?.executeSerialized(error: &err)
         }
     }
 

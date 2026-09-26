@@ -729,7 +729,7 @@ final class ShareIntentRouter {
     private func runAppleScript(_ source: String) -> Bool {
         guard let script = NSAppleScript(source: source) else { return false }
         var error: NSDictionary?
-        script.executeAndReturnError(&error)
+        script.executeSerialized(error: &error)
         return error == nil
     }
 }

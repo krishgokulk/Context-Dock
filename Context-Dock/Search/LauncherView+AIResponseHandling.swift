@@ -602,7 +602,7 @@ extension LauncherView {
             return (false, "The AppleScript couldn't be compiled.")
         }
         var error: NSDictionary?
-        let result = script.executeAndReturnError(&error)
+        let result = script.executeSerialized(error: &error)
         if let error {
             let message = error[NSAppleScript.errorMessage] as? String ?? "Unknown AppleScript error."
             let code = error[NSAppleScript.errorNumber] as? Int
@@ -868,7 +868,7 @@ extension LauncherView {
             return nil
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
 
         if let error = error {
             #if DEBUG
@@ -1458,7 +1458,7 @@ extension LauncherView {
                         try? proc.run()
                     case .appleScript:
                         if let script = NSAppleScript(source: sc.actionValue) {
-                            script.executeAndReturnError(nil)
+                            script.executeSerialized(error: nil)
                         }
                     case .jxa:
                         let tmp = FileManager.default.temporaryDirectory

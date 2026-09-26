@@ -7824,7 +7824,7 @@ struct PermissionsSettingsView: View {
         func run(script: String) -> String? {
             if let appleScript = NSAppleScript(source: script) {
                 var error: NSDictionary?
-                _ = appleScript.executeAndReturnError(&error)
+                _ = appleScript.executeSerialized(error: &error)
                 if let error {
                     return "AppleScript error: \(error)"
                 } else {
