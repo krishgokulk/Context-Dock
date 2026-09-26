@@ -39,6 +39,18 @@ struct CornerDockStrip: View {
 
     private var isDock: Bool { model.phase == .dock }
 
+    /// The strip's tools stay over the field's trailing end in Global, still and
+    /// clickable. An app's field draws its own clipboard and selection beside the pin, so
+    /// there the strip's go with the bar — drawn over the field they doubled up on the pin.
+    private var toolsShown: Bool { isDock || !model.fitsField }
+
+    private var appBarToolsDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.18))
+            .frame(width: 1, height: M.dockIconSize * 0.7)
+            .modifier(StripToolVisibility(shown: toolsShown))
+    }
+
     /// What gathers into the field fades late on the way in — after it has flown to the
     /// pill — and at once on the way back, so it is seen leaving the pill.
     private var movingFade: Animation {
@@ -255,15 +267,14 @@ struct CornerDockStrip: View {
                 }
             }
             if plan.layout.tools > 0 {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.18))
-                    .frame(width: 1, height: M.dockIconSize * 0.7)
+                appBarToolsDivider
                 // The corner's own cards, not the field's scope chips: a dock icon opens a
                 // surface beside the dock, it does not bring the field back with a chip in it.
                 if clipboard.phase.announcesCopy {
                     toolIcon("doc.on.clipboard", title: "Clipboard") {
                         ClipboardPanelController.shared.show()
                     }
+                    .modifier(StripToolVisibility(shown: toolsShown))
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     // Hovering opens the card without taking the keyboard; a click arms it.
                     .onHover { inside in
@@ -279,6 +290,7 @@ struct CornerDockStrip: View {
                     toolIcon("text.cursor", title: "Selection") {
                         CornerDockController.shared.showSelectionScopeFromDock()
                     }
+                    .modifier(StripToolVisibility(shown: toolsShown))
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
                 // What the last action came to, for a few seconds — the dock's inline
@@ -922,5 +934,16 @@ struct RightClickReporter: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             if event.modifierFlags.contains(.control) { onRightClick?() } else { super.mouseDown(with: event) }
         }
+    }
+}
+
+/// A strip tool fades with the bar where the field draws its own (`toolsShown`).
+private struct StripToolVisibility: ViewModifier {
+    let shown: Bool
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .allowsHitTesting(shown)
+            .animation(.easeInOut(duration: 0.2), value: shown)
     }
 }

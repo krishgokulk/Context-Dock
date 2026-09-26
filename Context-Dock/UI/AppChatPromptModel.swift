@@ -798,6 +798,9 @@ final class AppChatPromptModel: ObservableObject {
         // an app stepped into from Global — clicking away from any of them used to swap the
         // field to whatever came forward, losing the place the user had picked.
         guard !isGlobalScope, !returnsToGlobalScope else { return }
+        // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
+        // on the app it was pinned in, whatever comes forward after.
+        guard !isPinned else { return }
         query = ""
         attachments = []
         appName = name
