@@ -855,7 +855,8 @@ struct AppChatPromptPill: View {
                             return
                         }
                         if model.isSearchField {
-                            if let first = model.rows.first { model.run(first) }
+                            // The top row, the one the leading icon previews (C3).
+                            model.runReturnRow(runsTopRow: true)
                             return
                         }
                         model.submit()
@@ -878,8 +879,8 @@ struct AppChatPromptPill: View {
                         // and the one most people reach for before they find the "−". Both
                         // delete keys, because `.delete` alone did not match the backspace
                         // this field actually receives.
-                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
-                        return .ignored
+                        // The Dock's ladder: folder, selection, app chat, scope (B3, B4, E4).
+                        return model.applyEmptyBackspace() ? .handled : .ignored
                     }
                     .onKeyPress(.escape) {
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the

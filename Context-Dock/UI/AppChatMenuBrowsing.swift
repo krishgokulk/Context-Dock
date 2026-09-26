@@ -60,6 +60,13 @@ extension AppChatPromptModel {
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
+        // Finder's field is a file search; its menus are never listed here. And Finder is the
+        // app whose menus the AX tree does not hold until they are opened, so the read below
+        // came back empty and fell through to a System Events walk of the whole menu bar —
+        // an AppleScript run on the main thread. → from Global into Finder froze the field
+        // (no caret, the next → ignored) and then crashed in AppleScriptQueue (2026-09-26).
+        guard !isFinderScope else { return }
+
         // The AX read walks the whole menu bar, so it happens after the surface is up
         // rather than in front of it. Live items go first: where both have a row, the live
         // one is the one that is actually clickable, and dedupe keeps the first.
@@ -703,6 +710,13 @@ extension AppChatPromptModel {
     /// next keystroke.
     func updateFinderResults(for typed: String) {
         guard isFinderScope else { return }
+        // Inside a folder, what is typed filters that folder rather than searching the disk.
+        if let folder = finderBrowseStack.last {
+            rows = Self.folderListing(folder, matching: typed).map(AppChatRow.file)
+            focusedMenuIndex = nil
+            syncListPhase()
+            return
+        }
         guard !typed.isEmpty else {
             rows = []
             syncListPhase()
@@ -725,6 +739,103 @@ extension AppChatPromptModel {
             self.focusedMenuIndex = nil
             self.syncListPhase()
         }
+    }
+
+    // MARK: Finder folders (C11, B3)
+
+    /// How many entries one folder shows. The card scrolls; this only bounds the read.
+    static let folderListingLimit = 200
+
+    /// → on a highlighted folder in the Finder scope: step into it. The field empties and
+    /// lists the folder; typing filters it; Backspace on the empty field climbs back out.
+    @discardableResult
+    func enterFocusedFolder() -> Bool {
+        guard isFinderScope, case .file(let url)? = focusedRow, Self.isFolder(url)
+        else { return false }
+        finderBrowseStack.append(url)
+        query = ""
+        focusedMenuIndex = nil
+        updateFinderResults(for: "")
+        touch()
+        return true
+    }
+
+    /// Backspace on an empty field inside a folder: up one level, and past the outermost
+    /// folder back to the search the walk started from.
+    @discardableResult
+    func leaveFinderFolder() -> Bool {
+        guard !finderBrowseStack.isEmpty else { return false }
+        finderBrowseStack.removeLast()
+        focusedMenuIndex = nil
+        updateFinderResults(for: query.trimmingCharacters(in: .whitespacesAndNewlines))
+        touch()
+        return true
+    }
+
+    nonisolated static func isFolder(_ url: URL) -> Bool {
+        guard !isPackage(url) else { return false }
+        return (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+    }
+
+    /// An app or other bundle is a file to the user, not a folder to walk into.
+    private nonisolated static func isPackage(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isPackageKey]).isPackage) == true
+    }
+
+    /// A folder's visible entries, folders first, then by name as Finder sorts them;
+    /// filtered by what is typed when anything is.
+    nonisolated static func folderListing(_ folder: URL, matching typed: String) -> [URL] {
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: folder, includingPropertiesForKeys: [.isDirectoryKey, .isPackageKey],
+            options: [.skipsHiddenFiles])) ?? []
+        let filter = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        return entries
+            .filter { filter.isEmpty || $0.lastPathComponent.localizedCaseInsensitiveContains(filter) }
+            .sorted { lhs, rhs in
+                let (l, r) = (isFolder(lhs), isFolder(rhs))
+                if l != r { return l }
+                return lhs.lastPathComponent.localizedStandardCompare(rhs.lastPathComponent)
+                    == .orderedAscending
+            }
+            .prefix(folderListingLimit)
+            .map { $0 }
+    }
+
+    // MARK: Backspace on an empty field, ⌘R
+
+    /// Backspace on an empty field, by the Dock's ladder (DockKeyRules.emptyBackspace): a
+    /// folder, then the in-place Selection Scope, then the app chat, then a scope entered from
+    /// Global. Returns false when there is nothing to step out of.
+    @discardableResult
+    func applyEmptyBackspace() -> Bool {
+        guard query.isEmpty else { return false }
+        switch DockKeyRules.emptyBackspace(
+            browsingFolder: isFinderScope && !finderBrowseStack.isEmpty,
+            selectionScope: isShowingSelectionScope,
+            chatOpen: phase == .chat,
+            scopedFromGlobal: returnsToGlobalScope)
+        {
+        case .leaveFolder: return leaveFinderFolder()
+        case .leaveSelectionAndClose:
+            _ = leaveSelectionScope()
+            dismiss()
+            return true
+        case .leaveChat: return leaveChatForMenus()
+        case .leaveScope: return leaveScopeForGlobal()
+        case .pass: return false
+        }
+    }
+
+    /// ⌘R (C12): read the app's live menus again — for a menu that changed since the scope
+    /// opened (a document opened, a tab moved). Global Context has no one app to read.
+    @discardableResult
+    func refreshLiveMenus() -> Bool {
+        // Finder's field is a file search: there are no menus of its own to refresh.
+        guard !isGlobalScope, !appBundleID.isEmpty, !isCLIScope, !isFinderScope
+        else { return false }
+        loadMenuItems()
+        touch()
+        return true
     }
 
     /// This scope shows the app's window rather than its commands.
@@ -868,8 +979,11 @@ extension AppChatPromptModel {
     /// has arrowed into the list. With the caret still in the field, space is a space.
     @discardableResult
     func previewFocusedRow() -> Bool {
-        guard focusedMenuIndex != nil, let row = focusedRow,
-            let path = previewPath(for: row)
+        let path = focusedRow.flatMap(previewPath(for:))
+        guard DockKeyRules.spacePreviews(
+            hasFocusedRow: focusedMenuIndex != nil && focusedRow != nil,
+            rowHasPreview: path != nil, command: false),
+            let path
         else { return false }
         FileQuickLookPanel.shared.toggle(path: path)
         touch()
@@ -949,13 +1063,10 @@ extension AppChatPromptModel {
         // it, the same way the dock's own results sheet is never open until the arrow
         // keys ask for it. Reaching for it now is exactly that ask.
         if phase == .prompt { set(.suggesting) }
-        let count = rows.count
-        if let current = focusedMenuIndex {
-            focusedMenuIndex = (current + delta + count) % count
-        } else {
-            // Down enters at the top, up enters at the bottom.
-            focusedMenuIndex = delta > 0 ? 0 : count - 1
-        }
+        // The first press opens the list on a row — down at the top, up at the bottom —
+        // as the Dock's does (DockKeyRules.listArrow, C1); after that the arrows move.
+        focusedMenuIndex = DockKeyRules.listArrow(
+            down: delta > 0, focused: focusedMenuIndex, count: rows.count)
         touch()
         return true
     }
@@ -996,7 +1107,10 @@ extension AppChatPromptModel {
                 return true
             }
             return false
-        case .dock, .command, .action, .file:
+        case .file:
+            // A folder in the Finder scope is stepped into, as the Dock's → does (C11).
+            return enterFocusedFolder()
+        case .dock, .command, .action:
             return false
         }
     }
@@ -1032,8 +1146,18 @@ extension AppChatPromptModel {
     /// falls through to asking the question the user typed.
     @discardableResult
     func runFocusedRow() -> Bool {
-        guard let row = focusedRow else { return false }
-        run(row)
+        runReturnRow(runsTopRow: false)
+    }
+
+    /// ↩ on the list (C3): the highlighted row, else — in a search field — the top row, the
+    /// one the leading icon previews. Returns false when ↩ is not the list's.
+    @discardableResult
+    func runReturnRow(runsTopRow: Bool) -> Bool {
+        guard let index = DockKeyRules.returnRow(
+            focused: focusedRow == nil ? nil : focusedMenuIndex,
+            count: rows.count, runsTopRow: runsTopRow)
+        else { return false }
+        run(rows[index])
         return true
     }
 

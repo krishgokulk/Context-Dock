@@ -220,6 +220,9 @@ final class AppChatPromptModel: ObservableObject {
     @Published var returnsToGlobalScope = false
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    /// The folders → has stepped into in the Finder scope, outermost first. Empty while the
+    /// scope is a search. Backspace on an empty field climbs back out one at a time (C11, B3).
+    @Published var finderBrowseStack: [URL] = []
     /// The Global Extension this scope is showing, drawn in the board above the field.
     @Published var scopedExtension: UserGlobalExtension?
     /// The Global Command this scope is showing — Quick Note, Currency Converter, the rest
@@ -457,6 +460,8 @@ final class AppChatPromptModel: ObservableObject {
             query = drafts[incoming] ?? ""
             // The answer being waited for belonged to the scope being left.
             stopAwaitingAnswer()
+            // A folder walk belongs to the Finder scope it was taken in.
+            finderBrowseStack = []
         }
         appName = name
         appBundleID = bundleID
@@ -579,6 +584,8 @@ final class AppChatPromptModel: ObservableObject {
     /// sheet has, and the capability summary under the field still says what is in scope.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // Inside a folder the listing is what the step went to fetch, typed filter or not.
+        if isFinderScope, !finderBrowseStack.isEmpty { return rows.isEmpty ? .prompt : .suggesting }
         // Typed: the field alone, same as the dock. Typing never pops the sheet open by
         // itself, and it closes right back down if a down-arrow peek was open when the next
         // character landed — the arrow key is the only door in.
@@ -660,6 +667,21 @@ final class AppChatPromptModel: ObservableObject {
     /// The turn belongs to the dock's pipeline, so this asks for the same reason clearing
     /// does — and a request that arrives after the turn already finished is simply ignored
     /// on the other side.
+    /// Backspace on an empty field in the app chat (E4): the conversation is kept — it is the
+    /// dock's, and it is there next time — the chat steps aside, and the field is the app's
+    /// menu search again. A turn still running is stopped first, as the Dock's key does.
+    @discardableResult
+    func leaveChatForMenus() -> Bool {
+        guard phase == .chat, query.isEmpty else { return false }
+        cancelTurn()
+        stopAwaitingAnswer()
+        hasPresentedConversation = false
+        focusedMenuIndex = nil
+        set(restingInputPhase)
+        touch()
+        return true
+    }
+
     func cancelTurn() {
         guard isAnswering else { return }
         NotificationCenter.default.post(name: .appChatPromptCancel, object: nil)
