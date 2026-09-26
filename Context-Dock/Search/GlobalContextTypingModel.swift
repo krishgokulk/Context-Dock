@@ -87,18 +87,22 @@ struct ContextMatchDock: View {
     let overflowCount: Int
     let isSearching: Bool
     let onSelect: ((MatchDockIcon) -> Void)?
+    /// The icon Tab and ←/→ have highlighted (`DockKeyRules.pillRow`), if any.
+    let focusedID: String?
 
     init(
         phase: Phase,
         icons: [MatchDockIcon],
         overflowCount: Int,
         isSearching: Bool,
+        focusedID: String? = nil,
         onSelect: ((MatchDockIcon) -> Void)? = nil
     ) {
         self.phase = phase
         self.icons = icons
         self.overflowCount = overflowCount
         self.isSearching = isSearching
+        self.focusedID = focusedID
         self.onSelect = onSelect
     }
 
@@ -196,6 +200,7 @@ struct ContextMatchDock: View {
                     .offset(x: 3, y: 3)
             }
         }
+        .dockKeyboardFocus(item.id == focusedID)
     }
 }
 

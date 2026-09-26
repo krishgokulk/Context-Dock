@@ -887,6 +887,22 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // The Dock's keyboard rules (`DockKeyRules`), before any of the field's own meanings
+        // below: a highlighted pill or row is what the key is about. Backspace here lets go
+        // of the highlight and nothing else — it never deletes, leaves a scope or quits the
+        // app a row names (C6).
+        if let panel, event.window === panel,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput, prompt.phase != .chat,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            keyboardState.owner != .selection, keyboardState.owner != .clipboard,
+            !ClipboardPanelController.shared.model.isKeyboardArmed,
+            let key = DockKey(keyCode: event.keyCode)
+        {
+            if prompt.focusedPillIndex != nil, prompt.applyPillRowKey(key) { return nil }
+            if prompt.applyResultFocusKey(key) { return nil }
+        }
+
         // Backspace on an empty field leaves the scope. Like Tab, the field's own handler
         // never saw it — `onKeyPress` competes with the text system for the delete keys,
         // and the text system wins even when there is nothing to delete.
@@ -910,6 +926,8 @@ final class CornerDockController: NSObject {
         {
             if prompt.enterFocusedRow() { return nil }
             if prompt.acceptGlobalTopMatch() { return nil }
+            // Nothing to take: Tab walks into the pills beside the field (C7).
+            if prompt.applyPillRowKey(.tab) { return nil }
             return event
         }
         guard let panel, event.window === panel,

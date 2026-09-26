@@ -792,8 +792,13 @@ extension LauncherView {
                     return nil
                 case 36:  // Return — execute focused grouped row, or first row if none focused
                     return self.executeFocusedGlobalGroupedListRow() ? nil : event
-                case 123:  // Left — exit result focus, return to input field
-                    if self.focusedAppPillIndex != nil || self.l2.focusedPillIndex != nil {
+                case 123:  // Left — exit result focus, return to input field (DockKeyRules C4)
+                    if DockKeyRules.resultFocus(
+                        .left,
+                        hasFocusedRow: self.focusedAppPillIndex != nil
+                            || self.l2.focusedPillIndex != nil,
+                        listIsOpen: false) == .clearFocus
+                    {
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil
                         self.l2.pillNavViaKeyboard = false
@@ -801,8 +806,13 @@ extension LauncherView {
                         return nil
                     }
                     return event
-                case 53:  // Escape — collapse expanded sheet to compact typing; keep query
-                    if self.globalContextViewModel.typingSnapshot.phase == .expanded {
+                case 53:  // Escape — collapse expanded sheet to compact typing; keep query (C5)
+                    let escape = DockKeyRules.resultFocus(
+                        .escape,
+                        hasFocusedRow: self.focusedAppPillIndex != nil
+                            || self.l2.focusedPillIndex != nil,
+                        listIsOpen: self.globalContextViewModel.typingSnapshot.phase == .expanded)
+                    if escape == .collapseKeepingQuery {
                         // globalMenuResultsRevealed's setter re-derives the pre-expansion
                         // phase from the current match icons — single source of truth.
                         self.globalMenuResultsRevealed = false
@@ -815,7 +825,7 @@ extension LauncherView {
                         DispatchQueue.main.async { self.reclaimSearchInputFocus() }
                         return nil
                     }
-                    if self.focusedAppPillIndex != nil || self.l2.focusedPillIndex != nil {
+                    if escape == .clearFocus {
                         self.focusedAppPillIndex = nil
                         self.l2.focusedPillIndex = nil
                         self.l2.pillNavViaKeyboard = false
@@ -825,8 +835,12 @@ extension LauncherView {
                     return event
                 case 48:  // Tab is handled above by explicit app-scope activation.
                     return nil
-                case 51:  // Delete/Backspace — clear focus only (never quit apps)
-                    if self.currentGlobalGroupedFocusIndex(state: state) != nil {
+                case 51:  // Delete/Backspace — clear focus only (never quit apps) (C6)
+                    if DockKeyRules.resultFocus(
+                        .backspace,
+                        hasFocusedRow: self.currentGlobalGroupedFocusIndex(state: state) != nil,
+                        listIsOpen: false) == .clearFocus
+                    {
                         self.setGlobalGroupedFocus(nil, state: state)
                         return nil
                     }
@@ -875,7 +889,14 @@ extension LauncherView {
 
                 switch event.keyCode {
                 case 48:  // Tab — enter/exit app pill navigation; never let macOS Full Keyboard Navigation take over
-                    if self.focusedAppPillIndex == nil {
+                    // DockKeyRules C7. With no pills (grouped rows only) Tab still enters at 0.
+                    if case .focus(let index) = DockKeyRules.pillRow(
+                        .tab, focused: self.focusedAppPillIndex,
+                        separators: appPills.map { _ in false }, rowIsAvailable: true)
+                    {
+                        self.focusedAppPillIndex = index
+                        self.l2.pillNavViaKeyboard = true
+                    } else if self.focusedAppPillIndex == nil {
                         self.focusedAppPillIndex = 0
                         self.l2.pillNavViaKeyboard = true
                     } else {
@@ -891,13 +912,16 @@ extension LauncherView {
                         DispatchQueue.main.async { self.reclaimSearchInputFocus() }
                         return nil
                     }
-                    let curLeft = self.focusedAppPillIndex ?? 0
-                    if curLeft <= 0 {
-                        self.focusedAppPillIndex = nil
-                        self.expandSearchBar()
+                    // DockKeyRules C9: walk left, wrap to the field at the first pill.
+                    if case .focus(let index) = DockKeyRules.pillRow(
+                        .left, focused: self.focusedAppPillIndex,
+                        separators: appPills.map { _ in false }, rowIsAvailable: true)
+                    {
+                        self.focusedAppPillIndex = index
                         return nil
                     }
-                    self.focusedAppPillIndex = curLeft - 1
+                    self.focusedAppPillIndex = nil
+                    self.expandSearchBar()
                     return nil
                 case 124:  // Right — vertical list: scope the focused app into a pill.
                     //          Horizontal pill row: move focus right / wrap to input.
@@ -926,13 +950,16 @@ extension LauncherView {
                         return event
                     }
                     guard self.focusedAppPillIndex != nil else { return event }
-                    let curIdx = self.focusedAppPillIndex ?? -1
-                    if curIdx >= appPills.count - 1 {
-                        self.focusedAppPillIndex = nil
-                        self.expandSearchBar()
+                    // DockKeyRules C9: walk right, wrap to the field past the last pill.
+                    if case .focus(let index) = DockKeyRules.pillRow(
+                        .right, focused: self.focusedAppPillIndex,
+                        separators: appPills.map { _ in false }, rowIsAvailable: true)
+                    {
+                        self.focusedAppPillIndex = index
                         return nil
                     }
-                    self.focusedAppPillIndex = curIdx + 1
+                    self.focusedAppPillIndex = nil
+                    self.expandSearchBar()
                     return nil
                 case 125:  // Down — navigate app list in List View; otherwise Global → Context → Media
                     if self.usesVerticalListDockLayout {
