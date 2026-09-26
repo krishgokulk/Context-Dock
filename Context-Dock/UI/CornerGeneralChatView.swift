@@ -21,10 +21,12 @@ struct CornerGeneralChatSnapshot {
 }
 
 enum CornerGeneralChatMetrics {
-    /// The composer row, matched to App mode's `inputHeight` deliberately. The two modes
-    /// are one surface: a General composer that stands taller than the App one makes the
-    /// switch between them look like the window changed rather than the scope.
-    static var composerRowHeight: CGFloat { AppChatPromptMetrics.inputHeight }
+    /// The composer row, matched to the Context Dock field deliberately. The two modes are
+    /// one surface: a General composer that stands at another height makes the switch
+    /// between them look like the window changed rather than the scope. That field moved to
+    /// Global's bar height on 2026-09-25 and this row kept the old one (owner 2026-09-26:
+    /// "general chat looks different").
+    static var composerRowHeight: CGFloat { AppChatPromptMetrics.fieldHeight(global: true) }
     static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentRowHeight }
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
@@ -215,16 +217,21 @@ struct CornerGeneralChatView: View {
                     .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
                     .transition(.opacity)
             }
+            let composerHeight = CornerGeneralChatMetrics.composerHeight(
+                hasAttachments: !model.attachments.isEmpty,
+                slashMatchCount: slashMatches.count,
+                hasApproval: approvals.pending(for: .corner) != nil)
+            // The Context Dock's capsule when the row stands alone, its 22-point card once
+            // something sits over it — the same rule that field follows.
+            let radius = composerHeight <= CornerGeneralChatMetrics.composerRowHeight
+                ? composerHeight / 2 : 22
             composer
-                .frame(
-                    width: size.width,
-                    height: CornerGeneralChatMetrics.composerHeight(
-                        hasAttachments: !model.attachments.isEmpty,
-                        slashMatchCount: slashMatches.count,
-                        hasApproval: approvals.pending(for: .corner) != nil))
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
+                .frame(width: size.width, height: composerHeight)
+                .background(GlassBackground(cornerRadius: radius, isDark: true))
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(.white.opacity(0.16)))
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
         .frame(width: size.width, height: size.height, alignment: .bottom)
@@ -651,7 +658,8 @@ struct CornerGeneralChatView: View {
                     ? nil
                     : { CornerDockController.shared.chatPresentation.toggleGeneralPin() },
                 rendersSlashMatches: false,
-                drawsChrome: false)
+                drawsChrome: false,
+                cornerStyle: true)
                 .frame(height: CornerGeneralChatMetrics.composerRowHeight)
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
