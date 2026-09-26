@@ -792,7 +792,32 @@ final class CornerDockController: NSObject {
         return event
     }
 
+    /// The key event this panel's monitor last consumed.
+    ///
+    /// Returning nil from a local monitor does not stop SwiftUI's own key dispatch: the
+    /// field's `onKeyPress` still received the same press, so every key both handle ran twice
+    /// — → stepped two apps (Finder, then Code), ← went to Global and on to General Chat,
+    /// Esc on a highlighted row cleared the query it had just kept (traced 2026-09-26). The
+    /// field asks this first and stands down: one press, one handler.
+    private var consumedKeyEvent: (timestamp: TimeInterval, keyCode: UInt16)?
+
+    /// Whether the key event being dispatched right now was already taken by the monitor.
+    var monitorConsumedCurrentKey: Bool {
+        guard let event = NSApp.currentEvent, event.type == .keyDown,
+            let consumed = consumedKeyEvent
+        else { return false }
+        return event.timestamp == consumed.timestamp && event.keyCode == consumed.keyCode
+    }
+
     private func handleChatNavigationKey(_ event: NSEvent) -> NSEvent? {
+        let result = handleChatNavigationKeyBody(event)
+        if result == nil, event.type == .keyDown {
+            consumedKeyEvent = (event.timestamp, event.keyCode)
+        }
+        return result
+    }
+
+    private func handleChatNavigationKeyBody(_ event: NSEvent) -> NSEvent? {
         // A key pressed while Command is down means this was a shortcut, not a tap.
         commandTapStarted = nil
         pendingCommandSwitch?.cancel()
@@ -804,7 +829,11 @@ final class CornerDockController: NSObject {
             event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
             let panel, event.window === panel,
             selection.phase.isVisible, selection.query.isEmpty,
-            keyboardState.owner == .selection
+            keyboardState.owner == .selection,
+            // The card is the Selection Scope: leaving it closes it (B4).
+            DockKeyRules.emptyBackspace(
+                browsingFolder: false, selectionScope: true, chatOpen: false,
+                scopedFromGlobal: false) == .leaveSelectionAndClose
         {
             selection.dismiss()
             return nil
@@ -827,6 +856,17 @@ final class CornerDockController: NSObject {
         // typed letter — bring the field back — is exactly what put the "5" in the wrong
         // place.
         if PluginKeyboardClaim.shared.isEditing { return event }
+
+        // ⌘R reads the scoped app's live menus again (C12).
+        if event.keyCode == 15,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+            let panel, event.window === panel,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput,
+            prompt.refreshLiveMenus()
+        {
+            return nil
+        }
 
         // The dock has no field, so nothing below can answer for it. Printable characters
         // bring the field back with the character in it; every other key keeps doing what
@@ -911,7 +951,7 @@ final class CornerDockController: NSObject {
             let panel, event.window === panel,
             chatPresentation.isVisible, prompt.phase.showsInput,
             prompt.query.isEmpty,
-            prompt.leaveScopeForGlobal()
+            prompt.applyEmptyBackspace()
         {
             return nil
         }
@@ -930,6 +970,22 @@ final class CornerDockController: NSObject {
             if prompt.applyPillRowKey(.tab) { return nil }
             return event
         }
+        // → on an empty field with nothing highlighted walks into the next app, or along the
+        // scopes — the field's own `onKeyPress(.rightArrow)` ladder, taken here as well so it
+        // does not depend on the field holding the caret. A scope swap had left it without
+        // one, and → stopped at Finder (2026-09-26).
+        if let panel, event.window === panel,
+            event.keyCode == 124,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput, prompt.phase != .chat,
+            prompt.rightArrowWalksFromEmptyField,
+            !ClipboardPanelController.shared.model.isKeyboardArmed
+        {
+            if prompt.scopeIntoFirstRunningApp() { return nil }
+            return chatPresentation.handleRightArrow(draft: "") ? nil : event
+        }
+
         guard let panel, event.window === panel,
               event.keyCode == 123,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
@@ -940,6 +996,14 @@ final class CornerDockController: NSObject {
         // ← on an empty Global field folds it into the dock, before the presentation's
         // own walk between scopes is considered.
         if chatPresentation.mode != .general, prompt.foldToDock() { return nil }
+        // ← inside a scope entered from Global walks back one app, and from the first home
+        // to Global — the mirror of →, as the Dock walks. Without it an empty Finder field
+        // went straight to General Chat (owner, 2026-09-26).
+        if chatPresentation.mode != .general, prompt.query.isEmpty,
+            prompt.stepBackThroughRunningApps()
+        {
+            return nil
+        }
         return chatPresentation.handleLeftArrow(draft: prompt.query) ? nil : event
     }
 

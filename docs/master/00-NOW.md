@@ -10,8 +10,9 @@
 
 ## In progress
 
-**Task 5 — keyboard rules (B/C/E4) into a shared tested type.** Branch `claude/keyboard-rules`.
-First slice: the ❌ rows C4–C7, C9, with C6's safety rule (Backspace on a focused row never quits an app).
+**Task 5 — keyboard rules (B/C/E4) into a shared tested type.**
+Part 1 (C4–C7, C9, C6's safety rule): #96, owner-tested, ready for review.
+Part 2 (B2–B4, C1, C3, C10–C12, E4): branch `claude/keyboard-rules-2`, stacked on part 1.
 
 ## Next, in order
 
