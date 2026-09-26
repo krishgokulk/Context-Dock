@@ -53,6 +53,15 @@ struct CornerDockStrip: View {
 
     /// What gathers into the field fades late on the way in — after it has flown to the
     /// pill — and at once on the way back, so it is seen leaving the pill.
+    /// The app icon's own fade: it stays whole for the whole flight into the chip and goes
+    /// in the instant the chip's icon takes over; back, it is there at once.
+    private var appIconHandover: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return isDock
+            ? .linear(duration: 0.04)
+            : .linear(duration: 0.06).delay(full * 0.55)
+    }
+
     private var movingFade: Animation {
         let full = AppChatPromptMetrics.dockMorphDuration
         return isDock
@@ -185,7 +194,12 @@ struct CornerDockStrip: View {
                 // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
                 .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
                 .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
-                .animation(gatherAnimation(index: 0, count: 1), value: gathered)
+                // A fixed-length curve, not a spring: it has to have landed exactly when the
+                // chip's icon takes over, or the hand-off shows as a jump.
+                .animation(
+                    .timingCurve(0.3, 0, 0.2, 1,
+                        duration: AppChatPromptMetrics.dockMorphDuration * 0.5),
+                    value: gathered)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
                 // The hairline between the field, folded, and the apps — the same one the
                 // pins get. Drawn over room that is already there, so it costs no width, and
@@ -201,8 +215,9 @@ struct CornerDockStrip: View {
                         .allowsHitTesting(false)
                 }
                 // The field's own magnifier opens on this exact spot; this one hands over.
+                // An app bar's icon hands over only once it has landed on the chip.
                 .opacity(isDock ? 1 : 0)
-                .animation(movingFade, value: isDock)
+                .animation(gathersIntoAppBar ? appIconHandover : movingFade, value: isDock)
                 .allowsHitTesting(isDock)
             // One region for apps: the pinned ones first, in the order the user placed
             // them, then whatever else is running. Composed once for the whole pass —

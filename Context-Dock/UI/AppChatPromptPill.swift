@@ -1244,6 +1244,12 @@ struct AppChatPromptPill: View {
                     .resizable()
                     .frame(width: 16, height: 16)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    // Opening an app bar, the bar's own app icon flies here and becomes this
+                    // one: hidden until it lands, then taking over in the same spot, so the
+                    // eye sees one icon, not a second copy fading in beside a moving one
+                    // (owner 2026-09-26).
+                    .opacity(chipIconShown ? 1 : 0)
+                    .animation(chipIconHandover, value: chipIconShown)
             }
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
@@ -1252,6 +1258,18 @@ struct AppChatPromptPill: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.primary.opacity(0.09), in: Capsule())
+    }
+
+    private var chipIconShown: Bool { model.phase != .dock }
+
+    private var chipIconHandover: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        guard model.showsTabBar, model.usesDockShell, !reduceMotion else {
+            return .easeOut(duration: 0.1)
+        }
+        return chipIconShown
+            ? .linear(duration: 0.06).delay(full * 0.55)
+            : .linear(duration: 0.04)
     }
 
     @ViewBuilder
