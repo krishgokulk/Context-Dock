@@ -16,13 +16,13 @@ struct AppBarPill: View {
         let icons = model.allRunningIcons
         let lastPin = icons.lastIndex { model.isAppPinIcon($0.id) }
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 7) {
+            HStack(spacing: AppChatPromptMetrics.appBarIconGap) {
                 ForEach(Array(icons.enumerated()), id: \.element.id) { index, icon in
                     cell(icon)
                     if index == lastPin, index < icons.count - 1 {
                         Rectangle()
                             .fill(Color.primary.opacity(0.22))
-                            .frame(width: 1, height: 16)
+                            .frame(width: 1, height: 20)
                     }
                 }
             }
@@ -31,9 +31,8 @@ struct AppBarPill: View {
         // The room the field keeps for the pill: the same arithmetic the field's size uses,
         // so the capsule and the space for it are one number.
         .frame(
-            width: AppChatPromptMetrics.pillWidth(
-                icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0),
-            height: 30)
+            width: AppChatPromptMetrics.appBarPillWidth(for: model),
+            height: AppChatPromptMetrics.appBarPillHeight)
         .background(.regularMaterial, in: Capsule(style: .continuous))
         .overlay(
             Capsule(style: .continuous)
@@ -48,8 +47,10 @@ struct AppBarPill: View {
             Image(nsImage: icon.icon)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 18, height: 18)
-                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+                .frame(
+                    width: AppChatPromptMetrics.appBarIconSize,
+                    height: AppChatPromptMetrics.appBarIconSize)
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         }
         .buttonStyle(.plain)
         .help(icon.title)

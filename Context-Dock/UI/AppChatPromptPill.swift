@@ -106,9 +106,25 @@ enum AppChatPromptMetrics {
     /// The app bar's pill in a fitted field, or 0 where there is none.
     @MainActor
     static func appBarPillWidth(for model: AppChatPromptModel) -> CGFloat {
-        guard model.showsTabBar, !model.usesDockShell else { return 0 }
-        return pillWidth(
-            icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0)
+        guard model.showsTabBar else { return 0 }
+        let icons = model.globalMatchIcons
+        let pins = icons.filter { model.isAppPinIcon($0.id) }.count
+        return appBarPillWidth(icons: icons.count, divider: pins > 0 && pins < model.allRunningIcons.count)
+    }
+
+    /// The app bar's icons: the size of the field's send button (owner 2026-09-26: the
+    /// 18-point pill icons read too small beside it).
+    static let appBarIconSize: CGFloat = 24
+    static let appBarIconGap: CGFloat = 8
+    static let appBarPillHeight: CGFloat = 34
+
+    /// The app bar's capsule, measured: its icons, the hairline between pins and tabs, the
+    /// gaps between them all, and 8 of padding each side.
+    static func appBarPillWidth(icons: Int, divider: Bool) -> CGFloat {
+        guard icons > 0 else { return 0 }
+        let items = icons + (divider ? 1 : 0)
+        return CGFloat(icons) * appBarIconSize + (divider ? 1 : 0)
+            + CGFloat(items - 1) * appBarIconGap + 16
     }
 
     /// The width an app scope's result card shares with its field: the fitted field's own,
@@ -116,7 +132,7 @@ enum AppChatPromptMetrics {
     /// Global's field is the strip's width and keeps the card at the base.
     @MainActor
     static func boardWidth(for model: AppChatPromptModel) -> CGFloat {
-        guard !model.usesDockShell else { return width }
+        guard model.fitsField else { return width }
         let pill = appBarPillWidth(for: model)
         return width + (pill > 0 ? pill + appBarPillSpacing : 0)
     }
@@ -337,7 +353,8 @@ struct AppChatPromptPill: View {
     /// field's magnifier on the strip's, and its trailing region is kept clear. Nil outside
     /// Global and in chat, where the field is the composer and nothing is shared.
     private var globalStrip: AppChatPromptMetrics.DockLayout? {
-        guard model.usesDockShell, model.phase != .chat else { return nil }
+        // A fitted field shares nothing with the strip: it is its own compact width.
+        guard model.usesDockShell, !model.fitsField, model.phase != .chat else { return nil }
         return stripPlan.layout
     }
 
@@ -376,7 +393,7 @@ struct AppChatPromptPill: View {
             tools: tools,
             promptIcons: model.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
-            fitsContent: !model.usesDockShell,
+            fitsContent: model.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model))
     }
@@ -1065,7 +1082,7 @@ struct AppChatPromptPill: View {
             if model.phase != .chat, !model.isSearchField, isTyping {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            } else if pointerInside, model.phase != .chat, !model.usesDockShell {
+            } else if pointerInside, model.phase != .chat, model.fitsField {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }

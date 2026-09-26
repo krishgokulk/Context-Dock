@@ -40,18 +40,26 @@ struct CornerSafariTabsTests {
         return model
     }
 
-    @Test("Safari's Context Dock stays compact: Global's height, its bar a pill, never the big fold")
-    func theSafariScopeStaysCompact() {
-        // Owner 2026-09-26: it used to fold into the big strip at rest and looked small one
-        // moment and large the next. It is the compact field, always.
+    @Test("Safari's Context Dock folds into the big bar at rest and opens into the compact field")
+    func theSafariScopeFoldsAndOpensCompact() {
+        // Owner 2026-09-26: idle it is a big bar of pins and tabs, like Global's running
+        // apps; open it is the compact field — fitted, never the bar's width.
         let model = scope()
-        #expect(model.showsTabBar && !model.usesDockShell && model.showsFieldPills)
+        #expect(model.showsTabBar && model.usesDockShell && model.fitsField)
         #expect(AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight)
             == AppChatPromptMetrics.dockHeight)
-        #expect(!model.canRestAsDock)
-        model.set(.prompt)
-        #expect(!model.foldToDock())
-        #expect(model.phase == .prompt)
+        #expect(model.canRestAsDock == model.autoShrinkEnabled())
+        // Guarded on "keep open": the test host reads the developer's own setting.
+        if model.autoShrinkEnabled(), !model.isPinned {
+            model.set(.prompt)
+            #expect(model.foldToDock())
+            #expect(model.phase == .dock)
+        }
+        // Open, the field is its own compact width, not the strip's.
+        let open = AppChatPromptMetrics.size(
+            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
+            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model)).width
+        #expect(open == AppChatPromptMetrics.boardWidth(for: model))
     }
 
     @Test("The open tabs are the bar's icons, all of them, in order")

@@ -578,7 +578,7 @@ final class CornerDockController: NSObject {
             tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
             promptIcons: prompt.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: prompt.usesDockHeight),
-            fitsContent: !prompt.usesDockShell,
+            fitsContent: prompt.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: prompt))
     }

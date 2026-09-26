@@ -322,9 +322,9 @@ struct CornerAppPinsTests {
             app: "com.anthropic.claudefordesktop")
         model.updateTabStrip()
         let pill = AppChatPromptMetrics.appBarPillWidth(for: model)
-        #expect(pill == AppChatPromptMetrics.pillWidth(icons: 2, overflow: false))
+        #expect(pill == AppChatPromptMetrics.appBarPillWidth(icons: 2, divider: false))
         let field = AppChatPromptMetrics.size(
-            for: .prompt, suggestions: 0, fitsContent: !model.usesDockShell,
+            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
             appBarPillWidth: pill).width
         #expect(field == base + pill + AppChatPromptMetrics.appBarPillSpacing)
         #expect(AppChatListMetrics.size(

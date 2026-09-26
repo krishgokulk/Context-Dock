@@ -52,6 +52,9 @@ struct CornerDockStrip: View {
     /// the room the field keeps for it. Typing hides it, as it hid the field's own.
     private var isPill: Bool {
         [.prompt, .suggesting].contains(model.phase) && model.showsFieldPills
+            // An app bar's field is compact and draws its own pill after "+": the big
+            // icons fade across rather than flying into a pill at the strip's end.
+            && !model.fitsField
             && (!model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0)
             // Typing hides it everywhere — tabs and pins included (owner 2026-09-26: while
             // typing the field is compact: attach, send, pin).

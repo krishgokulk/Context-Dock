@@ -186,11 +186,15 @@ final class AppChatPromptModel: ObservableObject {
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
     var stripPins: [DockPin] { showsTabBar ? [] : dockPins.pins }
-    /// The Global shell — its fold into the big dock and back — is Global Context's alone.
-    /// An app's Context Dock stays compact, its bar a pill in the field (owner 2026-09-26:
-    /// "stay compact"; it used to fold into the big strip too, and looked small one moment
-    /// and large the next). Its height is Global's all the same, through `usesDockHeight`.
-    var usesDockShell: Bool { isGlobalScope }
+    /// The Global shell — resting as the big dock and opening back into the field. Global
+    /// Context's, and an app bar's (owner 2026-09-26): idle, an app folds into a big bar of
+    /// its pins and tabs the way Global folds into its running apps.
+    var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The field is fitted to its own content rather than to the strip's width. Every app
+    /// scope, the app bar's included: open, it is the compact field (owner 2026-09-26:
+    /// "stay compact" — the field used to take the big bar's width and looked large one
+    /// moment and small the next). Only Global's field shares its strip's width.
+    var fitsField: Bool { !isGlobalScope }
     /// How many of the app bar's icons the field makes room for; the rest scroll sideways
     /// inside the pill rather than widening the field or becoming +N.
     static let appBarVisibleIcons = 5
