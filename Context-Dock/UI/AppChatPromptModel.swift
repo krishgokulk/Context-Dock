@@ -168,19 +168,36 @@ final class AppChatPromptModel: ObservableObject {
     }
     /// The tabs behind the Safari scope's icons, by icon id.
     var tabsByIconID: [String: SafariTab] = [:]
+    /// The app's pins behind its bar's leading icons, by icon id.
+    var appPinsByIconID: [String: DockPin] = [:]
+    /// The text field's frame in the corner's hosting view (top-left origin). Not published:
+    /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
+    var inputFrame: CGRect = .zero
 
-    /// A Safari scope: its open tabs take the running apps' place in the Global shell — the
-    /// strip of big icons at rest, the small pill in the field (owner 2026-09-25: "exactly
-    /// like Global").
+    /// The app's own bar: a Safari scope's open tabs take the running apps' place in the
+    /// Global shell — the strip of big icons at rest, the small pill in the field (owner
+    /// 2026-09-25: "exactly like Global"). Any other app's Context Dock gets the same bar
+    /// once it has pins (task 4b): the bar is the app's own things, and those are its pins.
     var showsTabBar: Bool {
-        !isGlobalScope && BrowserTabList.listsTabs(bundleID: appBundleID)
+        guard !isGlobalScope else { return false }
+        if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
+        return isAppContextDock && !dockPins.pins(forApp: appBundleID).isEmpty
     }
-    /// The pins the strip shows: Global's, never a Safari scope's — its bar is the app's own
-    /// things (open tabs today; its pinned actions and tabs are task 5 in 00-NOW.md).
-    var stripPins: [DockPin] { showsTabBar ? [] : DockPinStore.shared.pins }
-    /// The Global shell — its height, its fold into a dock and back — is Global Context's,
-    /// and a Safari scope's.
+    /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
+    /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
+    var stripPins: [DockPin] { showsTabBar ? [] : dockPins.pins }
+    /// The Global shell — resting as the big dock and opening back into the field. Global
+    /// Context's, and an app bar's (owner 2026-09-26): idle, an app folds into a big bar of
+    /// its pins and tabs the way Global folds into its running apps.
     var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The field is fitted to its own content rather than to the strip's width. Every app
+    /// scope, the app bar's included: open, it is the compact field (owner 2026-09-26:
+    /// "stay compact" — the field used to take the big bar's width and looked large one
+    /// moment and small the next). Only Global's field shares its strip's width.
+    var fitsField: Bool { !isGlobalScope }
+    /// How many of the app bar's icons the field makes room for; the rest scroll sideways
+    /// inside the pill rather than widening the field or becoming +N.
+    static let appBarVisibleIcons = 5
     /// The frontmost app's own chat — its Context Dock, Finder's included — rather than
     /// Global, a CLI tool or an extension's panel.
     var isAppContextDock: Bool {
@@ -256,14 +273,35 @@ final class AppChatPromptModel: ObservableObject {
     let globalResultSource: GlobalContextResultSource
     /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
     var tabSource: () -> [SafariTab] = {
-        // A quit Safari has no tabs, whatever the cache last held.
+        // A quit Safari has no tabs, whatever the cache last held. Otherwise the last list
+        // read, however old: a 45-second limit turned it into no tabs at all, and the bar
+        // opened with its pins and nothing else (owner 2026-09-26). Opening and folding the
+        // bar ask for a fresh read, which replaces it a moment later.
         NSRunningApplication.runningApplications(withBundleIdentifier: BrowserTabList.safariBundleID)
-            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: 45)
+            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: .infinity)
     }
     /// The page Safari is showing, which leads the pills. Tests replace it.
     var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
     /// Shows a tab in Safari. Tests replace it so they never script the user's Safari.
     var switchTab: (SafariTab) -> Void = { SafariTabManager.shared.switchTo($0) }
+    /// Where pins live. Tests hand in their own so they never touch the user's pins.
+    var dockPins: DockPinStore = .shared
+    /// Loads a page in the app a pinned tab belongs to, when that tab is no longer open.
+    /// Tests replace it.
+    var openPage: (URL, String) -> Void = { url, bundleID in
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { NSWorkspace.shared.open(url); return }
+        NSWorkspace.shared.open(
+            [url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+    /// The consent gate a pinned menu command passes before it runs — the same one every
+    /// menu click the AI makes goes through. Tests replace it.
+    var askMenuConsent: ([String], String, String) async -> Bool = { path, bundleID, name in
+        await AppAdapterManager.shared.ensureMenuConsent(
+            path: path, targetBundleId: bundleID, appName: name)
+    }
+    /// Runs a menu path in this scope's app once consent is settled. Tests replace it.
+    var performMenuPath: (([String]) -> Void)? = nil
     /// Reads Safari's tabs again, then calls back. Tests replace it so they never script
     /// the user's Safari.
     var refreshTabCache: (@escaping @MainActor () -> Void) -> Void = { done in
@@ -666,7 +704,10 @@ final class AppChatPromptModel: ObservableObject {
     /// The pill's height comes from its phase, so the phase has to follow the list — which
     /// can also arrive *after* typing, when the live menu read lands.
     func syncListPhase() {
-        guard phase.isVisible, phase != .chat else { return }
+        // Not from the dock: a list refresh — the menu read landing after a tab switch —
+        // opened the field under a click on the big bar (owner 2026-09-26: it opens on
+        // hover, not on a click). The dock opens by hover, typing or the magnifier only.
+        guard phase.isVisible, phase != .chat, phase != .dock else { return }
         set(restingInputPhase)
     }
 
@@ -760,6 +801,9 @@ final class AppChatPromptModel: ObservableObject {
         // an app stepped into from Global — clicking away from any of them used to swap the
         // field to whatever came forward, losing the place the user had picked.
         guard !isGlobalScope, !returnsToGlobalScope else { return }
+        // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
+        // on the app it was pinned in, whatever comes forward after.
+        guard !isPinned else { return }
         query = ""
         attachments = []
         appName = name
@@ -831,9 +875,12 @@ final class AppChatPromptModel: ObservableObject {
     /// happened, the selection when there is one, the result of an action for a few seconds
     /// after it ran. Same rules as the field's own row.
     func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
-        // A Safari scope's bar is its tabs alone (owner 2026-09-25): the Context Dock's
-        // own things, not Global's.
-        guard !showsTabBar else { return 0 }
+        // An app bar is the app's own things (owner 2026-09-25) — plus, at its end after the
+        // pins and tabs, a copy's clipboard icon for its few seconds and the selection icon
+        // while something is selected (owner 2026-09-26). No action results.
+        guard !showsTabBar else {
+            return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
+        }
         return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 
@@ -909,6 +956,19 @@ final class AppChatPromptModel: ObservableObject {
     @discardableResult
     func foldToDock() -> Bool {
         guard phase == .prompt, canRestAsDock, !isPinned, !isAnswering else { return false }
+        cancel()
+        set(.dock)
+        return true
+    }
+
+    /// The pointer rested on an app bar's pill: show the big bar of its pins and tabs at
+    /// once (owner 2026-09-26), as resting on Global's small pill does. Asked for by hand,
+    /// so "keep open" does not refuse it — that setting is about not folding on its own.
+    @discardableResult
+    func expandAppBar() -> Bool {
+        guard showsTabBar, usesDockShell, phase == .prompt, !isAnswering,
+            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
         cancel()
         set(.dock)
         return true
@@ -1039,6 +1099,9 @@ final class AppChatPromptModel: ObservableObject {
         phase = next
         // A plugin's card belongs to the strip; leaving the dock takes it down with it.
         if next != .dock { pluginCardPinID = nil }
+        // The bar opening or folding shows the tabs: read them again so what it shows is
+        // current. The tab manager throttles this to one read every two seconds.
+        if showsTabBar, next == .dock || next == .prompt { refreshTabs() }
         onPhaseChange?(next)
     }
 }

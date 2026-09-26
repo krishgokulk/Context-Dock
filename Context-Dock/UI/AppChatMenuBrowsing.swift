@@ -161,12 +161,35 @@ extension AppChatPromptModel {
         updateGlobalTyping(for: query)
     }
 
-    /// Safari's open tabs as the strip's icons, current page first.
+    /// The app bar's icons: the app's pins first, in the order the user put them, then
+    /// Safari's open tabs, current page first. A pinned tab is not among the tabs: it has its
+    /// place with the pins. Pins lead so that the cut for room — from the end — reaches the
+    /// tabs first and never a pin.
     func tabStripIcons() -> [MatchDockIcon] {
-        let tabs = BrowserTabList.ordered(tabSource(), currentURL: currentTabURL())
+        let pins = appPinIcons()
+        // An app with pins but no tabs has the bar for its pins alone.
+        guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
+            tabsByIconID = [:]
+            return pins
+        }
+        // Safari's own order, window by window, tab by tab — never the current page first:
+        // choosing a tab here made it the current page, and it jumped to the front under
+        // the pointer (owner 2026-09-26: "stay as it is").
+        let tabs = AppPinRun.unpinnedTabs(
+            BrowserTabList.ordered(tabSource(), currentURL: nil),
+            pins: dockPins.pins(forApp: appBundleID))
         tabsByIconID = Dictionary(
             tabs.map { (BrowserTabList.iconID(for: $0), $0) }, uniquingKeysWith: { a, _ in a })
-        return tabs.map(BrowserTabList.icon(for:))
+        return pins + tabs.map(BrowserTabList.icon(for:))
+    }
+
+    /// A click on an icon in the app bar's pill: a pin runs, a tab shows.
+    func openBarIcon(_ icon: MatchDockIcon) {
+        if let pin = appPin(forIconID: icon.id) {
+            openAppPin(pin)
+        } else {
+            openGlobalMatchIcon(icon)
+        }
     }
 
     /// Whether an icon in the strip or the pill is one of Safari's tabs.
@@ -298,11 +321,8 @@ extension AppChatPromptModel {
                 ? nil
                 : GlobalContextSearchCoordinator.shared.resolveFastTopMatch(query: typed),
             running: running,
-            // A Safari scope's bar has no pins to keep room for.
-            fieldCapacity: showsTabBar
-                ? AppChatPromptMetrics.matchIconCapacity(maximumWidth: DockStripPlan.screenBudget)
-                    - AppChatPromptMetrics.appFieldChromeSlots
-                : Self.pillFieldCapacity)
+            // The app bar keeps the field compact: a few icons' room, the rest scroll.
+            fieldCapacity: showsTabBar ? Self.appBarVisibleIcons : Self.pillFieldCapacity)
     }
 
     /// How many running apps the field shows before the rest become `+N`.

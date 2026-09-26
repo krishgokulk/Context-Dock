@@ -10,26 +10,9 @@
 
 ## In progress
 
-*None.* Task 4 (Safari tabs, D13) is done in #89; task 4b is next.
+*None.* Task 4b (pins in the Corner strip) is done in #94; task 5 is next.
 
 ## Next, in order
-
-**4b. Pins in the Corner strip** (owner 2026-09-25, after 4 merges). The Corner's context dock uses
-the strip beside the input for things the user pins, per app: tabs, menu commands, app actions
-(Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI), and the user's own actions.
-
-```
-Task 4b: pins in the Corner strip. Own worktree from origin/general-chat-agent, after #89 merges.
-- Any row in the Corner's app list (menu command, app action, extension, the user's own action) and any tab can be
-  pinned for that app; pins show in the strip beside the input, before live tabs, and run with one click / ↩.
-- Reuse the Dock's pin store (DockPinStore, inventory F4) — per-app pins, same storage; no second store.
-- Safari actions: first check which of Add to Bookmarks / Export as PDF / Save as Markdown / Ask AI already exist
-  as actions in the Dock; reuse those; list any that don't exist in the PR and ask before building them.
-- Strip auto-sizes; unpin from the pill's context menu; order is the user's (drag) or pin order.
-- Actions that are destructive/outbound keep their consent step even when pinned.
-- Tests: pin/unpin per app, strip order, a pinned destructive action still asks, overflow.
-End with the AGENTS.md hand-off.
-```
 
 **5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
 remaining scopes → owner decisions D9 / D11 / D12.
@@ -46,6 +29,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | AGENTS.md: Dock/Corner rule, 00-NOW.md in "Start here" | #88 |
 | 2026-09-25 | Menu safety list (4a): whole words; History ▸ Forward is navigation; Reopen Last Closed Window / Recently Closed stay in results; page rows still open by URL; unsure stays gated | #91 |
 | 2026-09-25 | Safari tabs in the Corner (D13): Context Dock folds into its tab bar | #89 |
+| 2026-09-26 | Pins in the Corner strip (4b): per-app pins of menu commands, actions, extensions and tabs lead the app's bar; any app with pins gets the bar; pinned destructive commands still ask. Safari "Save as Markdown" / "Ask AI" actions not built (asked in PR) | #94 |
 
 ## Owner decisions (append-only)
 
@@ -73,6 +57,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | The Corner's strip holds the user's **pins per app**: tabs, menu commands, app actions (e.g. Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI) and the user's own actions. |
 | 2026-09-25 | Every Corner scope (frontmost app / Context Dock, Safari, …) uses the **same shell size, field and strip style as Global Context** — one look, not a wider or smaller variant per scope. |
 | 2026-09-25 | UI changes are checked by eye against a reference screenshot before a PR is called done (AGENTS.md); tests alone are not enough. |
+| 2026-09-26 | While typing, every Context Dock is compact: no tabs pill, no pinned pages, no extensions — just attach (+), send and pin; no expand. Replaces "Safari's tabs stay while a question is typed" (2026-09-25). An app's pins show in its bar and the field's pill at rest, ahead of the tabs. |
 
 ## Open decisions (owner)
 

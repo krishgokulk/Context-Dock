@@ -698,6 +698,12 @@ enum PillPhase: Equatable {
     case expanded
 
     var isVisible: Bool { self != .hidden }
+
+    /// A copy just happened, or the card is open: what the dock's and field's clipboard
+    /// icon shows for — a notification, a few seconds, gone once the pill ages to its mini
+    /// form (owner 2026-09-26). The hotkey opens the card, so it shows the icon too, for as
+    /// long as the card is up.
+    var announcesCopy: Bool { self == .collapsed || self == .expanded }
 }
 
 struct ClipboardDockPill: View {

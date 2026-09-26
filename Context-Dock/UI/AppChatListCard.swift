@@ -28,7 +28,7 @@ enum AppChatListMetrics {
     /// becoming a terminal — a real PTY flow is a different surface, and this is not it.
     static let outputHeight: CGFloat = 150
 
-    static func size(rows: Int, output: Bool = false) -> CGSize {
+    static func size(rows: Int, output: Bool = false, width: CGFloat = width) -> CGSize {
         CGSize(
             width: width,
             height: headerHeight + CGFloat(rows) * rowHeight
@@ -90,7 +90,8 @@ struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
 
     private var size: CGSize {
-        AppChatListMetrics.size(rows: model.listRowCount)
+        AppChatListMetrics.size(
+            rows: model.listRowCount, width: AppChatPromptMetrics.boardWidth(for: model))
     }
 
     var body: some View {
@@ -302,7 +303,12 @@ struct AppChatListCard: View {
     /// One rule (`DockPinKind(row:)`) decides, the same one the strip's drop uses.
     @ViewBuilder
     private func pinMenu(for row: AppChatRow) -> some View {
-        if let kind = DockPinKind(row: row) {
+        // In an app's Context Dock a row pins for that app: to its bar, not Global's.
+        if model.canPinToApp(row) {
+            Button(model.isPinnedToApp(row) ? "Unpin from \(model.appName)" : "Pin to \(model.appName)") {
+                model.toggleAppPin(row)
+            }
+        } else if let kind = DockPinKind(row: row) {
             if DockPinStore.shared.isPinned(kind) {
                 Button("Unpin from Dock") {
                     if let pin = DockPinStore.shared.pins.first(where: { $0.kind == kind }) {

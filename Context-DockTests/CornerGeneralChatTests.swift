@@ -22,7 +22,8 @@ struct CornerGeneralChatTests {
             CornerGeneralChatMetrics.height(
                 messageCount: 0, isSending: false,
                 hasAttachments: false, slashMatchCount: 0)
-                == AppChatPromptMetrics.inputHeight)
+                // The Context Dock field's own height — Global's bar since 2026-09-25.
+                == AppChatPromptMetrics.fieldHeight(global: true))
     }
 
     @Test func anAttachmentAddsItsRowAndNothingElse() {

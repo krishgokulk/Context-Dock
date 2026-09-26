@@ -100,6 +100,62 @@ enum AppChatPromptMetrics {
     /// `ContextMatchDock`'s capsule, measured: 18-point icons 7 apart, a 24-point `+N`, and
     /// 8 of padding each side. The Global field keeps this room and the strip's own icons
     /// shrink into it, so both have to agree on the number.
+    /// The row spacing before the app bar's pill.
+    static let appBarPillSpacing: CGFloat = 10
+
+    /// The app bar's pill in a fitted field, or 0 where there is none.
+    @MainActor
+    static func appBarPillWidth(for model: AppChatPromptModel) -> CGFloat {
+        guard model.showsTabBar else { return 0 }
+        let icons = model.globalMatchIcons
+        let pins = icons.filter { model.isAppPinIcon($0.id) }.count
+        return appBarPillWidth(icons: icons.count, divider: pins > 0 && pins < model.allRunningIcons.count)
+    }
+
+    /// The app bar's icons: the size of the field's send button (owner 2026-09-26: the
+    /// 18-point pill icons read too small beside it).
+    static let appBarIconSize: CGFloat = 24
+    static let appBarIconGap: CGFloat = 8
+    static let appBarPillHeight: CGFloat = 34
+
+    /// The app bar's capsule, measured: its icons, the hairline between pins and tabs, the
+    /// gaps between them all, and 8 of padding each side.
+    static func appBarPillWidth(icons: Int, divider: Bool) -> CGFloat {
+        guard icons > 0 else { return 0 }
+        let items = icons + (divider ? 1 : 0)
+        return CGFloat(icons) * appBarIconSize + (divider ? 1 : 0)
+            + CGFloat(items - 1) * appBarIconGap + 16
+    }
+
+    /// The width an app scope's result card shares with its field: the fitted field's own,
+    /// pill included, so the card above never stands wider or narrower than the bar below.
+    /// Global's field is the strip's width and keeps the card at the base.
+    @MainActor
+    static func boardWidth(for model: AppChatPromptModel) -> CGFloat {
+        if model.fitsField {
+            let pill = appBarPillWidth(for: model)
+            return width + (pill > 0 ? pill + appBarPillSpacing : 0)
+        }
+        // Global: the field is the strip's width, so the card takes the same number, worked
+        // out the way the field works out its own (owner 2026-09-26: the card was narrower).
+        let tools = model.dockToolCount(
+            clipboardVisible: ClipboardPanelController.shared.model.phase.announcesCopy,
+            feedbackVisible: CornerActionFeedback.shared.glyph != nil)
+        let composition = DockStripPlan.make(
+            running: model.stripIcons, pins: model.stripPins, tools: tools).composition
+        return size(
+            for: .prompt, suggestions: 0,
+            running: composition.unpinnedRunningCount,
+            pinnedApps: composition.pinnedAppCount,
+            pinned: composition.otherPins.count,
+            pinnedExtraWidth: composition.widgetExtraWidth,
+            tools: tools,
+            promptIcons: model.promptIconCount,
+            fitsContent: false,
+            maximumWidth: DockStripPlan.screenBudget
+        ).width
+    }
+
     static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
         let items = icons + (overflow ? 1 : 0)
         guard items > 0 else { return 0 }
@@ -263,7 +319,11 @@ enum AppChatPromptMetrics {
         /// The width the row was planned against. The shell and the row are two readings
         /// of one number and must be given the same budget, or the row overflows the glass
         /// it is drawn in and the leading magnifier is what gets clipped.
-        maximumWidth: CGFloat = dockMaximumWidth
+        maximumWidth: CGFloat = dockMaximumWidth,
+        /// An app's bar beside "+" in a fitted field: the pill's own width, which the field
+        /// adds to its base rather than squeezing the chip and the text to make room. Kept
+        /// while typing too, so the field does not jump as the pill steps aside.
+        appBarPillWidth: CGFloat = 0
     ) -> CGSize {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
@@ -272,7 +332,8 @@ enum AppChatPromptMetrics {
             return miniSize
         // `where` binds to one pattern only: both are spelled out.
         case .prompt where fitsContent, .suggesting where fitsContent:
-            return CGSize(width: width, height: fieldHeight + sheet)
+            let pill = appBarPillWidth > 0 ? appBarPillWidth + appBarPillSpacing : 0
+            return CGSize(width: width + pill, height: fieldHeight + sheet)
         case .dock, .prompt, .suggesting:
             // One width for the strip and the field it opens into, so the magnifier opening
             // is the only thing that moves: the wider of the row's own width and what the
@@ -311,7 +372,8 @@ struct AppChatPromptPill: View {
     /// field's magnifier on the strip's, and its trailing region is kept clear. Nil outside
     /// Global and in chat, where the field is the composer and nothing is shared.
     private var globalStrip: AppChatPromptMetrics.DockLayout? {
-        guard model.usesDockShell, model.phase != .chat else { return nil }
+        // A fitted field shares nothing with the strip: it is its own compact width.
+        guard model.usesDockShell, !model.fitsField, model.phase != .chat else { return nil }
         return stripPlan.layout
     }
 
@@ -323,7 +385,7 @@ struct AppChatPromptPill: View {
 
     private var stripToolCount: Int {
         model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
+            clipboardVisible: clipboard.phase.announcesCopy,
             feedbackVisible: actionFeedback.glyph != nil)
     }
 
@@ -331,7 +393,7 @@ struct AppChatPromptPill: View {
         // The strip's own composition, not the raw counts: an app that is pinned and
         // running is one icon there, and a pin this build cannot resolve is none.
         let tools = model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
+            clipboardVisible: clipboard.phase.announcesCopy,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: tools)
@@ -350,8 +412,9 @@ struct AppChatPromptPill: View {
             tools: tools,
             promptIcons: model.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
-            fitsContent: !model.usesDockShell,
-            maximumWidth: DockStripPlan.screenBudget)
+            fitsContent: model.fitsField,
+            maximumWidth: DockStripPlan.screenBudget,
+            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model))
     }
 
     /// ↑/↓ with no list to move through change layer, as the Dock's keys do — on an empty
@@ -425,10 +488,18 @@ struct AppChatPromptPill: View {
         return size(for: .prompt).width
     }
 
+    /// Global's field and strip share their trailing edge: they are one width. An app bar's
+    /// compact field is not the bar's width, so the two share their *leading* edge instead:
+    /// the chip opens right where the bar's app icon rests, and the field grows away from it
+    /// (owner 2026-09-26: "resize the icon and add the name next to it").
+    private var shellAlignment: Alignment {
+        model.fitsField ? .bottomLeading : .bottomTrailing
+    }
+
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
         let stripShown = [.dock, .prompt, .suggesting].contains(model.phase)
-        return ZStack(alignment: .bottomTrailing) {
+        return ZStack(alignment: shellAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
             // stack pinned to the trailing edge left that growth as blank glass before the
@@ -453,7 +524,7 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(model.phase == .mini)
                 .animation(.easeInOut(duration: 0.2), value: model.phase)
         }
-        .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
+        .frame(width: size.width, height: size.height, alignment: shellAlignment)
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
@@ -535,7 +606,7 @@ struct AppChatPromptPill: View {
     private var legacyBody: some View {
         ZStack(alignment: .bottomLeading) {
             inputStack
-                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                .frame(width: legacyInputWidth, alignment: .bottomLeading)
                 .opacity(model.phase.showsInput ? 1 : 0)
                 .allowsHitTesting(model.phase.showsInput)
                 .animation(.easeOut(duration: 0.11), value: model.phase)
@@ -558,6 +629,13 @@ struct AppChatPromptPill: View {
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
+    }
+
+    /// The field's width: the base, plus an app bar's pill where it has one. Not in a
+    /// conversation, which keeps its own width.
+    private var legacyInputWidth: CGFloat {
+        guard model.phase != .chat else { return AppChatPromptMetrics.width }
+        return size.width
     }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
@@ -751,6 +829,11 @@ struct AppChatPromptPill: View {
                 }
                 TextField("", text: $model.query)
                     .textFieldStyle(.plain)
+                    // Where the field is, for the swipe monitor: a swipe switches surfaces
+                    // only over the text, never over the pill beside it (owner 2026-09-26).
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        model.inputFrame = $0
+                    }
                     .font(.system(size: 14, weight: .medium))
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
@@ -861,12 +944,16 @@ struct AppChatPromptPill: View {
             // anywhere to go, so they stay through a scope change.
             // Safari's tabs stay while a question is typed (owner 2026-09-25); the running
             // apps step aside, as the Dock's do.
+            // Typing hides them in every scope, tabs and pins included (owner 2026-09-26:
+            // while typing the field is compact — attach, send, pin).
             if model.showsFieldPills,
-                model.showsTabBar
-                    || model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                if model.usesDockShell {
+                if model.showsTabBar {
+                    // An app's bar is drawn after "+", below — pins sit next to it.
+                    EmptyView()
+                } else if model.usesDockShell {
                     // The strip's own icons shrink into this spot and are the pill, so the
                     // field only keeps the room — drawing a second set here is what showed
                     // every app twice while the first set was still travelling.
@@ -899,7 +986,9 @@ struct AppChatPromptPill: View {
                 // current as a fresh one. Same transient signal as the composer's own.
                 // In Global the strip's own clipboard icon stays on screen in its trailing
                 // region, so the field does not draw a second one beside it.
-                if clipboard.phase.isVisible, !model.isGlobalScope {
+                // A composer draws its one clipboard icon at the end, next to the pin (owner
+                // 2026-09-26: two showed); only a search field keeps it here.
+                if clipboard.phase.announcesCopy, model.isSearchField, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
@@ -948,6 +1037,14 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
+                // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
+                // its pins, then its tabs, scrolling inside the pill. Gone while typing.
+                if model.showsTabBar, !isTyping,
+                    !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
+                {
+                    AppBarPill(model: model)
+                        .transition(.opacity)
+                }
                 // Gated on `entries.isEmpty` this stayed forever after the first copy of
                 // the session — not what the dock does. The dock's own trailing button
                 // reads a transient flag a fresh copy sets and a timer clears a few
@@ -955,7 +1052,7 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.phase.isVisible {
+                if clipboard.phase.announcesCopy {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a
@@ -1008,7 +1105,13 @@ struct AppChatPromptPill: View {
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
             // Not in the dock shell: its trailing end is the strip's, as in Global.
-            if pointerInside, model.phase != .chat, !model.usesDockShell {
+            // The field carries pin, never expand (owner 2026-09-26): while typing in every
+            // Context Dock, the dock shell's included, and under the pointer otherwise. A
+            // conversation's header keeps its own expand.
+            if model.phase != .chat, !model.isSearchField, isTyping {
+                surfaceControls
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            } else if pointerInside, model.phase != .chat, model.fitsField {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -1037,16 +1140,15 @@ struct AppChatPromptPill: View {
     /// off the screen instead of picking a file.
     private var selectionScopeButton: some View {
         Button {
-            // In place, not a second card: this session already knows what is selected
-            // and already carries it on whatever question gets asked here, so opening the
-            // separate Selection Scope card on top of an already-open chat stacked one
-            // surface on another for something this one could just show itself.
-            model.toggleSelectionScope()
+            // The Selection card, the same one the dock's selection icon opens (owner
+            // 2026-09-26): attaching the text to this field instead left the user with a
+            // chip and none of the selection's actions. Closing it comes back here.
+            CornerDockController.shared.showSelectionScopeFromDock()
         } label: {
-            controlGlyph("text.cursor", tinted: model.isShowingSelectionScope)
+            controlGlyph("text.cursor")
         }
         .buttonStyle(.plain)
-        .help(model.isShowingSelectionScope ? "Back to \(model.appName)" : "Show the current selection")
+        .help("Show the current selection")
         .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
@@ -1150,6 +1252,12 @@ struct AppChatPromptPill: View {
                     .resizable()
                     .frame(width: 16, height: 16)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    // Opening an app bar, the bar's own app icon flies here and becomes this
+                    // one: hidden until it lands, then taking over in the same spot, so the
+                    // eye sees one icon, not a second copy fading in beside a moving one
+                    // (owner 2026-09-26).
+                    .opacity(chipIconShown ? 1 : 0)
+                    .animation(chipIconHandover, value: chipIconShown)
             }
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
@@ -1158,6 +1266,18 @@ struct AppChatPromptPill: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.primary.opacity(0.09), in: Capsule())
+    }
+
+    private var chipIconShown: Bool { model.phase != .dock }
+
+    private var chipIconHandover: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        guard model.showsTabBar, model.usesDockShell, !reduceMotion else {
+            return .easeOut(duration: 0.1)
+        }
+        return chipIconShown
+            ? .linear(duration: 0.06).delay(full * 0.32)
+            : .linear(duration: 0.04)
     }
 
     @ViewBuilder
@@ -1188,26 +1308,67 @@ struct AppChatPromptPill: View {
         }
     }
 
-    /// What acts on the surface rather than on the question: where it opens, and whether it
-    /// stays. Attach and send are in the field itself, because they are part of asking.
+    /// What acts on the surface rather than on the question: whether it stays. Attach and
+    /// send are in the field itself, because they are part of asking.
+    private var isTyping: Bool {
+        !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var surfaceControls: some View {
         HStack(spacing: 8) {
-            Button {
-                model.openInDock()
-            } label: {
-                controlGlyph("arrow.up.left.and.arrow.down.right")
+            // While typing, with a result to pin: the pin takes that result's picture and
+            // pins it to this app — tinted once it is pinned (owner 2026-09-26). With no
+            // match it is the ordinary "keep open" pin below.
+            if isTyping, let row = model.pinnableResult {
+                let pinned = model.isPinnedToApp(row)
+                Button {
+                    model.toggleAppPin(row)
+                } label: {
+                    resultPinGlyph(row, pinned: pinned)
+                }
+                .buttonStyle(.plain)
+                .help(pinned
+                    ? "Unpin \(row.title) from \(model.appName)"
+                    : "Pin \(row.title) to \(model.appName)")
+                .accessibilityLabel(pinned ? "Unpin \(row.title)" : "Pin \(row.title)")
+            } else {
+                keepOpenPin
             }
-            .buttonStyle(.plain)
-            .help("Open this conversation in the dock")
-
-            Button {
-                model.togglePin()
-            } label: {
-                controlGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
-            }
-            .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin" : "Keep this open")
         }
+    }
+
+    /// The matching result's own picture, nothing added: a filled accent circle behind it
+    /// says it is pinned (owner 2026-09-26: "just the menu icon is fine").
+    private func resultPinGlyph(_ row: AppChatRow, pinned: Bool) -> some View {
+        let art = model.resultPinArt(row)
+        return Group {
+            if let image = art.image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else {
+                Image(systemName: art.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(pinned ? Color.white : Color.secondary)
+            }
+        }
+        .frame(width: 26, height: 26)
+        .background(
+            pinned ? Color.accentColor.opacity(0.85) : Color.white.opacity(0.08), in: Circle())
+        .contentShape(Circle())
+        .animation(.easeOut(duration: 0.15), value: pinned)
+    }
+
+    private var keepOpenPin: some View {
+        Button {
+            model.togglePin()
+        } label: {
+            controlGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
+        }
+        .buttonStyle(.plain)
+        .help(model.isPinned ? "Unpin" : "Keep this open")
     }
 
     private func controlGlyph(_ symbol: String, tinted: Bool = false) -> some View {

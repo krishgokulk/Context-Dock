@@ -378,7 +378,7 @@ final class CornerDockController: NSObject {
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount)
+                        ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt))
                         : (showsWindowRow
                             ? windowRowSize
                             : (showsPinPreview
@@ -394,21 +394,32 @@ final class CornerDockController: NSObject {
     /// Set while the dock stood aside for the selection card; the card's dismissal brings
     /// the dock back.
     private var dockStoodAsideForSelection = false
+    /// The scope the Selection card was opened from, so closing it comes back there — an
+    /// app's Context Dock, not always Global (owner 2026-09-26).
+    private var modeBeforeSelection: CornerChatMode?
 
     /// The dock's selection icon: the dock becomes the selection card. One shell, one place
     /// — the card takes the dock's slot rather than stacking over it, and Backspace on its
     /// empty field (or Esc) brings the dock back.
     func showSelectionScopeFromDock() {
+        let opener: CornerChatMode? = chatPresentation.isVisible ? chatPresentation.mode : nil
         AppDelegate.shared?.activateSelectionScope(sourceBundleID: nil)
         guard selection.phase.isVisible else { return }
         dockStoodAsideForSelection = true
+        modeBeforeSelection = opener
         chatPresentation.dismiss()
     }
 
     private func selectionPhaseDidChange(_ visible: Bool) {
         guard !visible, dockStoodAsideForSelection else { return }
         dockStoodAsideForSelection = false
-        chatPresentation.showGlobalContext()
+        let back = modeBeforeSelection
+        modeBeforeSelection = nil
+        if back == .frontmostApp {
+            chatPresentation.show(.frontmostApp)
+        } else {
+            chatPresentation.showGlobalContext()
+        }
         prompt.foldToDock()
     }
 
@@ -445,7 +456,7 @@ final class CornerDockController: NSObject {
     var pluginCardPin: (pin: DockPin, manifest: PluginManifest)? {
         CornerPluginCardRouting.cardPin(
             open: prompt.pluginCardPinID, hovered: prompt.previewPinID,
-            pins: DockPinStore.shared.pins,
+            pins: DockPinStore.shared.pins + DockPinStore.shared.appPins,
             manifest: { PluginRegistry.shared.plugin(id: $0)?.manifest })
     }
 
@@ -496,7 +507,7 @@ final class CornerDockController: NSObject {
         guard let target else { return nil }
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
             fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
     }
@@ -511,7 +522,7 @@ final class CornerDockController: NSObject {
 
     var hoveredPin: DockPin? {
         guard let id = prompt.previewPinID else { return nil }
-        return DockPinStore.shared.pins.first { $0.id == id }
+        return DockPinStore.shared.pin(withID: id)
     }
 
     private var pinPreviewSize: CGSize {
@@ -563,7 +574,7 @@ final class CornerDockController: NSObject {
         // icon there, so it must be one icon wide here.
         let composition = DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil)
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil)
         ).composition
         return AppChatPromptMetrics.size(
             for: prompt.phase,
@@ -575,11 +586,12 @@ final class CornerDockController: NSObject {
             pinnedApps: composition.pinnedAppCount,
             pinned: composition.otherPins.count,
             pinnedExtraWidth: composition.widgetExtraWidth,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
             promptIcons: prompt.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: prompt.usesDockHeight),
-            fitsContent: !prompt.usesDockShell,
-            maximumWidth: DockStripPlan.screenBudget)
+            fitsContent: prompt.fitsField,
+            maximumWidth: DockStripPlan.screenBudget,
+            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: prompt))
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -596,7 +608,7 @@ final class CornerDockController: NSObject {
                     outcome: selection.showsOutcome,
                     folderPreview: selection.showsFolderPreview,
                     sendConfirm: selection.pendingSend != nil) : nil,
-            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
+            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt)) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width
         ).shelf
@@ -918,6 +930,17 @@ final class CornerDockController: NSObject {
               let promptRect = currentSlots().prompt,
               promptRect.contains(event.locationInWindow)
         else { return event }
+        // Over the text only (owner 2026-09-26): the pill beside it scrolls sideways, and a
+        // swipe over the chip or the buttons was switching to General Chat by accident. The
+        // field's frame is in the hosting view's top-left space; the event is bottom-left.
+        if let host = panel.contentView, !prompt.inputFrame.isEmpty {
+            let point = CGPoint(
+                x: event.locationInWindow.x,
+                y: host.bounds.height - event.locationInWindow.y)
+            guard prompt.inputFrame.insetBy(dx: -8, dy: -10).contains(point) else {
+                return event
+            }
+        }
 
         if event.phase == .began {
             accumulatedChatSwipeX = 0
