@@ -129,6 +129,59 @@ enum DockKeyRules {
         }
     }
 
+    // MARK: - The list (C1, C3, C10)
+
+    /// ↑/↓ over the results: the first press opens the list **and** lands on a row — the
+    /// Dock's `expandGlobalContextTypingMatch(selectFirst: true)` — ↓ at the top, ↑ at the
+    /// bottom; after that they move, wrapping. Nil when there is nothing to move through.
+    static func listArrow(down: Bool, focused: Int?, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        guard let current = focused else { return down ? 0 : count - 1 }
+        return (current + (down ? 1 : -1) + count) % count
+    }
+
+    /// Which row ↩ runs: the one the arrows landed on, else — where the field is a search —
+    /// the top row, the one its leading icon previews. Nil means ↩ is not the list's: the
+    /// field sends what is typed.
+    static func returnRow(focused: Int?, count: Int, runsTopRow: Bool) -> Int? {
+        if let focused, focused >= 0, focused < count { return focused }
+        return runsTopRow && count > 0 ? 0 : nil
+    }
+
+    /// Space previews the highlighted row only while the user is arrowing through the list;
+    /// with the caret in the field a space is a space. ⌘Space is Spotlight's.
+    static func spacePreviews(hasFocusedRow: Bool, rowHasPreview: Bool, command: Bool) -> Bool {
+        !command && hasFocusedRow && rowHasPreview
+    }
+
+    // MARK: - Backspace on an empty field (B3, B4, E4)
+
+    /// What Backspace on an empty field steps out of, innermost first.
+    enum EmptyBackspace: Equatable {
+        /// Up one folder — the mirror of → into it (B3).
+        case leaveFolder
+        /// Out of the Selection Scope, closing the surface: the scope *is* the surface, and
+        /// an empty field under it is a dead end (B4).
+        case leaveSelectionAndClose
+        /// Out of the frontmost-app chat, kept, back to that app's menu search (E4).
+        case leaveChat
+        /// Out of a scope entered from Global Context, back to Global (B3).
+        case leaveScope
+        case pass
+    }
+
+    /// The Dock's ladder for Backspace on an empty field, in its order: a folder first, then
+    /// the Selection Scope, then an app chat, then a scope entered from Global.
+    static func emptyBackspace(
+        browsingFolder: Bool, selectionScope: Bool, chatOpen: Bool, scopedFromGlobal: Bool
+    ) -> EmptyBackspace {
+        if browsingFolder { return .leaveFolder }
+        if selectionScope { return .leaveSelectionAndClose }
+        if chatOpen { return .leaveChat }
+        if scopedFromGlobal { return .leaveScope }
+        return .pass
+    }
+
     /// The nearest pill that is not a separator, walking from `start` by `step`; nil past
     /// either end.
     private static func firstPill(from start: Int, step: Int, _ separators: [Bool]) -> Int? {

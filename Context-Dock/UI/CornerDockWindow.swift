@@ -804,7 +804,11 @@ final class CornerDockController: NSObject {
             event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
             let panel, event.window === panel,
             selection.phase.isVisible, selection.query.isEmpty,
-            keyboardState.owner == .selection
+            keyboardState.owner == .selection,
+            // The card is the Selection Scope: leaving it closes it (B4).
+            DockKeyRules.emptyBackspace(
+                browsingFolder: false, selectionScope: true, chatOpen: false,
+                scopedFromGlobal: false) == .leaveSelectionAndClose
         {
             selection.dismiss()
             return nil
@@ -827,6 +831,17 @@ final class CornerDockController: NSObject {
         // typed letter — bring the field back — is exactly what put the "5" in the wrong
         // place.
         if PluginKeyboardClaim.shared.isEditing { return event }
+
+        // ⌘R reads the scoped app's live menus again (C12).
+        if event.keyCode == 15,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+            let panel, event.window === panel,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput,
+            prompt.refreshLiveMenus()
+        {
+            return nil
+        }
 
         // The dock has no field, so nothing below can answer for it. Printable characters
         // bring the field back with the character in it; every other key keeps doing what
@@ -911,7 +926,7 @@ final class CornerDockController: NSObject {
             let panel, event.window === panel,
             chatPresentation.isVisible, prompt.phase.showsInput,
             prompt.query.isEmpty,
-            prompt.leaveScopeForGlobal()
+            prompt.applyEmptyBackspace()
         {
             return nil
         }

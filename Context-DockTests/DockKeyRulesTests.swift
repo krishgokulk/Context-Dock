@@ -241,3 +241,181 @@ struct CornerDockKeyRulesTests {
         #expect(!model.pillRowIsAvailable)
     }
 }
+
+// MARK: - Part 2: the list, Backspace on an empty field, folders, ⌘R
+
+@Suite("Dock key rules — list and empty field")
+struct DockKeyRulesListTests {
+
+    typealias R = DockKeyRules
+
+    @Test("The first arrow opens on a row — ↓ at the top, ↑ at the bottom — then moves (C1)")
+    func firstArrowLandsOnARow() {
+        #expect(R.listArrow(down: true, focused: nil, count: 3) == 0)
+        #expect(R.listArrow(down: false, focused: nil, count: 3) == 2)
+        #expect(R.listArrow(down: true, focused: 0, count: 3) == 1)
+        #expect(R.listArrow(down: true, focused: 2, count: 3) == 0)
+        #expect(R.listArrow(down: false, focused: 0, count: 3) == 2)
+        #expect(R.listArrow(down: true, focused: nil, count: 0) == nil)
+    }
+
+    @Test("↩ runs the highlighted row, else a search field's top row (C3)")
+    func returnRunsFocusedOrTop() {
+        #expect(R.returnRow(focused: 2, count: 3, runsTopRow: true) == 2)
+        #expect(R.returnRow(focused: 2, count: 3, runsTopRow: false) == 2)
+        #expect(R.returnRow(focused: nil, count: 3, runsTopRow: true) == 0)
+        // Not a search field: ↩ sends what is typed.
+        #expect(R.returnRow(focused: nil, count: 3, runsTopRow: false) == nil)
+        #expect(R.returnRow(focused: nil, count: 0, runsTopRow: true) == nil)
+        #expect(R.returnRow(focused: 7, count: 3, runsTopRow: false) == nil)
+    }
+
+    @Test("Space previews only while navigating, and never with ⌘ (C10)")
+    func spaceIsASpaceWhileTyping() {
+        #expect(R.spacePreviews(hasFocusedRow: true, rowHasPreview: true, command: false))
+        #expect(!R.spacePreviews(hasFocusedRow: false, rowHasPreview: true, command: false))
+        #expect(!R.spacePreviews(hasFocusedRow: true, rowHasPreview: false, command: false))
+        #expect(!R.spacePreviews(hasFocusedRow: true, rowHasPreview: true, command: true))
+    }
+
+    @Test("Backspace on an empty field climbs out innermost first: folder, selection, chat, scope")
+    func emptyBackspaceLadder() {
+        #expect(
+            R.emptyBackspace(
+                browsingFolder: true, selectionScope: true, chatOpen: true, scopedFromGlobal: true)
+                == .leaveFolder)
+        #expect(
+            R.emptyBackspace(
+                browsingFolder: false, selectionScope: true, chatOpen: true, scopedFromGlobal: true)
+                == .leaveSelectionAndClose)
+        #expect(
+            R.emptyBackspace(
+                browsingFolder: false, selectionScope: false, chatOpen: true, scopedFromGlobal: true)
+                == .leaveChat)
+        #expect(
+            R.emptyBackspace(
+                browsingFolder: false, selectionScope: false, chatOpen: false, scopedFromGlobal: true)
+                == .leaveScope)
+        #expect(
+            R.emptyBackspace(
+                browsingFolder: false, selectionScope: false, chatOpen: false, scopedFromGlobal: false)
+                == .pass)
+    }
+}
+
+@Suite("Corner keys follow the Dock's rules — part 2")
+@MainActor
+struct CornerDockKeyRulesPart2Tests {
+
+    @Test("↩ with nothing highlighted runs a search field's top row; with a row, that row (C3)")
+    func returnRunsTopOrFocused() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        // A CLI suggestion fills the field when run — a harmless way to see which row ran.
+        model.rows = [.cliSuggestion("git status"), .cliSuggestion("git log")]
+        #expect(model.runReturnRow(runsTopRow: true))
+        #expect(model.query == "git status")
+
+        model.rows = [.cliSuggestion("git status"), .cliSuggestion("git log")]
+        model.focusedMenuIndex = 1
+        #expect(model.runReturnRow(runsTopRow: true))
+        #expect(model.query == "git log")
+    }
+
+    @Test("The first ↓ opens the list on the top row, the next moves (C1)")
+    func firstDownOpensOnTheTopRow() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "git"
+        model.rows = [.cliSuggestion("git status"), .cliSuggestion("git log")]
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.phase == .suggesting)
+        #expect(model.focusedMenuIndex == 0)
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.focusedMenuIndex == 1)
+    }
+
+    @Test("Space with the caret in the field is a space (C10)")
+    func spaceWithoutARowIsAKeystroke() throws {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.rows = [.file(URL(fileURLWithPath: NSTemporaryDirectory()))]
+        #expect(!model.previewFocusedRow())
+    }
+
+    @Test("Backspace on an empty app chat keeps the conversation and goes back to the menus (E4)")
+    func backspaceLeavesTheChat() {
+        let conversation = AppChatConversation()
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "brew", bundleID: "cli://brew")
+        model.query = "what can you do?"
+        #expect(model.submit())
+        conversation.messages = [AIChatMessage(role: .assistant, content: "brew can…")]
+        #expect(model.phase == .chat)
+        model.query = ""
+
+        #expect(model.applyEmptyBackspace())
+        #expect(model.phase != .chat)
+        #expect(model.phase.showsInput)
+        #expect(conversation.messages.count == 1)
+    }
+
+    @Test("Backspace with something typed is a deletion, not a way out")
+    func backspaceWithTextIsTheField() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.query = "x"
+        #expect(!model.applyEmptyBackspace())
+    }
+
+    @Test("→ on a folder in Finder steps into it; Backspace on the empty field climbs out (C11, B3)")
+    func foldersAreWalkedByKey() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DockKeyRules-\(UUID().uuidString)")
+        let inner = root.appendingPathComponent("Alpha")
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        try Data().write(to: root.appendingPathComponent("beta.txt"))
+        try Data().write(to: root.appendingPathComponent("aardvark.txt"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        model.rows = [.file(root)]
+        #expect(model.moveMenuFocus(by: 1))
+
+        #expect(model.stepIntoFocusedRow())
+        #expect(model.finderBrowseStack == [root])
+        // Folders first, then by name.
+        #expect(model.rows.map(\.title) == ["Alpha", "aardvark.txt", "beta.txt"])
+        #expect(model.phase == .suggesting)
+
+        // Typing filters the folder.
+        model.query = "bet"
+        model.queryChanged()
+        #expect(model.rows.map(\.title) == ["beta.txt"])
+
+        // A file is not stepped into.
+        model.focusedMenuIndex = 0
+        #expect(!model.stepIntoFocusedRow())
+
+        model.query = ""
+        model.queryChanged()
+        #expect(model.applyEmptyBackspace())
+        #expect(model.finderBrowseStack.isEmpty)
+    }
+
+    @Test("An app bundle is a file, not a folder")
+    func appsAreNotFolders() {
+        #expect(!AppChatPromptModel.isFolder(URL(fileURLWithPath: "/System/Applications/Calculator.app")))
+        #expect(AppChatPromptModel.isFolder(URL(fileURLWithPath: "/System/Applications")))
+    }
+
+    @Test("⌘R re-reads an app's menus; Global Context has none of its own (C12)")
+    func refreshIsForAnAppScope() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        #expect(!model.refreshLiveMenus())
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        #expect(model.refreshLiveMenus())
+    }
+}
