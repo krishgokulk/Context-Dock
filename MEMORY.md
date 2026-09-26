@@ -24,3 +24,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 2026-09-25 · mac-claude/claude/corner-safari-tabs · task 4: Safari tabs in the Corner (D13 ✅), shared BrowserTabList, checked on the app.
 - 2026-09-26 (claude/keyboard-rules, #96): task 5 slice 1 — `DockKeyRules` holds the Dock's result-focus and pill-row keys; Dock and Corner both read it. C4–C7, C9 ✅ by test; hand check owed.
 - 2026-09-26 (claude/keyboard-rules-2, #98): task 5 part 2 — B3, B4, C1, C3, C10–C12, E4 via DockKeyRules; B2 marked not-a-Corner-row; Dock ⌘R missing (follow-up). Suite 2051 / 0.
+- 2026-09-26 (cloud coordinator): 00-NOW — task 5 done (#96, #98), #95 in Done; AppleScriptQueue re-entrancy fix in progress ahead of task 6; B2 = "—" recorded.
