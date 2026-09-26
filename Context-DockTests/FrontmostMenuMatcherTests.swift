@@ -187,4 +187,26 @@ struct FrontmostMenuMatcherTests {
 
         #expect(ranked.map(\.title) == ["Minimize", "Minimize All"])
     }
+
+    @Test("Global Context drops generic rows by whole word, so Reopen Last Closed Window stays")
+    func genericRowsMatchWholeWords() {
+        let generic = [
+            menuItem("Close Window", path: ["File", "Close Window"]),
+            menuItem("Quit Safari", path: ["Safari", "Quit Safari"]),
+            menuItem("Settings…", path: ["Safari", "Settings…"]),
+            menuItem("Show All History", path: ["History", "Show All History"]),
+        ]
+        for item in generic {
+            #expect(FrontmostMenuMatcher.isGenericAppMenu(item), "\(item.title) is generic")
+        }
+        let specific = [
+            menuItem("Reopen Last Closed Window", path: ["History", "Reopen Last Closed Window"]),
+            menuItem("Recently Closed", path: ["History", "Recently Closed"]),
+        ]
+        for item in specific {
+            #expect(!FrontmostMenuMatcher.isGenericAppMenu(item), "\(item.title) was dropped")
+        }
+        let kept = FrontmostMenuMatcher.allowed(specific + generic, policy: .globalContext)
+        #expect(kept.map(\.title) == ["Reopen Last Closed Window", "Recently Closed"])
+    }
 }
