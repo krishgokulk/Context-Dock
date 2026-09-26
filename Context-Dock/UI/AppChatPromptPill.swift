@@ -1009,13 +1009,14 @@ struct AppChatPromptPill: View {
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
             // Not in the dock shell: its trailing end is the strip's, as in Global.
-            // While typing the field is compact in every Context Dock, the dock shell's
-            // included: attach, send and pin, and no expand (owner 2026-09-26).
+            // The field carries pin, never expand (owner 2026-09-26): while typing in every
+            // Context Dock, the dock shell's included, and under the pointer otherwise. A
+            // conversation's header keeps its own expand.
             if model.phase != .chat, !model.isSearchField, isTyping {
-                surfaceControls(expands: false)
+                surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             } else if pointerInside, model.phase != .chat, !model.usesDockShell {
-                surfaceControls(expands: true)
+                surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
             // Room for the strip's pins and tools, which stay on screen over this end of
@@ -1194,23 +1195,14 @@ struct AppChatPromptPill: View {
         }
     }
 
-    /// What acts on the surface rather than on the question: where it opens, and whether it
-    /// stays. Attach and send are in the field itself, because they are part of asking.
+    /// What acts on the surface rather than on the question: whether it stays. Attach and
+    /// send are in the field itself, because they are part of asking.
     private var isTyping: Bool {
         !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func surfaceControls(expands: Bool) -> some View {
+    private var surfaceControls: some View {
         HStack(spacing: 8) {
-            if expands {
-                Button {
-                    model.openInDock()
-                } label: {
-                    controlGlyph("arrow.up.left.and.arrow.down.right")
-                }
-                .buttonStyle(.plain)
-                .help("Open this conversation in the dock")
-            }
 
             Button {
                 model.togglePin()
