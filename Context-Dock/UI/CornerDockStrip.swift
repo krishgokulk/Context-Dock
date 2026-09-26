@@ -135,6 +135,16 @@ struct CornerDockStrip: View {
         return to - from
     }
 
+    /// From the folded field's icon to the app chip's icon in the compact field. The field
+    /// ends where the strip ends; its chip icon sits 14 of padding, 8 of chip padding and
+    /// half a 16-point icon in from the field's leading edge.
+    private func appChipOffset(plan: DockStripPlan) -> CGFloat {
+        let layout = plan.layout
+        let from = layout.leadingInset + M.dockIconSize / 2
+        let fieldStart = layout.width - AppChatPromptMetrics.boardWidth(for: model)
+        return fieldStart + 14 + 8 + 8 - from
+    }
+
     private func gatherOffset(index: Int, bundleID: String?, plan: DockStripPlan) -> CGFloat {
         let layout = plan.layout
         let pills = model.globalMatchIcons
@@ -171,6 +181,11 @@ struct CornerDockStrip: View {
             // Dock — what the field says it is about when it opens.
             foldedField { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
+                // An app bar's icon flies into the field's app chip and shrinks to its size,
+                // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
+                .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
+                .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
+                .animation(gatherAnimation(index: 0, count: 1), value: gathered)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
                 // The hairline between the field, folded, and the apps — the same one the
                 // pins get. Drawn over room that is already there, so it costs no width, and

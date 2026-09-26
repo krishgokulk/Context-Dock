@@ -132,9 +132,28 @@ enum AppChatPromptMetrics {
     /// Global's field is the strip's width and keeps the card at the base.
     @MainActor
     static func boardWidth(for model: AppChatPromptModel) -> CGFloat {
-        guard model.fitsField else { return width }
-        let pill = appBarPillWidth(for: model)
-        return width + (pill > 0 ? pill + appBarPillSpacing : 0)
+        if model.fitsField {
+            let pill = appBarPillWidth(for: model)
+            return width + (pill > 0 ? pill + appBarPillSpacing : 0)
+        }
+        // Global: the field is the strip's width, so the card takes the same number, worked
+        // out the way the field works out its own (owner 2026-09-26: the card was narrower).
+        let tools = model.dockToolCount(
+            clipboardVisible: ClipboardPanelController.shared.model.phase.announcesCopy,
+            feedbackVisible: CornerActionFeedback.shared.glyph != nil)
+        let composition = DockStripPlan.make(
+            running: model.stripIcons, pins: model.stripPins, tools: tools).composition
+        return size(
+            for: .prompt, suggestions: 0,
+            running: composition.unpinnedRunningCount,
+            pinnedApps: composition.pinnedAppCount,
+            pinned: composition.otherPins.count,
+            pinnedExtraWidth: composition.widgetExtraWidth,
+            tools: tools,
+            promptIcons: model.promptIconCount,
+            fitsContent: false,
+            maximumWidth: DockStripPlan.screenBudget
+        ).width
     }
 
     static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
