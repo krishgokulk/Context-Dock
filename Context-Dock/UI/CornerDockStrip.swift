@@ -59,7 +59,7 @@ struct CornerDockStrip: View {
         let full = AppChatPromptMetrics.dockMorphDuration
         return isDock
             ? .linear(duration: 0.04)
-            : .linear(duration: 0.06).delay(full * 0.55)
+            : .linear(duration: 0.06).delay(full * 0.32)
     }
 
     private var movingFade: Animation {
@@ -119,7 +119,7 @@ struct CornerDockStrip: View {
     private var gathersIntoAppBar: Bool { model.fitsField && model.showsTabBar }
 
     /// Where an app bar's icon lands, measured from the strip's leading edge. The field and
-    /// the strip share their trailing edge, so the pill's end is the strip's width less what
+    /// the strip share their leading edge, so the pill's end is the field's width less what
     /// the field draws after the pill: its 14 of padding and the controls after the pill.
     private func appBarGatherOffset(index: Int, plan: DockStripPlan) -> CGFloat {
         let layout = plan.layout
@@ -131,7 +131,7 @@ struct CornerDockStrip: View {
         if model.isPointerInside { trailing += control }  // the pin
         if clipboard.phase.announcesCopy { trailing += control }
         if model.selection != nil { trailing += control }
-        let pillEnd = layout.width - trailing
+        let pillEnd = AppChatPromptMetrics.boardWidth(for: model) - trailing
         let pillStart = pillEnd - AppChatPromptMetrics.appBarPillWidth(for: model)
         // Pins lead, so an icon is past the hairline when it is a tab with a pin before it.
         let icons = model.allRunningIcons
@@ -145,13 +145,12 @@ struct CornerDockStrip: View {
     }
 
     /// From the folded field's icon to the app chip's icon in the compact field. The field
-    /// ends where the strip ends; its chip icon sits 14 of padding, 8 of chip padding and
-    /// half a 16-point icon in from the field's leading edge.
+    /// starts where the strip starts (`shellAlignment`); its chip icon sits 14 of padding,
+    /// 8 of chip padding and half a 16-point icon in from that edge — a few points from
+    /// where the bar's icon already is, so it shrinks in place rather than flying.
     private func appChipOffset(plan: DockStripPlan) -> CGFloat {
-        let layout = plan.layout
-        let from = layout.leadingInset + M.dockIconSize / 2
-        let fieldStart = layout.width - AppChatPromptMetrics.boardWidth(for: model)
-        return fieldStart + 14 + 8 + 8 - from
+        let from = plan.layout.leadingInset + M.dockIconSize / 2
+        return 14 + 8 + 8 - from
     }
 
     private func gatherOffset(index: Int, bundleID: String?, plan: DockStripPlan) -> CGFloat {
@@ -198,7 +197,7 @@ struct CornerDockStrip: View {
                 // chip's icon takes over, or the hand-off shows as a jump.
                 .animation(
                     .timingCurve(0.3, 0, 0.2, 1,
-                        duration: AppChatPromptMetrics.dockMorphDuration * 0.5),
+                        duration: AppChatPromptMetrics.dockMorphDuration * 0.3),
                     value: gathered)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
                 // The hairline between the field, folded, and the apps — the same one the

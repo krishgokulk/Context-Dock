@@ -488,10 +488,18 @@ struct AppChatPromptPill: View {
         return size(for: .prompt).width
     }
 
+    /// Global's field and strip share their trailing edge: they are one width. An app bar's
+    /// compact field is not the bar's width, so the two share their *leading* edge instead:
+    /// the chip opens right where the bar's app icon rests, and the field grows away from it
+    /// (owner 2026-09-26: "resize the icon and add the name next to it").
+    private var shellAlignment: Alignment {
+        model.fitsField ? .bottomLeading : .bottomTrailing
+    }
+
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
         let stripShown = [.dock, .prompt, .suggesting].contains(model.phase)
-        return ZStack(alignment: .bottomTrailing) {
+        return ZStack(alignment: shellAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
             // stack pinned to the trailing edge left that growth as blank glass before the
@@ -516,7 +524,7 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(model.phase == .mini)
                 .animation(.easeInOut(duration: 0.2), value: model.phase)
         }
-        .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
+        .frame(width: size.width, height: size.height, alignment: shellAlignment)
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
@@ -1268,7 +1276,7 @@ struct AppChatPromptPill: View {
             return .easeOut(duration: 0.1)
         }
         return chipIconShown
-            ? .linear(duration: 0.06).delay(full * 0.55)
+            ? .linear(duration: 0.06).delay(full * 0.32)
             : .linear(duration: 0.04)
     }
 
