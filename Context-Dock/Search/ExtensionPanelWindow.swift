@@ -571,6 +571,10 @@ struct AIComposerBar: View {
     /// is a second border and a second set of insets, which is what made General mode read
     /// as taller and looser than App mode when the two show the same single row.
     var drawsChrome: Bool = true
+    /// The corner's General Chat draws the Context Dock field's controls: the provider as
+    /// the app chip, 14-point text, "+", a send button once something is typed, and round
+    /// 26-point glyphs (owner 2026-09-26: one UI for both). The window keeps its own look.
+    var cornerStyle: Bool = false
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -616,6 +620,19 @@ struct AIComposerBar: View {
             } label: {
                 // Icon only by default: the placeholder already says which model this
                 // is, and the name repeated beside it ate half the bar on a narrow panel.
+                if cornerStyle {
+                    HStack(spacing: 6) {
+                        AIProviderIcon(provider: settings.selectedAIProvider, size: 16)
+                        Text(settings.selectedAIProvider.shortName)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.09), in: Capsule())
+                    .contentShape(Capsule())
+                } else {
                 HStack(spacing: 4) {
                     AIProviderIcon(provider: settings.selectedAIProvider, size: 14)
                         .foregroundStyle(.primary)
@@ -630,6 +647,7 @@ struct AIComposerBar: View {
                 }
                 .frame(height: 22)
                 .contentShape(Rectangle())
+                }
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -637,7 +655,7 @@ struct AIComposerBar: View {
 
             TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(.system(size: cornerStyle ? 14 : 12, weight: cornerStyle ? .medium : .regular))
                 .lineLimit(1...5)
                 .onSubmit {
                     // A surface drawing its own picker knows which row is highlighted;
@@ -696,10 +714,18 @@ struct AIComposerBar: View {
                     Divider()
                     extraAttachMenu()
                 } label: {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .contentShape(Rectangle())
+                    if cornerStyle {
+                        Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(.primary.opacity(0.85))
+                            .frame(width: 26, height: 26)
+                            .contentShape(Rectangle())
+                    } else {
+                        Image(systemName: "plus.circle")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                            .contentShape(Rectangle())
+                    }
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -772,9 +798,13 @@ struct AIComposerBar: View {
                     showAppPicker = true
                 }
             } label: {
-                Image(systemName: "app.dashed")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.secondary)
+                if cornerStyle {
+                    cornerGlyph("app.dashed")
+                } else {
+                    Image(systemName: "app.dashed")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
             }
             .buttonStyle(.plain)
             .help("Work with an app")
@@ -798,13 +828,37 @@ struct AIComposerBar: View {
 
             if let onTogglePin {
                 Button(action: onTogglePin) {
-                    Image(systemName: isPinned ? "pin.fill" : "pin")
-                        .font(.system(size: 13))
-                        .foregroundStyle(isPinned ? Color.accentColor : .secondary)
-                        .contentShape(Rectangle())
+                    if cornerStyle {
+                        cornerGlyph(isPinned ? "pin.fill" : "pin", tinted: isPinned)
+                    } else {
+                        Image(systemName: isPinned ? "pin.fill" : "pin")
+                            .font(.system(size: 13))
+                            .foregroundStyle(isPinned ? Color.accentColor : .secondary)
+                            .contentShape(Rectangle())
+                    }
                 }
                 .buttonStyle(.plain)
                 .help(isPinned ? "Unpin" : "Keep this open")
+            }
+
+            // The Context Dock field's send: shown once something is typed.
+            if cornerStyle, !isSending,
+                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            {
+                Button {
+                    if onCommitSelection?() == true { return }
+                    onSubmit()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.92))
+                        .frame(width: 26, height: 26)
+                        .background(Color.accentColor, in: Circle())
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Send")
+                .transition(.opacity)
             }
 
             if isSending {
@@ -840,6 +894,17 @@ struct AIComposerBar: View {
             }
         }
         .acceptsPastedImages { urls in onPasteImages?(urls) }
+    }
+
+    /// The Context Dock field's round control, for the corner style.
+    private func cornerGlyph(_ symbol: String, tinted: Bool = false) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(tinted ? Color.accentColor : .secondary)
+            .frame(width: 26, height: 26)
+            .background(
+                tinted ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.08),
+                in: Circle())
     }
 }
 

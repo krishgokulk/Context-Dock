@@ -39,8 +39,29 @@ struct CornerDockStrip: View {
 
     private var isDock: Bool { model.phase == .dock }
 
+    /// The strip's tools stay over the field's trailing end in Global, still and
+    /// clickable. An app's field draws its own clipboard and selection beside the pin, so
+    /// there the strip's go with the bar — drawn over the field they doubled up on the pin.
+    private var toolsShown: Bool { isDock || !model.fitsField }
+
+    private var appBarToolsDivider: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.18))
+            .frame(width: 1, height: M.dockIconSize * 0.7)
+            .modifier(StripToolVisibility(shown: toolsShown))
+    }
+
     /// What gathers into the field fades late on the way in — after it has flown to the
     /// pill — and at once on the way back, so it is seen leaving the pill.
+    /// The app icon's own fade: it stays whole for the whole flight into the chip and goes
+    /// in the instant the chip's icon takes over; back, it is there at once.
+    private var appIconHandover: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return isDock
+            ? .linear(duration: 0.04)
+            : .linear(duration: 0.06).delay(full * 0.32)
+    }
+
     private var movingFade: Animation {
         let full = AppChatPromptMetrics.dockMorphDuration
         return isDock
@@ -98,7 +119,7 @@ struct CornerDockStrip: View {
     private var gathersIntoAppBar: Bool { model.fitsField && model.showsTabBar }
 
     /// Where an app bar's icon lands, measured from the strip's leading edge. The field and
-    /// the strip share their trailing edge, so the pill's end is the strip's width less what
+    /// the strip share their leading edge, so the pill's end is the field's width less what
     /// the field draws after the pill: its 14 of padding and the controls after the pill.
     private func appBarGatherOffset(index: Int, plan: DockStripPlan) -> CGFloat {
         let layout = plan.layout
@@ -108,9 +129,9 @@ struct CornerDockStrip: View {
         let control: CGFloat = 26 + 10  // a 26-point control and the row's spacing before it
         var trailing: CGFloat = 14
         if model.isPointerInside { trailing += control }  // the pin
-        if clipboard.phase.isVisible { trailing += control }
+        if clipboard.phase.announcesCopy { trailing += control }
         if model.selection != nil { trailing += control }
-        let pillEnd = layout.width - trailing
+        let pillEnd = AppChatPromptMetrics.boardWidth(for: model) - trailing
         let pillStart = pillEnd - AppChatPromptMetrics.appBarPillWidth(for: model)
         // Pins lead, so an icon is past the hairline when it is a tab with a pin before it.
         let icons = model.allRunningIcons
@@ -121,6 +142,15 @@ struct CornerDockStrip: View {
         let to = pillStart + 8 + CGFloat(index) * (size + AppChatPromptMetrics.appBarIconGap)
             + (pastDivider ? 1 + AppChatPromptMetrics.appBarIconGap : 0) + size / 2
         return to - from
+    }
+
+    /// From the folded field's icon to the app chip's icon in the compact field. The field
+    /// starts where the strip starts (`shellAlignment`); its chip icon sits 14 of padding,
+    /// 8 of chip padding and half a 16-point icon in from that edge — a few points from
+    /// where the bar's icon already is, so it shrinks in place rather than flying.
+    private func appChipOffset(plan: DockStripPlan) -> CGFloat {
+        let from = plan.layout.leadingInset + M.dockIconSize / 2
+        return 14 + 8 + 8 - from
     }
 
     private func gatherOffset(index: Int, bundleID: String?, plan: DockStripPlan) -> CGFloat {
@@ -146,7 +176,7 @@ struct CornerDockStrip: View {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins,
             tools: model.dockToolCount(
-                clipboardVisible: clipboard.phase.isVisible,
+                clipboardVisible: clipboard.phase.announcesCopy,
                 feedbackVisible: feedback.glyph != nil),
             fieldIcons: model.promptIconCount)
     }
@@ -159,6 +189,16 @@ struct CornerDockStrip: View {
             // Dock — what the field says it is about when it opens.
             foldedField { expandField() }
                 .scaleEffect(condensing ? 1.12 : 1)
+                // An app bar's icon flies into the field's app chip and shrinks to its size,
+                // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
+                .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
+                .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
+                // A fixed-length curve, not a spring: it has to have landed exactly when the
+                // chip's icon takes over, or the hand-off shows as a jump.
+                .animation(
+                    .timingCurve(0.3, 0, 0.2, 1,
+                        duration: AppChatPromptMetrics.dockMorphDuration * 0.3),
+                    value: gathered)
                 .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
                 // The hairline between the field, folded, and the apps — the same one the
                 // pins get. Drawn over room that is already there, so it costs no width, and
@@ -174,8 +214,9 @@ struct CornerDockStrip: View {
                         .allowsHitTesting(false)
                 }
                 // The field's own magnifier opens on this exact spot; this one hands over.
+                // An app bar's icon hands over only once it has landed on the chip.
                 .opacity(isDock ? 1 : 0)
-                .animation(movingFade, value: isDock)
+                .animation(gathersIntoAppBar ? appIconHandover : movingFade, value: isDock)
                 .allowsHitTesting(isDock)
             // One region for apps: the pinned ones first, in the order the user placed
             // them, then whatever else is running. Composed once for the whole pass —
@@ -255,15 +296,15 @@ struct CornerDockStrip: View {
                 }
             }
             if plan.layout.tools > 0 {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.18))
-                    .frame(width: 1, height: M.dockIconSize * 0.7)
+                appBarToolsDivider
                 // The corner's own cards, not the field's scope chips: a dock icon opens a
                 // surface beside the dock, it does not bring the field back with a chip in it.
-                if clipboard.phase.isVisible {
+                if clipboard.phase.announcesCopy {
                     toolIcon("doc.on.clipboard", title: "Clipboard") {
                         ClipboardPanelController.shared.show()
                     }
+                    .modifier(StripToolVisibility(shown: toolsShown))
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     // Hovering opens the card without taking the keyboard; a click arms it.
                     .onHover { inside in
                         guard inside else { return }
@@ -272,14 +313,18 @@ struct CornerDockStrip: View {
                         controller.model.summon()
                     }
                 }
+                // An app bar carries the clipboard and the selection, not action results
+                // (`dockToolCount`): drawing more than it counts would overrun its width.
                 if model.selection != nil {
                     toolIcon("text.cursor", title: "Selection") {
                         CornerDockController.shared.showSelectionScopeFromDock()
                     }
+                    .modifier(StripToolVisibility(shown: toolsShown))
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
                 // What the last action came to, for a few seconds — the dock's inline
                 // result, in the corner's own idiom: the clipboard's slot and lifetime.
-                if let result = feedback.glyph {
+                if let result = feedback.glyph, !model.showsTabBar {
                     ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
@@ -290,6 +335,8 @@ struct CornerDockStrip: View {
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
+        .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
+        .animation(.smooth(duration: 0.25), value: model.selection != nil)
         .padding(.horizontal, plan.layout.leadingInset)
         .frame(height: M.dockHeight)
         // The pill's capsule, drawn behind the icons that became it — it arrives once they
@@ -916,5 +963,16 @@ struct RightClickReporter: NSViewRepresentable {
         override func mouseDown(with event: NSEvent) {
             if event.modifierFlags.contains(.control) { onRightClick?() } else { super.mouseDown(with: event) }
         }
+    }
+}
+
+/// A strip tool fades with the bar where the field draws its own (`toolsShown`).
+private struct StripToolVisibility: ViewModifier {
+    let shown: Bool
+    func body(content: Content) -> some View {
+        content
+            .opacity(shown ? 1 : 0)
+            .allowsHitTesting(shown)
+            .animation(.easeInOut(duration: 0.2), value: shown)
     }
 }

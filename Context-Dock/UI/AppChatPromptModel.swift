@@ -273,9 +273,12 @@ final class AppChatPromptModel: ObservableObject {
     let globalResultSource: GlobalContextResultSource
     /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
     var tabSource: () -> [SafariTab] = {
-        // A quit Safari has no tabs, whatever the cache last held.
+        // A quit Safari has no tabs, whatever the cache last held. Otherwise the last list
+        // read, however old: a 45-second limit turned it into no tabs at all, and the bar
+        // opened with its pins and nothing else (owner 2026-09-26). Opening and folding the
+        // bar ask for a fresh read, which replaces it a moment later.
         NSRunningApplication.runningApplications(withBundleIdentifier: BrowserTabList.safariBundleID)
-            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: 45)
+            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: .infinity)
     }
     /// The page Safari is showing, which leads the pills. Tests replace it.
     var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
@@ -798,6 +801,9 @@ final class AppChatPromptModel: ObservableObject {
         // an app stepped into from Global — clicking away from any of them used to swap the
         // field to whatever came forward, losing the place the user had picked.
         guard !isGlobalScope, !returnsToGlobalScope else { return }
+        // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
+        // on the app it was pinned in, whatever comes forward after.
+        guard !isPinned else { return }
         query = ""
         attachments = []
         appName = name
@@ -869,9 +875,12 @@ final class AppChatPromptModel: ObservableObject {
     /// happened, the selection when there is one, the result of an action for a few seconds
     /// after it ran. Same rules as the field's own row.
     func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
-        // A Safari scope's bar is its tabs alone (owner 2026-09-25): the Context Dock's
-        // own things, not Global's.
-        guard !showsTabBar else { return 0 }
+        // An app bar is the app's own things (owner 2026-09-25) — plus, at its end after the
+        // pins and tabs, a copy's clipboard icon for its few seconds and the selection icon
+        // while something is selected (owner 2026-09-26). No action results.
+        guard !showsTabBar else {
+            return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
+        }
         return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 
@@ -1090,6 +1099,9 @@ final class AppChatPromptModel: ObservableObject {
         phase = next
         // A plugin's card belongs to the strip; leaving the dock takes it down with it.
         if next != .dock { pluginCardPinID = nil }
+        // The bar opening or folding shows the tabs: read them again so what it shows is
+        // current. The tab manager throttles this to one read every two seconds.
+        if showsTabBar, next == .dock || next == .prompt { refreshTabs() }
         onPhaseChange?(next)
     }
 }

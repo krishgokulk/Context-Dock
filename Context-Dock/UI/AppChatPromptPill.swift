@@ -132,9 +132,28 @@ enum AppChatPromptMetrics {
     /// Global's field is the strip's width and keeps the card at the base.
     @MainActor
     static func boardWidth(for model: AppChatPromptModel) -> CGFloat {
-        guard model.fitsField else { return width }
-        let pill = appBarPillWidth(for: model)
-        return width + (pill > 0 ? pill + appBarPillSpacing : 0)
+        if model.fitsField {
+            let pill = appBarPillWidth(for: model)
+            return width + (pill > 0 ? pill + appBarPillSpacing : 0)
+        }
+        // Global: the field is the strip's width, so the card takes the same number, worked
+        // out the way the field works out its own (owner 2026-09-26: the card was narrower).
+        let tools = model.dockToolCount(
+            clipboardVisible: ClipboardPanelController.shared.model.phase.announcesCopy,
+            feedbackVisible: CornerActionFeedback.shared.glyph != nil)
+        let composition = DockStripPlan.make(
+            running: model.stripIcons, pins: model.stripPins, tools: tools).composition
+        return size(
+            for: .prompt, suggestions: 0,
+            running: composition.unpinnedRunningCount,
+            pinnedApps: composition.pinnedAppCount,
+            pinned: composition.otherPins.count,
+            pinnedExtraWidth: composition.widgetExtraWidth,
+            tools: tools,
+            promptIcons: model.promptIconCount,
+            fitsContent: false,
+            maximumWidth: DockStripPlan.screenBudget
+        ).width
     }
 
     static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
@@ -366,7 +385,7 @@ struct AppChatPromptPill: View {
 
     private var stripToolCount: Int {
         model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
+            clipboardVisible: clipboard.phase.announcesCopy,
             feedbackVisible: actionFeedback.glyph != nil)
     }
 
@@ -374,7 +393,7 @@ struct AppChatPromptPill: View {
         // The strip's own composition, not the raw counts: an app that is pinned and
         // running is one icon there, and a pin this build cannot resolve is none.
         let tools = model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
+            clipboardVisible: clipboard.phase.announcesCopy,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: tools)
@@ -469,10 +488,18 @@ struct AppChatPromptPill: View {
         return size(for: .prompt).width
     }
 
+    /// Global's field and strip share their trailing edge: they are one width. An app bar's
+    /// compact field is not the bar's width, so the two share their *leading* edge instead:
+    /// the chip opens right where the bar's app icon rests, and the field grows away from it
+    /// (owner 2026-09-26: "resize the icon and add the name next to it").
+    private var shellAlignment: Alignment {
+        model.fitsField ? .bottomLeading : .bottomTrailing
+    }
+
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
         let stripShown = [.dock, .prompt, .suggesting].contains(model.phase)
-        return ZStack(alignment: .bottomTrailing) {
+        return ZStack(alignment: shellAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
             // stack pinned to the trailing edge left that growth as blank glass before the
@@ -497,7 +524,7 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(model.phase == .mini)
                 .animation(.easeInOut(duration: 0.2), value: model.phase)
         }
-        .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
+        .frame(width: size.width, height: size.height, alignment: shellAlignment)
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
@@ -959,7 +986,9 @@ struct AppChatPromptPill: View {
                 // current as a fresh one. Same transient signal as the composer's own.
                 // In Global the strip's own clipboard icon stays on screen in its trailing
                 // region, so the field does not draw a second one beside it.
-                if clipboard.phase.isVisible, !model.isGlobalScope {
+                // A composer draws its one clipboard icon at the end, next to the pin (owner
+                // 2026-09-26: two showed); only a search field keeps it here.
+                if clipboard.phase.announcesCopy, model.isSearchField, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
@@ -1023,7 +1052,7 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.phase.isVisible {
+                if clipboard.phase.announcesCopy {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a
@@ -1111,16 +1140,15 @@ struct AppChatPromptPill: View {
     /// off the screen instead of picking a file.
     private var selectionScopeButton: some View {
         Button {
-            // In place, not a second card: this session already knows what is selected
-            // and already carries it on whatever question gets asked here, so opening the
-            // separate Selection Scope card on top of an already-open chat stacked one
-            // surface on another for something this one could just show itself.
-            model.toggleSelectionScope()
+            // The Selection card, the same one the dock's selection icon opens (owner
+            // 2026-09-26): attaching the text to this field instead left the user with a
+            // chip and none of the selection's actions. Closing it comes back here.
+            CornerDockController.shared.showSelectionScopeFromDock()
         } label: {
-            controlGlyph("text.cursor", tinted: model.isShowingSelectionScope)
+            controlGlyph("text.cursor")
         }
         .buttonStyle(.plain)
-        .help(model.isShowingSelectionScope ? "Back to \(model.appName)" : "Show the current selection")
+        .help("Show the current selection")
         .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
@@ -1224,6 +1252,12 @@ struct AppChatPromptPill: View {
                     .resizable()
                     .frame(width: 16, height: 16)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    // Opening an app bar, the bar's own app icon flies here and becomes this
+                    // one: hidden until it lands, then taking over in the same spot, so the
+                    // eye sees one icon, not a second copy fading in beside a moving one
+                    // (owner 2026-09-26).
+                    .opacity(chipIconShown ? 1 : 0)
+                    .animation(chipIconHandover, value: chipIconShown)
             }
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
@@ -1232,6 +1266,18 @@ struct AppChatPromptPill: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(Color.primary.opacity(0.09), in: Capsule())
+    }
+
+    private var chipIconShown: Bool { model.phase != .dock }
+
+    private var chipIconHandover: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        guard model.showsTabBar, model.usesDockShell, !reduceMotion else {
+            return .easeOut(duration: 0.1)
+        }
+        return chipIconShown
+            ? .linear(duration: 0.06).delay(full * 0.32)
+            : .linear(duration: 0.04)
     }
 
     @ViewBuilder

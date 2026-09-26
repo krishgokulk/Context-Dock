@@ -79,7 +79,11 @@ struct CornerSafariTabsTests {
     func theBarIsTheAppsOwn() {
         let model = scope()
         #expect(model.stripPins.isEmpty)
-        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 0)
+        // Only the clipboard (for a copy's few seconds) and the selection (while there is
+        // one) join it; never an action result.
+        let selected = model.selection != nil ? 1 : 0
+        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 1 + selected)
+        #expect(model.dockToolCount(clipboardVisible: false, feedbackVisible: true) == selected)
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
         #expect(chrome.stripPins.count == chrome.dockPins.pins.count)
     }

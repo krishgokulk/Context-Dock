@@ -394,21 +394,32 @@ final class CornerDockController: NSObject {
     /// Set while the dock stood aside for the selection card; the card's dismissal brings
     /// the dock back.
     private var dockStoodAsideForSelection = false
+    /// The scope the Selection card was opened from, so closing it comes back there — an
+    /// app's Context Dock, not always Global (owner 2026-09-26).
+    private var modeBeforeSelection: CornerChatMode?
 
     /// The dock's selection icon: the dock becomes the selection card. One shell, one place
     /// — the card takes the dock's slot rather than stacking over it, and Backspace on its
     /// empty field (or Esc) brings the dock back.
     func showSelectionScopeFromDock() {
+        let opener: CornerChatMode? = chatPresentation.isVisible ? chatPresentation.mode : nil
         AppDelegate.shared?.activateSelectionScope(sourceBundleID: nil)
         guard selection.phase.isVisible else { return }
         dockStoodAsideForSelection = true
+        modeBeforeSelection = opener
         chatPresentation.dismiss()
     }
 
     private func selectionPhaseDidChange(_ visible: Bool) {
         guard !visible, dockStoodAsideForSelection else { return }
         dockStoodAsideForSelection = false
-        chatPresentation.showGlobalContext()
+        let back = modeBeforeSelection
+        modeBeforeSelection = nil
+        if back == .frontmostApp {
+            chatPresentation.show(.frontmostApp)
+        } else {
+            chatPresentation.showGlobalContext()
+        }
         prompt.foldToDock()
     }
 
@@ -496,7 +507,7 @@ final class CornerDockController: NSObject {
         guard let target else { return nil }
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
             fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
     }
@@ -563,7 +574,7 @@ final class CornerDockController: NSObject {
         // icon there, so it must be one icon wide here.
         let composition = DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil)
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil)
         ).composition
         return AppChatPromptMetrics.size(
             for: prompt.phase,
@@ -575,7 +586,7 @@ final class CornerDockController: NSObject {
             pinnedApps: composition.pinnedAppCount,
             pinned: composition.otherPins.count,
             pinnedExtraWidth: composition.widgetExtraWidth,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.isVisible, feedbackVisible: actionFeedback.glyph != nil),
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
             promptIcons: prompt.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: prompt.usesDockHeight),
             fitsContent: prompt.fitsField,
