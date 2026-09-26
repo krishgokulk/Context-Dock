@@ -90,6 +90,8 @@ final class CornerDockController: NSObject {
     private var edgeMonitors: [Any] = []
     /// The prompt's phase before its latest change, to tell a fold from the field apart.
     private var lastPromptPhase: AppChatPromptPhase = .hidden
+    /// Whether the latest phase change may arm the keyboard (`phaseChangeMayTakeKeys`).
+    private var phaseChangeMayArm = true
     /// An edge summon passes through the field on its way to the strip; that is not the
     /// user finishing with the keyboard, so the fold it makes keeps the keys.
     private var edgeSummonKeepsKeys = false
@@ -266,6 +268,9 @@ final class CornerDockController: NSObject {
                 // Dock, a dock at rest does not keep the keyboard from the app in front
                 // (owner 2026-09-26).
                 var folded = next == .dock && self.lastPromptPhase.showsInput
+                self.phaseChangeMayArm = CornerKeyboardOwner.phaseChangeMayTakeKeys(
+                    from: self.lastPromptPhase, to: next,
+                    cornerHasKeys: NSApp.isActive && self.panel?.isKeyWindow == true)
                 self.lastPromptPhase = next
                 if folded { self.foldedAt = Date() }
                 if folded, self.edgeSummonKeepsKeys {
@@ -293,7 +298,9 @@ final class CornerDockController: NSObject {
                 // ambient pills it takes focus the moment it appears. Disarming is not its
                 // decision alone: a selection card or an armed clipboard may still need the
                 // keys after the chat closes.
-                self?.syncPanelKeyboard()
+                // Not when the user is working in another app and the phase moved on its own
+                // (`phaseChangeMayTakeKeys`): that pulled DoraX in front of their app.
+                if self?.phaseChangeMayArm ?? true { self?.syncPanelKeyboard() }
                 self?.publishKeyboardOwner()
             }
         }.store(in: &sinks)
