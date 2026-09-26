@@ -532,7 +532,7 @@ class LayeredExtensionManager: ObservableObject {
             throw LayeredExtensionError.scriptCompilationFailed
         }
 
-        let output = script.executeAndReturnError(&error)
+        let output = script.executeSerialized(error: &error)
         if let error = error {
             throw LayeredExtensionError.executionFailed(error.description)
         }

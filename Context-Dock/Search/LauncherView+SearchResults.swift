@@ -2105,7 +2105,7 @@ extension LauncherView {
             }
         case .appleScript:
             if let script = NSAppleScript(source: inject(sc.actionValue)) {
-                script.executeAndReturnError(nil)
+                script.executeSerialized(error: nil)
             }
         case .jxa:
             // JXA runs via osascript -l JavaScript, passing selected file + text as argv

@@ -1726,7 +1726,7 @@ struct LauncherView: View {
     func runAppleMenuScript(_ source: String) {
         Task.detached(priority: .userInitiated) {
             var error: NSDictionary?
-            NSAppleScript(source: source)?.executeAndReturnError(&error)
+            NSAppleScript(source: source)?.executeSerialized(error: &error)
             if let error {
                 let message = error[NSAppleScript.errorMessage] as? String
                     ?? "Apple menu action unavailable"

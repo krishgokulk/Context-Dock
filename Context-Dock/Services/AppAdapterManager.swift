@@ -1547,7 +1547,7 @@ final class AppAdapterManager: ObservableObject {
                 }
             } else {
                 var errDict: NSDictionary?
-                let result = NSAppleScript(source: source)?.executeAndReturnError(&errDict)
+                let result = NSAppleScript(source: source)?.executeSerialized(error: &errDict)
                 if let e = errDict {
                     let msg = e[NSAppleScript.errorMessage] as? String ?? "AppleScript error"
                     return (false, msg)

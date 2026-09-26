@@ -722,7 +722,7 @@ final class AXMenuReader {
     private func runAppleScript(_ source: String) -> (output: String?, error: String?)? {
         var error: NSDictionary?
         guard let script = NSAppleScript(source: source) else { return (nil, "failed to compile AppleScript") }
-        let result = script.executeAndReturnError(&error)
+        let result = script.executeSerialized(error: &error)
         if let error {
             let message = error[NSAppleScript.errorMessage] as? String
                 ?? error.description
