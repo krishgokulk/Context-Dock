@@ -114,6 +114,18 @@ final class AXMenuReader {
         return items
     }
 
+    /// The live Accessibility menu tree and nothing else: never the AppleScript walk that
+    /// `allMenuItems` falls back to when AX comes back empty (Finder's unopened menus,
+    /// Electron apps). That walk drives System Events over the whole menu bar — seconds of
+    /// AppleScript — and a caller on the main thread that only tops up a cached list must
+    /// not pay it: the Corner froze on → into Finder and then crashed in AppleScriptQueue
+    /// (2026-09-26). Leaves the structural cache alone.
+    func liveAXMenuItems(for pid: pid_t, maxDepth: Int = 6) -> [AXMenuItem] {
+        activeScanPID = pid
+        defer { if activeScanPID == pid { activeScanPID = 0 } }
+        return flatten(menuTree(for: pid, maxDepth: maxDepth), includeGroups: true)
+    }
+
     /// Some apps (notably Finder) only populate a top-level menu's children into the
     /// Accessibility tree once that menu is OPENED. A passive scan then sees only the top
     /// row (File, Edit, Go…) with empty children. This scan presses each top-level menu

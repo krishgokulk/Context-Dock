@@ -462,6 +462,14 @@ struct AppChatPromptPill: View {
         .onChange(of: model.phase) { _, _ in syncFocus() }
         .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
+        // Global → a scope swaps `globalBody` for `legacyBody`, and the field in the new
+        // branch is a new text field. `fieldFocused` was already true, so nothing gave it the
+        // caret: Finder opened with no caret and the next → went nowhere (2026-09-26). Let go
+        // and claim again, so the field that is on screen is the one that has it.
+        .onChange(of: model.usesDockShell) { _, _ in
+            fieldFocused = false
+            DispatchQueue.main.async { syncFocus() }
+        }
         // A panel minimised or restored changes the pills without anything being typed, so
         // the row has to be asked again rather than waiting for the next keystroke.
         .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in

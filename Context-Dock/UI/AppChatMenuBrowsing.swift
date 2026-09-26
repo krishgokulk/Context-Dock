@@ -73,7 +73,9 @@ extension AppChatPromptModel {
         let pid = app.processIdentifier
         let bundleID = appBundleID
         Task { @MainActor [weak self] in
-            let live = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 7)
+            // AX only: the cached list already holds what a script read found, and a script
+            // read here runs on the main thread (see `liveAXMenuItems`).
+            let live = AXMenuReader.shared.liveAXMenuItems(for: pid, maxDepth: 7)
             guard let self, self.appBundleID == bundleID, !live.isEmpty else { return }
             self.allMenuItems = live + self.allMenuItems
             self.updateMenuMatches()

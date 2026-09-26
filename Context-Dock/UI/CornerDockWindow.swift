@@ -945,6 +945,22 @@ final class CornerDockController: NSObject {
             if prompt.applyPillRowKey(.tab) { return nil }
             return event
         }
+        // → on an empty field with nothing highlighted walks into the next app, or along the
+        // scopes — the field's own `onKeyPress(.rightArrow)` ladder, taken here as well so it
+        // does not depend on the field holding the caret. A scope swap had left it without
+        // one, and → stopped at Finder (2026-09-26).
+        if let panel, event.window === panel,
+            event.keyCode == 124,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+            chatPresentation.isVisible, chatPresentation.mode != .general,
+            prompt.phase.showsInput, prompt.phase != .chat,
+            prompt.rightArrowWalksFromEmptyField,
+            !ClipboardPanelController.shared.model.isKeyboardArmed
+        {
+            if prompt.scopeIntoFirstRunningApp() { return nil }
+            return chatPresentation.handleRightArrow(draft: "") ? nil : event
+        }
+
         guard let panel, event.window === panel,
               event.keyCode == 123,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,

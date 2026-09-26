@@ -24,6 +24,12 @@ extension AppChatPromptModel {
         return globalMatchIcons[index]
     }
 
+    /// → means "the next app / scope" rather than anything in the field: nothing typed (no
+    /// caret to move, no ghost to take), no row and no pill highlighted.
+    var rightArrowWalksFromEmptyField: Bool {
+        query.isEmpty && focusedRow == nil && focusedPillIndex == nil
+    }
+
     /// ←, Esc and Backspace while a result row is highlighted (C4–C6). Returns whether the
     /// key was spent. Backspace here only lets go of the row: it deletes nothing, runs
     /// nothing and quits nothing.

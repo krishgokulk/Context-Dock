@@ -404,6 +404,31 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(model.finderBrowseStack.isEmpty)
     }
 
+    @Test("→ walks from an empty field only: nothing typed, no row, no pill highlighted")
+    func rightArrowWalksOnlyFromAnEmptyField() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        #expect(model.rightArrowWalksFromEmptyField)
+        model.query = "saf"
+        #expect(!model.rightArrowWalksFromEmptyField)
+        model.query = ""
+        model.rows = [.cliSuggestion("git status")]
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(!model.rightArrowWalksFromEmptyField)
+    }
+
+    @Test("A second → leaves the first app for the next running one")
+    func rightArrowWalksPastTheFirstApp() {
+        let apps = AppChatPromptModel.orderedAppPills()
+        guard apps.count > 1 else { return }  // nothing to walk to on this Mac
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        #expect(model.scopeIntoFirstRunningApp())
+        #expect(model.appBundleID == apps[0].bundleID)
+        #expect(model.scopeIntoFirstRunningApp())
+        #expect(model.appBundleID == apps[1].bundleID)
+    }
+
     @Test("An app bundle is a file, not a folder")
     func appsAreNotFolders() {
         #expect(!AppChatPromptModel.isFolder(URL(fileURLWithPath: "/System/Applications/Calculator.app")))
