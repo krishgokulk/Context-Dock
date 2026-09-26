@@ -366,7 +366,7 @@ struct AppChatPromptPill: View {
 
     private var stripToolCount: Int {
         model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
+            clipboardVisible: clipboard.phase.announcesCopy,
             feedbackVisible: actionFeedback.glyph != nil)
     }
 
@@ -374,7 +374,7 @@ struct AppChatPromptPill: View {
         // The strip's own composition, not the raw counts: an app that is pinned and
         // running is one icon there, and a pin this build cannot resolve is none.
         let tools = model.dockToolCount(
-            clipboardVisible: clipboard.phase.isVisible,
+            clipboardVisible: clipboard.phase.announcesCopy,
             feedbackVisible: actionFeedback.glyph != nil)
         let plan = DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: tools)
@@ -959,7 +959,9 @@ struct AppChatPromptPill: View {
                 // current as a fresh one. Same transient signal as the composer's own.
                 // In Global the strip's own clipboard icon stays on screen in its trailing
                 // region, so the field does not draw a second one beside it.
-                if clipboard.phase.isVisible, !model.isGlobalScope {
+                // A composer draws its one clipboard icon at the end, next to the pin (owner
+                // 2026-09-26: two showed); only a search field keeps it here.
+                if clipboard.phase.announcesCopy, model.isSearchField, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
@@ -1023,7 +1025,7 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.phase.isVisible {
+                if clipboard.phase.announcesCopy {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a

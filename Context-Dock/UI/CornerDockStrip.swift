@@ -108,7 +108,7 @@ struct CornerDockStrip: View {
         let control: CGFloat = 26 + 10  // a 26-point control and the row's spacing before it
         var trailing: CGFloat = 14
         if model.isPointerInside { trailing += control }  // the pin
-        if clipboard.phase.isVisible { trailing += control }
+        if clipboard.phase.announcesCopy { trailing += control }
         if model.selection != nil { trailing += control }
         let pillEnd = layout.width - trailing
         let pillStart = pillEnd - AppChatPromptMetrics.appBarPillWidth(for: model)
@@ -146,7 +146,7 @@ struct CornerDockStrip: View {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins,
             tools: model.dockToolCount(
-                clipboardVisible: clipboard.phase.isVisible,
+                clipboardVisible: clipboard.phase.announcesCopy,
                 feedbackVisible: feedback.glyph != nil),
             fieldIcons: model.promptIconCount)
     }
@@ -260,10 +260,11 @@ struct CornerDockStrip: View {
                     .frame(width: 1, height: M.dockIconSize * 0.7)
                 // The corner's own cards, not the field's scope chips: a dock icon opens a
                 // surface beside the dock, it does not bring the field back with a chip in it.
-                if clipboard.phase.isVisible {
+                if clipboard.phase.announcesCopy {
                     toolIcon("doc.on.clipboard", title: "Clipboard") {
                         ClipboardPanelController.shared.show()
                     }
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                     // Hovering opens the card without taking the keyboard; a click arms it.
                     .onHover { inside in
                         guard inside else { return }
@@ -272,14 +273,16 @@ struct CornerDockStrip: View {
                         controller.model.summon()
                     }
                 }
-                if model.selection != nil {
+                // An app bar carries only the clipboard (`dockToolCount`): drawing more than
+                // it counts would run past the width it was given.
+                if model.selection != nil, !model.showsTabBar {
                     toolIcon("text.cursor", title: "Selection") {
                         CornerDockController.shared.showSelectionScopeFromDock()
                     }
                 }
                 // What the last action came to, for a few seconds — the dock's inline
                 // result, in the corner's own idiom: the clipboard's slot and lifetime.
-                if let result = feedback.glyph {
+                if let result = feedback.glyph, !model.showsTabBar {
                     ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
                         .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
@@ -290,6 +293,7 @@ struct CornerDockStrip: View {
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
+        .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
         .padding(.horizontal, plan.layout.leadingInset)
         .frame(height: M.dockHeight)
         // The pill's capsule, drawn behind the icons that became it — it arrives once they

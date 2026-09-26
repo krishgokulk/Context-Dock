@@ -869,9 +869,9 @@ final class AppChatPromptModel: ObservableObject {
     /// happened, the selection when there is one, the result of an action for a few seconds
     /// after it ran. Same rules as the field's own row.
     func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
-        // A Safari scope's bar is its tabs alone (owner 2026-09-25): the Context Dock's
-        // own things, not Global's.
-        guard !showsTabBar else { return 0 }
+        // An app bar is the app's own things (owner 2026-09-25) — and a copy's clipboard
+        // icon, for its few seconds, at the end after the pins and tabs (owner 2026-09-26).
+        guard !showsTabBar else { return clipboardVisible ? 1 : 0 }
         return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
     }
 

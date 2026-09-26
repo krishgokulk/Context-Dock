@@ -390,4 +390,12 @@ struct CornerAppPinsTests {
         model.syncListPhase()
         #expect(model.phase == .dock)
     }
+
+    @Test("The clipboard icon is a notification: up for the copy and the open card, not the mini pill")
+    func theClipboardIconIsANotification() {
+        #expect(PillPhase.collapsed.announcesCopy)
+        #expect(PillPhase.expanded.announcesCopy)
+        #expect(!PillPhase.mini.announcesCopy)
+        #expect(!PillPhase.hidden.announcesCopy)
+    }
 }
