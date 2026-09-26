@@ -92,6 +92,37 @@ struct CornerDockStrip: View {
     /// How far app `index` travels to reach its slot in the field's pill — found by bundle
     /// id, since the pill leads with Finder and the strip with its pinned apps. Anything
     /// the pill does not show lands on the pill's end, where its `+N` is.
+    /// An app bar gathers into its own pill in the compact field, right after "+", rather
+    /// than into a pill at the strip's end: the icons fly and shrink to where the pill draws
+    /// them, then hand over to it — Global's motion, aimed at the app bar's pill.
+    private var gathersIntoAppBar: Bool { model.fitsField && model.showsTabBar }
+
+    /// Where an app bar's icon lands, measured from the strip's leading edge. The field and
+    /// the strip share their trailing edge, so the pill's end is the strip's width less what
+    /// the field draws after the pill: its 14 of padding and the controls after the pill.
+    private func appBarGatherOffset(index: Int, plan: DockStripPlan) -> CGFloat {
+        let layout = plan.layout
+        let from = layout.leadingInset + M.dockSearchStubSpan
+            + CGFloat(index + 1) * layout.appSpread
+            + CGFloat(index) * (M.dockIconSize + M.dockIconGap) + M.dockIconSize / 2
+        let control: CGFloat = 26 + 10  // a 26-point control and the row's spacing before it
+        var trailing: CGFloat = 14
+        if model.isPointerInside { trailing += control }  // the pin
+        if clipboard.phase.isVisible { trailing += control }
+        if model.selection != nil { trailing += control }
+        let pillEnd = layout.width - trailing
+        let pillStart = pillEnd - AppChatPromptMetrics.appBarPillWidth(for: model)
+        // Pins lead, so an icon is past the hairline when it is a tab with a pin before it.
+        let icons = model.allRunningIcons
+        let pastDivider = icons.indices.contains(index)
+            && !model.isAppPinIcon(icons[index].id)
+            && icons.prefix(index).contains { model.isAppPinIcon($0.id) }
+        let size = AppChatPromptMetrics.appBarIconSize
+        let to = pillStart + 8 + CGFloat(index) * (size + AppChatPromptMetrics.appBarIconGap)
+            + (pastDivider ? 1 + AppChatPromptMetrics.appBarIconGap : 0) + size / 2
+        return to - from
+    }
+
     private func gatherOffset(index: Int, bundleID: String?, plan: DockStripPlan) -> CGFloat {
         let layout = plan.layout
         let pills = model.globalMatchIcons
@@ -157,16 +188,32 @@ struct CornerDockStrip: View {
             // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
             let count = plan.composition.apps.count + (plan.layout.overflow > 0 ? 1 : 0)
             ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
-                let stays = isDock || (isPill && inPill(slot.bundleID))
-                appIcon(slot, ids: ids)
-                    .scaleEffect(gathered ? M.pillIconScale : 1)
-                    .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
-                    .animation(gatherAnimation(index: index, count: count), value: gathered)
-                    // An app the pill does not carry goes as it leaves; the rest are the pill.
-                    .opacity(stays ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: stays)
-                    .allowsHitTesting(stays)
-                    .padding(.leading, plan.layout.appSpread)
+                if gathersIntoAppBar {
+                    // Flies and shrinks to its place in the field's pill, then hands over to
+                    // it: gone once it has arrived, back at once when the bar spreads out.
+                    let inPill = index < AppChatPromptModel.appBarVisibleIcons
+                    appIcon(slot, ids: ids)
+                        .scaleEffect(gathered
+                            ? AppChatPromptMetrics.appBarIconSize / M.dockIconSize : 1)
+                        .offset(x: gathered && inPill
+                            ? appBarGatherOffset(index: index, plan: plan) : 0)
+                        .animation(gatherAnimation(index: index, count: count), value: gathered)
+                        .opacity(isDock ? 1 : 0)
+                        .animation(inPill ? movingFade : .easeIn(duration: 0.12), value: isDock)
+                        .allowsHitTesting(isDock)
+                        .padding(.leading, plan.layout.appSpread)
+                } else {
+                    let stays = isDock || (isPill && inPill(slot.bundleID))
+                    appIcon(slot, ids: ids)
+                        .scaleEffect(gathered ? M.pillIconScale : 1)
+                        .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
+                        .animation(gatherAnimation(index: index, count: count), value: gathered)
+                        // An app the pill does not carry goes as it leaves; the rest are the pill.
+                        .opacity(stays ? 1 : 0)
+                        .animation(.easeInOut(duration: 0.2), value: stays)
+                        .allowsHitTesting(stays)
+                        .padding(.leading, plan.layout.appSpread)
+                }
             }
             if plan.layout.overflow > 0 {
                 let stays = isDock || (isPill && model.globalOverflowCount > 0)

@@ -377,4 +377,17 @@ struct CornerAppPinsTests {
         model.updateTabStrip()
         #expect(model.stripIcons.map(\.title) == ["Inbox", "Pull requests"])
     }
+
+    @Test("A click on the big bar does not open the field: a list refresh leaves the dock alone")
+    func aListRefreshLeavesTheDock() {
+        let (store, _) = temporaryStore()
+        let model = scope(store)
+        model.set(.prompt)
+        #expect(model.expandAppBar())
+        // What a tab switch sets off: the tabs re-read, the menu read lands.
+        model.refreshTabs()
+        model.updateMenuMatches()
+        model.syncListPhase()
+        #expect(model.phase == .dock)
+    }
 }

@@ -701,7 +701,10 @@ final class AppChatPromptModel: ObservableObject {
     /// The pill's height comes from its phase, so the phase has to follow the list — which
     /// can also arrive *after* typing, when the live menu read lands.
     func syncListPhase() {
-        guard phase.isVisible, phase != .chat else { return }
+        // Not from the dock: a list refresh — the menu read landing after a tab switch —
+        // opened the field under a click on the big bar (owner 2026-09-26: it opens on
+        // hover, not on a click). The dock opens by hover, typing or the magnifier only.
+        guard phase.isVisible, phase != .chat, phase != .dock else { return }
         set(restingInputPhase)
     }
 
