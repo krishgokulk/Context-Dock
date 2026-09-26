@@ -410,12 +410,16 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(AppChatPromptModel.isFolder(URL(fileURLWithPath: "/System/Applications")))
     }
 
-    @Test("⌘R re-reads an app's menus; Global Context has none of its own (C12)")
+    @Test("⌘R re-reads an app's menus; Global Context and Finder's file search have none (C12)")
     func refreshIsForAnAppScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summonGlobalContext()
         #expect(!model.refreshLiveMenus())
         model.summon(app: "Finder", bundleID: "com.apple.finder")
+        #expect(!model.refreshLiveMenus())
+        // An app that is not running: the scope accepts ⌘R, and the read finds nothing to
+        // walk — no live AX or AppleScript read runs inside the test host.
+        model.summon(app: "Nothing", bundleID: "com.example.not-running")
         #expect(model.refreshLiveMenus())
     }
 }

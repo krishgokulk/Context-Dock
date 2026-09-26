@@ -60,6 +60,13 @@ extension AppChatPromptModel {
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
+        // Finder's field is a file search; its menus are never listed here. And Finder is the
+        // app whose menus the AX tree does not hold until they are opened, so the read below
+        // came back empty and fell through to a System Events walk of the whole menu bar —
+        // an AppleScript run on the main thread. → from Global into Finder froze the field
+        // (no caret, the next → ignored) and then crashed in AppleScriptQueue (2026-09-26).
+        guard !isFinderScope else { return }
+
         // The AX read walks the whole menu bar, so it happens after the surface is up
         // rather than in front of it. Live items go first: where both have a row, the live
         // one is the one that is actually clickable, and dedupe keeps the first.
@@ -823,7 +830,9 @@ extension AppChatPromptModel {
     /// opened (a document opened, a tab moved). Global Context has no one app to read.
     @discardableResult
     func refreshLiveMenus() -> Bool {
-        guard !isGlobalScope, !appBundleID.isEmpty, !isCLIScope else { return false }
+        // Finder's field is a file search: there are no menus of its own to refresh.
+        guard !isGlobalScope, !appBundleID.isEmpty, !isCLIScope, !isFinderScope
+        else { return false }
         loadMenuItems()
         touch()
         return true
