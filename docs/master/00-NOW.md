@@ -17,6 +17,23 @@
 **5. Then** the inventory's own order: keyboard rules (B/C/E4) into a shared tested type →
 remaining scopes → owner decisions D9 / D11 / D12.
 
+**6. Safari actions: Ask AI + Save as Markdown** (owner 2026-09-26, after 5). Both are new app
+actions for Safari, pinnable through #94's pins.
+
+```
+Task 6 in docs/master/00-NOW.md: two Safari actions. Claim with a draft PR first; own branch from origin/general-chat-agent.
+- "Ask AI about this page": a Safari action in the Corner's app list (and pinnable). It sends the current page
+  (title, URL, readable text) to the Corner's own ask path — the same path Selection's AI rows use; no second AI path.
+  The answer shows in the Corner chat. Nothing is sent before the user runs the action.
+- "Save as Markdown": converts the current page's readable content to Markdown and saves it (Downloads by default,
+  the file name from the page title); shows where it saved, with Reveal in Finder. Never overwrites: add " 2", " 3".
+- Reuse existing code: the page reader the AI already uses for Safari; the Dock's action plumbing (AppAdapterManager).
+- Private pages (the SensitivePageGuard list: banking, passwords…) refuse both actions and say why.
+- Tests: both actions listed and pinnable for Safari only; Ask AI goes through the Corner ask path; Markdown file
+  name + no-overwrite; sensitive page refused. UI screenshots per AGENTS.md.
+End with the AGENTS.md hand-off.
+```
+
 ## Done
 
 | Date | Task | PR |
@@ -57,6 +74,7 @@ remaining scopes → owner decisions D9 / D11 / D12.
 | 2026-09-25 | The Corner's strip holds the user's **pins per app**: tabs, menu commands, app actions (e.g. Safari: Add to Bookmarks, Export as PDF, Save as Markdown, Ask AI) and the user's own actions. |
 | 2026-09-25 | Every Corner scope (frontmost app / Context Dock, Safari, …) uses the **same shell size, field and strip style as Global Context** — one look, not a wider or smaller variant per scope. |
 | 2026-09-25 | UI changes are checked by eye against a reference screenshot before a PR is called done (AGENTS.md); tests alone are not enough. |
+| 2026-09-26 | Build Safari **"Ask AI about this page"** and **"Save as Markdown"** as app actions (task 6, after task 5). |
 | 2026-09-26 | While typing, every Context Dock is compact: no tabs pill, no pinned pages, no extensions — just attach (+), send and pin; no expand. Replaces "Safari's tabs stay while a question is typed" (2026-09-25). An app's pins show in its bar and the field's pill at rest, ahead of the tabs. |
 
 ## Open decisions (owner)
