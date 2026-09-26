@@ -100,6 +100,27 @@ enum AppChatPromptMetrics {
     /// `ContextMatchDock`'s capsule, measured: 18-point icons 7 apart, a 24-point `+N`, and
     /// 8 of padding each side. The Global field keeps this room and the strip's own icons
     /// shrink into it, so both have to agree on the number.
+    /// The row spacing before the app bar's pill.
+    static let appBarPillSpacing: CGFloat = 10
+
+    /// The app bar's pill in a fitted field, or 0 where there is none.
+    @MainActor
+    static func appBarPillWidth(for model: AppChatPromptModel) -> CGFloat {
+        guard model.showsTabBar, !model.usesDockShell else { return 0 }
+        return pillWidth(
+            icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0)
+    }
+
+    /// The width an app scope's result card shares with its field: the fitted field's own,
+    /// pill included, so the card above never stands wider or narrower than the bar below.
+    /// Global's field is the strip's width and keeps the card at the base.
+    @MainActor
+    static func boardWidth(for model: AppChatPromptModel) -> CGFloat {
+        guard !model.usesDockShell else { return width }
+        let pill = appBarPillWidth(for: model)
+        return width + (pill > 0 ? pill + appBarPillSpacing : 0)
+    }
+
     static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
         let items = icons + (overflow ? 1 : 0)
         guard items > 0 else { return 0 }
@@ -263,7 +284,11 @@ enum AppChatPromptMetrics {
         /// The width the row was planned against. The shell and the row are two readings
         /// of one number and must be given the same budget, or the row overflows the glass
         /// it is drawn in and the leading magnifier is what gets clipped.
-        maximumWidth: CGFloat = dockMaximumWidth
+        maximumWidth: CGFloat = dockMaximumWidth,
+        /// An app's bar beside "+" in a fitted field: the pill's own width, which the field
+        /// adds to its base rather than squeezing the chip and the text to make room. Kept
+        /// while typing too, so the field does not jump as the pill steps aside.
+        appBarPillWidth: CGFloat = 0
     ) -> CGSize {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
@@ -272,7 +297,8 @@ enum AppChatPromptMetrics {
             return miniSize
         // `where` binds to one pattern only: both are spelled out.
         case .prompt where fitsContent, .suggesting where fitsContent:
-            return CGSize(width: width, height: fieldHeight + sheet)
+            let pill = appBarPillWidth > 0 ? appBarPillWidth + appBarPillSpacing : 0
+            return CGSize(width: width + pill, height: fieldHeight + sheet)
         case .dock, .prompt, .suggesting:
             // One width for the strip and the field it opens into, so the magnifier opening
             // is the only thing that moves: the wider of the row's own width and what the
@@ -351,7 +377,8 @@ struct AppChatPromptPill: View {
             promptIcons: model.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
             fitsContent: !model.usesDockShell,
-            maximumWidth: DockStripPlan.screenBudget)
+            maximumWidth: DockStripPlan.screenBudget,
+            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model))
     }
 
     /// ↑/↓ with no list to move through change layer, as the Dock's keys do — on an empty
@@ -535,7 +562,7 @@ struct AppChatPromptPill: View {
     private var legacyBody: some View {
         ZStack(alignment: .bottomLeading) {
             inputStack
-                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                .frame(width: legacyInputWidth, alignment: .bottomLeading)
                 .opacity(model.phase.showsInput ? 1 : 0)
                 .allowsHitTesting(model.phase.showsInput)
                 .animation(.easeOut(duration: 0.11), value: model.phase)
@@ -558,6 +585,13 @@ struct AppChatPromptPill: View {
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
+    }
+
+    /// The field's width: the base, plus an app bar's pill where it has one. Not in a
+    /// conversation, which keeps its own width.
+    private var legacyInputWidth: CGFloat {
+        guard model.phase != .chat else { return AppChatPromptMetrics.width }
+        return size.width
     }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
@@ -873,9 +907,8 @@ struct AppChatPromptPill: View {
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
                 if model.showsTabBar {
-                    // An app's bar: its pins, then its tabs, scrolling inside the pill.
-                    AppBarPill(model: model)
-                        .transition(.opacity)
+                    // An app's bar is drawn after "+", below — pins sit next to it.
+                    EmptyView()
                 } else if model.usesDockShell {
                     // The strip's own icons shrink into this spot and are the pill, so the
                     // field only keeps the room — drawing a second set here is what showed
@@ -958,6 +991,14 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
+                // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
+                // its pins, then its tabs, scrolling inside the pill. Gone while typing.
+                if model.showsTabBar, !isTyping,
+                    !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
+                {
+                    AppBarPill(model: model)
+                        .transition(.opacity)
+                }
                 // Gated on `entries.isEmpty` this stayed forever after the first copy of
                 // the session — not what the dock does. The dock's own trailing button
                 // reads a transient flag a fresh copy sets and a timer clears a few

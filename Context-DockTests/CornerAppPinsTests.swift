@@ -305,4 +305,28 @@ struct CornerAppPinsTests {
         model.updateMenuMatches()
         #expect(model.pinnableResult == nil)
     }
+
+    // MARK: One width
+
+    @Test("An app's field grows by its pill, and its result card is exactly as wide")
+    func fieldAndCardShareOneWidth() {
+        let (store, _) = temporaryStore()
+        let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
+        let base = AppChatPromptMetrics.width
+        #expect(AppChatPromptMetrics.boardWidth(for: model) == base, "no pins: the base field")
+
+        store.pin(.menuCommand(path: ["Window", "Centre"]), title: "Centre",
+            app: "com.anthropic.claudefordesktop")
+        store.pin(.menuCommand(path: ["Window", "Fill"]), title: "Fill",
+            app: "com.anthropic.claudefordesktop")
+        model.updateTabStrip()
+        let pill = AppChatPromptMetrics.appBarPillWidth(for: model)
+        #expect(pill == AppChatPromptMetrics.pillWidth(icons: 2, overflow: false))
+        let field = AppChatPromptMetrics.size(
+            for: .prompt, suggestions: 0, fitsContent: !model.usesDockShell,
+            appBarPillWidth: pill).width
+        #expect(field == base + pill + AppChatPromptMetrics.appBarPillSpacing)
+        #expect(AppChatListMetrics.size(
+            rows: 3, width: AppChatPromptMetrics.boardWidth(for: model)).width == field)
+    }
 }

@@ -378,7 +378,7 @@ final class CornerDockController: NSObject {
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount)
+                        ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt))
                         : (showsWindowRow
                             ? windowRowSize
                             : (showsPinPreview
@@ -579,7 +579,8 @@ final class CornerDockController: NSObject {
             promptIcons: prompt.promptIconCount,
             fieldHeight: AppChatPromptMetrics.fieldHeight(global: prompt.usesDockHeight),
             fitsContent: !prompt.usesDockShell,
-            maximumWidth: DockStripPlan.screenBudget)
+            maximumWidth: DockStripPlan.screenBudget,
+            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: prompt))
     }
 
     /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
@@ -596,7 +597,7 @@ final class CornerDockController: NSObject {
                     outcome: selection.showsOutcome,
                     folderPreview: selection.showsFolderPreview,
                     sendConfirm: selection.pendingSend != nil) : nil,
-            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount) : nil,
+            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt)) : nil,
             prompt: prompt.phase.isVisible ? promptSize : nil,
             anchor: anchor, panelWidth: panel?.frame.width
         ).shelf

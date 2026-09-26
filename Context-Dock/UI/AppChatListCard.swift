@@ -28,7 +28,7 @@ enum AppChatListMetrics {
     /// becoming a terminal — a real PTY flow is a different surface, and this is not it.
     static let outputHeight: CGFloat = 150
 
-    static func size(rows: Int, output: Bool = false) -> CGSize {
+    static func size(rows: Int, output: Bool = false, width: CGFloat = width) -> CGSize {
         CGSize(
             width: width,
             height: headerHeight + CGFloat(rows) * rowHeight
@@ -90,7 +90,8 @@ struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
 
     private var size: CGSize {
-        AppChatListMetrics.size(rows: model.listRowCount)
+        AppChatListMetrics.size(
+            rows: model.listRowCount, width: AppChatPromptMetrics.boardWidth(for: model))
     }
 
     var body: some View {
