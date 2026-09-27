@@ -327,6 +327,7 @@ struct InlineAdapterApprovalCard: View {
         case .shortcut: return request.action.shortcutName ?? "Shortcut"
         case .aiPrompt: return "AI prompt"
         case .pageJS: return "Page JavaScript"
+        case .savePageMarkdown: return "Save the page to Downloads as Markdown"
         }
     }
 
@@ -2140,6 +2141,7 @@ struct AdapterApprovalPopupView: View {
         case .shortcut: return "Shortcut: \(request.action.shortcutName ?? "")"
         case .aiPrompt: return "AI Prompt"
         case .pageJS: return "Page JavaScript"
+        case .savePageMarkdown: return "Save the page to Downloads as Markdown"
         }
     }
 

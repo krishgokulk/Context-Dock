@@ -108,49 +108,13 @@ enum ScopedGroundingBlocks {
     ) -> String {
         guard ScopedAppPromptBuilder.isBrowserBundle(bundleId) else { return "" }
 
-        var pageTitle = ""
-        var pageURL = ""
-        var pageText = ""
-        var selected = ""
-        var links: [SafariPageLink] = []
-
-        // The Safari Web Extension payload — reliable URL, readable page text, no automation
-        // prompt — when it is fresh enough to be describing the page on screen now.
-        if SafariBrowserBridge.shared.isFresh,
-            let context = SafariBrowserBridge.shared.currentContext()
-        {
-            pageTitle = context.title
-            pageURL = context.url
-            pageText = context.pageText
-            selected = context.selectedText
-            links = context.links
-        }
-
-        // The accessibility snapshot, for other browsers and for a disabled extension. The
-        // process is resolved from the scoped bundle id first: reading whichever app was
-        // last frontmost answers about the wrong window whenever the question is asked from
-        // somewhere other than the dock.
-        if pageText.isEmpty {
-            let browser = NSRunningApplication
-                .runningApplications(withBundleIdentifier: bundleId).first
-                ?? AppDelegate.shared?.previousFrontmostApp
-            if let browser {
-                let pid = browser.processIdentifier
-                let currentURL = liveURL ?? ""
-                var snapshot = AXWebReader.shared.cachedSnapshot(for: pid)
-                if snapshot?.text.isEmpty != false || snapshot?.isStale == true,
-                    !currentURL.isEmpty
-                {
-                    AXWebReader.shared.refresh(pid: pid, currentURL: currentURL)
-                    snapshot = AXWebReader.shared.cachedSnapshot(for: pid)
-                }
-                pageText = snapshot?.text ?? ""
-                if pageURL.isEmpty {
-                    pageURL = snapshot?.url.isEmpty == false ? (snapshot?.url ?? currentURL) : currentURL
-                }
-                if pageTitle.isEmpty { pageTitle = snapshot?.title ?? "" }
-            }
-        }
+        // One reader for the page, shared with the Safari actions (`BrowserPageReader`).
+        let read = BrowserPageReader.current(bundleId: bundleId, liveURL: liveURL)
+        let pageTitle = read?.title ?? ""
+        let pageURL = read?.url ?? ""
+        var pageText = read?.text ?? ""
+        let selected = read?.selectedText ?? ""
+        let links = read?.links ?? []
 
         // Every other tab the browser has open. `dorax_browser_tabs` has always been exposed
         // over MCP to other agents, while DoraX's own turn got the front page and nothing

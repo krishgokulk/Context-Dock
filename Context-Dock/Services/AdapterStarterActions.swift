@@ -15,7 +15,7 @@ enum AdapterStarterActions {
 
     /// Bump when bundled packs gain actions. Existing adapters then receive the
     /// new pack once, while later user deletions remain respected.
-    private static let catalogVersion = 3
+    private static let catalogVersion = 4
     private static var seededKey: String { "adapterStarterActionsSeededBundles.v\(catalogVersion)" }
 
     /// Bundle ids that have already been seeded once — never re-seed these,
@@ -41,6 +41,23 @@ enum AdapterStarterActions {
         if curated.isEmpty { curated = curatedActionsByAppName(appName) }
         return curated.isEmpty ? [genericAssistAction(appName: appName)] : curated
     }
+
+    /// "Ask AI about this page": a question about the open page, asked through the Corner's
+    /// own ask path. The wording must name "this page" — that is what grounds a browser
+    /// turn on the page (`FrontmostAppTaskPlan`), through the chat's own reader.
+    static let safariAskAboutPage = AdapterAction(
+        id: "starter.safari.askAboutPage", name: "Ask AI about this page",
+        icon: "sparkles", description: "Ask the AI about the page that is open",
+        triggers: ["ask", "ai", "summarize", "summarise", "explain", "page"], type: .aiPrompt,
+        aiPromptTemplate: "Summarise this page: what it is, its key points, and anything I should act on.",
+        accentColor: "purple")
+
+    /// "Save as Markdown": the open page, as a Markdown file in Downloads.
+    static let safariSaveAsMarkdown = AdapterAction(
+        id: "starter.safari.saveAsMarkdown", name: "Save as Markdown",
+        icon: "arrow.down.doc", description: "Save the open page to Downloads as Markdown",
+        triggers: ["save", "markdown", "md", "download", "export"], type: .savePageMarkdown,
+        accentColor: "teal")
 
     /// Curated starters for apps whose bundle id isn't stable (Safari web apps).
     private static func curatedActionsByAppName(_ appName: String) -> [AdapterAction] {
@@ -232,6 +249,9 @@ enum AdapterStarterActions {
                     triggers: ["reader", "read", "article"], type: .menubar,
                     menuPath: ["View", "Show Reader"], accentColor: "blue"
                 ),
+                // Task 6 (owner 2026-09-25): both pinnable through the app's pins.
+                safariAskAboutPage,
+                safariSaveAsMarkdown,
             ]
         case "com.apple.Preview":
             return [

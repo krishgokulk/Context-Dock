@@ -28,6 +28,7 @@ enum AdapterActionType: String, Codable, CaseIterable {
     case shortcut     = "shortcut"      // Run a macOS Shortcut by name
     case aiPrompt     = "aiPrompt"      // Pre-fill the AI chat with a context-aware prompt
     case pageJS       = "pageJS"        // Inject & run JavaScript in the active Safari page (userscript)
+    case savePageMarkdown = "savePageMarkdown" // Save the browser's current page to Downloads as Markdown
 
     var displayName: String {
         switch self {
@@ -42,13 +43,14 @@ enum AdapterActionType: String, Codable, CaseIterable {
         case .shortcut:    return "Run Shortcut"
         case .aiPrompt:    return "AI Prompt"
         case .pageJS:      return "Browser JavaScript"
+        case .savePageMarkdown: return "Save Page as Markdown"
         }
     }
 
     /// Execution risk — drives the warning badge + approval requirement.
     var riskLevel: AdapterActionRisk {
         switch self {
-        case .urlScheme, .openItem, .shortcut, .menubar: return .low
+        case .urlScheme, .openItem, .shortcut, .menubar, .savePageMarkdown: return .low
         case .aiPrompt, .pageJS: return .medium
         case .shell, .applescript, .jxa, .scriptFile, .cliTool: return .high
         }
@@ -802,7 +804,7 @@ final class AppAdapterManager: ObservableObject {
         case .aiPrompt:
             scriptType = "aiPrompt"
             script = (action.aiPromptTemplate ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        case .menubar, .pageJS:
+        case .menubar, .pageJS, .savePageMarkdown:
             return nil
         }
         guard !script.isEmpty else { return nil }
@@ -1279,6 +1281,19 @@ final class AppAdapterManager: ObservableObject {
         case .shortcut:
             guard let name = action.shortcutName else { return (false, "No shortcut name") }
             return await runShell("shortcuts run \"\(name)\"", context: context)
+
+        case .savePageMarkdown:
+            // Reads the page through the chat's own reader and refuses what SensitivePageGuard
+            // refuses; says where it saved, with Reveal in Finder.
+            let owner = targetBundleId
+                ?? adapters.first { $0.actions.contains { $0.id == action.id } }?.bundleId
+                ?? ""
+            switch await MainActor.run(body: { PageMarkdownExport.saveCurrentPage(bundleId: owner) }) {
+            case .saved(let url): return (true, url.path)
+            case .refused(let reason): return (false, reason)
+            case .unreadable: return (false, "The page could not be read")
+            case .failed(let message): return (false, message)
+            }
 
         case .aiPrompt:
             // ContentView handles this type: we return the resolved prompt so it can be injected
