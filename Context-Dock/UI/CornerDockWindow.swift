@@ -1005,11 +1005,25 @@ final class CornerDockController: NSObject {
         guard let panel, panel.isKeyWindow else { return }
         panel.styleMask = [.borderless, .nonactivatingPanel]
         keyboardState.stoodDown()
-        if NSApp.isActive {
-            AppDelegate.shared?.previousFrontmostApp?.activate(options: [
-                .activateIgnoringOtherApps
-            ])
+        guard NSApp.isActive else {
+            resignKeyByReordering(panel)
+            return
         }
+        // Handing the app in front its activation takes the key status away by itself. The
+        // off-and-on reorder below ran here as well and was seen: after a ⌘⌘ launch the strip
+        // blinked out and back a second after folding, then slid away (owner 2026-09-27).
+        AppDelegate.shared?.previousFrontmostApp?.activate(options: [
+            .activateIgnoringOtherApps
+        ])
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel = self.panel, panel.isKeyWindow else { return }
+            self.resignKeyByReordering(panel)
+        }
+    }
+
+    /// A non-activating panel can stay key while DoraX is not the active app, and only
+    /// taking it off screen and back ends that. It is visible, so it is kept for that case.
+    private func resignKeyByReordering(_ panel: NSPanel) {
         let wasShown = panel.isVisible
         panel.orderOut(nil)
         if wasShown { panel.orderFrontRegardless() }
