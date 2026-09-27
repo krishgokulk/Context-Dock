@@ -655,15 +655,31 @@ struct AppChatPromptPill: View {
     }
 
     /// What a click in the field does (`requestComposerFocus`), after the scope under the
-    /// field changed — only while the Corner already holds the keyboard, so an app the user
-    /// switched to themselves never loses its keys to this.
+    /// field changed — only when the change came from the user's own keys in the Corner:
+    /// DoraX active and the Corner the key window.
+    ///
+    /// It asked only `keyboardState.isArmed` before, which stays true after the user clicks
+    /// away. The Corner follows the frontmost app, so clicking another app changed the scope,
+    /// this activated DoraX (`NSApp.activate(ignoringOtherApps:)`), and the app the user had
+    /// just clicked lost its keys every time — "while the dock is active I can't use the
+    /// frontmost app" (owner, 2026-09-27).
     private func reclaimCaretAfterScopeChange() {
-        guard keyboardState.isArmed, model.phase.showsInput else { return }
+        guard Self.scopeChangeCameFromTheCorner(
+            appIsActive: NSApp.isActive, keyWindowIsCorner: NSApp.keyWindow is CornerDockPanel,
+            armed: keyboardState.isArmed, showsInput: model.phase.showsInput)
+        else { return }
         fieldFocused = false
         DispatchQueue.main.async {
             CornerDockController.shared.requestComposerFocus()
             syncFocus()
         }
+    }
+
+    /// Pure: whether a scope change may take the caret back — the Corner is where the user is.
+    nonisolated static func scopeChangeCameFromTheCorner(
+        appIsActive: Bool, keyWindowIsCorner: Bool, armed: Bool, showsInput: Bool
+    ) -> Bool {
+        appIsActive && keyWindowIsCorner && armed && showsInput
     }
 
     private func syncFocus() {
