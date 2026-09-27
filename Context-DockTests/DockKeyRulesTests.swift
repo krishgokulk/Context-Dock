@@ -478,3 +478,42 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(model.refreshLiveMenus())
     }
 }
+
+@Suite("Corner caret never steals the frontmost app")
+struct CornerCaretStealTests {
+
+    @Test("A scope change takes the caret only when the user is in the Corner")
+    func onlyFromTheCorner() {
+        typealias P = AppChatPromptPill
+        #expect(P.scopeChangeCameFromTheCorner(
+            appIsActive: true, keyWindowIsCorner: true, armed: true, showsInput: true))
+        // The user clicked another app: DoraX is not active. The frontmost app keeps its keys.
+        #expect(!P.scopeChangeCameFromTheCorner(
+            appIsActive: false, keyWindowIsCorner: false, armed: true, showsInput: true))
+        // DoraX active, but another of its windows is key (Settings, a panel).
+        #expect(!P.scopeChangeCameFromTheCorner(
+            appIsActive: true, keyWindowIsCorner: false, armed: true, showsInput: true))
+        #expect(!P.scopeChangeCameFromTheCorner(
+            appIsActive: true, keyWindowIsCorner: true, armed: false, showsInput: true))
+        #expect(!P.scopeChangeCameFromTheCorner(
+            appIsActive: true, keyWindowIsCorner: true, armed: true, showsInput: false))
+    }
+
+    @Test("A phase change takes the keys only when the field opens, or the Corner already has them")
+    func phaseChangesLeaveTheFrontmostAppAlone() {
+        typealias K = CornerKeyboardOwner
+        // Opening the field is a request: hotkey, hover, a typed letter.
+        #expect(K.phaseChangeMayTakeKeys(from: .hidden, to: .prompt, cornerHasKeys: false))
+        #expect(K.phaseChangeMayTakeKeys(from: .dock, to: .prompt, cornerHasKeys: false))
+        #expect(K.phaseChangeMayTakeKeys(from: .mini, to: .prompt, cornerHasKeys: false))
+        // Open → open while the user is in another app: the list closing, an answer landing,
+        // following the app they clicked. Their app keeps its keys.
+        #expect(!K.phaseChangeMayTakeKeys(from: .suggesting, to: .prompt, cornerHasKeys: false))
+        #expect(!K.phaseChangeMayTakeKeys(from: .prompt, to: .chat, cornerHasKeys: false))
+        #expect(!K.phaseChangeMayTakeKeys(from: .chat, to: .prompt, cornerHasKeys: false))
+        // The user is in the Corner: nothing is taken from anyone.
+        #expect(K.phaseChangeMayTakeKeys(from: .suggesting, to: .prompt, cornerHasKeys: true))
+        // Letting go is always allowed.
+        #expect(K.phaseChangeMayTakeKeys(from: .prompt, to: .dock, cornerHasKeys: false))
+    }
+}
