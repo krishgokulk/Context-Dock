@@ -10,14 +10,8 @@
 
 ## In progress
 
-**Bug fix: `AppleScriptQueue` re-entrancy crash** (crash reports 2026-09-26 16:46, found testing #98),
-in the session that owns #95. `AppleScriptQueue.sync` guards by queue, not by thread: a script that
-starts on the main thread while another script there is waiting for its reply calls `shared.sync` on
-the queue its own thread already holds, and libdispatch traps. Trigger seen: the Dock's
-Finder-selection timer. **Done means the queue itself is fixed** (per-thread ownership, e.g. a
-recursive lock), not only that timer; the Dock's menu reader must not run the System Events fallback
-on the main thread (the Corner's is AX-only since #98). Tests: a nested call on one thread returns;
-two threads never run at once.
+**Task 6 — Safari actions: Ask AI + Save as Markdown.** Branch `claude/safari-actions`.
+(The `AppleScriptQueue` re-entrancy fix that stood here landed in #100, 2026-09-27.)
 
 ## Next, in order
 
