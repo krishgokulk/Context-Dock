@@ -37,6 +37,21 @@ struct AppearanceSettingsPage: View {
                             """)
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
+
+                        Divider().padding(.vertical, 6)
+
+                        Toggle(isOn: $settings.cornerDockAutoHide) {
+                            Text("Automatically hide and show the dock")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        Text(
+                            """
+                            At rest the dock slides below the screen. Move the pointer to the \
+                            bottom edge under it to bring it back — the way the macOS Dock does.
+                            """)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 10)
                 }

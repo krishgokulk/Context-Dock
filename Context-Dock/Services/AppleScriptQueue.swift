@@ -10,9 +10,9 @@ import Foundation
 /// `TUASApplication::SetSupportsOperator` (2026-09-26). Serial, so scripts wait their turn
 /// instead of racing; each one is short, so the wait is too.
 ///
-/// Every `NSAppleScript` in the app executes through here — either `shared.async` from
-/// code that was already off the main thread, or `executeSerialized(error:)` where the
-/// caller needs the result in line.
+/// Every `NSAppleScript` in the app executes through `executeSerialized(error:)`, which
+/// takes the script lock; `shared.async` is where code that wants a script off the main
+/// thread sends it.
 enum AppleScriptQueue {
     nonisolated private static let marker = DispatchSpecificKey<Void>()
 
@@ -26,15 +26,46 @@ enum AppleScriptQueue {
     /// True while running a block on `shared`.
     nonisolated static var isCurrent: Bool { DispatchQueue.getSpecific(key: marker) != nil }
 
-    /// Runs `work` serialized with every other script and returns its result.
+    /// One script at a time, recursively: another thread waits its turn, and the thread
+    /// already holding it runs in place.
     ///
-    /// Already on the queue (a script started from inside a queued block), it runs in place:
-    /// a `sync` onto a serial queue from that same queue never returns. Otherwise it waits
-    /// its turn with `sync`, which GCD runs on the calling thread — so a script the main
-    /// thread used to run still runs on the main thread, only never beside another one.
+    /// A lock, not `shared.sync`. Swift's `DispatchQueue.sync` goes through `asyncAndWait`,
+    /// which may run the block on a thread other than the caller's, and a script waiting for
+    /// its Apple Event reply spins the run loop — the main queue's pending work, another
+    /// script included, runs inside it on the thread that is holding the queue but is not on
+    /// it. Both crashed (2026-09-26: `__DISPATCH_WAIT_FOR_QUEUE__`, then a trap in
+    /// `_syncHelper`). A recursive lock is owned by a thread, which is exactly the question.
+    nonisolated private static let lock: NSRecursiveLock = {
+        let lock = NSRecursiveLock()
+        lock.name = "com.krishgokul.ContextDock.applescript"
+        return lock
+    }()
+
+    nonisolated private static let depthKey = "com.krishgokul.ContextDock.applescript.depth"
+
+    /// True while this thread is inside `sync` — including from code the run loop runs
+    /// during a script.
+    nonisolated static var isHeldByThisThread: Bool {
+        ((Thread.current.threadDictionary[depthKey] as? Int) ?? 0) > 0
+    }
+
+    /// Runs `work` serialized with every other script and returns its result, on the
+    /// calling thread — a script the main thread used to run still runs on the main thread,
+    /// only never beside another one.
     nonisolated static func sync<T>(_ work: () throws -> T) rethrows -> T {
-        if isCurrent { return try work() }
-        return try shared.sync(execute: work)
+        lock.lock()
+        let dictionary = Thread.current.threadDictionary
+        let depth = (dictionary[depthKey] as? Int) ?? 0
+        dictionary[depthKey] = depth + 1
+        defer {
+            if depth == 0 {
+                dictionary.removeObject(forKey: depthKey)
+            } else {
+                dictionary[depthKey] = depth
+            }
+            lock.unlock()
+        }
+        return try work()
     }
 }
 

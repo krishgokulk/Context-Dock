@@ -2480,7 +2480,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastHotkeyFiredAt = now
 
         let presentation = CornerDockController.shared.chatPresentation
-        if presentation.isVisible, presentation.mode == .globalContext {
+        // Slid below the screen by auto-hide is not "open": the press brings it up.
+        if presentation.isVisible, presentation.mode == .globalContext,
+            !CornerDockController.shared.isAutoHidden
+        {
             presentation.dismiss()
             return
         }

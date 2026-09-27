@@ -988,6 +988,18 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// Straight to the dock, whatever "fold on its own" says: auto-hide's edge summons the
+    /// resting strip, the way the macOS Dock shows its icons — typing is what opens the field.
+    @discardableResult
+    func restAsDockNow() -> Bool {
+        guard usesDockShell, !isAnswering,
+            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        cancel()
+        set(.dock)
+        return true
+    }
+
     /// The pointer rested on an app bar's pill: show the big bar of its pins and tabs at
     /// once (owner 2026-09-26), as resting on Global's small pill does. Asked for by hand,
     /// so "keep open" does not refuse it — that setting is about not folding on its own.

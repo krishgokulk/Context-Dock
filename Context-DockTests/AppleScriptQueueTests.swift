@@ -6,10 +6,17 @@ import Testing
 /// `AppleScriptQueue`. These pin the two properties that keep that from deadlocking or
 /// racing — no script is executed (the suite is offline).
 struct AppleScriptQueueTests {
-    @Test func syncFromOffTheQueueRunsOnIt() {
-        #expect(!AppleScriptQueue.isCurrent)
-        let inside = AppleScriptQueue.sync { AppleScriptQueue.isCurrent }
-        #expect(inside)
+    /// On the caller's own thread, holding the lock — never hopped onto the queue's thread,
+    /// which is what `DispatchQueue.sync`'s `asyncAndWait` does and what crashed.
+    @Test func syncRunsOnTheCallingThreadHoldingTheLock() {
+        #expect(!AppleScriptQueue.isHeldByThisThread)
+        let caller = Thread.current
+        let (sameThread, held) = AppleScriptQueue.sync {
+            (Thread.current == caller, AppleScriptQueue.isHeldByThisThread)
+        }
+        #expect(sameThread)
+        #expect(held)
+        #expect(!AppleScriptQueue.isHeldByThisThread)
     }
 
     /// A script started from inside a queued block must not `sync` onto the same serial
