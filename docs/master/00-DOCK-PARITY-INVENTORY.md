@@ -73,17 +73,17 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D1 | Global Context search (apps, menus, files, commands, extensions, plugins, browser URLs) | ✅ | `CornerGlobalContextParityTests` (5 tests: same index, result kinds, row filtering) |
 | D2 | Frontmost-app scope: its menus + actions | 🟡 | `CornerFrontmostAppPillsTests`; plan 2026-09-08 phases — see `00-DOCK-AND-CORNER.md` §4 |
 | D3 | CLI tool scope | ✅ | `CornerCLIScopeTests` (7) |
-| D4 | System command scope | 🟡 | → no longer runs a command row (checked on the app 2026-09-25: → on "Sleep" does nothing; `CornerRightArrowTests`). Stepping into a system command's panel not yet verified |
-| D5 | Global Extension opens its own board | 🟡 | `GlobalContextRow.run`: "in the corner the extension opens in the board" — no test named |
-| D6 | Plugin: panel or one-shot run | 🟡 | Same file: Corner opens the panel inline; no Corner test named |
-| D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ❓ | `AppChatPromptModel` has Finder search; browse & attach not verified |
+| D4 | System command scope | ✅ | Task 7 (#106): in the Corner's Global results the rows are the Dock's pills, and a Global Command's pill ran the command outright (↩ on "Sleep" slept the Mac). A row whose search document is a command, extension or CLI tool now steps into it in the board, from ↩ and → (`returnDoesNotRunTheCommand`, `rightArrowStepsIntoTheTool`, `scopeDocumentKinds`); → never runs (#81, `CornerRightArrowTests`). Hand check owed |
+| D5 | Global Extension opens its own board | ✅ | Task 7 (#106): `scopeIntoExtension` opens it in the Corner's board, now also from the Dock's own pill for it (`scopeDocumentKinds`). Hand check owed |
+| D6 | Plugin: panel or one-shot run | 🟡 | Same as the Dock from Global search: a one-shot runs, a panel plugin opens its panel window (`GlobalContextRow.run` / the Dock's pill). Inline in the Corner's board only from a strip pin (`pluginCardPinID`). Owner to decide whether search should open it in the board too |
+| D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ✅ | Browse: → on a folder, Backspace climbs (C11, #98, `foldersAreWalkedByKey`). Attach: "+" ▸ Attach Front Finder Folder attaches the front window's folder, once (task 7, #106, `attachFrontFinderFolder`). Desktop-only mode is the Dock's way of acting like Global when Finder shows only the desktop; the Corner's Finder scope is a file search either way, so it has no separate mode — owner to confirm |
 | D8 | Clipboard as a scope | ✅ | Separate Corner pill + card (`CornerDockLayoutTests`, `CornerKeyboardOwnerTests`) |
 | D9 | Notifications compact scope | ❌ | No Corner code found |
 | D10 | Selection Scope with actions | ✅ | #84, checked on the app row by row 2026-09-25 (TextEdit, Finder). The Dock's rows through `SelectionActionProviding` on the captured selection (`theDocksOwnRowsReachTheCard`, `aRowRunsOnTheCapturedSelection`, `keysChooseAndRun`, `closeAndEscapeClose`); answers inside the card (`theAnswerIsDrawnInTheCard`, `followUpsAndEscape`); Share (`shareSelectionInTheCard`). Extraction still owed: #83 |
 | D11 | Quick Note split editor (list + editor, ⌘N new note, ↩ asks AI into the note) | ❌ | Dock-only (`NotepadScopeView`); the Quick Note hotkey opens a separate floating note |
 | D12 | Mail find actions | ❌ | No Corner code found |
 | D13 | Safari page actions | ✅ | Tabs, in Safari's **Context Dock** (owner 2026-09-25): the field folds away at rest — on idle or hovering its pill — into a bar of the app's own things, its open tabs (no Global pins or tools), the way Global Context folds into its running apps; typing or the app icon expands it back; the field carries the tabs as a small pill, "+N" past what fits; a click on a tab (big or small) switches Safari. Same shell and height as Global. From the Dock's loader (`SafariTabManager`) through the shared `BrowserTabList`. Pinned actions and pinned tabs: task 5 in `00-NOW.md`. Checked on the app 2026-09-25. `CornerSafariTabsTests` |
-| D14 | Share actions | ❓ | Not verified |
+| D14 | Share actions | ✅ | Share of the selection runs in the Selection card with the Mac's share destinations (X1: `shareSelectionInTheCard`, `typingNarrowsTheDestinations`, `shareTheAnswer`); an app's bar carries Share (the Safari bar's share icon). Hand check owed for the bar's Share |
 
 ## E. Chat
 
@@ -131,6 +131,7 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 *2026-09-25: D10 🟡 → ✅ (#84); D13 ❌ → ✅.*
 *2026-09-26: C4, C5, C6, C7, C9 ❌ → ✅ (task 5, #96) — the rules now live in `DockKeyRules`, which the Dock's monitor and the Corner's both read.*
 *2026-09-26: B3, B4, C1, C3, C10, C11, C12, E4 → ✅; B2 → — (task 5 part 2, #98).*
+*2026-09-28: D4, D5, D7, D14 → ✅; D6 stays 🟡 with an owner question (task 7, #106).*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,

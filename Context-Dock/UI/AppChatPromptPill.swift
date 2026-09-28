@@ -1235,6 +1235,11 @@ struct AppChatPromptPill: View {
             Button("Take Screenshot") { capture(interactive: false) }
             Button("Capture Area") { capture(interactive: true) }
             Button("Capture Text") { captureText() }
+            // Finder: the folder its front window shows, the Dock's "add this folder" (D7).
+            if model.isFinderScope {
+                Divider()
+                Button("Attach Front Finder Folder") { model.attachFrontFinderFolder() }
+            }
         } label: {
             controlGlyph("plus")
         }

@@ -826,6 +826,36 @@ extension AppChatPromptModel {
             .map { $0 }
     }
 
+    // MARK: Finder's front folder (D7)
+
+    /// Attaches the folder Finder's front window shows, as the Dock's "add this folder"
+    /// does, so the next question is about it. Read when chosen — it is an AppleScript
+    /// round trip — never while a menu is drawn.
+    @discardableResult
+    func attachFrontFinderFolder(
+        read: () -> String? = { ContextDetector.shared.getCurrentFinderDirectory() }
+    ) -> Bool {
+        guard isFinderScope, let folder = Self.finderFolderToAttach(path: read()) else {
+            AppToast.show("No Finder window is open", icon: "folder.badge.questionmark", duration: 3)
+            return false
+        }
+        guard !attachments.contains(folder) else { return false }
+        attach(folder)
+        return true
+    }
+
+    /// Pure: the folder a Finder path names, or nil when it is empty or not a folder.
+    nonisolated static func finderFolderToAttach(path: String?) -> URL? {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: trimmed).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return nil }
+        return url
+    }
+
     // MARK: Backspace on an empty field, ⌘R
 
     /// Backspace on an empty field, by the Dock's ladder (DockKeyRules.emptyBackspace): a
@@ -1135,9 +1165,31 @@ extension AppChatPromptModel {
         case .file:
             // A folder in the Finder scope is stepped into, as the Dock's → does (C11).
             return enterFocusedFolder()
-        case .dock, .command, .action:
+        case .dock(let pill):
+            // A Dock row for a command, extension or tool: into it, like its `.global` twin.
+            if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup) {
+                focusedMenuIndex = nil
+                run(.global(doc))
+                return true
+            }
+            return false
+        case .command, .action:
             return false
         }
+    }
+
+    /// The scope a Dock row stands for — a Global Command, a Global Extension, a CLI tool —
+    /// found through its search document, or nil for every other row.
+    nonisolated static func scopeDocument(
+        for pill: DockPill,
+        lookup: (String) -> GlobalSearchService.SearchDocument? = {
+            GlobalSearchService.shared.document(withID: $0)
+        }
+    ) -> GlobalSearchService.SearchDocument? {
+        guard let id = pill.searchDocumentID, let doc = lookup(id),
+            rightArrowStepsInto(doc.action)
+        else { return nil }
+        return doc
     }
 
     /// Pure: whether ↑/↓ try the layer before the list — an empty field with nothing
@@ -1193,6 +1245,13 @@ extension AppChatPromptModel {
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }
+            // A command, extension or tool from Global steps in, in this board — the Dock's
+            // closure for it runs the command outright ("Sleep" slept the Mac from ↩) or
+            // opens a window beside the Corner (task 7, inventory D4–D5).
+            if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup) {
+                run(.global(doc))
+                return
+            }
             query = ""
             updateMenuMatches()
             touch()

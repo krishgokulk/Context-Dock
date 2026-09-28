@@ -10,9 +10,7 @@
 
 ## In progress
 
-**Task 7 — remaining scopes** (inventory D4–D7, D14): a system command's own panel, a Global
-Extension's board, a plugin's panel or one-shot run, Finder's desktop-only mode and "attach this
-folder", Share actions. Each row gets a test and its inventory mark.
+*None.* Task 7 (remaining scopes) is done in #106. Next is the owner's call, below.
 
 ## Next, in order
 
@@ -40,6 +38,7 @@ freeze for apps with an empty AX menu tree (Finder, Electron apps).
 | 2026-09-27 | The Corner no longer pulls DoraX in front of the app you are using; no blink when the strip hands the keyboard back | #101 |
 | 2026-09-28 | Safari actions (task 6): Ask AI about this page, Save as Markdown (Downloads, never overwrites, Reveal); sensitive pages refused | #102 |
 | 2026-09-28 | Per-app settings card: pin beside +, ⚙ in the app chip opens Can do / Sees now / Allowed | #105 |
+| 2026-09-28 | Remaining scopes (task 7): a Global Command's row steps in, never runs (D4, D5); attach Finder's front folder (D7); D14 marked; D6 left for the owner | #106 |
 
 ## Owner decisions (append-only)
 

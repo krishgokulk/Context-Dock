@@ -220,6 +220,10 @@ final class AppChatPromptModel: ObservableObject {
     @Published var returnsToGlobalScope = false
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
+    var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
+        GlobalSearchService.shared.document(withID: $0)
+    }
     /// The folders → has stepped into in the Finder scope, outermost first. Empty while the
     /// scope is a search. Backspace on an empty field climbs back out one at a time (C11, B3).
     @Published var finderBrowseStack: [URL] = []
