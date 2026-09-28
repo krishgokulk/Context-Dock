@@ -363,6 +363,8 @@ struct AppChatPromptPill: View {
     @ObservedObject private var actionFeedback = CornerActionFeedback.shared
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
+    /// The app's settings card, open from the chip.
+    @State private var showsScopeCard = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
 
@@ -1321,10 +1323,24 @@ struct AppChatPromptPill: View {
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
+            // The app's settings card lives in its chip (owner 2026-09-28, layout C).
+            Image(systemName: "gearshape")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.09), in: Capsule())
+        .background(
+            Color.primary.opacity(showsScopeCard ? 0.16 : 0.09), in: Capsule())
+        .contentShape(Capsule())
+        .onTapGesture { showsScopeCard.toggle() }
+        .help("What DoraX can do in \(model.appName)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(model.appName) settings")
+        .popover(isPresented: $showsScopeCard, arrowEdge: .top) {
+            AppScopeCard(model: model, appIcon: appIcon) { showsScopeCard = false }
+        }
+        .onChange(of: showsScopeCard) { _, open in model.isShowingScopeCard = open }
     }
 
     private var chipIconShown: Bool { model.phase != .dock }

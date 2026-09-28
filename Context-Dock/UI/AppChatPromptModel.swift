@@ -246,6 +246,15 @@ final class AppChatPromptModel: ObservableObject {
     /// choice down rather than only holding it in memory for as long as this object exists.
     @Published private(set) var isPinned = AppChatPromptModel.pinStore.bool(
         forKey: AppChatPromptModel.pinnedDefaultsKey)
+    /// The app's settings card is open over the chip. It hangs outside the panel, so the
+    /// pointer "leaving" onto it must not fold the field out from under it: the idle clock
+    /// stops while it is open and starts again when it closes.
+    @Published var isShowingScopeCard = false {
+        didSet {
+            guard isShowingScopeCard != oldValue else { return }
+            if isShowingScopeCard { cancel() } else { touch() }
+        }
+    }
 
     /// Where the pin preference lives. The app's own defaults — except under the test
     /// suite, which runs inside a copy of this app and so shares its domain: a developer
@@ -794,7 +803,8 @@ final class AppChatPromptModel: ObservableObject {
     /// Any interaction puts the clock back, unless the surface is pinned.
     func touch() {
         // A dock has no clock to put back.
-        guard !isPinned, !isAnswering, phase.isVisible, phase != .dock else { return }
+        guard !isPinned, !isAnswering, !isShowingScopeCard, phase.isVisible, phase != .dock
+        else { return }
         armForIdle()
     }
 
