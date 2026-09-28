@@ -1348,6 +1348,22 @@ extension LauncherView {
         reloadMenuForApp(app)
     }
 
+    /// ⌘R (C12): read the Dock's app's live menus again, through the Corner's rule and the
+    /// shared `AXMenuReader.rereadMenus`, then reload the list from what it found. Finder and
+    /// CLI tools decline.
+    @discardableResult
+    func rereadLiveMenus() -> Bool {
+        guard let app = contextTargetApp(),
+            DockKeyRules.rereadsMenus(
+                appBundleID: app.bundleIdentifier ?? "",
+                isGlobalScope: isGlobalContextActive, isCLIScope: isCLIToolScopeLocked,
+                isFinder: app.bundleIdentifier == "com.apple.finder")
+        else { return false }
+        AXMenuReader.shared.rereadMenus(for: app.processIdentifier)
+        reloadMenuForApp(app)
+        return true
+    }
+
     func reloadMenuForApp(_ app: NSRunningApplication) {
         guard showContextInDock, !app.isTerminated else { return }
         let pid = app.processIdentifier

@@ -955,8 +955,15 @@ extension AppChatPromptModel {
     @discardableResult
     func refreshLiveMenus() -> Bool {
         // A Finder file search has no menus of its own to refresh.
-        guard !isGlobalScope, !appBundleID.isEmpty, !isCLIScope, !isFinderFileSearch
+        guard DockKeyRules.rereadsMenus(
+            appBundleID: appBundleID, isGlobalScope: isGlobalScope, isCLIScope: isCLIScope,
+            isFinder: isFinderFileSearch)
         else { return false }
+        if let app = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == appBundleID && !$0.isTerminated
+        }) {
+            AXMenuReader.shared.rereadMenus(for: app.processIdentifier)
+        }
         loadMenuItems()
         touch()
         return true
