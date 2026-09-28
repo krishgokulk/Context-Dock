@@ -57,7 +57,28 @@ final class AXMenuReader {
         return AXContextReader.browserBundleIds.contains(bundleIdentifier)
             && skipRecursionMenuTitles.contains(menuTitle.lowercased())
     }
-    private init() {}
+    /// The System Events walk of an app's whole menu bar, given the app's name. A seam so
+    /// tests never run AppleScript; the app always uses `systemEventsMenuWalk`.
+    typealias ScriptedMenuWalk = @Sendable (_ appName: String) -> (output: String?, error: String?)
+
+    private let scriptedMenuWalk: ScriptedMenuWalk
+    private let appNameForPID: (pid_t) -> String?
+    private let axMenuTree: ((pid_t, Int) -> [AXMenuItem])?
+
+    init(
+        scriptedMenuWalk: @escaping ScriptedMenuWalk = { AXMenuReader.systemEventsMenuWalk(appName: $0) },
+        appNameForPID: @escaping (pid_t) -> String? = AXMenuReader.runningAppName(for:),
+        axMenuTree: ((pid_t, Int) -> [AXMenuItem])? = nil
+    ) {
+        self.scriptedMenuWalk = scriptedMenuWalk
+        self.appNameForPID = appNameForPID
+        self.axMenuTree = axMenuTree
+    }
+
+    nonisolated static func runningAppName(for pid: pid_t) -> String? {
+        NSWorkspace.shared.runningApplications
+            .first(where: { $0.processIdentifier == pid })?.localizedName
+    }
 
     // MARK: - Structural cache
 
@@ -384,7 +405,7 @@ final class AXMenuReader {
     func allMenuItems(for pid: pid_t, maxDepth: Int = 5) -> [AXMenuItem] {
         activeScanPID = pid
         defer { if activeScanPID == pid { activeScanPID = 0 } }
-        let tree = menuTree(for: pid, maxDepth: maxDepth)
+        let tree = axMenuTree?(pid, maxDepth) ?? menuTree(for: pid, maxDepth: maxDepth)
         let flattened = flatten(tree, includeGroups: true)
         let probe = lastMenuBarProbe[pid] ?? "probe unavailable"
         let trusted = AXIsProcessTrusted() ? "trusted" : "not_trusted"
@@ -394,15 +415,92 @@ final class AXMenuReader {
             return flattened
         }
 
-        // AX returned nothing — try AppleScript walk (handles Electron, Catalyst, etc.)
-        let appElement = AXUIElementCreateApplication(pid)
-        let (scriptItems, scriptErr) = scriptedMenuItems(for: pid, appElement: appElement)
-        let scriptResult = scriptErr.map { "as_err:\($0)" } ?? "as_ok:\(scriptItems.count)"
-        lastDebugMessage[pid] = "ax \(trusted), \(probe), tree 0, \(scriptResult)"
-        if !scriptItems.isEmpty {
-            menuCache[pid] = CacheEntry(items: scriptItems, date: Date())
+        // AX returned nothing (Electron, Catalyst). The System Events walk that reads those
+        // menus runs off the main thread; until it lands, this returns what it last found.
+        guard let scripted = scriptedMenuItemsOrStartWalk(for: pid) else {
+            lastDebugMessage[pid] = "ax \(trusted), \(probe), tree 0, as_pending"
+            return []
         }
-        return scriptItems
+        let scriptResult = scripted.error.map { "as_err:\($0)" } ?? "as_ok:\(scripted.items.count)"
+        lastDebugMessage[pid] = "ax \(trusted), \(probe), tree 0, \(scriptResult)"
+        return scripted.items
+    }
+
+    // MARK: - System Events fallback, off the main thread
+
+    private struct ScriptedEntry {
+        var items: [AXMenuItem]
+        var error: String?
+        var date: Date
+    }
+    private var scriptedMenus: [pid_t: ScriptedEntry] = [:]
+    private var scriptedWalks: [pid_t: Task<Void, Never>] = [:]
+
+    /// Posted on the main thread when a System Events walk has read an app's menus. The
+    /// user info's `"pid"` is the app. The Dock and the Corner reload that app's menus.
+    nonisolated static let scriptedMenusDidLoad = Notification.Name("AXMenuReader.scriptedMenusDidLoad")
+
+    /// The last walk's result while it is fresh; otherwise starts a walk and returns nil.
+    private func scriptedMenuItemsOrStartWalk(for pid: pid_t) -> ScriptedEntry? {
+        if let entry = scriptedMenus[pid], Date().timeIntervalSince(entry.date) < cacheMaxAge {
+            return entry
+        }
+        startScriptedMenuWalk(for: pid)
+        return nil
+    }
+
+    /// The walk in flight for `pid`, if any — tests await it.
+    func pendingScriptedMenuWalk(for pid: pid_t) -> Task<Void, Never>? {
+        scriptedWalks[pid]
+    }
+
+    /// Walks the menu bar with System Events on `AppleScriptQueue`, never on the main thread,
+    /// and publishes the result back here. It is seconds of AppleScript over the whole menu
+    /// bar; run on the main thread it froze the Dock's field over Finder and VS Code.
+    private func startScriptedMenuWalk(for pid: pid_t) {
+        guard scriptedWalks[pid] == nil,
+              let appName = appNameForPID(pid), !appName.isEmpty
+        else { return }
+        let walk = scriptedMenuWalk
+        scriptedWalks[pid] = Task { [weak self] in
+            let result = await withCheckedContinuation { continuation in
+                AppleScriptQueue.shared.async {
+                    continuation.resume(
+                        returning: AXMenuReader.runScriptedMenuWalk(appName: appName, walk: walk))
+                }
+            }
+            self?.scriptedMenuWalkFinished(pid: pid, output: result.output, error: result.error)
+        }
+    }
+
+    /// The only way a scripted walk runs. Traps on the main thread so a regression shows up
+    /// in Debug and in the tests rather than as a frozen field.
+    nonisolated static func runScriptedMenuWalk(
+        appName: String, walk: ScriptedMenuWalk
+    ) -> (output: String?, error: String?) {
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        return walk(appName)
+    }
+
+    private func scriptedMenuWalkFinished(pid: pid_t, output: String?, error: String?) {
+        scriptedWalks[pid] = nil
+        let items = output.map { scriptedMenuItems(fromOutput: $0, pid: pid) } ?? []
+        scriptedMenus[pid] = ScriptedEntry(
+            items: items, error: items.isEmpty ? (error ?? "empty result") : error, date: Date())
+        guard !items.isEmpty else { return }
+        menuCache[pid] = CacheEntry(items: items, date: Date())
+        if let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated {
+            let name = app.localizedName ?? ""
+            let stamped = items.map { item -> AXMenuItem in
+                var item = item
+                item.sourcePID = pid
+                item.sourceAppName = name
+                return item
+            }
+            AppMenuCapabilityCache.shared.store(items: stamped, for: app)
+        }
+        NotificationCenter.default.post(
+            name: Self.scriptedMenusDidLoad, object: nil, userInfo: ["pid": pid])
     }
 
     /// Search menu items by keyword — returns up to `maxResults` best matches.
@@ -636,12 +734,9 @@ final class AXMenuReader {
         return nil
     }
 
-    private func scriptedMenuItems(for pid: pid_t, appElement: AXUIElement) -> (items: [AXMenuItem], error: String?) {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid }),
-              let appName = app.localizedName, !appName.isEmpty else {
-            return ([], "target app not found")
-        }
-
+    /// The System Events walk itself. Only ever called through `runScriptedMenuWalk`.
+    nonisolated static func systemEventsMenuWalk(appName: String) -> (output: String?, error: String?) {
+        dispatchPrecondition(condition: .notOnQueue(.main))
         let escapedName = appName.replacingOccurrences(of: "\"", with: "\\\"")
         let script = """
         on walkMenu(theMenu, prefixText)
@@ -698,12 +793,12 @@ final class AXMenuReader {
         end tell
         """
 
-        let scriptResult = runAppleScript(script) ?? runOsaScriptProcess(script)
-        guard let raw = scriptResult.output, !raw.isEmpty else {
-            return ([], scriptResult.error ?? "empty result")
-        }
+        return runAppleScript(script) ?? runOsaScriptProcess(script)
+    }
 
-        let items = raw
+    private func scriptedMenuItems(fromOutput raw: String, pid: pid_t) -> [AXMenuItem] {
+        let appElement = AXUIElementCreateApplication(pid)
+        return raw
             .components(separatedBy: .newlines)
             .compactMap { line -> AXMenuItem? in
                 let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -728,10 +823,9 @@ final class AXMenuReader {
                     shortcutModifiers: 0
                 )
             }
-        return (items, scriptResult.error)
     }
 
-    private func runAppleScript(_ source: String) -> (output: String?, error: String?)? {
+    nonisolated private static func runAppleScript(_ source: String) -> (output: String?, error: String?)? {
         var error: NSDictionary?
         guard let script = NSAppleScript(source: source) else { return (nil, "failed to compile AppleScript") }
         let result = script.executeSerialized(error: &error)
@@ -743,7 +837,7 @@ final class AXMenuReader {
         return (result.stringValue, nil)
     }
 
-    private func runOsaScriptProcess(_ source: String) -> (output: String?, error: String?) {
+    nonisolated private static func runOsaScriptProcess(_ source: String) -> (output: String?, error: String?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", source]
@@ -804,7 +898,7 @@ final class AXMenuReader {
         end tell
         """
 
-        let result = runAppleScript(script) ?? runOsaScriptProcess(script)
+        let result = Self.runAppleScript(script) ?? Self.runOsaScriptProcess(script)
         return result.error == nil
     }
 

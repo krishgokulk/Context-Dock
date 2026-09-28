@@ -317,6 +317,9 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .launcherWindowOpened)) { _ in
                 handleLauncherWindowOpened()
             }
+            .onReceive(NotificationCenter.default.publisher(for: AXMenuReader.scriptedMenusDidLoad)) { note in
+                scriptedMenusDidLoad(pid: note.userInfo?["pid"] as? pid_t)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .globalSearchIndexRebuildRequested)) { _ in
                 rebuildGlobalSearchIndex()
                 if shouldUsePureGlobalAppSearch {
@@ -1337,6 +1340,14 @@ extension LauncherView {
 
     /// Called immediately when the frontmost app changes while the dock is open.
     /// Cancels any in-flight menu load and starts a fresh one for `app`.
+    /// A System Events walk (off the main thread) has read the menus of an app whose AX tree
+    /// is empty — VS Code and other Electron apps. If that is the Dock's app, reload so the
+    /// list fills in; the Corner does the same through `AppChatPromptModel`.
+    func scriptedMenusDidLoad(pid: pid_t?) {
+        guard let pid, let app = contextTargetApp(), app.processIdentifier == pid else { return }
+        reloadMenuForApp(app)
+    }
+
     func reloadMenuForApp(_ app: NSRunningApplication) {
         guard showContextInDock, !app.isTerminated else { return }
         let pid = app.processIdentifier
