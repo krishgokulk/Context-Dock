@@ -546,6 +546,9 @@ final class CapabilityRegistry {
                 let pageText = extensionContext?.pageText ?? snapshot?.text ?? ""
                 let pageURL = extensionContext?.url ?? snapshot?.url ?? ""
                 let pageTitle = extensionContext?.title ?? snapshot?.title ?? ""
+                if let reason = SensitivePageGuard.refusal(for: pageURL) {
+                    return .init(success: false, output: reason.message)
+                }
                 guard !pageText.isEmpty else {
                     return .init(
                         success: false,

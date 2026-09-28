@@ -19,8 +19,16 @@ struct BrowserPageSnapshot: Equatable {
     var text: String
     var selectedText: String = ""
     var links: [SafariPageLink] = []
+    /// Set when `SensitivePageGuard` refused the page: the reader then keeps nothing of it
+    /// but its origin, so no caller can hand its text, title or links to a model.
+    var withheld: SensitivePageGuard.Reason? = nil
 
     var isEmpty: Bool { text.isEmpty && url.isEmpty }
+
+    /// Why DoraX stays out of this page, or nil when it may read it.
+    var refusal: SensitivePageGuard.Reason? {
+        withheld ?? SensitivePageGuard.refusal(for: url)
+    }
 }
 
 @MainActor
@@ -69,6 +77,29 @@ enum BrowserPageReader {
                 if page.title.isEmpty { page.title = snapshot?.title ?? "" }
             }
         }
-        return page.isEmpty ? nil : page
+        return page.isEmpty ? nil : guarded(page)
+    }
+
+    /// Pure: `page` as a prompt may carry it. A page the guard refuses keeps only its origin
+    /// (`https://host`) and the reason — no title, text, selection, links, path or query,
+    /// since a token-bearing address is itself the secret.
+    static func guarded(_ page: BrowserPageSnapshot) -> BrowserPageSnapshot {
+        guard page.withheld == nil, let reason = SensitivePageGuard.refusal(for: page.url)
+        else { return page }
+        return BrowserPageSnapshot(
+            url: origin(of: page.url), title: "", text: "", withheld: reason)
+    }
+
+    /// Pure: scheme and host of `urlString`, dropping path, query and fragment.
+    static func origin(of urlString: String) -> String {
+        guard var parts = URLComponents(string: urlString), parts.host != nil else {
+            return ""
+        }
+        parts.path = ""
+        parts.query = nil
+        parts.fragment = nil
+        parts.user = nil
+        parts.password = nil
+        return parts.string ?? ""
     }
 }

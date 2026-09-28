@@ -73,19 +73,29 @@ extension AgentToolRegistry {
             let block = await MainActor.run {
                 ScopedGroundingBlocks.browserPage(bundleId: bundleID, query: focus)
             }
-            guard !block.isEmpty else {
-                return AgentToolResult(
-                    success: false,
-                    output: "The page could not be read. DoraX reads pages through its Safari "
-                        + "extension or the accessibility API; if neither is available, say "
-                        + "the page is unreadable rather than describing it from memory.",
-                    displayCommand: "read_page")
-            }
+            return await MainActor.run { AgentToolRegistry.readPageResult(block: block) }
+        }
+    }
+
+    /// Pure: what `read_page` returns for the page block it read. A page SensitivePageGuard
+    /// refused comes back as a plain refusal — outside the untrusted-content fence, so the
+    /// model reads the reason as DoraX's and tells the user — never as page content.
+    static func readPageResult(block: String) -> AgentToolResult {
+        guard !block.isEmpty else {
             return AgentToolResult(
-                success: true,
-                output: UntrustedContent.fenced(block, from: "the current web page"),
+                success: false,
+                output: "The page could not be read. DoraX reads pages through its Safari "
+                    + "extension or the accessibility API; if neither is available, say "
+                    + "the page is unreadable rather than describing it from memory.",
                 displayCommand: "read_page")
         }
+        if block.contains(ScopedGroundingBlocks.withheldMarker) {
+            return AgentToolResult(success: false, output: block, displayCommand: "read_page")
+        }
+        return AgentToolResult(
+            success: true,
+            output: UntrustedContent.fenced(block, from: "the current web page"),
+            displayCommand: "read_page")
     }
 
     // MARK: - A page that is not open

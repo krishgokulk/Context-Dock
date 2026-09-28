@@ -79,16 +79,19 @@ enum PageMarkdownExport {
     /// Why this page may not be saved, or nil. The same guard that keeps DoraX from reading
     /// or driving the page keeps it off the disk.
     static func refusal(for page: BrowserPageSnapshot) -> String? {
-        SensitivePageGuard.refusal(for: page.url)?.message
+        page.refusal?.message
     }
 
     // MARK: Saving
 
     /// Writes `page` into `folder`. Nothing is written for a refused or empty page.
     static func save(_ page: BrowserPageSnapshot?, to folder: URL) -> Outcome {
-        guard let page, !page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return .unreadable }
+        guard let page else { return .unreadable }
+        // Before the emptiness check: the reader empties a refused page, and "refused" is
+        // the true answer, not "unreadable".
         if let reason = refusal(for: page) { return .refused(reason) }
+        guard !page.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return .unreadable }
         let url = freeURL(
             base: baseName(title: page.title, url: page.url), in: folder,
             exists: { FileManager.default.fileExists(atPath: $0.path) })

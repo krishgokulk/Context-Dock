@@ -110,6 +110,11 @@ enum ScopedGroundingBlocks {
 
         // One reader for the page, shared with the Safari actions (`BrowserPageReader`).
         let read = BrowserPageReader.current(bundleId: bundleId, liveURL: liveURL)
+        if let read, let reason = read.withheld {
+            return withheldPageBlock(
+                origin: read.url, reason: reason,
+                tabsSection: openTabsSection(bundleId: bundleId, activeURL: ""))
+        }
         let pageTitle = read?.title ?? ""
         let pageURL = read?.url ?? ""
         var pageText = read?.text ?? ""
@@ -176,6 +181,46 @@ enum ScopedGroundingBlocks {
             """
     }
 
+    /// Opens the reason line of a withheld page block.
+    static let withheldMarker = "PAGE WITHHELD:"
+
+    /// Pure: the page block for a page `SensitivePageGuard` refused. It carries the origin and
+    /// the guard's reason — never the page's title, text, selection or links — so the model
+    /// tells the user why instead of guessing at what the page says.
+    static func withheldPageBlock(
+        origin: String, reason: SensitivePageGuard.Reason, tabsSection: String = ""
+    ) -> String {
+        """
+            CURRENT PAGE URL: \(origin.isEmpty ? "(withheld)" : origin)\(tabsSection)
+            \(withheldMarker) \(reason.message)
+            DoraX did not read this page. Tell the user that, with the reason above, and do not \
+            guess or describe what the page contains.
+            """
+    }
+
+    /// The withheld-page block for `urlString`, or nil when the guard lets DoraX read it. For
+    /// the prompt builders that read the page without `BrowserPageReader`.
+    static func withheldPageBlock(forURL urlString: String) -> String? {
+        guard let reason = SensitivePageGuard.refusal(for: urlString) else { return nil }
+        return withheldPageBlock(origin: BrowserPageReader.origin(of: urlString), reason: reason)
+    }
+
+    /// Pure: the tab-list row for a tab `SensitivePageGuard` refuses — its origin only — or nil
+    /// when the tab may be listed as it is.
+    static func withheldTabRow(url: String) -> String? {
+        guard SensitivePageGuard.refusal(for: url) != nil else { return nil }
+        return "- \(BrowserPageReader.origin(of: url)) \(withheldTabNote)"
+    }
+
+    /// Pure: a tab's title and address as a prompt may list them — a refused tab's title
+    /// replaced by a note and its address cut to the origin.
+    static func promptSafeTab(title: String, url: String) -> (title: String, url: String) {
+        guard SensitivePageGuard.refusal(for: url) != nil else { return (title, url) }
+        return (withheldTabNote, BrowserPageReader.origin(of: url))
+    }
+
+    private static let withheldTabNote = "(withheld — DoraX does not read this site)"
+
     /// Every tab the scoped browser has open, with the one the page block describes marked
     /// active. Empty when the browser exposes none, so the caller can tell "no tabs" from
     /// "a tab list that happens to be short".
@@ -193,6 +238,9 @@ enum ScopedGroundingBlocks {
     static func formatTabs(_ tabs: [BrowserTab], activeURL: String, limit: Int = 40) -> String {
         guard !tabs.isEmpty else { return "" }
         let rows = tabs.prefix(limit).map { tab -> String in
+            // A sensitive tab stays listed by origin only: its title and its address's path
+            // and query can carry a balance or a sign-in token.
+            if let withheld = withheldTabRow(url: tab.url) { return withheld }
             let title = tab.title.isEmpty ? tab.url : tab.title
             let active = !activeURL.isEmpty && tab.url == activeURL ? " (active — the page above)" : ""
             return "- \(title) — \(tab.url)\(active)"
