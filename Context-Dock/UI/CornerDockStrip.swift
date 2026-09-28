@@ -127,8 +127,9 @@ struct CornerDockStrip: View {
             + CGFloat(index + 1) * layout.appSpread
             + CGFloat(index) * (M.dockIconSize + M.dockIconGap) + M.dockIconSize / 2
         let control: CGFloat = 26 + 10  // a 26-point control and the row's spacing before it
+        // The pin sits before the pill now, beside "+" (owner 2026-09-28), so it is not
+        // part of what trails the pill.
         var trailing: CGFloat = 14
-        if model.isPointerInside { trailing += control }  // the pin
         if clipboard.phase.announcesCopy { trailing += control }
         if model.selection != nil { trailing += control }
         let pillEnd = AppChatPromptMetrics.boardWidth(for: model) - trailing

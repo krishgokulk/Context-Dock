@@ -1089,6 +1089,14 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
+                // The pin right after "+", in every app (owner 2026-09-28): it sat at the far
+                // end, past the app's bar, and appeared and vanished with the pointer. Beside
+                // "+" it is always there, so nothing after it shifts when it would have come
+                // and gone. A conversation's header carries its own.
+                if model.phase != .chat {
+                    surfaceControls
+                        .transition(.opacity)
+                }
                 // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
                 // its pins, then its tabs, scrolling inside the pill. Gone while typing.
                 if model.showsTabBar, !isTyping,
@@ -1160,10 +1168,9 @@ struct AppChatPromptPill: View {
             // The field carries pin, never expand (owner 2026-09-26): while typing in every
             // Context Dock, the dock shell's included, and under the pointer otherwise. A
             // conversation's header keeps its own expand.
-            if model.phase != .chat, !model.isSearchField, isTyping {
-                surfaceControls
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            } else if pointerInside, model.phase != .chat, model.fitsField {
+            // A field with "+" draws the pin beside it (above); only a search field — no
+            // "+" — keeps it here at the end, under the pointer.
+            if model.isSearchField, pointerInside, model.phase != .chat, model.fitsField {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
