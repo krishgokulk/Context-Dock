@@ -19,6 +19,10 @@ All notable changes to Context-Dock are tracked here.
 
 ## Unreleased
 
+### Added
+
+- General Chat can read your Global Commands' current state ("is Bluetooth on?") without an approval prompt; commands are grouped into System packs (Bluetooth, Wi-Fi, Sound, Appearance, …).
+
 ### Fixed
 
 - Stabilized Context Dock result rows by using stable pill IDs instead of row indexes.

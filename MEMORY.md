@@ -28,3 +28,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-27 (cloud coordinator): 00-NOW — queue fix (#100) and focus fix (#101) in Done; task 6 in progress (#102); Dock menu-reader main-thread freeze noted as follow-up.
 - 2026-09-28 (cloud coordinator): 00-NOW — tasks 9–13 queued; 9 and 10 run in cloud sessions.
 - 2026-09-28 Task 10 (cloud session): AXMenuReader's System Events menu walk moved off the main thread (AppleScriptQueue); Dock + Corner reload on `AXMenuReader.scriptedMenusDidLoad`. Draft PR #110.
+- 2026-09-28 Task 12a (cloud session): Global Commands grouped into System packs (SystemConnectors); low-risk `globalcmd.<pack>.status` reads + existing writes through one GlobalCommandRuntime seam. Branch claude/system-connectors.
