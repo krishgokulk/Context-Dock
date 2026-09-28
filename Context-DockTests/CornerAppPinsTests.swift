@@ -283,23 +283,28 @@ struct CornerAppPinsTests {
     func thePinButtonPinsTheMatch() {
         let (store, _) = temporaryStore()
         let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
+        // An ordinary command: a Window-menu one (Centre) now gives way to the Dock's window
+        // layout for it, which leads the list.
         model.allMenuItems = [AXMenuItem(
-            title: "Centre", path: ["Window", "Centre"], isEnabled: true,
+            title: "Duplicate", path: ["File", "Duplicate"], isEnabled: true,
             element: AXUIElementCreateSystemWide(), children: [])]
         // Nothing typed: no result to pin — the button is the ordinary keep-open pin.
         model.query = ""
         model.updateMenuMatches()
         #expect(model.pinnableResult == nil)
 
-        model.query = "cen"
+        model.query = "dup"
         model.updateMenuMatches()
-        let row = try! #require(model.pinnableResult)
-        #expect(row.title == "Centre")
+        guard let row = model.pinnableResult else {
+            Issue.record("no pinnable result for \"dup\"")
+            return
+        }
+        #expect(row.title == "Duplicate")
         #expect(!model.isPinnedToApp(row))
         model.toggleAppPin(row)
         #expect(model.isPinnedToApp(row), "the button's tint reads this")
         #expect(store.pins(forApp: "com.anthropic.claudefordesktop").map(\.kind)
-            == [.menuCommand(path: ["Window", "Centre"])])
+            == [.menuCommand(path: ["File", "Duplicate"])])
 
         // Typed, but nothing matches: back to keep-open.
         model.query = "zzzz-no-such-command"

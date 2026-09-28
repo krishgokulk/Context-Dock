@@ -5,6 +5,7 @@
 // document is a scope — a command, an extension, a CLI tool — steps into it in the Corner's
 // board instead, from ↩ and from →.
 
+import AppKit
 import Foundation
 import Testing
 
@@ -118,6 +119,77 @@ struct CornerRemainingScopesTests {
         other.summon(app: "brew", bundleID: "cli://brew")
         #expect(!other.attachFrontFinderFolder(read: { folder.path }))
         #expect(other.attachments.isEmpty)
+    }
+}
+
+
+@Suite("Corner Finder in front and window layouts")
+@MainActor
+struct CornerFinderMenusAndLayoutsTests {
+
+    @Test("Finder in front lists its menus; from Global, or inside a folder, it searches files")
+    func finderModes() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        #expect(model.isFinderScope)
+        #expect(!model.isFinderFileSearch)
+        model.finderBrowseStack = [FileManager.default.temporaryDirectory]
+        #expect(model.isFinderFileSearch)
+        model.finderBrowseStack = []
+
+        let scoped = AppChatPromptModel(conversation: AppChatConversation())
+        scoped.summonGlobalContext()
+        scoped.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+        #expect(scoped.isFinderFileSearch)
+    }
+
+    @Test("The Dock's window layouts lead the app's rows while typing")
+    func windowLayoutsLead() {
+        let source = GlobalContextResultSource.shared
+        let saved = source.windowLayoutResults
+        defer { source.windowLayoutResults = saved }
+        var asked: (String, String, String)?
+        source.windowLayoutResults = { query, bundleID, appName in
+            asked = (query, bundleID, appName)
+            return [DockPill(id: "native-window-quarters", name: "Quarters", icon: "rectangle.split.2x2",
+                             badge: "Window", execute: {})]
+        }
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Claude", bundleID: "com.anthropic.claudefordesktop")
+        model.query = "ar"
+        model.queryChanged()
+        #expect(asked?.0 == "ar")
+        #expect(asked?.1 == "com.anthropic.claudefordesktop")
+        // Only a switch-to-app row ("ar" also matches a running Safari) may stand before them.
+        let lead = model.rows.drop { row in
+            if case .dock(let pill) = row { return pill.rankingKind == "appSwitch" }
+            return false
+        }
+        #expect(lead.first?.title == "Quarters")
+    }
+
+    @Test("A Window-menu command a layout covers gives way to the layout, as in the Dock")
+    func layoutsReplaceTheirMenuCommands() {
+        let source = GlobalContextResultSource.shared
+        let saved = source.windowLayoutResults
+        defer { source.windowLayoutResults = saved }
+        source.windowLayoutResults = { _, _, _ in
+            [DockPill(id: "native-window-center", name: "Centre", icon: "rectangle.center.inset.filled",
+                      badge: "Window", execute: {})]
+        }
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Claude", bundleID: "com.anthropic.claudefordesktop")
+        model.allMenuItems = [
+            AXMenuItem(title: "Centre", path: ["Window", "Centre"], isEnabled: true,
+                       element: AXUIElementCreateSystemWide(), children: []),
+            AXMenuItem(title: "Center Text", path: ["Format", "Center Text"], isEnabled: true,
+                       element: AXUIElementCreateSystemWide(), children: []),
+        ]
+        model.query = "cen"
+        model.updateMenuMatches()
+        #expect(model.rows.first?.title == "Centre")
+        #expect(!model.rows.contains { if case .command(let item) = $0 { return item.path == ["Window", "Centre"] }; return false })
+        #expect(model.rows.contains { $0.title == "Center Text" })
     }
 }
 

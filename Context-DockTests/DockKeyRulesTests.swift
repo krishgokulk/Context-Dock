@@ -470,7 +470,8 @@ struct CornerDockKeyRulesPart2Tests {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summonGlobalContext()
         #expect(!model.refreshLiveMenus())
-        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        // Finder stepped into from Global is a file search: no menus of its own.
+        model.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(!model.refreshLiveMenus())
         // An app that is not running: the scope accepts ⌘R, and the read finds nothing to
         // walk — no live AX or AppleScript read runs inside the test host.
