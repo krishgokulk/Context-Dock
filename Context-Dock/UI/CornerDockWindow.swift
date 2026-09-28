@@ -326,6 +326,14 @@ final class CornerDockController: NSObject {
         }.store(in: &sinks)
         syncEdgeWatch()
         NotificationCenter.default.addObserver(
+            forName: AXMenuReader.scriptedMenusDidLoad, object: nil, queue: .main
+        ) { [weak self] note in
+            let pid = note.userInfo?["pid"] as? pid_t
+            MainActor.assumeIsolated {
+                self?.prompt.scriptedMenusDidLoad(pid: pid)
+            }
+        }
+        NotificationCenter.default.addObserver(
             forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
