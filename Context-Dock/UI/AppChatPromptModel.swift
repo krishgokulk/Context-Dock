@@ -205,7 +205,7 @@ final class AppChatPromptModel: ObservableObject {
     /// Global, a CLI tool or an extension's panel.
     var isAppContextDock: Bool {
         !isGlobalScope && !appBundleID.isEmpty && !isCLIScope
-            && scopedExtension == nil && scopedCommand == nil
+            && scopedExtension == nil && scopedCommand == nil && scopedPlugin == nil
     }
     /// Global's height: Global Context and every app's Context Dock are one bar (owner
     /// 2026-09-25: "why is the Context Dock smaller than Global Context?").
@@ -224,6 +224,10 @@ final class AppChatPromptModel: ObservableObject {
     var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
         GlobalSearchService.shared.document(withID: $0)
     }
+    /// Where a plugin's manifest is found. A test swaps it.
+    var pluginManifestLookup: (String) -> PluginManifest? = {
+        PluginRegistry.shared.plugin(id: $0)?.manifest
+    }
     /// The folders → has stepped into in the Finder scope, outermost first. Empty while the
     /// scope is a search. Backspace on an empty field climbs back out one at a time (C11, B3).
     @Published var finderBrowseStack: [URL] = []
@@ -232,6 +236,9 @@ final class AppChatPromptModel: ObservableObject {
     /// The Global Command this scope is showing — Quick Note, Currency Converter, the rest
     /// of Settings → Integrations → Global → Commands.
     @Published var scopedCommand: SystemCommand?
+    /// The plugin this scope is showing, its panel drawn in the board above the field — from
+    /// Global search, as a strip pin's card already was (owner 2026-09-28, inventory D6).
+    @Published var scopedPlugin: PluginManifest?
     /// What the panel's assistant has been asked and has answered, while this scope is up.
     @Published var panelConversation: [ChatMessage] = []
     @Published var isAskingPanel = false
