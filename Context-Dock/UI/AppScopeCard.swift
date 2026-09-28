@@ -35,7 +35,7 @@ enum AppScopeContext {
         if isBrowser {
             if let page {
                 let title = page.title.isEmpty ? (URL(string: page.url)?.host ?? "This page") : page.title
-                if let reason = SensitivePageGuard.refusal(for: page.url)?.message {
+                if let reason = page.refusal?.message {
                     lines.append(AppScopeContextLine(
                         symbol: "lock.fill", title: title, detail: reason, isRefused: true))
                 } else {

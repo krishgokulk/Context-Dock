@@ -119,7 +119,13 @@ enum AppKnowledgeService {
 
         var parts: [String] = []
 
-        if let page = await MainActor.run(body: { SafariBrowserBridge.shared.currentContext() }) {
+        let page = await MainActor.run(body: { SafariBrowserBridge.shared.currentContext() })
+        let withheld = await MainActor.run {
+            page.flatMap { ScopedGroundingBlocks.withheldPageBlock(forURL: $0.url) }
+        }
+        if let withheld {
+            parts.append(withheld)
+        } else if let page {
             parts.append("Current page: \(page.title)\n\(page.url)")
             if !page.description.isEmpty {
                 parts.append("Description: \(page.description)")
@@ -136,11 +142,14 @@ enum AppKnowledgeService {
             }
         }
 
-        let tabs = await MainActor.run { SafariTabManager.shared.cachedTabs(maxAge: 30) }
-        if !tabs.isEmpty {
-            let list = tabs.prefix(40)
-                .map { "- \($0.title) — \($0.url)" }
-                .joined(separator: "\n")
+        let rows = await MainActor.run {
+            SafariTabManager.shared.cachedTabs(maxAge: 30).prefix(40).map { tab in
+                ScopedGroundingBlocks.withheldTabRow(url: tab.url)
+                    ?? "- \(tab.title) — \(tab.url)"
+            }
+        }
+        if !rows.isEmpty {
+            let list = rows.joined(separator: "\n")
             parts.append("Open tabs:\n\(list)")
         }
 

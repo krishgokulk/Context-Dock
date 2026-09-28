@@ -6428,6 +6428,11 @@ extension LauncherView {
 
         let title = payload["title"] as? String ?? ""
         let url = payload["url"] as? String ?? ""
+        if let withheld = await MainActor.run(body: {
+            ScopedGroundingBlocks.withheldPageBlock(forURL: url)
+        }) {
+            return withheld
+        }
         let text = payload["text"] as? String ?? ""
         let compacted = MarkItDownService.compact(text, for: query, limit: 5_000)
         let collected = (payload["links"] as? [[String: Any]] ?? [])
