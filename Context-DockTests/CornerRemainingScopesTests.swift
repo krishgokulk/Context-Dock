@@ -92,4 +92,32 @@ struct CornerRemainingScopesTests {
         #expect(model.runFocusedRow())
         #expect(ran.value)
     }
+
+    // MARK: D7 — Finder's front folder
+
+    @Test("Only an existing folder is attachable")
+    func finderFolderToAttach() {
+        #expect(AppChatPromptModel.finderFolderToAttach(path: NSTemporaryDirectory()) != nil)
+        #expect(AppChatPromptModel.finderFolderToAttach(path: "  ") == nil)
+        #expect(AppChatPromptModel.finderFolderToAttach(path: nil) == nil)
+        #expect(AppChatPromptModel.finderFolderToAttach(path: "/nonexistent/folder") == nil)
+        #expect(AppChatPromptModel.finderFolderToAttach(path: "/bin/ls") == nil)  // a file
+    }
+
+    @Test("In Finder, the front window's folder is attached once; elsewhere never (D7)")
+    func attachFrontFinderFolder() {
+        let folder = FileManager.default.temporaryDirectory
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        #expect(model.attachFrontFinderFolder(read: { folder.path }))
+        #expect(model.attachments == [folder.standardizedFileURL])
+        #expect(!model.attachFrontFinderFolder(read: { folder.path }))  // not twice
+        #expect(model.attachments.count == 1)
+
+        let other = AppChatPromptModel(conversation: AppChatConversation())
+        other.summon(app: "brew", bundleID: "cli://brew")
+        #expect(!other.attachFrontFinderFolder(read: { folder.path }))
+        #expect(other.attachments.isEmpty)
+    }
 }
+

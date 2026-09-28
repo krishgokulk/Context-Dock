@@ -826,6 +826,36 @@ extension AppChatPromptModel {
             .map { $0 }
     }
 
+    // MARK: Finder's front folder (D7)
+
+    /// Attaches the folder Finder's front window shows, as the Dock's "add this folder"
+    /// does, so the next question is about it. Read when chosen — it is an AppleScript
+    /// round trip — never while a menu is drawn.
+    @discardableResult
+    func attachFrontFinderFolder(
+        read: () -> String? = { ContextDetector.shared.getCurrentFinderDirectory() }
+    ) -> Bool {
+        guard isFinderScope, let folder = Self.finderFolderToAttach(path: read()) else {
+            AppToast.show("No Finder window is open", icon: "folder.badge.questionmark", duration: 3)
+            return false
+        }
+        guard !attachments.contains(folder) else { return false }
+        attach(folder)
+        return true
+    }
+
+    /// Pure: the folder a Finder path names, or nil when it is empty or not a folder.
+    nonisolated static func finderFolderToAttach(path: String?) -> URL? {
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: trimmed).standardizedFileURL
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
+        else { return nil }
+        return url
+    }
+
     // MARK: Backspace on an empty field, ⌘R
 
     /// Backspace on an empty field, by the Dock's ladder (DockKeyRules.emptyBackspace): a
