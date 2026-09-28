@@ -10,7 +10,10 @@
 
 ## In progress
 
-**Task 6 — Safari actions: Ask AI + Save as Markdown.** Draft #102, branch `claude/safari-actions`.
+**Per-app settings card** (owner 2026-09-28): ⚙ lives in the app chip (layout C), the pin sits
+next to +, and clicking the chip opens a narrow card anchored to it, in the iOS glass-menu style.
+Proposed groups: Can do (actions, tools, menus) · Knows (skills, docs) · Sees now (what the next
+turn carries) · Allowed (Computer Use, always-allowed commands, provider). Own branch and PR.
 
 ## Next, in order
 
@@ -36,6 +39,7 @@ freeze for apps with an empty AX menu tree (Finder, Electron apps).
 | 2026-09-26 | Keyboard rules (task 5) in the shared `DockKeyRules`: result focus, pill row, empty-field Backspace ladder, list arrows, Return, Space, Finder folders, ⌘R in the Corner; one key press, one handler; ←/→ walk the apps both ways | #96, #98 |
 | 2026-09-27 | AppleScript re-entrancy crash: one recursive lock owned by a thread, not `DispatchQueue.sync`; also the Corner dock auto-hides and shows (setting) | #100 |
 | 2026-09-27 | The Corner no longer pulls DoraX in front of the app you are using; no blink when the strip hands the keyboard back | #101 |
+| 2026-09-28 | Safari actions (task 6): Ask AI about this page, Save as Markdown (Downloads, never overwrites, Reveal); sensitive pages refused | #102 |
 
 ## Owner decisions (append-only)
 

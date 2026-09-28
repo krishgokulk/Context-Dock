@@ -1281,10 +1281,39 @@ extension AppChatPromptModel {
             AXContextReader.shared.refreshLightweight(from: app)
         }
         let context = AXContextReader.shared.current
-        Task { @MainActor in
-            _ = await AppAdapterManager.shared.execute(
+        Task { @MainActor [weak self] in
+            let result = await AppAdapterManager.shared.execute(
                 action, context: context, targetBundleId: bundleID)
+            // An AI-prompt action is a question: its resolved prompt is asked here, through
+            // the Corner's own ask path, and answered in the Corner chat (task 6). The Dock
+            // pre-fills its field with it instead; asked here, the answer is where the user is.
+            if action.type == .aiPrompt, result.0 {
+                self?.askActionPrompt(result.1)
+            }
         }
+    }
+
+    /// Asks an action's prompt in this scope. On a browser page DoraX stays out of
+    /// (`SensitivePageGuard`) nothing is asked, and the reason is shown.
+    @discardableResult
+    func askActionPrompt(_ prompt: String) -> Bool {
+        let question = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, phase.isVisible else { return false }
+        let page = ScopedAppPromptBuilder.isBrowserBundle(appBundleID)
+            ? BrowserPageReader.current(bundleId: appBundleID) : nil
+        if let reason = Self.askRefusal(page: page) {
+            AppToast.show(reason, icon: "hand.raised", duration: 4)
+            return false
+        }
+        query = question
+        return submit()
+    }
+
+    /// Pure: why a question about this page may not be asked — the page guard's reason —
+    /// or nil. No page (not a browser, or nothing readable) is not a refusal: the question
+    /// is asked, and the turn says it could not read a page.
+    nonisolated static func askRefusal(page: BrowserPageSnapshot?) -> String? {
+        page.flatMap(PageMarkdownExport.refusal(for:))
     }
 
     // MARK: - Running one

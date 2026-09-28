@@ -230,11 +230,15 @@ struct ToastPillView: View {
                             .foregroundStyle(t.tint)
                             .frame(width: 20)
 
+                        // With a button beside it the message gives way, from the middle: a
+                        // long file name held its full width and squeezed "Reveal" into an
+                        // empty capsule (owner 2026-09-28, Save as Markdown).
                         Text(t.message)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                            .fixedSize()
+                            .truncationMode(.middle)
+                            .fixedSize(horizontal: t.actionTitle == nil, vertical: false)
 
                         if let progress = t.progress {
                             Text("\(Int((progress * 100).rounded()))%")
@@ -254,8 +258,10 @@ struct ToastPillView: View {
                                     .padding(.vertical, 5)
                                     .background(t.tint.opacity(0.12), in: Capsule())
                                     .overlay(Capsule().strokeBorder(t.tint.opacity(0.35), lineWidth: 0.8))
+                                    .fixedSize()
                             }
                             .buttonStyle(.plain)
+                            .layoutPriority(1)
                         }
                     }
                     if let progress = t.progress {

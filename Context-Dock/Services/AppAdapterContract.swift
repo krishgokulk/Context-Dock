@@ -109,6 +109,9 @@ enum AppAdapterContract {
             return !(action.shortcutName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .aiPrompt:
             return !(action.aiPromptTemplate ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .savePageMarkdown:
+            // Built in: the page it saves is read when it runs.
+            return true
         }
     }
 }
