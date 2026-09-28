@@ -60,12 +60,11 @@ extension AppChatPromptModel {
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
-        // Finder's field is a file search; its menus are never listed here. And Finder is the
-        // app whose menus the AX tree does not hold until they are opened, so the read below
+        // A Finder file search lists no menus. And Finder is the app whose menus the AX tree does not hold until they are opened, so the read below
         // came back empty and fell through to a System Events walk of the whole menu bar —
         // an AppleScript run on the main thread. → from Global into Finder froze the field
         // (no caret, the next → ignored) and then crashed in AppleScriptQueue (2026-09-26).
-        guard !isFinderScope else { return }
+        guard !isFinderFileSearch else { return }
 
         // The AX read walks the whole menu bar, so it happens after the surface is up
         // rather than in front of it. Live items go first: where both have a row, the live
@@ -96,8 +95,10 @@ extension AppChatPromptModel {
             syncListPhase()
             return
         }
-        // Finder searches the disk instead of its own menus.
-        if isFinderScope {
+        // Finder searches the disk when that is what was asked for — stepped into from Global,
+        // or walking a folder. In front, it lists its menus like any app, as the Dock does
+        // (owner 2026-09-28).
+        if isFinderFileSearch {
             updateFinderResults(for: typed)
             updateGlobalTyping(for: typed)
             return
@@ -148,6 +149,22 @@ extension AppChatPromptModel {
         // row `pillIcons()` already offers when the field is empty, just reachable through
         // typing instead. This scope never had it: typing "safari" while chatting with Code
         // only ever filtered Code's own commands, with no way out but leaving the scope.
+        // The Dock's window layouts for this app — Quarters, Left & Right… with the app's
+        // icon where it will sit — lead, as they do in the Dock's list (owner 2026-09-28).
+        if !typed.isEmpty, !isCLIScope,
+            let layouts = globalResultSource.windowLayoutResults?(typed, appBundleID, appName),
+            !layouts.isEmpty
+        {
+            // A Window-menu command a layout already covers (Centre, Zoom…) is dropped, as
+            // the Dock drops it: one row per thing to do.
+            rows.removeAll { row in
+                if case .command(let item) = row {
+                    return WindowManagementService.shared.handlesMenuPath(item.path)
+                }
+                return false
+            }
+            rows.insert(contentsOf: layouts.map(AppChatRow.dock), at: 0)
+        }
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
@@ -763,6 +780,12 @@ extension AppChatPromptModel {
         appBundleID == "com.apple.finder"
     }
 
+    /// Finder as a file search: stepped into from Global, or walking a folder. Finder in
+    /// front lists its menus instead, as the Dock's does.
+    var isFinderFileSearch: Bool {
+        isFinderScope && (returnsToGlobalScope || !finderBrowseStack.isEmpty)
+    }
+
     /// Files and folders matching what is typed, from the same Spotlight index the dock's
     /// Finder scope reads. Async: a metadata query cannot answer on the keystroke, so the
     /// rows land a moment later and the generation guard drops anything overtaken by the
@@ -826,7 +849,9 @@ extension AppChatPromptModel {
         guard !finderBrowseStack.isEmpty else { return false }
         finderBrowseStack.removeLast()
         focusedMenuIndex = nil
-        updateFinderResults(for: query.trimmingCharacters(in: .whitespacesAndNewlines))
+        // Past the top: back to what the scope lists — a file search, or Finder's menus
+        // when Finder is the app in front.
+        updateMenuMatches()
         touch()
         return true
     }
@@ -919,8 +944,8 @@ extension AppChatPromptModel {
     /// opened (a document opened, a tab moved). Global Context has no one app to read.
     @discardableResult
     func refreshLiveMenus() -> Bool {
-        // Finder's field is a file search: there are no menus of its own to refresh.
-        guard !isGlobalScope, !appBundleID.isEmpty, !isCLIScope, !isFinderScope
+        // A Finder file search has no menus of its own to refresh.
+        guard !isGlobalScope, !appBundleID.isEmpty, !isCLIScope, !isFinderFileSearch
         else { return false }
         loadMenuItems()
         touch()

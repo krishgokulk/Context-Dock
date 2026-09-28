@@ -230,6 +230,11 @@ extension LauncherView {
     }
 
     func connectCornerGlobalResults() {
+        GlobalContextResultSource.shared.windowLayoutResults = { query, bundleID, appName in
+            makeNativeWindowManagementPills(
+                rawScopedQuery: query, scopedBundleId: bundleID, scopedAppName: appName,
+                isGlobalScope: false)
+        }
         GlobalContextResultSource.shared.pureGlobalResults = { query in
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !q.isEmpty else { return [] }
