@@ -10,8 +10,10 @@
 
 ## In progress
 
-**Task 6 — Safari actions: Ask AI + Save as Markdown.** Branch `claude/safari-actions`.
-(The `AppleScriptQueue` re-entrancy fix that stood here landed in #100, 2026-09-27.)
+**Per-app settings card** (owner 2026-09-28): ⚙ lives in the app chip (layout C), the pin sits
+next to +, and clicking the chip opens a narrow card anchored to it, in the iOS glass-menu style.
+Proposed groups: Can do (actions, tools, menus) · Knows (skills, docs) · Sees now (what the next
+turn carries) · Allowed (Computer Use, always-allowed commands, provider). Own branch and PR.
 
 ## Next, in order
 
@@ -48,6 +50,9 @@ Follow-up from #98: the Dock never had ⌘R (re-read menus) though its Hotkeys p
 | 2026-09-25 | Menu safety list (4a): whole words; History ▸ Forward is navigation; Reopen Last Closed Window / Recently Closed stay in results; page rows still open by URL; unsure stays gated | #91 |
 | 2026-09-25 | Safari tabs in the Corner (D13): Context Dock folds into its tab bar | #89 |
 | 2026-09-26 | Pins in the Corner strip (4b): per-app pins of menu commands, actions, extensions and tabs lead the app's bar; any app with pins gets the bar; pinned destructive commands still ask. Safari "Save as Markdown" / "Ask AI" actions not built (asked in PR) | #94 |
+| 2026-09-26 | Keyboard rules B/C/E4 in one shared type, `DockKeyRules` (task 5); ←/→ walk the apps; one key press, one handler | #96, #98 |
+| 2026-09-27 | The Corner no longer steals focus from the frontmost app; no blink on hide | #101 |
+| 2026-09-28 | Safari actions (task 6): Ask AI about this page, Save as Markdown (Downloads, never overwrites, Reveal); sensitive pages refused | #102 |
 | 2026-09-26 | AppleScript runs on one serial queue (fixes the Safari tab-click crash) | #95 |
 | 2026-09-26 | Keyboard rules (task 5) in the shared `DockKeyRules`: result focus, pill row, empty-field Backspace ladder, list arrows, Return, Space, Finder folders, ⌘R in the Corner; one key press, one handler; ←/→ walk the apps both ways | #96, #98 |
 
