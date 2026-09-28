@@ -547,7 +547,11 @@ final class DoraXMCPServer: ObservableObject {
                 return "No Safari tabs cached. Safari may not be running."
             }
             return tabs.prefix(40)
-                .map { "- \($0.title)\n  \($0.url)" }
+                .map { tab in
+                    // A bank or sign-in tab is listed by origin only: no title, path or query.
+                    ScopedGroundingBlocks.withheldTabRow(url: tab.url)
+                        ?? "- \(tab.title)\n  \(tab.url)"
+                }
                 .joined(separator: "\n")
 
         case "dorax_run_menu_command":

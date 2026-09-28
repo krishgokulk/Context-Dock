@@ -579,7 +579,8 @@ extension LauncherView {
                                 currentWindow = tab.windowIndex
                                 prompt += "\n--- Window \(currentWindow) ---\n"
                             }
-                            prompt += "\(tab.tabIndex). \(tab.title)\n   \(tab.url)\n"
+                            let safe = ScopedGroundingBlocks.promptSafeTab(title: tab.title, url: tab.url)
+                            prompt += "\(tab.tabIndex). \(safe.title)\n   \(safe.url)\n"
                         }
                         if tabs.count > 50 {
                             prompt += "... and \(tabs.count - 50) more tabs\n"
@@ -615,6 +616,13 @@ extension LauncherView {
                         if text.count > 1000 {
                             prompt += "...\n"
                         }
+
+                    case .browserTab(let url, _)
+                    where ScopedGroundingBlocks.withheldPageBlock(forURL: url) != nil:
+                        // SensitivePageGuard refuses this page: its reason, never its content.
+                        prompt += "\n\n🌐 CURRENT TAB:\n"
+                        prompt += ScopedGroundingBlocks.withheldPageBlock(forURL: url) ?? ""
+                        prompt += "\n"
 
                     case .browserTab(let url, let title):
                         prompt += "\n\n🌐 CURRENT TAB:\n"
@@ -1036,7 +1044,9 @@ extension LauncherView {
                                         currentWindow = tab.windowIndex
                                         prompt += "\n--- Window \(currentWindow) ---\n"
                                     }
-                                    prompt += "\(tab.tabIndex). \(tab.title)\n   URL: \(tab.url)\n"
+                                    let safe = ScopedGroundingBlocks.promptSafeTab(
+                                        title: tab.title, url: tab.url)
+                                    prompt += "\(tab.tabIndex). \(safe.title)\n   URL: \(safe.url)\n"
                                 }
 
                                 if tabs.count > 50 {

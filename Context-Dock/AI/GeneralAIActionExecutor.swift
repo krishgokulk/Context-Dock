@@ -873,6 +873,9 @@ final class GeneralAIActionExecutor {
                 success: false,
                 message: "The Safari extension context went stale — reload the page and try again.")
         }
+        if let reason = SensitivePageGuard.refusal(for: context.url) {
+            return .init(success: false, message: reason.message)
+        }
         do {
             let response = try await AIProviderRouter.shared.send(
                 AIRequest(

@@ -882,6 +882,19 @@ enum AppScopedChatService {
     /// idea what was open in it, so it offered to reload a page it could not name.
     static func browserPageFacts(bundleID: String, query: String? = nil) -> String? {
         guard ScopedAppPromptBuilder.isBrowserBundle(bundleID) else { return nil }
+        guard let facts = unguardedBrowserPageFacts(bundleID: bundleID, query: query) else {
+            return nil
+        }
+        // A page SensitivePageGuard refuses contributes its reason, never its title or text.
+        if let withheld = ScopedGroundingBlocks.withheldPageBlock(forURL: facts.url) {
+            return withheld
+        }
+        return facts.text
+    }
+
+    private static func unguardedBrowserPageFacts(
+        bundleID: String, query: String?
+    ) -> (url: String, text: String)? {
         let detector = ContextDetector.shared
         switch bundleID {
         case "com.apple.Safari":
@@ -889,19 +902,19 @@ enum AppScopedChatService {
                 let context = SafariBrowserBridge.shared.currentContext()
             {
                 let text = context.compactedPageText(for: query, limit: 5_000)
-                return "Current page (read just now, factual):\nTitle: \(context.title)\n"
-                    + "URL: \(context.url)\nPage content:\n\(text)"
+                return (context.url, "Current page (read just now, factual):\nTitle: \(context.title)\n"
+                    + "URL: \(context.url)\nPage content:\n\(text)")
             }
             if let page = detector.getSafariContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         case "com.google.Chrome":
             if let page = detector.getChromeContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         case "company.thebrowser.Browser":
             if let page = detector.getArcContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         default:
             break
