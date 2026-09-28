@@ -71,12 +71,10 @@ enum AppScopeContext {
 
 struct AppScopeCard: View {
     @ObservedObject var model: AppChatPromptModel
-    @ObservedObject private var computerUse = ComputerUseConsentStore.shared
     let appIcon: NSImage?
     let close: () -> Void
 
     @State private var expanded: Set<String> = []
-    @State private var allowedCommands: [String] = []
 
     private var bundleID: String { model.appBundleID }
 
@@ -85,20 +83,25 @@ struct AppScopeCard: View {
     }
 
     var body: some View {
+        let inventory = inventory
         VStack(alignment: .leading, spacing: 12) {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    canDo
-                    seesNow
-                    allowed
+                    canDo(inventory)
+                    if !inventory.knowsGroups.isEmpty {
+                        AppScopeSection("Knows") {
+                            AppScopeInventoryGroups(groups: inventory.knowsGroups, expanded: $expanded)
+                        }
+                    }
+                    AppScopeSection("Sees now") { AppScopeSeesNowList(lines: seesNowLines) }
+                    AppScopeSection("Allowed") { AppScopeAllowedList(bundleID: bundleID) }
                 }
             }
             .frame(maxHeight: 420)
         }
         .padding(14)
         .frame(width: 300)
-        .onAppear { allowedCommands = AppMenuConsentStore.shared.allowedCommands(bundleId: bundleID) }
     }
 
     private var header: some View {
@@ -117,16 +120,16 @@ struct AppScopeCard: View {
 
     // MARK: Can do
 
-    private var canDo: some View {
-        section("Can do") {
-            if model.adapterActions.isEmpty && inventory.groups.isEmpty {
+    private func canDo(_ inventory: ScopeInventory) -> some View {
+        AppScopeSection("Can do") {
+            if model.adapterActions.isEmpty && inventory.canDoGroups.isEmpty {
                 Text("Nothing for \(model.appName) yet — its menus are searchable from the field.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
             if !model.adapterActions.isEmpty {
-                disclosure(
+                AppScopeDisclosure(
                     id: "actions", symbol: "bolt.fill", title: "Actions",
-                    count: model.adapterActions.count
+                    count: model.adapterActions.count, expanded: $expanded
                 ) {
                     ForEach(model.adapterActions) { action in
                         actionRow(action)
@@ -134,26 +137,8 @@ struct AppScopeCard: View {
                 }
             }
             // Everything else the Dock's panel lists, but actions (drawn above, runnable).
-            ForEach(inventory.groups.filter { $0.title != "Actions" }) { group in
-                disclosure(
-                    id: group.title, symbol: group.symbol, title: group.title,
-                    count: group.items.count
-                ) {
-                    ForEach(Array(group.items.prefix(12).enumerated()), id: \.offset) { _, item in
-                        Text(item)
-                            .font(group.isMonospaced
-                                ? .system(size: 11.5, design: .monospaced) : .system(size: 11.5))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .padding(.leading, 24)
-                    }
-                    if group.items.count > 12 {
-                        Text("+\(group.items.count - 12) more")
-                            .font(.system(size: 11)).foregroundStyle(.tertiary)
-                            .padding(.leading, 24)
-                    }
-                }
-            }
+            AppScopeInventoryGroups(
+                groups: inventory.canDoGroups.filter { $0.title != "Actions" }, expanded: $expanded)
         }
     }
 
@@ -189,125 +174,11 @@ struct AppScopeCard: View {
 
     // MARK: Sees now
 
-    private var seesNow: some View {
-        let lines = AppScopeContext.lines(
-            isBrowser: ScopedAppPromptBuilder.isBrowserBundle(bundleID),
-            page: ScopedAppPromptBuilder.isBrowserBundle(bundleID)
-                ? BrowserPageReader.current(bundleId: bundleID) : nil,
+    private var seesNowLines: [AppScopeContextLine] {
+        let isBrowser = ScopedAppPromptBuilder.isBrowserBundle(bundleID)
+        return AppScopeContext.lines(
+            isBrowser: isBrowser,
+            page: isBrowser ? BrowserPageReader.current(bundleId: bundleID) : nil,
             selection: model.selection, attachments: model.attachments)
-        return section("Sees now") {
-            if lines.isEmpty {
-                Text("Only what you type.").font(.system(size: 11.5)).foregroundStyle(.secondary)
-            }
-            ForEach(lines) { line in
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: line.symbol).frame(width: 16)
-                        .foregroundStyle(line.isRefused ? Color.orange : .secondary)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(line.title).font(.system(size: 12)).lineLimit(1)
-                        Text(line.detail).font(.system(size: 11)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: Allowed
-
-    private var allowed: some View {
-        section("Allowed") {
-            HStack(spacing: 8) {
-                Image(systemName: "cursorarrow.click.2").frame(width: 16).foregroundStyle(.secondary)
-                Text("Computer Use").font(.system(size: 12))
-                Spacer(minLength: 0)
-                Menu {
-                    ForEach(ComputerUseMode.allCases, id: \.self) { mode in
-                        Button {
-                            computerUse.setMode(mode, for: bundleID)
-                        } label: {
-                            if computerUse.mode(for: bundleID) == mode {
-                                Label(mode.title, systemImage: "checkmark")
-                            } else {
-                                Text(mode.title)
-                            }
-                        }
-                    }
-                } label: {
-                    Text(computerUse.mode(for: bundleID).title).font(.system(size: 11.5))
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
-            .help(computerUse.isMasterEnabled
-                ? computerUse.mode(for: bundleID).explanation
-                : "Computer Use is off for every app in Settings")
-            HStack(spacing: 8) {
-                Image(systemName: "checkmark.shield").frame(width: 16).foregroundStyle(.secondary)
-                Text(allowedCommands.isEmpty
-                    ? "No commands run without asking"
-                    : "\(allowedCommands.count) command\(allowedCommands.count == 1 ? "" : "s") run without asking")
-                    .font(.system(size: 12))
-                    .help(allowedCommands.joined(separator: "\n"))
-                Spacer(minLength: 0)
-                if !allowedCommands.isEmpty {
-                    Button("Forget") {
-                        AppMenuConsentStore.shared.forget(bundleId: bundleID)
-                        allowedCommands = []
-                    }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Color.accentColor)
-                }
-            }
-            HStack(spacing: 8) {
-                AIProviderIcon(provider: AppSettings.shared.selectedAIProvider, size: 14)
-                    .frame(width: 16)
-                Text(AppSettings.shared.selectedAIProvider.displayName).font(.system(size: 12))
-                Spacer(minLength: 0)
-            }
-        }
-    }
-
-    // MARK: Pieces
-
-    private func section<Content: View>(
-        _ title: String, @ViewBuilder _ content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-            content()
-        }
-    }
-
-    private func disclosure<Content: View>(
-        id: String, symbol: String, title: String, count: Int,
-        @ViewBuilder _ content: () -> Content
-    ) -> some View {
-        let open = expanded.contains(id)
-        return VStack(alignment: .leading, spacing: 3) {
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) {
-                    if open { expanded.remove(id) } else { expanded.insert(id) }
-                }
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: symbol).frame(width: 16).foregroundStyle(.secondary)
-                    Text(title).font(.system(size: 12))
-                    Spacer(minLength: 0)
-                    Text("\(count)").font(.system(size: 11.5)).foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(open ? 90 : 0))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if open { content() }
-        }
     }
 }
