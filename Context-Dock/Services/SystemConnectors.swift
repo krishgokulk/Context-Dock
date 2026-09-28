@@ -39,6 +39,21 @@ enum SystemConnectorGroup: String, CaseIterable, Equatable {
         }
     }
 
+    /// The pack's symbol in Settings ▸ App Packs.
+    var symbol: String {
+        switch self {
+        case .bluetooth: return "dot.radiowaves.left.and.right"
+        case .wifi: return "wifi"
+        case .display: return "sun.max.fill"
+        case .sound: return "speaker.wave.2.fill"
+        case .appearance: return "circle.lefthalf.filled"
+        case .focus: return "moon.fill"
+        case .battery: return "battery.100"
+        case .windows: return "macwindow"
+        case .system: return "gearshape.fill"
+        }
+    }
+
     /// Whole names or keywords that put a command in this pack. Compared as whole words
     /// and whole keywords, never substrings: "power off" (Shut Down) is not "low power",
     /// and "monitor" in Process Monitor is not a display.
@@ -81,8 +96,13 @@ struct SystemConnector: Equatable {
 enum SystemConnectors {
     /// The packs the chat can use. Disabled commands are left out, and so are the ones with
     /// nothing to run (the Windows and Quick Note pickers), so an empty pack never appears.
-    static func connectors(from commands: [SystemCommand]) -> [SystemConnector] {
-        let usable = commands.filter { $0.isEnabled && GlobalCommandCapabilities.isRunnable($0) }
+    /// Settings passes `includingDisabled` so a pack that is switched off is still listed.
+    static func connectors(
+        from commands: [SystemCommand], includingDisabled: Bool = false
+    ) -> [SystemConnector] {
+        let usable = commands.filter {
+            (includingDisabled || $0.isEnabled) && GlobalCommandCapabilities.isRunnable($0)
+        }
         return SystemConnectorGroup.allCases.compactMap { group in
             let members = usable.filter { SystemConnectorGroup.group(for: $0) == group }
             return members.isEmpty ? nil : SystemConnector(group: group, commands: members)
