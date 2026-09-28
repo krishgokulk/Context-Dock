@@ -10,36 +10,14 @@
 
 ## In progress
 
-**Bug fix: `AppleScriptQueue` re-entrancy crash** (crash reports 2026-09-26 16:46, found testing #98),
-in the session that owns #95. `AppleScriptQueue.sync` guards by queue, not by thread: a script that
-starts on the main thread while another script there is waiting for its reply calls `shared.sync` on
-the queue its own thread already holds, and libdispatch traps. Trigger seen: the Dock's
-Finder-selection timer. **Done means the queue itself is fixed** (per-thread ownership, e.g. a
-recursive lock), not only that timer; the Dock's menu reader must not run the System Events fallback
-on the main thread (the Corner's is AX-only since #98). Tests: a nested call on one thread returns;
-two threads never run at once.
+**Task 6 — Safari actions: Ask AI + Save as Markdown.** Draft #102, branch `claude/safari-actions`.
 
 ## Next, in order
 
-**6. Safari actions: Ask AI + Save as Markdown** (owner 2026-09-26; after the queue fix). Both are new app
-actions for Safari, pinnable through #94's pins.
-
-```
-Task 6 in docs/master/00-NOW.md: two Safari actions. Claim with a draft PR first; own branch from origin/general-chat-agent.
-- "Ask AI about this page": a Safari action in the Corner's app list (and pinnable). It sends the current page
-  (title, URL, readable text) to the Corner's own ask path — the same path Selection's AI rows use; no second AI path.
-  The answer shows in the Corner chat. Nothing is sent before the user runs the action.
-- "Save as Markdown": converts the current page's readable content to Markdown and saves it (Downloads by default,
-  the file name from the page title); shows where it saved, with Reveal in Finder. Never overwrites: add " 2", " 3".
-- Reuse existing code: the page reader the AI already uses for Safari; the Dock's action plumbing (AppAdapterManager).
-- Private pages (the SensitivePageGuard list: banking, passwords…) refuse both actions and say why.
-- Tests: both actions listed and pinnable for Safari only; Ask AI goes through the Corner ask path; Markdown file
-  name + no-overwrite; sensitive page refused. UI screenshots per AGENTS.md.
-End with the AGENTS.md hand-off.
-```
-
 **7. Then** the inventory's own order: remaining scopes → owner decisions D9 / D11 / D12.
-Follow-up from #98: the Dock never had ⌘R (re-read menus) though its Hotkeys page advertises it.
+Follow-ups: the Dock never had ⌘R (re-read menus) though its Hotkeys page advertises it (#98); the Dock's
+menu reader still runs its System Events fallback on the main thread — no longer a crash since #100, but a
+freeze for apps with an empty AX menu tree (Finder, Electron apps).
 
 ## Done
 
@@ -56,6 +34,8 @@ Follow-up from #98: the Dock never had ⌘R (re-read menus) though its Hotkeys p
 | 2026-09-26 | Pins in the Corner strip (4b): per-app pins of menu commands, actions, extensions and tabs lead the app's bar; any app with pins gets the bar; pinned destructive commands still ask. Safari "Save as Markdown" / "Ask AI" actions not built (asked in PR) | #94 |
 | 2026-09-26 | AppleScript runs on one serial queue (fixes the Safari tab-click crash) | #95 |
 | 2026-09-26 | Keyboard rules (task 5) in the shared `DockKeyRules`: result focus, pill row, empty-field Backspace ladder, list arrows, Return, Space, Finder folders, ⌘R in the Corner; one key press, one handler; ←/→ walk the apps both ways | #96, #98 |
+| 2026-09-27 | AppleScript re-entrancy crash: one recursive lock owned by a thread, not `DispatchQueue.sync`; also the Corner dock auto-hides and shows (setting) | #100 |
+| 2026-09-27 | The Corner no longer pulls DoraX in front of the app you are using; no blink when the strip hands the keyboard back | #101 |
 
 ## Owner decisions (append-only)
 
