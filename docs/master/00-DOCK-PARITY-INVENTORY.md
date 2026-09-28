@@ -75,7 +75,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D3 | CLI tool scope | ✅ | `CornerCLIScopeTests` (7) |
 | D4 | System command scope | ✅ | Task 7 (#106): in the Corner's Global results the rows are the Dock's pills, and a Global Command's pill ran the command outright (↩ on "Sleep" slept the Mac). A row whose search document is a command, extension or CLI tool now steps into it in the board, from ↩ and → (`returnDoesNotRunTheCommand`, `rightArrowStepsIntoTheTool`, `scopeDocumentKinds`); → never runs (#81, `CornerRightArrowTests`). Hand check owed |
 | D5 | Global Extension opens its own board | ✅ | Task 7 (#106): `scopeIntoExtension` opens it in the Corner's board, now also from the Dock's own pill for it (`scopeDocumentKinds`). Hand check owed |
-| D6 | Plugin: panel or one-shot run | 🟡 | Same as the Dock from Global search: a one-shot runs, a panel plugin opens its panel window (`GlobalContextRow.run` / the Dock's pill). Inline in the Corner's board only from a strip pin (`pluginCardPinID`). Owner to decide whether search should open it in the board too |
+| D6 | Plugin: panel or one-shot run | ✅ | Owner 2026-09-28: search opens it in the Corner too. A plugin with a panel, chosen from Global search (↩, →, or the Dock's own pill for it), opens its panel in the Corner's board — the strip card's view (`CornerPluginCard`), ▢ still takes it to a window, × or Backspace leaves; a one-shot still just runs (`CornerPluginBoardTests`). Hand check owed |
 | D7 | Finder: folder browse / desktop-only mode / attach current folder to chat | ✅ | Browse: → on a folder, Backspace climbs (C11, #98, `foldersAreWalkedByKey`). Attach: "+" ▸ Attach Front Finder Folder attaches the front window's folder, once (task 7, #106, `attachFrontFinderFolder`). Desktop-only mode is the Dock's way of acting like Global when Finder shows only the desktop; the Corner's Finder scope is a file search either way, so it has no separate mode — owner to confirm |
 | D8 | Clipboard as a scope | ✅ | Separate Corner pill + card (`CornerDockLayoutTests`, `CornerKeyboardOwnerTests`) |
 | D9 | Notifications compact scope | ❌ | No Corner code found |
@@ -132,6 +132,7 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 *2026-09-26: C4, C5, C6, C7, C9 ❌ → ✅ (task 5, #96) — the rules now live in `DockKeyRules`, which the Dock's monitor and the Corner's both read.*
 *2026-09-26: B3, B4, C1, C3, C10, C11, C12, E4 → ✅; B2 → — (task 5 part 2, #98).*
 *2026-09-28: D4, D5, D7, D14 → ✅; D6 stays 🟡 with an owner question (task 7, #106).*
+*2026-09-28: D6 → ✅ (owner: search opens plugins in the Corner); D7's desktop-only mode confirmed not needed.*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,

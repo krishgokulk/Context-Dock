@@ -291,6 +291,7 @@ extension AppChatPromptModel {
     func summonGlobalContext() {
         returnsToGlobalScope = false
         scopedExtension = nil
+        scopedPlugin = nil
         scopedCommand = nil
         _ = leaveSelectionScope()
         adoptScope(name: Self.globalScopeName, bundleID: "")
@@ -613,6 +614,7 @@ extension AppChatPromptModel {
     /// the shell's whole design refuses — so the extension's view is mounted here instead.
     func scopeIntoExtension(_ ext: UserGlobalExtension) {
         scopedCommand = nil
+        scopedPlugin = nil
         scopedExtension = ext
         returnsToGlobalScope = true
         adoptScope(name: ext.name, bundleID: "userext://\(ext.id.uuidString)")
@@ -622,8 +624,39 @@ extension AppChatPromptModel {
         touch()
     }
 
-    /// The board is showing an extension's own interface.
-    var showsExtensionPanel: Bool { scopedExtension != nil || scopedCommand != nil }
+    /// The board is showing an extension's, a command's or a plugin's own interface.
+    var showsExtensionPanel: Bool {
+        scopedExtension != nil || scopedCommand != nil || scopedPlugin != nil
+    }
+
+    /// Step into a plugin with a panel: the panel, in the corner's board, as a strip pin's
+    /// card already shows it. From Global search it opened a window beside the Corner — a
+    /// second floating container, which the shell's design refuses (owner 2026-09-28, D6).
+    func scopeIntoPlugin(_ manifest: PluginManifest) {
+        scopedExtension = nil
+        scopedCommand = nil
+        scopedPlugin = manifest
+        returnsToGlobalScope = true
+        adoptScope(name: manifest.name, bundleID: "plugin://\(manifest.id)")
+        rows = []
+        updateGlobalTyping(for: "")
+        syncListPhase()
+        touch()
+    }
+
+    /// Pure: the plugin a Global result opens in the board — one with a panel. A one-shot
+    /// (Sleep) or an agent-only plugin is not stepped into.
+    nonisolated static func panelPlugin(
+        for doc: GlobalSearchService.SearchDocument,
+        manifest: (String) -> PluginManifest? = { id in
+            MainActor.assumeIsolated { PluginRegistry.shared.plugin(id: id)?.manifest }
+        }
+    ) -> PluginManifest? {
+        guard case .plugin(let id) = doc.action, let found = manifest(id),
+            PluginLaunch.behaviour(for: found) == .openPanel
+        else { return nil }
+        return found
+    }
 
     /// Ask the panel on screen, from the field under it.
     ///
@@ -634,7 +667,7 @@ extension AppChatPromptModel {
         let question = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, showsExtensionPanel, !isAskingPanel else { return }
 
-        let title = scopedExtension?.name ?? scopedCommand?.name ?? ""
+        let title = scopedExtension?.name ?? scopedCommand?.name ?? scopedPlugin?.name ?? ""
         let subtitle = scopedExtension?.description ?? scopedCommand?.description ?? ""
         let extra = scopedExtension?.aiPrompt ?? ""
         let history = panelConversation
@@ -666,6 +699,7 @@ extension AppChatPromptModel {
     /// extension work before this one covered `userext://` and so never reached them.
     func scopeIntoCommand(_ command: SystemCommand) {
         scopedExtension = nil
+        scopedPlugin = nil
         scopedCommand = command
         returnsToGlobalScope = true
         adoptScope(name: command.name, bundleID: "syscmd://\(command.id.uuidString)")
@@ -906,6 +940,7 @@ extension AppChatPromptModel {
         guard returnsToGlobalScope else { return false }
         returnsToGlobalScope = false
         scopedExtension = nil
+        scopedPlugin = nil
         scopedCommand = nil
         panelConversation = []
         summonGlobalContext()
@@ -1152,7 +1187,9 @@ extension AppChatPromptModel {
             run(row)
             return true
         case .global(let doc):
-            if Self.rightArrowStepsInto(doc.action) {
+            if Self.rightArrowStepsInto(doc.action)
+                || Self.panelPlugin(for: doc, manifest: pluginManifestLookup) != nil
+            {
                 run(row)
                 return true
             }
@@ -1167,7 +1204,7 @@ extension AppChatPromptModel {
             return enterFocusedFolder()
         case .dock(let pill):
             // A Dock row for a command, extension or tool: into it, like its `.global` twin.
-            if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup) {
+            if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup, manifest: pluginManifestLookup) {
                 focusedMenuIndex = nil
                 run(.global(doc))
                 return true
@@ -1184,10 +1221,13 @@ extension AppChatPromptModel {
         for pill: DockPill,
         lookup: (String) -> GlobalSearchService.SearchDocument? = {
             GlobalSearchService.shared.document(withID: $0)
+        },
+        manifest: (String) -> PluginManifest? = { id in
+            MainActor.assumeIsolated { PluginRegistry.shared.plugin(id: id)?.manifest }
         }
     ) -> GlobalSearchService.SearchDocument? {
         guard let id = pill.searchDocumentID, let doc = lookup(id),
-            rightArrowStepsInto(doc.action)
+            rightArrowStepsInto(doc.action) || panelPlugin(for: doc, manifest: manifest) != nil
         else { return nil }
         return doc
     }
@@ -1248,7 +1288,7 @@ extension AppChatPromptModel {
             // A command, extension or tool from Global steps in, in this board — the Dock's
             // closure for it runs the command outright ("Sleep" slept the Mac from ↩) or
             // opens a window beside the Corner (task 7, inventory D4–D5).
-            if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup) {
+            if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup, manifest: pluginManifestLookup) {
                 run(.global(doc))
                 return
             }
@@ -1289,6 +1329,11 @@ extension AppChatPromptModel {
                 })
             {
                 scopeIntoExtension(ext)
+            }
+        case .global(let doc) where Self.panelPlugin(for: doc, manifest: pluginManifestLookup) != nil:
+            // A plugin with a panel opens in this board (D6); a one-shot still just runs.
+            if let manifest = Self.panelPlugin(for: doc, manifest: pluginManifestLookup) {
+                scopeIntoPlugin(manifest)
             }
         case .global(let doc) where isCLIScopeAction(doc.action):
             // Stepping into a tool changes *this* field's scope, so it is done here rather

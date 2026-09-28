@@ -656,7 +656,8 @@ final class CornerDockController: NSObject {
                     folderPreview: selection.showsFolderPreview,
                     sendConfirm: selection.pendingSend != nil) : nil,
             list: showsExtensionPanel
-                ? ExtensionScopeMetrics.size
+                ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
+                    ?? ExtensionScopeMetrics.size)
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
@@ -1505,7 +1506,15 @@ struct CornerDockSurface: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         if chatPresentation.isVisible, chatPresentation.mode != .general {
-            if CornerDockController.shared.showsExtensionPanel {
+            if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
+                // A plugin opened from Global search: its panel, in the board (D6). × leaves
+                // the scope, as Backspace does.
+                CornerPluginCard(
+                    pin: nil, manifest: plugin, model: prompt,
+                    onClose: { _ = prompt.leaveScopeForGlobal() })
+                    .id(plugin.id)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(
                     model: prompt, ext: prompt.scopedExtension,
                     command: prompt.scopedCommand)
