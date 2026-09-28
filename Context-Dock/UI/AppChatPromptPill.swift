@@ -363,6 +363,8 @@ struct AppChatPromptPill: View {
     @ObservedObject private var actionFeedback = CornerActionFeedback.shared
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
+    /// The app's settings card, open from the chip.
+    @State private var showsScopeCard = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
 
@@ -1089,6 +1091,14 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
+                // The pin right after "+", in every app (owner 2026-09-28): it sat at the far
+                // end, past the app's bar, and appeared and vanished with the pointer. Beside
+                // "+" it is always there, so nothing after it shifts when it would have come
+                // and gone. A conversation's header carries its own.
+                if model.phase != .chat {
+                    surfaceControls
+                        .transition(.opacity)
+                }
                 // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
                 // its pins, then its tabs, scrolling inside the pill. Gone while typing.
                 if model.showsTabBar, !isTyping,
@@ -1160,10 +1170,9 @@ struct AppChatPromptPill: View {
             // The field carries pin, never expand (owner 2026-09-26): while typing in every
             // Context Dock, the dock shell's included, and under the pointer otherwise. A
             // conversation's header keeps its own expand.
-            if model.phase != .chat, !model.isSearchField, isTyping {
-                surfaceControls
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
-            } else if pointerInside, model.phase != .chat, model.fitsField {
+            // A field with "+" draws the pin beside it (above); only a search field — no
+            // "+" — keeps it here at the end, under the pointer.
+            if model.isSearchField, pointerInside, model.phase != .chat, model.fitsField {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
@@ -1314,10 +1323,24 @@ struct AppChatPromptPill: View {
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
+            // The app's settings card lives in its chip (owner 2026-09-28, layout C).
+            Image(systemName: "gearshape")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.09), in: Capsule())
+        .background(
+            Color.primary.opacity(showsScopeCard ? 0.16 : 0.09), in: Capsule())
+        .contentShape(Capsule())
+        .onTapGesture { showsScopeCard.toggle() }
+        .help("What DoraX can do in \(model.appName)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("\(model.appName) settings")
+        .popover(isPresented: $showsScopeCard, arrowEdge: .top) {
+            AppScopeCard(model: model, appIcon: appIcon) { showsScopeCard = false }
+        }
+        .onChange(of: showsScopeCard) { _, open in model.isShowingScopeCard = open }
     }
 
     private var chipIconShown: Bool { model.phase != .dock }

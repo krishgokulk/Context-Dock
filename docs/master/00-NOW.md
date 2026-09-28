@@ -10,14 +10,13 @@
 
 ## In progress
 
-**Per-app settings card** (owner 2026-09-28): ⚙ lives in the app chip (layout C), the pin sits
-next to +, and clicking the chip opens a narrow card anchored to it, in the iOS glass-menu style.
-Proposed groups: Can do (actions, tools, menus) · Knows (skills, docs) · Sees now (what the next
-turn carries) · Allowed (Computer Use, always-allowed commands, provider). Own branch and PR.
+**Task 7 — remaining scopes** (inventory D4–D7, D14): a system command's own panel, a Global
+Extension's board, a plugin's panel or one-shot run, Finder's desktop-only mode and "attach this
+folder", Share actions. Each row gets a test and its inventory mark.
 
 ## Next, in order
 
-**7. Then** the inventory's own order: remaining scopes → owner decisions D9 / D11 / D12.
+**8. Then** owner decisions D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip; keys inside the card.
 Follow-ups: the Dock never had ⌘R (re-read menus) though its Hotkeys page advertises it (#98); the Dock's
 menu reader still runs its System Events fallback on the main thread — no longer a crash since #100, but a
 freeze for apps with an empty AX menu tree (Finder, Electron apps).
@@ -40,6 +39,7 @@ freeze for apps with an empty AX menu tree (Finder, Electron apps).
 | 2026-09-27 | AppleScript re-entrancy crash: one recursive lock owned by a thread, not `DispatchQueue.sync`; also the Corner dock auto-hides and shows (setting) | #100 |
 | 2026-09-27 | The Corner no longer pulls DoraX in front of the app you are using; no blink when the strip hands the keyboard back | #101 |
 | 2026-09-28 | Safari actions (task 6): Ask AI about this page, Save as Markdown (Downloads, never overwrites, Reveal); sensitive pages refused | #102 |
+| 2026-09-28 | Per-app settings card: pin beside +, ⚙ in the app chip opens Can do / Sees now / Allowed | #105 |
 
 ## Owner decisions (append-only)
 

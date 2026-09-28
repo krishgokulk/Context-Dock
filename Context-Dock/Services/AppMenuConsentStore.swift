@@ -116,6 +116,26 @@ final class AppMenuConsentStore {
         UserDefaults.standard.set(snapshot, forKey: defaultsKey)
     }
 
+    /// The commands one app may run without asking, as the grants store them: lower-cased
+    /// paths ("file > export as pdf…"). For the app's settings card.
+    func allowedCommands(bundleId: String) -> [String] {
+        let prefix = bundleId.lowercased() + "|"
+        lock.lock(); defer { lock.unlock() }
+        return allowed.filter { $0.hasPrefix(prefix) }
+            .map { String($0.dropFirst(prefix.count)) }
+            .sorted()
+    }
+
+    /// Forget one app's grants: its commands ask again next time.
+    func forget(bundleId: String) {
+        let prefix = bundleId.lowercased() + "|"
+        lock.lock()
+        allowed = allowed.filter { !$0.hasPrefix(prefix) }
+        let snapshot = Array(allowed)
+        lock.unlock()
+        UserDefaults.standard.set(snapshot, forKey: defaultsKey)
+    }
+
     /// Forget every remembered grant (used by Reset in settings).
     func reset() {
         lock.lock()
