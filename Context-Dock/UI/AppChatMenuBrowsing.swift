@@ -82,6 +82,16 @@ extension AppChatPromptModel {
         }
     }
 
+    /// A System Events walk (off the main thread) has read the menus of an app whose AX tree
+    /// is empty. If that is this prompt's app, reload: the walk stored its rows in the
+    /// capability cache `loadMenuItems` reads first. The Dock reloads the same way.
+    func scriptedMenusDidLoad(pid: pid_t?) {
+        guard let pid, phase.isVisible, !appBundleID.isEmpty,
+            NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == appBundleID
+        else { return }
+        loadMenuItems()
+    }
+
     /// Re-filters against what is typed. Pure and synchronous: the matcher does no I/O, so
     /// this runs on a keystroke without a hop.
     func updateMenuMatches() {
