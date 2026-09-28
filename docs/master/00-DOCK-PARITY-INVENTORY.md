@@ -64,7 +64,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | C9 | Pill row: ←/→ move focus, skip separators, wrap to the field at the ends | ✅ | `DockKeyRules.pillRow` (#96): `arrowsWalkAndWrap`, `separatorsAreSkipped`, `arrowsWalkThePills`; ↩ opens the pill as a click does (the Corner's click scopes into the app). Hand check owed |
 | C10 | **Space** = Quick Look on the focused file/row (only while navigating, never while typing) | ✅ | `DockKeyRules.spacePreviews` (#98): `spaceIsASpaceWhileTyping`, `spaceWithoutARowIsAKeystroke`. Hand check owed |
 | C11 | **→** on a folder row enters the folder | ✅ | #98: in the Finder scope → on a highlighted folder lists it (folders first, typing filters it), Backspace on the empty field climbs out one level and past the top back to the search: `foldersAreWalkedByKey`, `appsAreNotFolders`. → on an app row scopes into the app (checked 2026-09-25). Hand check owed |
-| C12 | **⌘R** refreshes the front app's live menus | ✅ | Corner (#98): ⌘R in an app scope re-reads its live menus (`refreshIsForAnAppScope`). **The Dock never had it** — the Hotkeys page advertises ⌘R but no handler exists in `LauncherView`; filed as a follow-up. Hand check owed |
+| C12 | **⌘R** refreshes the front app's live menus | ✅ | Both shells (#98 Corner, Task 11 Dock): one rule, `DockKeyRules.isMenuRereadKey` + `rereadsMenus` (`menuRereadKey`, `menuRereadIsForAnAppScope`; Global, CLI tools and Finder decline), and one re-read, `AXMenuReader.rereadMenus` — drops the cached tree and the last scripted walk, reads AX again, an empty tree walks off-main (`rereadDropsTheCachedTreeAndReadsAXAgain`, `rereadOfAnEmptyAXTreeStartsAFreshWalk`, `refreshIsForAnAppScope`). Hand check owed |
 
 ## D. Scopes (what you can step into)
 

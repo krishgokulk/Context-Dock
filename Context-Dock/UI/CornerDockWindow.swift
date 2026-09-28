@@ -1201,8 +1201,11 @@ final class CornerDockController: NSObject {
         if PluginKeyboardClaim.shared.isEditing { return event }
 
         // ⌘R reads the scoped app's live menus again (C12).
-        if event.keyCode == 15,
-            event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+        if DockKeyRules.isMenuRereadKey(
+            keyCode: event.keyCode, command: event.modifierFlags.contains(.command),
+            control: event.modifierFlags.contains(.control),
+            option: event.modifierFlags.contains(.option),
+            shift: event.modifierFlags.contains(.shift)),
             let panel, event.window === panel,
             chatPresentation.isVisible, chatPresentation.mode != .general,
             prompt.phase.showsInput,
