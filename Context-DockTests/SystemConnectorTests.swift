@@ -188,4 +188,55 @@ struct SystemConnectorTests {
             query: "set volume to 30", catalogue: catalogue)
         #expect(Set(volume.prefix(2)) == ["globalcmd.sound.volume.status", "globalcmd.volume"])
     }
+
+    // MARK: Activity rows follow-ups
+
+    /// A picker — one of a fixed set of presets — moves a setting the user can move back.
+    /// Saved copies of Appearance carry only their presets, no interaction type.
+    @Test func aPickerStyleCommandIsMediumRisk() {
+        var picker = defaultCommand("Appearance")
+        picker.interaction = ""
+        #expect(picker.interactionType == .none)
+        #expect(!GlobalCommandCapabilities.presetValues(for: picker).isEmpty)
+        #expect(GlobalCommandCapabilities.riskLevel(for: picker) == .medium)
+        // A one-shot script without presets is still high.
+        #expect(GlobalCommandCapabilities.riskLevel(for: defaultCommand("Empty Trash")) == .high)
+    }
+
+    /// Ranked over the registry's own order — sorted by id, which puts the write first.
+    @Test func aStatusQuestionRanksTheStatusReadFirst() {
+        let catalogue = capabilities(RecordingRuntime(SystemCommandsRegistry.defaults))
+            .map { (id: $0.id, title: $0.title) }
+            .sorted { $0.id < $1.id }
+        let ranked = AgentToolRegistry.rankedCapabilityIDs(
+            query: "is bluetooth on?", catalogue: catalogue)
+        #expect(ranked.first == "globalcmd.bluetooth.status")
+
+        #expect(GlobalCommandCapabilities.asksForCurrentState("is bluetooth on?"))
+        #expect(GlobalCommandCapabilities.asksForCurrentState("what's the volume"))
+        #expect(!GlobalCommandCapabilities.asksForCurrentState("turn bluetooth off"))
+        #expect(AgentToolRegistry.statusQuestionBonus(
+            asksState: false, capabilityID: "globalcmd.bluetooth.status") == 0)
+    }
+
+    @Test func aWriteThatCanBeReadIsReadBack() async throws {
+        let recorder = RecordingRuntime([defaultCommand("Volume")])
+        recorder.values["Volume"] = "30"
+        let volume = try #require(capabilities(recorder).first(where: { $0.id == "globalcmd.volume" }))
+
+        let result = try await volume.executor(
+            AICapabilityExecutionRequest(input: ["value": "30"], context: .none))
+
+        #expect(result.success)
+        #expect(result.output == "Volume 30 ✓ (read back 30)")
+        #expect(result.readBack == "30")
+        #expect(recorder.runs == ["Volume=30"])
+        #expect(!result.output.contains("independent"))
+    }
+
+    @Test func aReadBackThatDisagreesSaysSo() {
+        #expect(GlobalCommandCapabilities.readBackMatches(requested: "off", readBack: "false"))
+        #expect(GlobalCommandCapabilities.readBackMatches(requested: "dark", readBack: "true"))
+        #expect(!GlobalCommandCapabilities.readBackMatches(requested: "30", readBack: "55"))
+    }
 }

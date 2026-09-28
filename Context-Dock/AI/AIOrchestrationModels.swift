@@ -76,6 +76,15 @@ struct AIUnifiedExecutionResult: Equatable, Sendable {
     let sideEffects: [String]
     let verification: AIVerificationStatus
     let error: String?
+    /// What the executor read back after writing, when it did.
+    var readBack: String? = nil
+
+    /// The line the chat is handed: the result, with a verification note only when a check
+    /// failed or could not run, and the read-back value when there is one.
+    func resultLine(isWrite: Bool) -> String {
+        ActivitySummary.resultLine(
+            result: output, isWrite: isWrite, verification: verification, readBack: readBack)
+    }
 }
 
 @MainActor

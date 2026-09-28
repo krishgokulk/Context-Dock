@@ -1471,7 +1471,9 @@ extension LauncherView {
                                                 offerReminderRowAction(reminder, operation: operation)
                                             },
                                             userAvatarSymbol: providerSymbol,
-                                            assistantAvatarImage: scopedAppIcon
+                                            assistantAvatarImage: scopedAppIcon,
+                                            activity: chatConversation
+                                                .activityByMessageID[message.id] ?? []
                                         )
                                         .id(message.id)
                                     } else {
@@ -1491,7 +1493,11 @@ extension LauncherView {
                                             },
                                             userAvatarSymbol: providerSymbol,
                                             assistantAvatarImage: scopedAppIcon,
-                                            liveSteps: dockLiveSteps(for: message)
+                                            liveSteps: dockLiveSteps(for: message),
+                                            liveActivity: dockLiveSteps(for: message).isEmpty
+                                                ? [] : chatConversation.liveActivity,
+                                            activity: chatConversation
+                                                .activityByMessageID[message.id] ?? []
                                         )
                                         .id(message.id)
                                     }
@@ -1527,7 +1533,9 @@ extension LauncherView {
                                 // after that they render above its text instead, so the block
                                 // collapses where it stood rather than jumping.
                                 if l2.isLoading, !dockProgressBelongsToLastMessage {
-                                    LiveAgentProgressView(steps: dockLiveProgressSteps)
+                                    LiveAgentProgressView(
+                                        steps: dockLiveProgressSteps,
+                                        activity: chatConversation.liveActivity)
                                         .id("l2loading")
                                 }
                             }
@@ -3388,12 +3396,14 @@ extension LauncherView {
     func beginL2AIRequest() -> UUID {
         let requestID = UUID()
         l2.activeRequestID = requestID
+        AppChatConversation.shared.beginActivity()
         return requestID
     }
 
     func finishL2AIRequest(_ requestID: UUID) {
         guard l2.activeRequestID == requestID else { return }
         l2.activeRequestID = nil
+        AppChatConversation.shared.finishActivity()
         l2.isLoading = false
         l2.loadingStatus = nil
         l2.currentTask = nil

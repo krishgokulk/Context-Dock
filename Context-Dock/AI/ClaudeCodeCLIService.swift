@@ -278,23 +278,31 @@ enum ClaudeCodeCLIService {
         let mcpConfigPath = UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey)
             ? DoraXMCPServer.writeCLIConfig()?.path
             : nil
+        // The turn's activity record, read here in the turn's task: the line handler runs
+        // on the pipe's thread, where the task-local is not visible. A turn that records
+        // activity streams, because the one-shot JSON says nothing about the tools it ran.
+        let activity = ActivityRecorder.active
+        let streams = onProgress != nil || activity != nil
         let arguments = arguments(
             prompt: prompt, systemPrompt: systemPrompt, model: model,
-            access: access, workingDirectory: directory, streaming: onProgress != nil,
+            access: access, workingDirectory: directory, streaming: streams,
             mcpConfigPath: mcpConfigPath)
         log.notice(
             "claude cli access=\(access.rawValue, privacy: .public) dir=\(directory?.path ?? "-", privacy: .public)")
 
         // Streaming answers as it goes; the final text arrives on the last `result` line, so
         // it is captured here rather than parsed back out of the whole transcript afterwards.
-        if let onProgress {
+        if streams {
             var answer: String?
             var failure: String?
             _ = try await run(
                 binary: binary, arguments: arguments, workingDirectory: directory,
                 onLine: { line in
+                    for event in CLIActivityEvent.claudeCode(streamLine: line) {
+                        activity?.apply(event)
+                    }
                     switch parse(streamLine: line) {
-                    case .progress(let step): onProgress(step)
+                    case .progress(let step): onProgress?(step)
                     case .result(let text): answer = text
                     case .failure(let message): failure = message
                     case .ignored: break

@@ -17,6 +17,9 @@ struct CornerTranscript: View {
     let appName: String
     let appBundleID: String
     let appIcon: NSImage?
+    /// The dock's turn record — the corner's App Chat is the dock's conversation, so its
+    /// rows are the dock's rows. Keyed by message, so any other transcript finds none.
+    @ObservedObject private var conversation = AppChatConversation.shared
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -32,7 +35,10 @@ struct CornerTranscript: View {
                             // only supplies its own scope.
                             onInstallProposal: { json in install(json) },
                             assistantAvatarImage: appIcon,
-                            liveSteps: isAnswering && index == messages.count - 1 ? liveSteps : []
+                            liveSteps: isAnswering && index == messages.count - 1 ? liveSteps : [],
+                            liveActivity: isAnswering && index == messages.count - 1
+                                ? conversation.liveActivity : [],
+                            activity: conversation.activityByMessageID[message.id] ?? []
                         )
                         .id(message.id)
                     }
@@ -40,7 +46,8 @@ struct CornerTranscript: View {
                     // corner drew a bare spinner over it. A spinner is the app declining
                     // to say what it is doing while it holds the user's question.
                     if isAnswering && (messages.last?.role == .user || messages.isEmpty) {
-                        LiveAgentProgressView(steps: waitingSteps)
+                        LiveAgentProgressView(
+                            steps: waitingSteps, activity: conversation.liveActivity)
                     }
                 }
                 .padding(.horizontal, 12)

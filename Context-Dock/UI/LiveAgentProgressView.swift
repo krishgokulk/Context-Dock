@@ -4,6 +4,15 @@ import SwiftUI
 /// model's private reasoning: every row corresponds to an orchestrator or tool lifecycle event.
 struct LiveAgentProgressView: View {
     let steps: [String]
+    /// Rows recorded for this turn so far. When there are any they are the list — one per
+    /// tool call, openable — and narration is reduced to the single live line beneath them.
+    var activity: [ActivityStep] = []
+
+    /// The line saying what is happening now, when no recorded step is itself running.
+    private var liveLine: String? {
+        guard !activity.contains(where: { $0.status == .running }) else { return nil }
+        return uniqueSteps.last ?? "Working…"
+    }
 
     private var uniqueSteps: [String] {
         var seen = Set<String>()
@@ -14,6 +23,32 @@ struct LiveAgentProgressView: View {
     }
 
     var body: some View {
+        if activity.isEmpty {
+            narrationList
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(activity) { step in
+                    ActivityStepRow(step: step)
+                }
+                if let liveLine {
+                    HStack(alignment: .top, spacing: 6) {
+                        ProgressView().controlSize(.mini).frame(width: 12).padding(.top, 1)
+                        Text(liveLine)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 3)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 11))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var narrationList: some View {
         VStack(alignment: .leading, spacing: 7) {
             ForEach(Array(uniqueSteps.enumerated()), id: \.offset) { index, step in
                 HStack(alignment: .top, spacing: 8) {

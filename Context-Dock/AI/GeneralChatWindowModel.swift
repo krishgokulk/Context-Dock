@@ -31,6 +31,9 @@ final class GeneralChatWindowModel: ObservableObject {
     @Published private(set) var statusByScopeKey: [String: String] = [:]
     /// Observable lifecycle events accumulated for each in-flight turn.
     @Published private(set) var progressByScopeKey: [String: [String]] = [:]
+    /// What each in-flight turn has actually run, one row per tool call. Narration above
+    /// drives the live line; these are the record the finished answer keeps.
+    @Published private(set) var activityByScopeKey: [String: [ActivityStep]] = [:]
     /// Files on the next message, shown as chips once it is sent.
     @Published var attachments: [URL] = []
     /// Apps the answer should be about — the composer's app picker. Several at once
@@ -86,6 +89,7 @@ final class GeneralChatWindowModel: ObservableObject {
     var isSending: Bool { sendingScopeKeys.contains(activeScope.storageKey) }
     var activeStatus: String? { statusByScopeKey[activeScope.storageKey] }
     var activeProgress: [String] { progressByScopeKey[activeScope.storageKey] ?? [] }
+    var activeActivity: [ActivityStep] { activityByScopeKey[activeScope.storageKey] ?? [] }
 
     /// Pull in whatever the result sheet has said since this window was last open.
     func reloadFromStore() {
@@ -326,7 +330,8 @@ final class GeneralChatWindowModel: ObservableObject {
     /// Files an answer, carrying whatever it came with: the enable button, the route
     /// choices, the console receipt.
     private func apply(
-        _ answer: AppScopedChatService.Answer, to scope: GeneralChatScope, title: String
+        _ answer: AppScopedChatService.Answer, to scope: GeneralChatScope, title: String,
+        activity: [ActivityStep] = []
     ) {
         // The log itself is written by whoever ran the work; the window only decides
         // whether the panel showing it should be visible.
@@ -345,16 +350,10 @@ final class GeneralChatWindowModel: ObservableObject {
         // the dock's Notes branch and nowhere else.
         let rows = ChatResultRowMapper.map(answer.rows)
         let liveProgress = progressByScopeKey[scope.storageKey] ?? []
-        var durableTrace: [String] = []
-        for step in liveProgress + answer.trace + ["Task complete"] {
-            if !durableTrace.contains(where: {
-                $0.caseInsensitiveCompare(step) == .orderedSame
-            }) {
-                durableTrace.append(step)
-            }
-        }
-        deliver(
-            AIChatMessage(
+        // Narration kept only where it says something; "Understanding your request…",
+        // "Thinking…" and "Task complete" were the record of every turn and of none.
+        let durableTrace = ActivityNarration.durableTrace(liveProgress + answer.trace)
+        var message = AIChatMessage(
                 role: .assistant, content: answer.text,
                 structuredData: answer.proposalJSON,
                 appLaunches: rows.apps,
@@ -368,8 +367,9 @@ final class GeneralChatWindowModel: ObservableObject {
                 subjectiveEvaluation: answer.subjectiveEvaluation,
                 enableAppRequest: answer.enableApp,
                 trace: durableTrace,
-                actionChoices: answer.routeChoices),
-            to: scope, title: title)
+                actionChoices: answer.routeChoices)
+        message.activity = activity
+        deliver(message, to: scope, title: title)
     }
 
     /// The user picked how to carry out the last request. Runs that route, remembers the
@@ -951,6 +951,13 @@ final class GeneralChatWindowModel: ObservableObject {
             "turn start scope=\(sendKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
         sendingScopeKeys.insert(sendKey)
         progressByScopeKey[sendKey] = ["Understanding your request…"]
+        activityByScopeKey[sendKey] = nil
+        let activity = ActivityRecorder { [weak self] steps in
+            Task { @MainActor [weak self] in
+                guard self?.sendingScopeKeys.contains(sendKey) == true else { return }
+                self?.activityByScopeKey[sendKey] = steps
+            }
+        }
         sendTasks[sendKey] = Task { [weak self] in
             // A provider or tool loop that never returns must still end the turn. Without
             // this the thread sat on "Thinking…" with no way back except relaunching.
@@ -975,7 +982,10 @@ final class GeneralChatWindowModel: ObservableObject {
                 // Every thread — scoped or not — goes through the one path, so the window
                 // grounds, executes and sanitises the way the dock's chat does instead of
                 // asking the model to answer from memory.
-                let answer = try await AppScopedChatService.send(
+                // Bound around the whole turn: every tool dispatched inside it, on any
+                // actor, records its row here and nowhere else.
+                let answer = try await ActivityRecorder.$current.withValue(activity) {
+                  try await AppScopedChatService.send(
                     scope: sendScope,
                     appName: scopeAppName,
                     query: query,
@@ -994,12 +1004,15 @@ final class GeneralChatWindowModel: ObservableObject {
                             self?.recordProgress(status, for: sendKey)
                         }
                     })
+                }
+                activity.settle()
+                let steps = activity.steps
                 guard !Task.isCancelled else {
                     await MainActor.run { self?.finishSending(sendKey) }
                     return
                 }
                 await MainActor.run {
-                    self?.apply(answer, to: sendScope, title: sendTitle)
+                    self?.apply(answer, to: sendScope, title: sendTitle, activity: steps)
                 }
             } catch {
                 guard !Task.isCancelled else {
@@ -1030,6 +1043,7 @@ final class GeneralChatWindowModel: ObservableObject {
         sendingScopeKeys.remove(key)
         statusByScopeKey[key] = nil
         progressByScopeKey[key] = nil
+        activityByScopeKey[key] = nil
         sendTasks[key] = nil
     }
 
@@ -1066,6 +1080,7 @@ final class GeneralChatWindowModel: ObservableObject {
         sendingScopeKeys.remove(scope.storageKey)
         statusByScopeKey[scope.storageKey] = nil
         progressByScopeKey[scope.storageKey] = nil
+        activityByScopeKey[scope.storageKey] = nil
         settleConsole(scope)
         // Anything the answer built becomes a file, which the panel already knows how to
         // show. Done here rather than in the view so an artifact survives the thread being

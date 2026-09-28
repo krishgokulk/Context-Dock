@@ -56,6 +56,9 @@ struct AICapabilityExecutionRequest {
 struct AICapabilityExecutionResult {
     let success: Bool
     let output: String
+    /// The value the executor read back after writing it, when it could. Set only by an
+    /// executor that actually re-read the setting — never inferred from its output.
+    var readBack: String? = nil
 }
 
 /// Whether a capability's entire authority comes from the user's explicit selection.
@@ -227,7 +230,12 @@ final class CapabilityRegistry {
             return "- \(capability.id): \(capability.title) | risk=\(capability.riskLevel.rawValue) | input=[\(fields)]"
         }
         return [
-            "Registered capabilities:\n" + entries.joined(separator: "\n"),
+            "Registered capabilities:\n" + entries.joined(separator: "\n")
+                // Said where the list is, because the list is what the model reads when it
+                // decides between a registered read and its own shell.
+                + "\n\nFor a question about a setting's current state (\"is Bluetooth on?\", "
+                + "\"what's the volume?\"), call its `.status` capability — a read with no "
+                + "approval — instead of running a shell command.",
             AppWorkflowToolCatalog.shared.promptBlock(for: bundleID)
         ].joined(separator: "\n\n")
     }
@@ -809,11 +817,14 @@ final class AIExecutionEngine {
                 success: result.success,
                 output: result.output,
                 sideEffects: result.success ? [plan.explanation] : [],
-                verification: verificationStatus(
-                    for: plan,
-                    succeeded: result.success,
-                    output: result.output),
-                error: result.success ? nil : result.output
+                verification: result.readBack == nil
+                    ? verificationStatus(
+                        for: plan,
+                        succeeded: result.success,
+                        output: result.output)
+                    : .verified,
+                error: result.success ? nil : result.output,
+                readBack: result.readBack
             )
         } catch {
             return AIUnifiedExecutionResult(

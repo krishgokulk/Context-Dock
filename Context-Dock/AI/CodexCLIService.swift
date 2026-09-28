@@ -159,10 +159,14 @@ enum CodexCLIService {
 
         log.notice("codex \(arguments.dropLast().joined(separator: " "), privacy: .public)")
 
+        // Read here, in the turn's task: the line handler runs on the pipe's own thread,
+        // where the turn's task-local is not visible.
+        let activity = ActivityRecorder.active
         let transcript = try await run(
             binary: binary, arguments: arguments, workingDirectory: workingDirectory,
             timeout: timeout,
             onLine: { line in
+                for event in CLIActivityEvent.codex(streamLine: line) { activity?.apply(event) }
                 switch parse(streamLine: line) {
                 case .step(let step): onProgress?(step)
                 case .failure(let message): onProgress?("Codex: \(message)")
