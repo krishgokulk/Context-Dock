@@ -10,14 +10,33 @@
 
 ## In progress
 
-*None.* Task 7 (remaining scopes) is done in #106. Next is the owner's call, below.
+Run by the cloud coordinator in parallel cloud sessions (owner 2026-09-28: "continue all tasks, list
+every test at the end"). Cloud sessions cannot build or screenshot: CI (macOS) is their build gate,
+and the owner hand-tests the batch at the end.
+
+**9. Fix: sensitive pages in chat.** The chat's page reading (`browserPage` / `read_page`) skips
+`SensitivePageGuard`, so "summarise this page" on a bank page sends it (found in #102). A refused page
+is never sent; the chat says why. Both shells.
+
+**10. Fix: the Dock's menu reader never runs System Events on the main thread.** Since #100 it is a
+freeze, not a crash, for apps with an empty AX menu tree (Finder, Electron apps). The Corner is AX-only
+since #98; the Dock matches.
 
 ## Next, in order
 
-**8. Then** owner decisions D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip; keys inside the card.
-Follow-ups: the Dock never had ⌘R (re-read menus) though its Hotkeys page advertises it (#98); the Dock's
-menu reader still runs its System Events fallback on the main thread — no longer a crash since #100, but a
-freeze for apps with an empty AX menu tree (Finder, Electron apps).
+**11. The Dock gets ⌘R** (re-read the app's live menus), as its Hotkeys page already advertises and the
+Corner has since #98.
+
+**12. App Packs + System connectors, step 1** (proposed 2026-09-28; the name is the owner's to veto).
+One name, "App Pack", for an app's adapter (actions, skills, menus, tools) everywhere in the UI; Global
+Commands regrouped into System packs (Bluetooth, Wi-Fi, Display, Sound, Focus…) whose value scripts
+become read tools and whose scripts become write tools, registered in `AgentToolRegistry` so General
+Chat and app chats can use them (reads free, writes ask); Settings lists installed packs with one
+switch each and a detail page reusing the settings card's groups; a "sends data out" label. No
+Discover/marketplace in 1.0. Global rows stay as they are — same code, two views.
+
+**13. Owner decisions** D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip;
+keys inside the card.
 
 ## Done
 
@@ -39,6 +58,7 @@ freeze for apps with an empty AX menu tree (Finder, Electron apps).
 | 2026-09-28 | Safari actions (task 6): Ask AI about this page, Save as Markdown (Downloads, never overwrites, Reveal); sensitive pages refused | #102 |
 | 2026-09-28 | Per-app settings card: pin beside +, ⚙ in the app chip opens Can do / Sees now / Allowed | #105 |
 | 2026-09-28 | Remaining scopes (task 7): a Global Command's row steps in, never runs (D4, D5); attach Finder's front folder (D7); D14 marked; D6 left for the owner | #106 |
+| 2026-09-28 | Plugins from search open in the Corner's board (D6); Finder in front lists its menus; the Dock's window layouts in the app field | #107, #108 |
 
 ## Owner decisions (append-only)
 

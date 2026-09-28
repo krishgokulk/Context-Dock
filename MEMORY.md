@@ -26,3 +26,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-26 (claude/keyboard-rules-2, #98): task 5 part 2 — B3, B4, C1, C3, C10–C12, E4 via DockKeyRules; B2 marked not-a-Corner-row; Dock ⌘R missing (follow-up). Suite 2051 / 0.
 - 2026-09-26 (cloud coordinator): 00-NOW — task 5 done (#96, #98), #95 in Done; AppleScriptQueue re-entrancy fix in progress ahead of task 6; B2 = "—" recorded.
 - 2026-09-27 (cloud coordinator): 00-NOW — queue fix (#100) and focus fix (#101) in Done; task 6 in progress (#102); Dock menu-reader main-thread freeze noted as follow-up.
+- 2026-09-28 (cloud coordinator): 00-NOW — tasks 9–13 queued; 9 and 10 run in cloud sessions.
