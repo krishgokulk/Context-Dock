@@ -314,6 +314,34 @@ struct DockKeyRulesListTests {
                 browsingFolder: false, selectionScope: false, chatOpen: false, scopedFromGlobal: false)
                 == .pass)
     }
+
+    @Test("⌘R alone is the re-read key; any other modifier or letter is not (C12)")
+    func menuRereadKey() {
+        typealias R = DockKeyRules
+        #expect(R.isMenuRereadKey(keyCode: 15, command: true, control: false, option: false, shift: false))
+        #expect(!R.isMenuRereadKey(keyCode: 15, command: false, control: false, option: false, shift: false))
+        #expect(!R.isMenuRereadKey(keyCode: 15, command: true, control: false, option: false, shift: true))
+        #expect(!R.isMenuRereadKey(keyCode: 15, command: true, control: false, option: true, shift: false))
+        #expect(!R.isMenuRereadKey(keyCode: 15, command: true, control: true, option: false, shift: false))
+        #expect(!R.isMenuRereadKey(keyCode: 45, command: true, control: false, option: false, shift: false))
+    }
+
+    /// Both shells ask this one rule: the Corner with its scope, the Dock with the app it is
+    /// over (Finder there is the Dock over Finder; in the Corner, Finder's file search).
+    @Test("⌘R re-reads in an app scope; Global, CLI tools and Finder decline (C12)")
+    func menuRereadIsForAnAppScope() {
+        typealias R = DockKeyRules
+        #expect(R.rereadsMenus(
+            appBundleID: "com.apple.TextEdit", isGlobalScope: false, isCLIScope: false, isFinder: false))
+        #expect(!R.rereadsMenus(
+            appBundleID: "com.apple.finder", isGlobalScope: false, isCLIScope: false, isFinder: true))
+        #expect(!R.rereadsMenus(
+            appBundleID: "com.apple.TextEdit", isGlobalScope: true, isCLIScope: false, isFinder: false))
+        #expect(!R.rereadsMenus(
+            appBundleID: "tool.git", isGlobalScope: false, isCLIScope: true, isFinder: false))
+        #expect(!R.rereadsMenus(
+            appBundleID: "", isGlobalScope: false, isCLIScope: false, isFinder: false))
+    }
 }
 
 @Suite("Corner keys follow the Dock's rules — part 2")
