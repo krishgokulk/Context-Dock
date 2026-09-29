@@ -102,6 +102,7 @@ struct SearchIsNotAnEditCommandTests {
 
 // MARK: - Task 16e: discovery ranks, approval acts
 
+@MainActor
 struct CandidateDiscoveryPolicyTests {
 
     @Test func discoveryNeverLaunchesAnything() {
