@@ -10,25 +10,55 @@
 
 ## In progress
 
-Owner rule (2026-09-29): strictly in order — finish 16 and 17, hand test, merge, then 18.
+Coordinator: Desktop app (Mac), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-29 23:39 UTC
 
-**15. Owner decisions** D9 / D11 / D12 — waiting on the owner. Nothing is being built until the
-owner orders the next task. Settings card follow-ups: ⚙ on the scope-from-Global chip; keys inside
-the card. Follow-ups: a read-back that disagrees after a System connector write reports success with
-the mismatch in text — make it a failed step (#115); cloud sessions must never merge their own PR
-(#114 merged before review). Small follow-ups are listed under "Next".
+Owner rules (2026-09-30): strict order below, one task at a time. **No `ship it` until the
+Hand-check queue is empty.** Merge only on the owner's words "merge <n>". The coordinator edits only
+`00-NOW.md` and `MEMORY.md` and runs each task in a subagent in its own worktree (see
+`docs/runbooks/coordinate-across-accounts.md`).
 
-Coordinator (2026-09-29): this branch (`claude/jev-popularity-comparison-t530yd`) runs in a local
-Mac session. It edits only `00-NOW.md` and `MEMORY.md`, runs each task in a subagent in its own
-worktree, watches the PRs, and merges only when the owner says so.
+**1. Flaky `AXMenuReaderScriptedFallbackTests`** — `anEmptyAXTreeReturnsAtOnceAndTheWalkLandsLater`
+and `anEmptyWalkIsNotRetriedWhileFresh` fail intermittently: a shared `scriptedMenusDidLoad`
+notification collects the same fake pid (999983) from parallel tests. Fix the isolation, not the
+assertions. Subagent starting; draft PR to follow.
 
 ## Next, in order
 
+**2. Retire the old Shortcuts route** — `.shortcutRunner` (`matchingMacShortcut` / `ShortcutsCatalog`)
+offers "Run Shortcut …" at medium risk with no exact-name check, timeout or output cap and can
+compete with `run_shortcut` (#127).
+**3. `~/Library` noise in result cards** — paths under `~/Library` from step output are shown as
+cards (a Claude Code log, `local_….json`, an `.cache` file). Filter them out of step-output paths.
+**4. Settings-card follow-ups** — ⚙ on the scope-from-Global chip; keys inside the card.
 
-**Small follow-ups (owner to order):** (a) result cards: paths under `~/Library` from step output are
-noise; (c) retire the older `.shortcutRunner` route (`matchingMacShortcut` / `ShortcutsCatalog`): medium risk, no exact-name check, timeout or output cap, and it can compete with `run_shortcut`; (b) flaky `AXMenuReaderScriptedFallbackTests` — a shared `scriptedMenusDidLoad` notification
-collects the same fake pid from parallel tests (fails intermittently, passes on retry).
+Also open: a read-back that disagrees after a System connector write reports success with the
+mismatch in text — make it a failed step (#115); cloud sessions must never merge their own PR (#114
+merged before review).
 
+## Hand-check queue
+
+Merged PRs the owner has not checked by hand yet. A failed check becomes a `Fix:` task at the top
+of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
+#127 (16d Shortcuts) is checked.
+
+- **#118 (16b result cards):** Finder chat "find my passport pdfs" → Files card, one row per file;
+  Quick Look (←/→), Open, Reveal, double-click, right-click, drag a row into Finder/Mail; same card
+  in Dock chat, Dock General Chat, Corner chats and the Chat Window; card only after the turn ends;
+  no card for a no-file or error answer; Corner resizes cleanly.
+- **#119 (16e routing):** Corner Finder chat `find my passport pdfs gokulakannan` stays in Finder (no
+  "Allow Find My", Find My does not open); General Chat `open Find My` still opens it;
+  `take a note about the roof quote` does not jump to Notes; `show photos of the beach` offers no
+  Photos while `open Photos` does.
+- **#121 (17 model-first routing):** Finder chat `find my passport pdf` → no action button, model
+  answers; `where are my passport PDFs?` → plain answer; `copy`, `new folder`, `empty trash` → one-tap
+  Use Finder button (Empty Trash still asks); `open Find My` → cross-app offer; Safari `summarize this
+  page` → summary, `copy` → Use Safari; General Chat `is bluetooth on?`, `turn dark mode off`,
+  `set volume to 30`, `open Find My`.
+- **#123 (18 file search, Spotlight off):** Finder chat and General Chat "find my passport pdfs" →
+  "Searching for files…" step, full paths, Files card; a no-match query says nothing was found.
+- **#125 (16c output files):** General Chat "write a csv of my three passport files to an output
+  file" → approval sheet (file, folder, preview) → card in `~/Documents/DoraX Outputs/`; same name →
+  " 2"; a .docx opens in Word/Pages; decline writes nothing.
 
 ## Done
 

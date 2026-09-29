@@ -45,3 +45,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-29 (Mac coordinator): #125 (16c) merged after owner hand test; 16d (Shortcuts connector) started in a subagent.
 - 2026-09-29 Task 16d (subagent): Shortcuts connector — `list_shortcuts` (read-only) + `run_shortcut` (high-risk approval, exact name checked pre-sheet, 60s timeout, 20KB output cap, input via temp file) + MCP `dorax_list_shortcuts`/`dorax_run_shortcut` (`ShortcutsService.swift`, `ShortcutsTool.swift`); injected runner. Branch claude/task-16d-shortcuts.
 - 2026-09-30 (Mac coordinator): #127 (16d Shortcuts) merged after owner hand test; queue empty pending owner decisions D9/D11/D12 and small follow-ups.
+- 2026-09-30 (Mac coordinator): #126 and #128 merged; Coordinator line + Hand-check queue (#118 #119 #121 #123 #125) added to 00-NOW; order: 1 flaky AX test, 2 retire old Shortcuts route, 3 ~/Library card noise, 4 settings-card follow-ups; no ship until the queue is empty.
