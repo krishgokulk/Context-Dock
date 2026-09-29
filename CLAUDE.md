@@ -207,14 +207,23 @@ These skills are installed and activate automatically based on your request:
 
 Note: `swiftui-pro` overlaps with `swiftui-patterns` (the former is a deep API/hygiene review skill; the latter covers app architecture/scene structure) — use whichever matches the task. Similarly, `appkit-accessibility-auditor` overlaps with `appkit-interop` (accessibility audit vs. general AppKit bridging).
 
-Vendored (not plugin-installed) skills above live in `Context-Dock/skills/<name>/SKILL.md`, copied directly from their upstream repos:
+Vendored skills live in `.claude/skills/<name>/SKILL.md` (auto-discovered, so they load in local and cloud sessions on any Claude account), copied directly from their upstream repos:
 - swiftui-pro ← https://github.com/twostraws/SwiftUI-Agent-Skill
 - swift-concurrency-pro ← https://github.com/twostraws/Swift-Concurrency-Agent-Skill
 - app-intents ← https://github.com/n0an/App-Intents-Agent-Skill
 - core-data-expert ← https://github.com/AvdLee/Core-Data-Agent-Skill
-- swiftui-accessibility-auditor, uikit-accessibility-auditor, appkit-accessibility-auditor ← https://github.com/rgmez/apple-accessibility-skills (shared docs in `skills/apple-accessibility-shared/`)
+- swiftui-accessibility-auditor, uikit-accessibility-auditor, appkit-accessibility-auditor ← https://github.com/rgmez/apple-accessibility-skills (shared docs in `.claude/skills/apple-accessibility-shared/`)
 
-These are plain files, not yet under `.claude/skills/`, so they won't auto-trigger via the skill-discovery mechanism the plugin-installed skills above use. Move them into `.claude/skills/` (e.g. `mv skills .claude/skills`) if you want Claude Code to auto-discover them the same way.
+Skills created in a claude.ai account (build-run-debug, liquid-glass, etc.) belong to that account only. To use them from another account, add them here under `.claude/skills/<name>/SKILL.md`.
+
+## Handoff between Claude accounts
+
+Two Claude accounts share this repo, so a session may start cold after one account hits its limit. The repo is the handoff, not the chat. At the start of a session:
+
+1. `git log --oneline -5`, `git status`, and list open PRs and work branches.
+2. Read `docs/superpowers/plans/` (the sequence above) and continue the first unchecked task.
+3. Keep the plan file and PR descriptions current when you stop: what is done, what is next, what needs a hand test.
+4. Do not edit a branch another session is actively working on; branch off it or ask.
 
 ## Apple Documentation
 
