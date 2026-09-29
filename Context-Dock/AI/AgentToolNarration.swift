@@ -51,6 +51,7 @@ enum AgentToolNarration {
         case "read_url": return "Fetching"
         case "read_file", "read_attachment": return "Reading"
         case "read_selection": return "Reading the selection"
+        case "find_files": return "Searching for files"
         case "run_command": return "Running"
         case "run_menu_command": return "Pressing"
         case "operate_app": return "Looking in the live menu bar for"

@@ -122,6 +122,13 @@ struct FrontmostAppTaskPlan: Equatable {
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
+        // Finding a file by name is read-only, so it is offered freely: always in Finder, and in
+        // any app when the sentence is about a file. Spotlight is often off; find_files scans.
+        let fileTerms = [" file", " pdf", " document", " spreadsheet", " folder", "passport",
+                         "invoice", "receipt", "screenshot"]
+        if id.contains("finder") || fileTerms.contains(where: { (" " + lower).contains($0) }) {
+            tools.insert("find_files")
+        }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
         // operate_app is offered on action turns even when Computer Use is switched off for
         // this app, because its refusal *is* the offer: it tells the model to ask the user for
