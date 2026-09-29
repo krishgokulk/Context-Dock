@@ -14,6 +14,8 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 - **How work is done:** `docs/master/00-ENGINEERING-OPERATING-MODEL.md`.
 - **Architecture truth files:** `docs/architecture/`.
 - **Runbooks:** `docs/runbooks/` — ship a release, diagnose an AI turn.
+- **Any account, any session:** when the owner says "continue" or "take over", follow
+  `docs/runbooks/coordinate-across-accounts.md` — the repo is the handoff, never the chat.
 
 ## DoraX architecture rule
 
