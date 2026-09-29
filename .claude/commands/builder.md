@@ -26,6 +26,17 @@ Each time you run:
    green, a `/code-review` pass on the diff is clean, and for anything visible
    `./scripts/dev-run.sh` plus screenshots of the changed surface and its reference, attached to
    the PR.
+   **Skill review pass — required by what the diff touches** (installed in `.claude/skills/`;
+   list each one run and its findings in the PR, and fix every P0/P1 finding before step 5):
+
+   | The diff touches | Run |
+   |---|---|
+   | SwiftUI views | `swiftui-pro`, `swiftui-accessibility-auditor` |
+   | AppKit views, windows, panels | `appkit-accessibility-auditor` |
+   | `async`/`await`, actors, `Task`, `@MainActor`, `@TaskLocal`, locks or queues | `swift-concurrency-pro` |
+   | App Intents, Shortcuts, Siri, Spotlight | `app-intents` |
+   | Core Data | `core-data-expert` |
+
 5. Mark the PR ready for review, put the owner's hand-check list in its description, then
    `gh issue edit <n> --remove-label in-progress --add-label needs-hand-check` and comment the PR
    link.
