@@ -10,9 +10,19 @@
 
 ## In progress
 
-*None.* Tasks 9–14 are merged and wait on the owner's batch hand test (checklist in the Done PRs).
+**16a. Approval bridge** — a CLI turn DoraX launched itself reaches DoraX's MCP server and gets
+the normal approval sheet; only external/eval MCP callers keep refuse-every-approval, and that flag is
+per-run, not app-wide (Bluetooth turn: `globalcmd.bluetooth → approval refused unattended`).
+**16b. Result cards for every turn** — file paths in an answer or a step result render as cards
+(Open, Reveal in Finder, Quick Look, drag), reusing `CapabilityResultCard`, in Dock and Corner.
+Tasks 9–14 are merged and wait on the owner's batch hand test (checklist in the Done PRs).
 
 ## Next, in order
+
+**16c. Output files** — the model writes a real file (.md/.csv/.docx) into a DoraX outputs folder,
+shown as a card. **16d. Shortcuts connector** — list and run the user's Shortcuts with approval
+(the supported route to Siri-style reach; macOS has no public API to call other apps' App Intents).
+Both wait until 16b is checked by eye.
 
 **15. Owner decisions** D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip;
 keys inside the card.

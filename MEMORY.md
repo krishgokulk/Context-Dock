@@ -31,3 +31,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-28 Task 12a (cloud session): Global Commands grouped into System packs (SystemConnectors); low-risk `globalcmd.<pack>.status` reads + existing writes through one GlobalCommandRuntime seam. Branch claude/system-connectors.
 - 2026-09-28 Task 12b (cloud session): Settings ▸ App Packs — app + System packs, one switch each (adapter switch now persisted), detail reuses the Corner card groups (AppScopeSections), `AppPack.sendsDataOut`. Branch claude/app-packs-page.
 - 2026-09-29 (cloud coordinator): tasks 9–14 merged (#110–#115); 00-NOW updated; App Pack name recorded.
+- 2026-09-29: tasks 16a (approval bridge) and 16b (result cards) started as cloud sessions; 16c/16d queued.
