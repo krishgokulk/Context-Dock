@@ -96,6 +96,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | E5 | Attachments (file, image, Finder folder, Mail context) | 🟡 | `anAttachmentAddsItsRowAndNothingElse`; Finder-folder & Mail attach ❓ |
 | E6 | Approvals shown in the composer | ✅ | `anApprovalIsReservedInTheComposerNotTheBoard` |
 | E7 | Live progress / result feedback | ✅ | `CornerActionFeedbackTests` (11) |
+| E8 | Files a finished answer names are drawn as cards under it — Open, Reveal in Finder, Quick Look (`PreviewController`), drag out | ✅ | Task 16b: one path for every shell and provider — `AIChatMessageView` loads `TurnFileCards` (paths in the answer and in its steps' output that exist, ≤ 12) and draws `CapabilityResultCard`, which the Dock, the Corner (app chat, General Chat) and the Chat Window all render. Extraction: `TurnFileExtractorTests`. Hand check owed |
 
 ## F. Layers and gestures
 
@@ -133,6 +134,7 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 *2026-09-26: B3, B4, C1, C3, C10, C11, C12, E4 → ✅; B2 → — (task 5 part 2, #98).*
 *2026-09-28: D4, D5, D7, D14 → ✅; D6 stays 🟡 with an owner question (task 7, #106).*
 *2026-09-28: D6 → ✅ (owner: search opens plugins in the Corner); D7's desktop-only mode confirmed not needed.*
+*2026-09-29: E8 added ✅ — result cards for every chat turn, one shared view (task 16b).*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,
