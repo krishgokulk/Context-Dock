@@ -178,11 +178,35 @@ struct ShortcutsToolTests {
         #expect(leftoverInputFiles().isEmpty)
     }
 
+    @Test func caseInsensitiveNameResolvesToTheListedName() async {
+        let fake = FakeShortcuts()
+        var asked: [AIActionPlan] = []
+        let result = await AgentToolRegistry.runRunShortcut(
+            name: "morning", input: nil, scope: nil, attended: true, runner: fake.runner
+        ) { plan, _ in asked.append(plan); return true }
+        #expect(result.success)
+        #expect(asked.first?.input["shortcut"] == "Morning")
+        #expect(fake.runCalls.first?.prefix(2) == ["run", "Morning"])
+    }
+
+    @Test func aFuzzyNameIsRefusedWithTheClosestNames() async {
+        let fake = FakeShortcuts()
+        fake.names = "Make PDF Of Page\nDay End\nMorning\n"
+        var asked = false
+        let result = await AgentToolRegistry.runRunShortcut(
+            name: "make pdf", input: nil, scope: nil, attended: true, runner: fake.runner
+        ) { _, _ in asked = true; return true }
+        #expect(!result.success)
+        #expect(!asked)
+        #expect(fake.runCalls.isEmpty)
+        #expect(result.output.contains("Make PDF Of Page"))
+    }
+
     @Test func unknownNameIsRefusedBeforeTheSheet() async {
         let fake = FakeShortcuts()
         var asked = false
         let result = await AgentToolRegistry.runRunShortcut(
-            name: "morning", input: nil, scope: nil, attended: true, runner: fake.runner
+            name: "Mornin", input: nil, scope: nil, attended: true, runner: fake.runner
         ) { _, _ in asked = true; return true }
         #expect(!result.success)
         #expect(!asked)

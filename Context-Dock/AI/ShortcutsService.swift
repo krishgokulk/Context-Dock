@@ -44,7 +44,7 @@ enum ShortcutsService {
     enum Refusal: Error, Equatable, LocalizedError {
         case emptyName
         case inputTooLong
-        case unknownShortcut(String)
+        case unknownShortcut(String, closest: [String] = [])
         case listFailed(String)
 
         var errorDescription: String? {
@@ -54,9 +54,11 @@ enum ShortcutsService {
             case .inputTooLong:
                 return "The input is too long for a shortcut (limit "
                     + "\(ShortcutsService.maxInputCharacters) characters)."
-            case .unknownShortcut(let name):
-                return "There is no shortcut named \"\(name)\". Nothing ran. Call list_shortcuts "
-                    + "and use a name exactly as listed, or tell the user it does not exist."
+            case .unknownShortcut(let name, let closest):
+                let near = closest.isEmpty
+                    ? "" : " The closest names are: " + closest.map { "\"\($0)\"" }.joined(separator: ", ") + "."
+                return "There is no shortcut named \"\(name)\". Nothing ran.\(near) Do not guess: "
+                    + "answer with the closest names and ask which one the user means."
             case .listFailed(let why):
                 return "Could not read the user's shortcuts: \(why)"
             }
@@ -91,6 +93,31 @@ enum ShortcutsService {
             return .failure(.listFailed(why.isEmpty ? "exit status \(outcome.status)." : why))
         }
         return .success(parseList(outcome.stdout))
+    }
+
+    /// The listed name a requested name means: an exact match first, then a case-insensitive
+    /// one when it is unique. Nothing fuzzier ever runs.
+    static func resolve(_ requested: String, in names: [String]) -> String? {
+        if names.contains(requested) { return requested }
+        let folded = names.filter {
+            $0.caseInsensitiveCompare(requested) == .orderedSame
+        }
+        return folded.count == 1 ? folded[0] : nil
+    }
+
+    /// Up to three listed names sharing a word with the request, for a refusal to offer.
+    static func closest(to requested: String, in names: [String]) -> [String] {
+        let words = Set(requested.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .map(String.init).filter { $0.count > 1 })
+        guard !words.isEmpty else { return [] }
+        let scored = names.compactMap { name -> (String, Int)? in
+            let theirs = Set(name.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+                .map(String.init))
+            let score = words.intersection(theirs).count
+                + (name.lowercased().contains(requested.lowercased()) ? 2 : 0)
+            return score > 0 ? (name, score) : nil
+        }
+        return scored.sorted { $0.1 > $1.1 }.prefix(3).map(\.0)
     }
 
     /// The text the model reads for `list_shortcuts`.

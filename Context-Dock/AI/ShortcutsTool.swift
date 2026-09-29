@@ -38,7 +38,11 @@ extension AgentToolRegistry {
             AgentTool(
                 name: "run_shortcut",
                 description: "Run one of the user's shortcuts from the Shortcuts app. The name "
-                    + "must exactly match one from list_shortcuts. The user approves each run "
+                    + "must match one from list_shortcuts (case does not matter). When the user says "
+                    + "\"run make pdf shortcut\", call list_shortcuts first, find the listed name "
+                    + "they mean and pass exactly that; if none fits, offer the closest names "
+                    + "and do not run anything. This is the tool for \"run <name> shortcut\": "
+                    + "never open the Shortcuts app or use its menus for that. The user approves each run "
                     + "and sees the name and any input. Optional 'input' is short text passed "
                     + "to the shortcut. Returns what the shortcut printed (or that it ran with "
                     + "no output) and the exit status; a shortcut that fails is a failed step. "
@@ -86,11 +90,11 @@ extension AgentToolRegistry {
         runner: @escaping ShortcutsService.Runner = ShortcutsService.systemRunner,
         approve: ((AIActionPlan, AICapability) async -> Bool)? = nil
     ) async -> AgentToolResult {
-        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requested = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let input = rawInput?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let shown = "run_shortcut(\(name))"
+        var shown = "run_shortcut(\(requested))"
 
-        guard !name.isEmpty else { return failure(ShortcutsService.Refusal.emptyName, shown) }
+        guard !requested.isEmpty else { return failure(ShortcutsService.Refusal.emptyName, shown) }
         if let input, input.count > ShortcutsService.maxInputCharacters {
             return failure(ShortcutsService.Refusal.inputTooLong, shown)
         }
@@ -108,13 +112,19 @@ extension AgentToolRegistry {
         let names = await Task.detached(priority: .userInitiated) {
             ShortcutsService.allNames(runner: runner)
         }.value
+        let name: String
         switch names {
         case .failure(let refusal): return failure(refusal, shown)
         case .success(let listed):
-            guard listed.contains(name) else {
-                return failure(ShortcutsService.Refusal.unknownShortcut(name), shown)
+            guard let exact = ShortcutsService.resolve(requested, in: listed) else {
+                return failure(
+                    ShortcutsService.Refusal.unknownShortcut(
+                        requested, closest: ShortcutsService.closest(to: requested, in: listed)),
+                    shown)
             }
+            name = exact
         }
+        shown = "run_shortcut(\(name))"
 
         let plan = ShortcutsTool.plan(name: name, input: input)
         let capability = ShortcutsTool.capability()
