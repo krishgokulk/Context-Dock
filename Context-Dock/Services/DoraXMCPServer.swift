@@ -438,6 +438,23 @@ final class DoraXMCPServer: ObservableObject {
             ],
         ],
         [
+            "name": "dorax_find_files",
+            "description":
+                "Find files on the user's Mac by name — Spotlight first, then a bounded scan of "
+                + "Desktop, Documents, Downloads and iCloud Drive, so it works when Spotlight is "
+                + "off. Returns full absolute paths, newest first. Read-only.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "query": [
+                        "type": "string",
+                        "description": "Words the file name contains, e.g. \"passport pdf\".",
+                    ]
+                ] as [String: Any],
+                "required": ["query"],
+            ],
+        ],
+        [
             "name": "dorax_browser_tabs",
             "description":
                 "The pages the user has open in Safari, with titles and URLs. Call this when "
@@ -598,6 +615,12 @@ final class DoraXMCPServer: ObservableObject {
                 app: (arguments["app"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines),
                 attended: attended)
+
+        case "dorax_find_files":
+            let query = (arguments["query"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return "dorax_find_files needs a query." }
+            return await AgentToolRegistry.runFileSearch(query: query).1
 
         case "dorax_browser_tabs":
             let tabs = SafariTabManager.shared.cachedTabs(maxAge: 30)

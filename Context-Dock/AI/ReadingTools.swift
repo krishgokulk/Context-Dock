@@ -29,6 +29,8 @@ extension AgentToolRegistry {
         register(makeReadURLTool())
         register(makeReadFileTool())
         register(makeReadSelectionTool())
+        // Finding a file is reading too: paths out, nothing opened. See FileSearchTool.swift.
+        registerFileSearchTool()
     }
 
     // MARK: - The page in front of the user
