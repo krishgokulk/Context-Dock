@@ -63,3 +63,29 @@ sentence or step is added to the matching test (for routing: `RoutingPhrasebookT
 - **Queue lane** — holds the lock; works `00-NOW.md` in order.
 - **Fixes lane** — owner-reported bugs only, on `claude/fix-*` branches with `Fix:` PRs. It never
   edits `00-NOW.md` or `MEMORY.md`; the queue lane records its merges.
+
+## Planner and builder (the default setup)
+
+Roles belong to **where a session runs**, not to which account is logged in.
+
+| Where | Role | Start it with |
+|---|---|---|
+| Claude Desktop on the owner's Mac, any account | **Builder** — builds, tests and screenshots one issue at a time | `/loop 20m /builder` |
+| A cloud session (claude.ai/code), any account | **Planner** — holds the Coordinator line, queues issues, reviews PRs | `/planner` |
+
+The two never message each other; **GitHub issues are the queue** between them:
+
+- `ready` — the planner queued it; the builder may take it (oldest first).
+- `in-progress` — the builder is on it. Never more than one.
+- `needs-hand-check` — PR open with CI green; waiting on the owner's check and "merge <n>".
+- `needs-owner` — blocked on an owner decision; nobody builds it.
+
+Rules that keep it safe when accounts change:
+
+- **One builder at a time.** Switching accounts on the Mac: close the old session first, then
+  `/loop 20m /builder` in the new one. A new builder continues an `in-progress` issue from its
+  pushed branch; it never restarts it.
+- **One planner at a time** — the session holding the `Coordinator:` line.
+- The builder never edits `00-NOW.md` or `MEMORY.md`; the planner records merges there.
+- When the Mac sleeps, the app closes or the account runs out, the loop stops. Nothing is lost:
+  the issue label and the pushed branch say exactly where it was.
