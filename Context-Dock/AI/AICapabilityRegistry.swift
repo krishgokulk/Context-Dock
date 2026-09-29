@@ -888,6 +888,28 @@ final class AIExecutionEngine {
     }
 }
 
+/// One unattended run's refusals. Bound around the run with `$current.withValue`, so every
+/// approval asked inside it — on any actor — is refused and recorded against that run alone.
+nonisolated final class UnattendedRun: @unchecked Sendable {
+    @TaskLocal static var current: UnattendedRun?
+
+    private let lock = NSLock()
+    private var asked: [String] = []
+
+    func record(_ what: String) {
+        lock.lock()
+        asked.append(what)
+        lock.unlock()
+    }
+
+    /// What was asked for while unattended, in order, so an eval can assert on it.
+    var requested: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return asked
+    }
+}
+
 @MainActor
 final class AICapabilityApprovalCenter: ObservableObject {
     static let shared = AICapabilityApprovalCenter()
@@ -920,36 +942,35 @@ final class AICapabilityApprovalCenter: ObservableObject {
     /// This makes the evaluation better, not merely safer. The question an eval should ask is
     /// "was the right approval requested?", which is a decision DoraX owns, rather than "did
     /// the side effect happen?", which depends on a person and on the state of their Mac.
-    static var refusesEveryApprovalUnattended = false
-
-    /// What was asked for while unattended, in order, so an eval can assert on it.
-    static private(set) var approvalsRequestedUnattended: [String] = []
+    ///
+    /// Scoped to the run's task, not the app: it was once a global flag, and while an MCP
+    /// run was in flight it refused approvals belonging to every other chat too.
+    nonisolated static var refusesEveryApprovalUnattended: Bool { UnattendedRun.current != nil }
 
     /// Record a refusal made somewhere other than this centre — adapter actions run their own
     /// gate and never reach requestApproval, which is how a blank note got created during an
     /// unattended run that reported no approvals at all.
-    static func recordUnattendedRefusal(_ what: String) {
-        approvalsRequestedUnattended.append(what)
+    nonisolated static func recordUnattendedRefusal(_ what: String) {
+        UnattendedRun.current?.record(what)
     }
 
-    static func beginUnattendedRun() {
-        refusesEveryApprovalUnattended = true
-        approvalsRequestedUnattended = []
-    }
-
-    static func endUnattendedRun() -> [String] {
-        refusesEveryApprovalUnattended = false
-        let asked = approvalsRequestedUnattended
-        approvalsRequestedUnattended = []
-        return asked
+    /// Run `body` unattended and return what it asked approval for, in order. Only work
+    /// inside `body`'s task tree is refused; an approval another chat asks for meanwhile is
+    /// shown as usual.
+    static func withUnattendedRun<T>(
+        _ body: () async throws -> T
+    ) async rethrows -> (result: T, approvalsRequested: [String]) {
+        let run = UnattendedRun()
+        let result = try await UnattendedRun.$current.withValue(run) { try await body() }
+        return (result, run.requested)
     }
 
     func requestApproval(
         plan: AIActionPlan, capability: AICapability, context: UserContext,
         chatScope: GeneralChatScope? = nil
     ) async -> Bool {
-        if Self.refusesEveryApprovalUnattended {
-            Self.approvalsRequestedUnattended.append(capability.id)
+        if let run = UnattendedRun.current {
+            run.record(capability.id)
             return false
         }
         return await withCheckedContinuation { continuation in
