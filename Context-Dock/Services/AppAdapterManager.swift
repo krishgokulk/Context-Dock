@@ -622,9 +622,13 @@ final class AppAdapterManager: ObservableObject {
 
     // MARK: - Toggle
 
+    /// Turns an App Pack on or off, and writes it to the adapter's own file so the switch
+    /// survives a relaunch — it used to change only the copy in memory.
     func setEnabled(_ enabled: Bool, for bundleId: String) {
-        guard let idx = adapters.firstIndex(where: { $0.bundleId == bundleId }) else { return }
-        adapters[idx].isEnabled = enabled
+        adapters = AppPacks.adapters(adapters, settingBundleID: bundleId, enabled: enabled)
+        guard let adapter = adapters.first(where: { $0.bundleId == bundleId }) else { return }
+        persistAdapter(adapter, to: adapter.sourceFileURL ?? adapterFileURL(for: adapter))
+        DoraXSpotlightIndexService.shared.scheduleRebuild(reason: "app-adapters")
     }
 
     // MARK: - User adapters from disk

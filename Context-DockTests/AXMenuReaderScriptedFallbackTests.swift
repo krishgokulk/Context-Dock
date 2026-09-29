@@ -152,4 +152,48 @@ struct AXMenuReaderScriptedFallbackTests {
         #expect(log.calls == 1)
         #expect(!log.ranOnMain)
     }
+
+    /// ⌘R (C12): the shared re-read forgets the fresh cached tree and reads AX again, so a
+    /// menu that changed inside the 60 s cache window shows up.
+    @Test func rereadDropsTheCachedTreeAndReadsAXAgain() {
+        final class Tree: @unchecked Sendable { var items: [AXMenuItem] = [] }
+        let tree = Tree()
+        tree.items = [axItem(["Window", "Minimize"])]
+        let reader = AXMenuReader(
+            scriptedMenuWalk: { _ in (nil, "unused") },
+            appNameForPID: { _ in "Fake App" },
+            axMenuTree: { _, _ in tree.items })
+
+        #expect(reader.cachedAllMenuItems(for: pid).map(\.title) == ["Minimize"])
+        tree.items = [axItem(["Window", "Minimize"]), axItem(["Window", "Untitled"])]
+        // Still cached: without ⌘R the new document's window is not listed.
+        #expect(reader.cachedAllMenuItems(for: pid).map(\.title) == ["Minimize"])
+
+        let reread = reader.rereadMenus(for: pid)
+
+        #expect(reread.map(\.title) == ["Minimize", "Untitled"])
+        #expect(reader.peekCachedAllMenuItems(for: pid).map(\.title) == ["Minimize", "Untitled"])
+        #expect(reader.pendingScriptedMenuWalk(for: pid) == nil)
+    }
+
+    /// An empty AX tree: the re-read drops the last walk's still-fresh result and starts a
+    /// new walk off the main thread instead of answering with the old rows.
+    @Test func rereadOfAnEmptyAXTreeStartsAFreshWalk() async throws {
+        let log = WalkLog()
+        let reader = reader(log: log)
+
+        _ = reader.refreshAllMenuItems(for: pid)
+        let first = try #require(reader.pendingScriptedMenuWalk(for: pid))
+        await first.value
+        #expect(reader.peekCachedAllMenuItems(for: pid).count == 4)
+
+        #expect(reader.rereadMenus(for: pid).isEmpty)
+        #expect(reader.peekCachedAllMenuItems(for: pid).isEmpty)
+        let walk = try #require(reader.pendingScriptedMenuWalk(for: pid))
+        await walk.value
+
+        #expect(log.calls == 2)
+        #expect(!log.ranOnMain)
+        #expect(reader.peekCachedAllMenuItems(for: pid).count == 4)
+    }
 }

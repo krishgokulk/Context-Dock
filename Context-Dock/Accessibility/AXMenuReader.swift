@@ -135,6 +135,24 @@ final class AXMenuReader {
         return items
     }
 
+    /// ⌘R (C12), both shells: forget what was read for `pid` — the structural cache and the
+    /// last System Events walk — and read again. AX answers now; an empty AX tree starts a
+    /// fresh walk off the main thread, whose rows arrive with `scriptedMenusDidLoad`. A
+    /// non-empty read replaces the app's stored capabilities, so the list the shell rebuilds
+    /// from them is the live menu.
+    @discardableResult
+    func rereadMenus(for pid: pid_t, maxDepth: Int = 6) -> [AXMenuItem] {
+        menuCache.removeValue(forKey: pid)
+        scriptedMenus.removeValue(forKey: pid)
+        let items = refreshAllMenuItems(for: pid, maxDepth: maxDepth)
+        if !items.isEmpty, let app = NSRunningApplication(processIdentifier: pid),
+            !app.isTerminated
+        {
+            AppMenuCapabilityCache.shared.store(items: items, for: app, replace: true)
+        }
+        return items
+    }
+
     /// The live Accessibility menu tree and nothing else: never the AppleScript walk that
     /// `allMenuItems` falls back to when AX comes back empty (Finder's unopened menus,
     /// Electron apps). That walk drives System Events over the whole menu bar — seconds of

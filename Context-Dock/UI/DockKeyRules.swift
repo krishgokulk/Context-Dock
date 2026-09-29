@@ -203,6 +203,26 @@ enum DockKeyRules {
         return .pass
     }
 
+    // MARK: - ⌘R re-reads the app's menus (C12)
+
+    /// ⌘R and nothing else held: the menu re-read's key in both shells.
+    static func isMenuRereadKey(
+        keyCode: UInt16, command: Bool, control: Bool, option: Bool, shift: Bool
+    ) -> Bool {
+        keyCode == 15 && command && !control && !option && !shift
+    }
+
+    /// Whether ⌘R re-reads the scoped app's live menus — for a menu that changed since the
+    /// scope opened (a document opened, a tab moved). Only an app scope has menus to read:
+    /// not Global Context, not a CLI tool, and not Finder (the Corner's file search, the Dock
+    /// over Finder), whose lazy AX tree has nothing to show until its menus are opened.
+    /// Declined, the key is spent on nothing and never reaches the frontmost app.
+    static func rereadsMenus(
+        appBundleID: String, isGlobalScope: Bool, isCLIScope: Bool, isFinder: Bool
+    ) -> Bool {
+        !appBundleID.isEmpty && !isGlobalScope && !isCLIScope && !isFinder
+    }
+
     /// The nearest pill that is not a separator, walking from `start` by `step`; nil past
     /// either end.
     private static func firstPill(from start: Int, step: Int, _ separators: [Bool]) -> Int? {
