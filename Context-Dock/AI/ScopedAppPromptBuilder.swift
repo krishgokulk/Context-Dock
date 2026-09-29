@@ -385,7 +385,9 @@ enum ScopedAppPromptBuilder {
             + "what they have highlighted. All four are read-only and need no approval, so "
             + "reach for them freely: a question about \"this page\", \"this file\" or "
             + "\"these\" is answered by reading it first, never from memory and never with "
-            + "\"I don't have access\". If you are unsure what an app can do, find_route "
+            + "\"I don't have access\". find_files looks for a file by name (Spotlight, then a scan of Desktop, "
+            + "Documents, Downloads and iCloud Drive) — use it, not mdfind, and quote the full "
+            + "paths it returns. If you are unsure what an app can do, find_route "
             + "lists what actually exists.")
         return lines.joined(separator: "\n")
     }

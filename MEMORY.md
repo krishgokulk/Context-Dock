@@ -39,3 +39,5 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-29 (Mac coordinator): #120 (docs) and #118 (16b, owner-tested) merged; #119 (16e) and #121 (17) open as drafts; coordinator moved to a local session that runs tasks in subagents.
 - 2026-09-29 (Mac coordinator): #119 (16e) merged after owner hand test; #121 (17) synced with the new base, built for the owner's hand test.
 - 2026-09-29 (Mac coordinator): #121 (17) merged after owner hand test; task 18 (file search, Spotlight off) started in a subagent.
+- 2026-09-29 Task 18 (cloud session): file search with Spotlight off — `FileSearchService` (Spotlight via mdfind, then bounded scan of Desktop/Documents/Downloads/iCloud Drive; newest-first full paths) exposed as the `find_files` agent tool (`FileSearchTool.swift`, offered in Finder scope and file-ish sentences) and MCP `dorax_find_files`; one path, both use `AgentToolRegistry.runFileSearch`. Branch claude/task-18-file-search.
+- 2026-09-29 (Mac coordinator): #123 (18) merged after owner hand test; 16c is next; #122 docs merging.
