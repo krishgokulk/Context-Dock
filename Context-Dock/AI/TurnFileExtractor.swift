@@ -43,6 +43,21 @@ nonisolated enum TurnFileExtractor {
         homeDirectory: String = NSHomeDirectory(),
         probe: (String) -> Probe? = TurnFileExtractor.diskProbe
     ) -> [URL] {
+        // The budget counter wraps the caller's probe; it never outlives this call.
+        withoutActuallyEscaping(probe) { probe in
+            collect(
+                answer: answer, stepOutputs: stepOutputs, limit: limit,
+                homeDirectory: homeDirectory, probe: probe)
+        }
+    }
+
+    private static func collect(
+        answer: String,
+        stepOutputs: [String],
+        limit: Int,
+        homeDirectory: String,
+        probe: @escaping (String) -> Probe?
+    ) -> [URL] {
         var budget = probeBudget
         let counted: (String) -> Probe? = { path in
             guard budget > 0 else { return nil }
