@@ -174,6 +174,8 @@ final class DoraXMCPServer: ObservableObject {
 
     private struct Request {
         let authorization: String?
+        /// `X-DoraX-Turn`: present only on requests from a CLI turn DoraX itself launched.
+        var turnKey: String? = nil
         let body: Data
     }
 
@@ -184,6 +186,7 @@ final class DoraXMCPServer: ObservableObject {
 
         var contentLength = 0
         var authorization: String?
+        var turnKey: String?
         for line in head.components(separatedBy: "\r\n").dropFirst() {
             let parts = line.split(separator: ":", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
@@ -192,11 +195,14 @@ final class DoraXMCPServer: ObservableObject {
             switch parts[0].lowercased() {
             case "content-length": contentLength = Int(parts[1]) ?? 0
             case "authorization": authorization = parts[1]
+            case attendedHeader.lowercased(): turnKey = parts[1]
             default: break
             }
         }
         guard body.count >= contentLength else { return nil }
-        return Request(authorization: authorization, body: Data(body.prefix(contentLength)))
+        return Request(
+            authorization: authorization, turnKey: turnKey,
+            body: Data(body.prefix(contentLength)))
     }
 
     private static func httpResponse(status: String, json: Any?) -> Data {
@@ -234,7 +240,8 @@ final class DoraXMCPServer: ObservableObject {
             return Self.httpResponse(status: "202 Accepted", json: nil)
         }
 
-        log.notice("\(method, privacy: .public)")
+        let attended = Self.isAttendedCaller(turnKey: request.turnKey)
+        log.notice("\(method, privacy: .public) attended=\(attended, privacy: .public)")
         lastRequest = method
 
         let result: Any
@@ -247,14 +254,14 @@ final class DoraXMCPServer: ObservableObject {
             ]
 
         case "tools/list":
-            result = ["tools": Self.toolDefinitions]
+            result = ["tools": Self.toolDefinitions(attended: attended)]
 
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             lastRequest = name
-            let text = await callTool(named: name, arguments: arguments)
+            let text = await callTool(named: name, arguments: arguments, attended: attended)
             result = ["content": [["type": "text", "text": text]]]
 
         default:
@@ -271,6 +278,22 @@ final class DoraXMCPServer: ObservableObject {
     }
 
     // MARK: - Handing this server to a CLI
+
+    /// The header that marks a request as coming from a CLI turn DoraX launched itself.
+    static let attendedHeader = "X-DoraX-Turn"
+
+    /// Minted per app launch and only ever written into the config DoraX hands its own CLI.
+    /// The bearer token says a caller may talk to this server; this says the user is at the
+    /// keyboard in the chat that started the turn, so its approvals are shown, not refused.
+    /// An agent registered with `claude mcp add` never has it and stays unattended.
+    static let attendedTurnKey = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        .lowercased()
+
+    /// True only for DoraX's own CLI turns. Anything else — no header, a stale key from an
+    /// earlier launch — is an unknown caller and runs unattended.
+    static func isAttendedCaller(turnKey: String?) -> Bool {
+        turnKey == attendedTurnKey
+    }
 
     /// Writes the MCP config the Claude Code CLI is launched with, and returns its path.
     ///
@@ -295,7 +318,10 @@ final class DoraXMCPServer: ObservableObject {
                 serverName: [
                     "type": "http",
                     "url": "http://127.0.0.1:\(port)/mcp",
-                    "headers": ["Authorization": "Bearer \(token)"],
+                    "headers": [
+                        "Authorization": "Bearer \(token)",
+                        attendedHeader: attendedTurnKey,
+                    ],
                 ]
             ]
         ]
@@ -319,7 +345,24 @@ final class DoraXMCPServer: ObservableObject {
 
     // MARK: - Tools
 
-    private static let toolDefinitions: [[String: Any]] = [
+    /// A turn DoraX launched is told its approvals reach the user; an outside agent is told
+    /// they are refused. Each description has to match what the call will actually do.
+    static func toolDefinitions(attended: Bool) -> [[String: Any]] {
+        guard attended else { return baseToolDefinitions }
+        return baseToolDefinitions.map { tool in
+            guard tool["name"] as? String == "dorax_ask" else { return tool }
+            var tool = tool
+            tool["description"] =
+                "Ask DoraX's own assistant to answer or do something on the user's Mac — a "
+                + "setting's state, the volume, an app action — and get back its answer, the "
+                + "steps it took and the receipts of what it ran. Anything that changes "
+                + "something shows the user DoraX's approval sheet and runs only if they "
+                + "approve; a denial comes back in the answer."
+            return tool
+        }
+    }
+
+    private static let baseToolDefinitions: [[String: Any]] = [
         [
             "name": "dorax_frontmost_app",
             "description":
@@ -403,16 +446,19 @@ final class DoraXMCPServer: ObservableObject {
         ],
     ]
 
-    /// Run one DoraX turn with nobody at the keyboard, and report what it decided.
+    /// Run one DoraX turn and report what it decided.
     ///
-    /// The point is testing the *decision*: which reader ran, which capability was chosen,
-    /// which approval was asked for. Approvals are refused throughout — an agent looping over
-    /// an eval set must not be able to send mail because a sheet resolved on its own, and
-    /// there is no one there to refuse it.
-    private func runUnattendedTurn(query: String, app: String?) async -> String {
+    /// Unattended (an outside agent): the point is testing the *decision* — which reader ran,
+    /// which capability was chosen, which approval was asked for. Approvals are refused
+    /// throughout — an agent looping over an eval set must not be able to send mail because a
+    /// sheet resolved on its own, and there is no one there to refuse it.
+    ///
+    /// Attended (a CLI turn DoraX launched from a chat): the user is right there, so approvals
+    /// go to the same sheet an in-app capability uses, and the capability runs if approved.
+    private func runTurn(query: String, app: String?, attended: Bool) async -> String {
         let resolved = await MainActor.run { () -> (scope: GeneralChatScope, name: String) in
             guard let app, !app.isEmpty else {
-                return (.thread(id: "dorax-mcp-eval"), "General Chat")
+                return (.thread(id: attended ? "dorax-cli-turn" : "dorax-mcp-eval"), "General Chat")
             }
             // Accept either a bundle id or the name a person would type.
             //
@@ -433,22 +479,30 @@ final class DoraXMCPServer: ObservableObject {
             return (.app(bundleId: app), app)
         }
 
-        await MainActor.run { AICapabilityApprovalCenter.beginUnattendedRun() }
         var liveSteps: [String] = []
         let answer: AppScopedChatService.Answer
+        var approvals: [String] = []
         do {
             // The steps the harness narrates as it works. Without this the tool whose whole
             // purpose is "check what DoraX did" returned an empty `steps` for a turn that had
             // read a page, listed fifteen tabs and chosen a route.
             let collected = StepCollector()
-            answer = try await AppScopedChatService.send(
-                scope: resolved.scope, appName: resolved.name, query: query, history: [],
-                onStatus: { step in collected.append(step) })
+            let send = {
+                try await AppScopedChatService.send(
+                    scope: resolved.scope, appName: resolved.name, query: query, history: [],
+                    onStatus: { step in collected.append(step) })
+            }
+            if attended {
+                answer = try await send()
+            } else {
+                let run = try await AICapabilityApprovalCenter.withUnattendedRun(send)
+                answer = run.result
+                approvals = run.approvalsRequested
+            }
             liveSteps = collected.steps
         } catch {
             // A turn that threw is a result an eval needs to see, reported in the same shape
             // as any other — not an exception the caller has to guess the meaning of.
-            _ = await MainActor.run { AICapabilityApprovalCenter.endUnattendedRun() }
             let failure: [String: Any] = [
                 "scope": resolved.name,
                 "failed": true,
@@ -460,14 +514,12 @@ final class DoraXMCPServer: ObservableObject {
             else { return "The turn failed: \(error.localizedDescription)" }
             return text
         }
-        let approvals = await MainActor.run { AICapabilityApprovalCenter.endUnattendedRun() }
 
         var payload: [String: Any] = [
             "answer": answer.text,
             "scope": resolved.name,
             "steps": liveSteps.isEmpty ? answer.trace : liveSteps + answer.trace,
             "toolChips": answer.toolChips,
-            "approvalsRequested": approvals,
             "receipts": answer.evidenceReceipts.map { receipt in
                 [
                     "command": receipt.command,
@@ -483,9 +535,12 @@ final class DoraXMCPServer: ObservableObject {
         if let enable = answer.enableApp {
             payload["blockedNeedingAccessTo"] = enable.name
         }
-        payload["note"] =
-            "Approvals were refused unattended. approvalsRequested is what DoraX decided to "
-            + "ask for; nothing was executed behind them."
+        if !attended {
+            payload["approvalsRequested"] = approvals
+            payload["note"] =
+                "Approvals were refused unattended. approvalsRequested is what DoraX decided to "
+                + "ask for; nothing was executed behind them."
+        }
 
         guard let data = try? JSONSerialization.data(
             withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
@@ -496,7 +551,9 @@ final class DoraXMCPServer: ObservableObject {
         return text
     }
 
-    private func callTool(named name: String, arguments: [String: Any]) async -> String {
+    private func callTool(
+        named name: String, arguments: [String: Any], attended: Bool
+    ) async -> String {
         switch name {
         case "dorax_frontmost_app":
             // Read live rather than trusting the shared snapshot. That snapshot updates on
@@ -536,10 +593,11 @@ final class DoraXMCPServer: ObservableObject {
             let query = (arguments["query"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return "dorax_ask needs a query." }
-            return await runUnattendedTurn(
+            return await runTurn(
                 query: query,
                 app: (arguments["app"] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines))
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                attended: attended)
 
         case "dorax_browser_tabs":
             let tabs = SafariTabManager.shared.cachedTabs(maxAge: 30)
