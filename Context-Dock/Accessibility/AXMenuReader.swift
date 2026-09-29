@@ -456,6 +456,8 @@ final class AXMenuReader {
 
     /// Posted on the main thread when a System Events walk has read an app's menus. The
     /// user info's `"pid"` is the app. The Dock and the Corner reload that app's menus.
+    /// The poster (`object`) is the reader that ran the walk; the Dock and the Corner observe
+    /// with `object: nil`, so they hear every reader.
     nonisolated static let scriptedMenusDidLoad = Notification.Name("AXMenuReader.scriptedMenusDidLoad")
 
     /// The last walk's result while it is fresh; otherwise starts a walk and returns nil.
@@ -518,7 +520,7 @@ final class AXMenuReader {
             AppMenuCapabilityCache.shared.store(items: stamped, for: app)
         }
         NotificationCenter.default.post(
-            name: Self.scriptedMenusDidLoad, object: nil, userInfo: ["pid": pid])
+            name: Self.scriptedMenusDidLoad, object: self, userInfo: ["pid": pid])
     }
 
     /// Search menu items by keyword — returns up to `maxResults` best matches.

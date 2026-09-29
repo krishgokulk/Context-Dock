@@ -73,7 +73,7 @@ struct AXMenuReaderScriptedFallbackTests {
         let reader = reader(log: log)
         let announced = Announcements()
         let observer = NotificationCenter.default.addObserver(
-            forName: AXMenuReader.scriptedMenusDidLoad, object: nil, queue: nil
+            forName: AXMenuReader.scriptedMenusDidLoad, object: reader, queue: nil
         ) { note in
             if let pid = note.userInfo?["pid"] as? pid_t { announced.append(pid) }
         }
@@ -119,7 +119,7 @@ struct AXMenuReaderScriptedFallbackTests {
         let reader = reader(log: log, output: nil)
         let announced = Announcements()
         let observer = NotificationCenter.default.addObserver(
-            forName: AXMenuReader.scriptedMenusDidLoad, object: nil, queue: nil
+            forName: AXMenuReader.scriptedMenusDidLoad, object: reader, queue: nil
         ) { note in
             if let pid = note.userInfo?["pid"] as? pid_t { announced.append(pid) }
         }
