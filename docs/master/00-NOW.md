@@ -12,24 +12,21 @@
 
 Owner rule (2026-09-29): strictly in order — finish 16 and 17, hand test, merge, then 18.
 
-**16b. Result cards for every turn** (#118) — file paths in an answer or a step result render as
-cards (Open, Reveal in Finder, Quick Look, drag). Owner's first test showed no card: re-test.
-**16e. "find my …" routing** (#119) — ordinary phrases are not app names; discovery never launches
-an app; no generic Edit-menu row answers a search.
-**17. Model-first routing** — the keyword shortcut preempts the model only on an exact command; the
-model chooses from the scoped app's commands; a phrasebook test of the owner's real sentences
-(append every sentence that fails a hand test). Branched from 16e.
+**16c. Output files** — the model writes a real file (.md/.csv/.docx) into a DoraX outputs folder,
+shown as a card (builds on 16b's cards). Not started; the coordinator runs it in a subagent next.
+
+Coordinator (2026-09-29): this branch (`claude/jev-popularity-comparison-t530yd`) runs in a local
+Mac session. It edits only `00-NOW.md` and `MEMORY.md`, runs each task in a subagent in its own
+worktree, watches the PRs, and merges only when the owner says so.
 
 ## Next, in order
 
-**18. File search with Spotlight off** — Spotlight first, then a bounded scan of Desktop,
-Documents, Downloads, iCloud Drive; full paths out; in-app agent, Finder pack and DoraX MCP server.
-Starts after 17 merges.
+**16d. Shortcuts connector** — list and run the user's Shortcuts with approval (the supported route
+to Siri-style reach; macOS has no public API to call other apps' App Intents). After 16c.
 
-**16c. Output files** — the model writes a real file (.md/.csv/.docx) into a DoraX outputs folder,
-shown as a card. **16d. Shortcuts connector** — list and run the user's Shortcuts with approval
-(the supported route to Siri-style reach; macOS has no public API to call other apps' App Intents).
-Both after 18 (they build on 16b's cards and 17's routing).
+**Small follow-ups (owner to order):** (a) result cards: paths under `~/Library` from step output are
+noise; (b) flaky `AXMenuReaderScriptedFallbackTests` — a shared `scriptedMenusDidLoad` notification
+collects the same fake pid from parallel tests (fails intermittently, passes on retry).
 
 **15. Owner decisions** D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip;
 keys inside the card.
@@ -64,6 +61,10 @@ merged before review).
 | 2026-09-28 | System connectors: Global Commands as chat tools — reads free, writes ask, same runner as the Global row (task 12a) | #113 |
 | 2026-09-29 | App Packs page in Settings: one switch per pack, detail page with the card's sections, "Sends data out" (task 12b) | #114 |
 | 2026-09-29 | Activity rows: one row per real step in General Chat, Dock and Corner; read-back results; picker risk Medium; status reads preferred (task 14) | #115 |
+| 2026-09-29 | Result cards for every chat turn: paths in an answer or step output become Open / Reveal / Quick Look / drag cards in Dock, Corner and the Chat Window; owner hand-tested (task 16b). Follow-up: paths under `~/Library` from step output are noise | #118 |
+| 2026-09-29 | "find my …" no longer routes to Find My: phrase-like app names need a real cue, discovery never launches an app, a generic Edit row is not an answer to a search; owner hand-tested (task 16e) | #119 |
+| 2026-09-29 | Model-first routing: the keyword shortcut preempts the model only on an exact command; the model picks from the scoped app's commands; phrasebook tests of the owner's real sentences (task 17) | #121 |
+| 2026-09-29 | File search with Spotlight off: `find_files` agent tool (Spotlight, then a bounded scan of Desktop, Documents, Downloads, iCloud Drive), Finder pack and `dorax_find_files` MCP tool; owner hand-tested (task 18) | #123 |
 | 2026-09-29 | Approval bridge: a CLI turn DoraX launched gets the normal approval sheet; unattended refusal is per-run (task 16a) | #117 |
 
 ## Owner decisions (append-only)
