@@ -409,6 +409,15 @@ extension LauncherView {
             default:
                 isRunnable = false
             }
+            // The scoped app wins unless the sentence named another one. Resolution is
+            // already scoped to this app plus whatever `namedElsewhere` found, but a rule
+            // that only lives in the scope set is a rule one refactor away from being
+            // gone — and what it protects is the owner being asked to let a Finder chat
+            // drive Find My because the words "find my" opened the request.
+            guard ActionReadiness.mayOfferCrossApp(
+                candidateApp: option.appName, scopedApp: appName,
+                namedApp: namedElsewhere?.name)
+            else { continue }
             // Runnable by route is not the same as runnable at all. A capability whose
             // required inputs are empty fails the moment it is approved — the owner tapped
             // "Run it?" and got `Missing capability input: title` — and a create capability

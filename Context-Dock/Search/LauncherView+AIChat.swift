@@ -2119,21 +2119,36 @@ extension LauncherView {
         submitAIQuery()
     }
 
-    /// Launch + warm the menu cache for any picked focus app that isn't running yet, so its
-    /// menu commands get listed and become callable via menu_call. Only invoked for
+    /// Warm the menu cache for any picked focus app that is running with a cold cache, so
+    /// its menu commands get listed and become callable via menu_call. Only invoked for
     /// action-shaped queries (not plain Q&A), and skips apps whose cache is already warm.
+    ///
+    /// This used to *launch* the closed ones first ("Opening Clock…"), which put an
+    /// application on screen while DoraX was still deciding what to offer — before any
+    /// approval, and sometimes for an app the user had not meant to name at all. Discovery
+    /// reads; approval opens. `CandidateDiscoveryPolicy` holds the rule and the test.
     func warmFocusAppMenusForAction() async {
-        for app in chatFocusApps {
-            let bundle = app.bundleId
-            guard !bundle.isEmpty, !bundle.hasPrefix("scope://") else { continue }
-            // Already warm? nothing to do.
-            let cached = AppMenuCapabilityCache.shared.menuItems(
-                bundleIdentifier: bundle, appName: app.name, query: "", maxResults: 1)
-            if !cached.isEmpty { continue }
-            await MainActor.run { aiMode.loadingStatus = "Opening \(app.name)…" }
-            guard let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundle)
+        let appsByBundleID = Dictionary(
+            chatFocusApps.map { ($0.bundleId, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let toRead = CandidateDiscoveryPolicy.menusToRead(
+            bundleIDs: chatFocusApps.map(\.bundleId),
+            isRunning: { bundleID in
+                NSRunningApplication
+                    .runningApplications(withBundleIdentifier: bundleID)
+                    .contains { !$0.isTerminated }
+            },
+            isCacheWarm: { bundleID in
+                !AppMenuCapabilityCache.shared.menuItems(
+                    bundleIdentifier: bundleID, appName: appsByBundleID[bundleID] ?? bundleID,
+                    query: "", maxResults: 1).isEmpty
+            })
+        for bundleID in toRead {
+            guard let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .first(where: { !$0.isTerminated })
             else { continue }
-            await MainActor.run { aiMode.loadingStatus = "Reading \(app.name) menus…" }
+            let name = appsByBundleID[bundleID] ?? bundleID
+            await MainActor.run { aiMode.loadingStatus = "Reading \(name) menus…" }
             await MenuWarmCacheService.shared.warm(app: running, force: true)
         }
     }
