@@ -32,8 +32,5 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-28 Task 12b (cloud session): Settings ▸ App Packs — app + System packs, one switch each (adapter switch now persisted), detail reuses the Corner card groups (AppScopeSections), `AppPack.sendsDataOut`. Branch claude/app-packs-page.
 - 2026-09-29 (cloud coordinator): tasks 9–14 merged (#110–#115); 00-NOW updated; App Pack name recorded.
 - 2026-09-29: tasks 16a (approval bridge) and 16b (result cards) started as cloud sessions; 16c/16d queued.
-<<<<<<< HEAD
 - 2026-09-29 Task 16b (cloud session): result cards for every chat turn — `TurnFileExtractor` (paths in the answer + step output that exist, ≤12) → `CapabilityResultCard` under the answer in `AIChatMessageView` (Dock, Corner, Chat Window); rows gain Quick Look / Open / Reveal buttons + drag. Branch claude/task-16b-result-cards.
-=======
 - 2026-09-29: #117 (16a) merged; #119 (16e) open; task 17 started from the 16e branch; 18 queued after 17.
->>>>>>> origin/general-chat-agent
