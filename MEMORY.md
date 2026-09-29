@@ -34,3 +34,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-29: tasks 16a (approval bridge) and 16b (result cards) started as cloud sessions; 16c/16d queued.
 - 2026-09-29 Task 16b (cloud session): result cards for every chat turn — `TurnFileExtractor` (paths in the answer + step output that exist, ≤12) → `CapabilityResultCard` under the answer in `AIChatMessageView` (Dock, Corner, Chat Window); rows gain Quick Look / Open / Reveal buttons + drag. Branch claude/task-16b-result-cards.
 - 2026-09-29: #117 (16a) merged; #119 (16e) open; task 17 started from the 16e branch; 18 queued after 17.
+- 2026-09-29 (Mac coordinator): #120 (docs) and #118 (16b, owner-tested) merged; #119 (16e) and #121 (17) open as drafts; coordinator moved to a local session that runs tasks in subagents.

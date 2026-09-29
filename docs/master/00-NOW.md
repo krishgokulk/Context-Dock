@@ -12,13 +12,16 @@
 
 Owner rule (2026-09-29): strictly in order — finish 16 and 17, hand test, merge, then 18.
 
-**16b. Result cards for every turn** (#118) — file paths in an answer or a step result render as
-cards (Open, Reveal in Finder, Quick Look, drag). Owner's first test showed no card: re-test.
-**16e. "find my …" routing** (#119) — ordinary phrases are not app names; discovery never launches
-an app; no generic Edit-menu row answers a search.
-**17. Model-first routing** — the keyword shortcut preempts the model only on an exact command; the
-model chooses from the scoped app's commands; a phrasebook test of the owner's real sentences
-(append every sentence that fails a hand test). Branched from 16e.
+**16e. "find my …" routing** (#119, draft) — ordinary phrases are not app names; discovery never
+launches an app; no generic Edit-menu row answers a search. Waiting on the owner's hand test
+(four checks in the PR). Merge only on "merge 119".
+**17. Model-first routing** (#121, draft, stacked on #119) — the keyword shortcut preempts the model
+only on an exact command; the model chooses from the scoped app's commands; a phrasebook test of
+the owner's real sentences (append every sentence that fails a hand test). Merges after 16e.
+
+Coordinator (2026-09-29): this branch (`claude/jev-popularity-comparison-t530yd`) runs in a local
+Mac session. It edits only `00-NOW.md` and `MEMORY.md`, runs each task in a subagent in its own
+worktree, watches the PRs, and merges only when the owner says so.
 
 ## Next, in order
 
@@ -64,6 +67,7 @@ merged before review).
 | 2026-09-28 | System connectors: Global Commands as chat tools — reads free, writes ask, same runner as the Global row (task 12a) | #113 |
 | 2026-09-29 | App Packs page in Settings: one switch per pack, detail page with the card's sections, "Sends data out" (task 12b) | #114 |
 | 2026-09-29 | Activity rows: one row per real step in General Chat, Dock and Corner; read-back results; picker risk Medium; status reads preferred (task 14) | #115 |
+| 2026-09-29 | Result cards for every chat turn: paths in an answer or step output become Open / Reveal / Quick Look / drag cards in Dock, Corner and the Chat Window; owner hand-tested (task 16b). Follow-up: paths under `~/Library` from step output are noise | #118 |
 | 2026-09-29 | Approval bridge: a CLI turn DoraX launched gets the normal approval sheet; unattended refusal is per-run (task 16a) | #117 |
 
 ## Owner decisions (append-only)
