@@ -12,8 +12,9 @@
 
 Owner rule (2026-09-29): strictly in order — finish 16 and 17, hand test, merge, then 18.
 
-**16c. Output files** — the model writes a real file (.md/.csv/.docx) into a DoraX outputs folder,
-shown as a card (builds on 16b's cards). Not started; the coordinator runs it in a subagent next.
+**16d. Shortcuts connector** — list and run the user's Shortcuts with approval (the supported route
+to Siri-style reach; macOS has no public API to call other apps' App Intents). Running in a
+subagent worktree; draft PR to follow.
 
 Coordinator (2026-09-29): this branch (`claude/jev-popularity-comparison-t530yd`) runs in a local
 Mac session. It edits only `00-NOW.md` and `MEMORY.md`, runs each task in a subagent in its own
@@ -21,8 +22,6 @@ worktree, watches the PRs, and merges only when the owner says so.
 
 ## Next, in order
 
-**16d. Shortcuts connector** — list and run the user's Shortcuts with approval (the supported route
-to Siri-style reach; macOS has no public API to call other apps' App Intents). After 16c.
 
 **Small follow-ups (owner to order):** (a) result cards: paths under `~/Library` from step output are
 noise; (b) flaky `AXMenuReaderScriptedFallbackTests` — a shared `scriptedMenusDidLoad` notification
@@ -65,6 +64,7 @@ merged before review).
 | 2026-09-29 | "find my …" no longer routes to Find My: phrase-like app names need a real cue, discovery never launches an app, a generic Edit row is not an answer to a search; owner hand-tested (task 16e) | #119 |
 | 2026-09-29 | Model-first routing: the keyword shortcut preempts the model only on an exact command; the model picks from the scoped app's commands; phrasebook tests of the owner's real sentences (task 17) | #121 |
 | 2026-09-29 | File search with Spotlight off: `find_files` agent tool (Spotlight, then a bounded scan of Desktop, Documents, Downloads, iCloud Drive), Finder pack and `dorax_find_files` MCP tool; owner hand-tested (task 18) | #123 |
+| 2026-09-29 | Output files: `write_output_file` writes .md/.txt/.csv/.docx into `~/Documents/DoraX Outputs/` (never overwrites, confined to that folder, approval sheet, refused when unattended) and shows a card; `dorax_write_output_file` on the MCP server; owner hand-tested (task 16c) | #125 |
 | 2026-09-29 | Approval bridge: a CLI turn DoraX launched gets the normal approval sheet; unattended refusal is per-run (task 16a) | #117 |
 
 ## Owner decisions (append-only)
