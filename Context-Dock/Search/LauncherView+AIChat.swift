@@ -5269,22 +5269,30 @@ extension LauncherView {
                     return
                 }
 
-                // App UI work is proposed as a visible Computer Use action. Resolution is
-                // deterministic and local; the user's click is Allow Once. Only after that
+                // An exact command is proposed as a visible Computer Use action. Resolution
+                // is deterministic and local; the user's click is Allow Once. Only after that
                 // click may DoraX launch/restore the app and live-verify the cached menu path.
+                // Any other sentence is the model's (Task 17): the commands that partly
+                // matched are handed to it as candidates, and it chooses.
+                var scopedModelCandidates = ""
                 if submittedContextDockFiles.isEmpty,
                     submittedContextDockText == nil,
                     !self.isGlobalQueryModeActive,
                     frontmostTaskPlan.permitsUIAutomation,
-                    !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle),
-                    await self.offerScopedNativeAppAction(
+                    !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle)
+                {
+                    switch await self.offerScopedNativeAppAction(
                         query: query,
                         bundleId: scopedBundleId,
                         appName: scopedAppName.isEmpty
                             ? (frontmostName ?? frontmost.name) : scopedAppName,
                         requestID: l2RequestID)
-                {
-                    return
+                    {
+                    case .offered:
+                        return
+                    case .declined(let modelCandidates):
+                        scopedModelCandidates = modelCandidates
+                    }
                 }
 
                 await self.setL2LoadingStatus(
@@ -5468,6 +5476,7 @@ extension LauncherView {
                     prompt.set(.attachments, attachmentBlock)
                     prompt.set(.liveAppData, appleData)
                     prompt.set(.mcp, mcpBlock)
+                    prompt.set(.capabilities, scopedModelCandidates)
                     prompt.set(.skills, skillsBlock)
                     prompt.set(.userProfile, profileBlock)
                     prompt.set(.memory, memoryBlock)
@@ -7251,8 +7260,10 @@ extension LauncherView {
             return prefAnswer
         }
 
-        let exactSelectedAdapterAction = hasExactSelectedAdapterAction(query: actionQuery)
-        if (!modelFirst || exactSelectedAdapterAction || resumedConfirmedHistoryRequest),
+        let generalRoute = ScopedRoutePolicy.generalChatRoute(
+            query: actionQuery, modelFirst: modelFirst,
+            selectedAppHasExactAction: hasExactSelectedAdapterAction(query: actionQuery))
+        if (generalRoute == .exactCommand || resumedConfirmedHistoryRequest),
            attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer

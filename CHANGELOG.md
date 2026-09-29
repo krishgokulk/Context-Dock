@@ -29,6 +29,7 @@ All notable changes to Context-Dock are tracked here.
 - An everyday phrase that happens to be an app name no longer hijacks a chat: asking a Finder chat to "find my passport pdfs" stays in Finder instead of offering to run a command in Find My. "open Find My" still reaches the app.
 - DoraX no longer opens an application while it is still working out what to offer — an app is launched only after you approve the action.
 - A generic Edit ▸ Copy / Paste / Cut / Select All / Undo command is no longer offered as the answer to a search.
+- In an app chat, a one-tap action is offered only when what you typed is the command itself ("copy", "new folder", "empty trash"). Any other sentence goes to the model, which sees the app's matching commands and picks one — or none.
 - Stabilized Context Dock result rows by using stable pill IDs instead of row indexes.
 - Stabilized Global Context app/menu result rows by using stable row IDs.
 - Reduced noisy Global Context matches by requiring 3+ characters for app search.
