@@ -228,6 +228,8 @@ struct AgentToolResult {
     /// reading itself, in the words the user would be shown. It is the strongest evidence
     /// the system produces, and it ends the question for the rest of the turn.
     var verifiedByReadBack: String? = nil
+    /// The user said no on the approval card. Distinct from a failure: nothing ran.
+    var deniedByUser = false
 
     init(
         success: Bool,
@@ -566,7 +568,15 @@ final class AgentToolRegistry {
                 displayCommand: "\(name) (resumed checkpoint)")
         }
 
+        let stepID = Self.beginActivityStep(name: name, arguments: arguments)
         let result = await tool.handler(arguments, context)
+        if let stepID {
+            ActivityRecorder.active?.finish(
+                stepID,
+                status: result.deniedByUser ? .denied : (result.success ? .ok : .failed),
+                output: result.output,
+                readBack: result.verifiedByReadBack)
+        }
         context.onStatus?(
             result.success
                 ? ScopedToolStep.completedLabel(for: name)
@@ -814,6 +824,27 @@ final class AgentToolRegistry {
     /// surface, and the model still decides whether any result fits. Without it, "paste what
     /// I copied" matched nothing, because no word in the phrase appears in "clipboard.read /
     /// Read Clipboard" — the model would have had to guess the word DoraX happens to use.
+    /// Opens a row for this call in the turn's activity, when a turn is recording one and
+    /// the call is work rather than plumbing. Returns the row to close when the call ends.
+    static func beginActivityStep(name: String, arguments: [String: Any]) -> UUID? {
+        guard let recorder = ActivityRecorder.active,
+            !ActivityStepNaming.plumbingTools.contains(name)
+        else { return nil }
+        var capabilityTitle: String?
+        var capabilityIsRead = false
+        if name == "run_capability", let id = arguments["capability_id"] as? String,
+            let capability = CapabilityRegistry.shared.capability(id: id)
+        {
+            capabilityTitle = capability.title
+            capabilityIsRead = capability.riskLevel == .low
+        }
+        let described = ActivityStepNaming.describe(
+            tool: name, arguments: arguments,
+            capabilityTitle: capabilityTitle, capabilityIsRead: capabilityIsRead)
+        return recorder.begin(
+            kind: described.kind, title: described.title, detail: described.detail)
+    }
+
     /// Capability ids that match `query`, best first.
     ///
     /// Extracted from the find_capability tool so the ranking can be tested without a
@@ -841,6 +872,7 @@ final class AgentToolRegistry {
         // left to the model reading the titles, and to the on-device fallback when nothing
         // matches at all.
         var scored: [(score: Int, rank: Int, id: String)] = []
+        let asksState = GlobalCommandCapabilities.asksForCurrentState(query)
         for (index, entry) in catalogue.enumerated() {
             let aliases: String = searchAliases(for: entry.id)
             let haystack: String = "\(entry.id) \(entry.title) \(aliases)".lowercased()
@@ -849,6 +881,7 @@ final class AgentToolRegistry {
                 score += 1
             }
             if score > 0 {
+                score += statusQuestionBonus(asksState: asksState, capabilityID: entry.id)
                 scored.append((score: score, rank: index, id: entry.id))
             }
         }
@@ -866,6 +899,14 @@ final class AgentToolRegistry {
             left.score == right.score ? left.rank < right.rank : left.score > right.score
         }
         return scored.map(\.id)
+    }
+
+    /// "Is Bluetooth on?" is a read. The status capability and the write beside it match the
+    /// same words, and the tie used to fall to whichever sorted first — the write, by id —
+    /// or to the provider's own shell, which a sandbox then blocked. A question about the
+    /// current state ranks the registered read first; an instruction gets no bonus.
+    static func statusQuestionBonus(asksState: Bool, capabilityID: String) -> Int {
+        asksState && capabilityID.hasSuffix(".status") ? 1 : 0
     }
 
     /// Words that carry no subject. Aliases are written as readable phrases, so "what is
@@ -1477,6 +1518,7 @@ final class AgentToolRegistry {
             // "notes.md" is a filename, not a request about Apple Notes. Detected on the
             // raw query because tokenising splits the extension off the stem, losing the
             // one signal that says which of the two this is.
+            let asksState = GlobalCommandCapabilities.asksForCurrentState(query)
             let namesAFile = query.range(
                 of: "[\\w-]+\\.(md|txt|pdf|docx?|rtf|csv|json|ya?ml|html?|pages|key|numbers|xlsx?|pptx?)\\b",
                 options: [.regularExpression, .caseInsensitive]) != nil
@@ -1500,6 +1542,10 @@ final class AgentToolRegistry {
                         // "summarise quarterly-notes.md" ranked Apple Notes above every
                         // file tool, on the strength of the word inside the filename.
                         if namesAFile, capability.id.hasPrefix("finder.") { score += 2 }
+                        if score > 0 {
+                            score += Self.statusQuestionBonus(
+                                asksState: asksState, capabilityID: capability.id)
+                        }
                         return (score, capability)
                     }
                     .filter { $0.score > 0 }
@@ -1581,6 +1627,13 @@ final class AgentToolRegistry {
                 return "- \(capability.id): \(capability.title) | input: [\(fields)]"
                     + " | risk: \(capability.riskLevel.rawValue)"
             }
+            // A state question with a registered read in hand is answered by that read —
+            // not by the provider's own shell, which the sandbox may block and which asks
+            // for an approval a status check never needs.
+            let statusHint = asksState && matches.contains(where: { $0.id.hasSuffix(".status") })
+                ? "\n\nThis asks about current state: call the .status capability above (a "
+                    + "read, no approval) rather than a shell command."
+                : ""
             return AgentToolResult(
                 success: true,
                 // The closing rule matters more than the list. Handed these ids, a model
@@ -1593,7 +1646,7 @@ final class AgentToolRegistry {
                     + "\n\nThese are the only capabilities for this request. If none of them "
                     + "can answer it, say so plainly and stop. Do not invent a capability id, "
                     + "and do not guess at file paths, log locations or support directories to "
-                    + "read instead — a guessed path is not a source.",
+                    + "read instead — a guessed path is not a source." + statusHint,
                 displayCommand: "find_capability(\(query))")
         })
 
@@ -2145,7 +2198,11 @@ final class AgentToolRegistry {
                         succeeded = false
                         output = "\(output)\n\nCouldn't confirm it: \(fallback)"
                     case .notApplicable:
-                        break
+                        // No registered verifier, but the executor read its own value
+                        // back (a System connector setting): that reading is the proof.
+                        if result.readBack?.isEmpty == false {
+                            reading = output
+                        }
                     }
                 }
                 var capabilityResult = AgentToolResult(
@@ -2159,13 +2216,15 @@ final class AgentToolRegistry {
                 // failed" need different next moves from the model, and one vague message
                 // for both is what produced "it seems there was an issue".
                 let known = CapabilityRegistry.shared.capability(id: capabilityID) != nil
-                return AgentToolResult(
+                var failed = AgentToolResult(
                     success: false,
                     output: known
                         ? "\(capabilityID) failed: \(error.localizedDescription)"
                         : "No capability or app action with id \"\(capabilityID)\". Call "
                             + "find_capability first and use an id it returns.",
                     displayCommand: "run_capability(\(capabilityID))")
+                if case AICapabilityError.approvalRequired = error { failed.deniedByUser = true }
+                return failed
             }
         })
 

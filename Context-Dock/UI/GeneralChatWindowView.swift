@@ -796,7 +796,9 @@ struct GeneralChatWindowView: View {
                                 onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
-                                liveSteps: liveSteps(for: message))
+                                liveSteps: liveSteps(for: message),
+                                liveActivity: liveSteps(for: message).isEmpty
+                                    ? [] : model.activeActivity)
 
                             // What this answer built, where it built it. The panel lists
                             // everything the thread has ever produced, which is the wrong
@@ -819,7 +821,8 @@ struct GeneralChatWindowView: View {
                     // Only until there is an assistant message to draw them in — after that
                     // they render above its text, so the block collapses where it stood.
                     if model.isSending, !progressBelongsToLastMessage {
-                        LiveAgentProgressView(steps: windowLiveProgressSteps)
+                        LiveAgentProgressView(
+                            steps: windowLiveProgressSteps, activity: model.activeActivity)
                         .id("thinking")
                     }
                 }

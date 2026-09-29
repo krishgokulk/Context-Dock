@@ -559,6 +559,9 @@ struct AIChatMessage: Identifiable, Equatable {
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
     var runOutput: String?  // terminal/script output, collapsed behind a disclosure
+    /// One row per thing the turn ran, recorded where it executed. Not persisted: like
+    /// `trace`, it describes the turn that produced the answer.
+    var activity: [ActivityStep] = []
 
     enum ChatRole {
         case user
@@ -782,10 +785,14 @@ struct AIChatMessageView: View {
     /// Live activity used to be a sibling rendered *after* the whole message list, so once an
     /// answer started streaming it appeared above while the activity stayed pinned below —
     /// reading as though the reasoning came after the result. It belongs inside the assistant
-    /// turn, above the answer, where it collapses into `routerTraceView` in the same place
+    /// turn, above the answer, where it collapses into `ActivityRows` in the same place
     /// rather than being destroyed and redrawn somewhere else.
     var liveSteps: [String] = []
-    @State private var isTraceExpanded = false
+    /// Rows recorded for the turn still running into this message.
+    var liveActivity: [ActivityStep] = []
+    /// The finished record, when the surface keeps it beside the message rather than on it
+    /// (the dock). Empty means `message.activity`.
+    var activity: [ActivityStep] = []
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
     @State private var isEvaluationExpanded = false
@@ -1499,48 +1506,16 @@ struct AIChatMessageView: View {
         Self.completedStepLines(trace: message.trace, toolCalls: message.mcpToolsRan)
     }
 
-    private var routerTraceView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.dockSoft) {
-                    isTraceExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: isTraceExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(Self.traceSummary(completedStepLines))
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.05), in: Capsule())
-            }
-            .buttonStyle(.plain)
+    private var durableStepLines: [String] {
+        ActivityNarration.durableTrace(completedStepLines)
+    }
 
-            if isTraceExpanded {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(completedStepLines.enumerated()), id: \.offset) { _, step in
-                        HStack(alignment: .top, spacing: 6) {
-                            Circle()
-                                .fill(Color.secondary.opacity(0.45))
-                                .frame(width: 4, height: 4)
-                                .padding(.top, 5)
-                            Text(step)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-                .padding(.leading, 10)
-                .padding(.top, 4)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
+    /// What ran for this answer: the recorded steps, or one per receipt for a path that
+    /// only wrote receipts.
+    private var finishedActivity: [ActivityStep] {
+        ActivityStep.steps(
+            recorded: activity.isEmpty ? message.activity : activity,
+            receipts: message.evidenceReceipts)
     }
 
     /// Collapsed script output. Header states the size so the user can judge whether to open it.
@@ -1633,14 +1608,16 @@ struct AIChatMessageView: View {
                     attachmentChips
                 }
                 // Live activity, in the place the answer is about to occupy.
-                if message.role == .assistant, !liveSteps.isEmpty {
-                    LiveAgentProgressView(steps: liveSteps)
-                }
-                // Completed routing and tool activity stays behind one disclosure — the same
-                // work the live view showed while it ran, in the same position, so finishing
-                // collapses the block instead of moving it.
-                if message.role == .assistant, !completedStepLines.isEmpty {
-                    routerTraceView
+                if message.role == .assistant, !liveSteps.isEmpty || !liveActivity.isEmpty {
+                    LiveAgentProgressView(steps: liveSteps, activity: liveActivity)
+                } else if message.role == .assistant,
+                    !finishedActivity.isEmpty || !durableStepLines.isEmpty
+                {
+                    // Completed activity stays behind one disclosure — the same work the live
+                    // view showed while it ran, in the same position, so finishing collapses
+                    // the block instead of moving it. One row per step; narration only when
+                    // nothing ran as a step, and never the filler.
+                    ActivityRows(steps: finishedActivity, fallbackLines: durableStepLines)
                 }
                 // Script/terminal output — collapsed. A conversion log is hundreds of lines of
                 // ffmpeg banner the user did not ask to read; it belongs one tap away, not

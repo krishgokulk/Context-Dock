@@ -122,6 +122,50 @@ enum GlobalCommandCapabilities {
 
     /// True when the command can report its current value: a value script, or one of the
     /// radios read natively rather than through a script.
+    /// The write's result once the setting has been read back. "Volume 30 ✓ (read back
+    /// 30)" when the Mac reports what was asked; the reading, plainly, when it does not.
+    static func readBackResult(
+        command: SystemCommand, requested: String, readBack: String
+    ) -> AICapabilityExecutionResult {
+        guard readBackMatches(requested: requested, readBack: readBack) else {
+            return AICapabilityExecutionResult(
+                success: true,
+                output: "\(command.name) was set to \(requested), but reading it back gives "
+                    + "\(readBack).",
+                readBack: readBack)
+        }
+        return AICapabilityExecutionResult(
+            success: true,
+            output: "\(command.name) \(requested) ✓ (read back \(readBack))",
+            readBack: readBack)
+    }
+
+    /// Whether a reading says what was asked. Toggles compare as on/off whatever the words
+    /// ("dark" and "true" are both on for Appearance); sliders compare as numbers.
+    static func readBackMatches(requested: String, readBack: String) -> Bool {
+        let want = requested.lowercased().trimmingCharacters(in: .whitespaces)
+        let got = readBack.lowercased().trimmingCharacters(in: .whitespaces)
+        if want == got { return true }
+        if let a = Double(want), let b = Double(got) { return abs(a - b) < 1 }
+        let on: Set<String> = ["on", "true", "yes", "1", "enabled", "dark"]
+        let off: Set<String> = ["off", "false", "no", "0", "disabled", "light"]
+        if on.contains(want) { return on.contains(got) }
+        if off.contains(want) { return off.contains(got) }
+        // "auto" and free text: nothing to compare against, so the reading stands as shown.
+        return true
+    }
+
+    /// A question about a setting's current state — "is Bluetooth on?", "what's the
+    /// volume?" — as opposed to an instruction to change it.
+    nonisolated static func asksForCurrentState(_ query: String) -> Bool {
+        let q = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, !requestsMutation(q) else { return false }
+        let openers = ["is ", "are ", "what's ", "whats ", "what is ", "check ", "how loud"]
+        return openers.contains(where: q.hasPrefix)
+            || q.contains(" status") || q.contains("currently") || q.hasSuffix(" on?")
+            || q.hasSuffix(" off?")
+    }
+
     static func canReadState(_ command: SystemCommand) -> Bool {
         command.keywords.contains("provider:bluetooth")
             || command.keywords.contains("provider:wifi")
@@ -249,7 +293,7 @@ enum GlobalCommandCapabilities {
             .filter { $0.count > 1 && !noise.contains($0) }
     }
 
-    private static func requestsMutation(_ query: String) -> Bool {
+    private nonisolated static func requestsMutation(_ query: String) -> Bool {
         let q = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let mutationSignals = [
             "turn on", "turn off", "enable", "disable", "set ", "switch to",
@@ -277,6 +321,11 @@ enum GlobalCommandCapabilities {
         // A switch or a slider moves one setting the user can move straight back — Dark
         // Mode, volume, Bluetooth. It still asks, but it is not Empty Trash.
         if command.interactionType != .none { return .medium }
+        // So does a picker: a command whose value is one of a fixed set of presets
+        // (Light / Dark / Auto) chooses between states the user can pick again. Saved
+        // copies of such commands carry no interaction type, only their presets, and fell
+        // through to the script rule below — Appearance asked with a High badge.
+        if !presetValues(for: command).isEmpty { return .medium }
         switch command.actionType {
         case .bash, .applescript, .jxa, .scriptFile:
             return .high
@@ -441,10 +490,19 @@ enum GlobalCommandCapabilities {
                 let output = await runtime.run(live, value)
 
                 let trimmed = output?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                // A setting that can be read is read back, so the answer can say what the
+                // Mac now reports rather than that a script exited cleanly.
+                if !value.isEmpty, canReadState(live),
+                    let after = await runtime.readValue(live)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines),
+                    !after.isEmpty
+                {
+                    return readBackResult(command: live, requested: value, readBack: after)
+                }
                 return AICapabilityExecutionResult(
                     success: true,
                     output: trimmed.isEmpty
-                        ? "Ran \(live.name). The executor returned successfully; no independent outcome check is configured for this command."
+                        ? (value.isEmpty ? "Ran \(live.name)." : "\(live.name) \(value).")
                         : trimmed
                 )
             }

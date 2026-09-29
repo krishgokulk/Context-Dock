@@ -454,7 +454,9 @@ struct CornerGeneralChatView: View {
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: message.id == model.messages.last?.id
-                                    ? model.activeProgress : [])
+                                    ? model.activeProgress : [],
+                                liveActivity: message.id == model.messages.last?.id
+                                    ? model.activeActivity : [])
 
                             // What this answer built. The model extracts artifacts for every
                             // scope, and the window shows them under the message that made
@@ -478,7 +480,7 @@ struct CornerGeneralChatView: View {
                     // so the surface that could explain itself least was the one asked the
                     // broadest questions.
                     if model.isSending {
-                        LiveAgentProgressView(steps: waitingSteps)
+                        LiveAgentProgressView(steps: waitingSteps, activity: model.activeActivity)
                             .id("live-progress")
                     }
                 }

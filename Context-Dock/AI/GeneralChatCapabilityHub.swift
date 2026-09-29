@@ -656,7 +656,8 @@ final class GeneralChatCapabilityHub {
                     handled: true,
                     success: result.success,
                     output: result.success
-                        ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                        ? result.resultLine(
+                            isWrite: CapabilityRegistry.shared.capability(id: tool)?.riskLevel != .low)
                         : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
                     label: "\(tool) via built-in")
             }
@@ -744,7 +745,9 @@ final class GeneralChatCapabilityHub {
                 handled: true,
                 success: result.success,
                 output: result.success
-                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    ? result.resultLine(
+                        isWrite: CapabilityRegistry.shared.capability(
+                            id: invocation.capabilityID)?.riskLevel != .low)
                     : "\(invocation.capabilityID) failed: \(result.error ?? "Unknown error")",
                 label: invocation.capabilityID)
 
@@ -849,7 +852,7 @@ final class GeneralChatCapabilityHub {
                 handled: true,
                 success: result.success,
                 output: result.success
-                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    ? result.resultLine(isWrite: true)
                     : "Terminal command failed: \(result.error ?? "Unknown error")",
                 label: "Terminal")
 
