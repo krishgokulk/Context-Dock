@@ -1046,6 +1046,8 @@ final class AgentToolRegistry {
         registerComputerUseTool()
         // Scripts an app's own profile declares. See AppAgentScriptTool.swift.
         registerAppAgentScriptTool()
+        // A file the model writes for the user, on the approval sheet. See OutputFileTool.swift.
+        registerOutputFileTool()
 
         register(AgentTool(
             name: "read_tool_result",

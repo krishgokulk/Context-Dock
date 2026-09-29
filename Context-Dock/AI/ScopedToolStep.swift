@@ -21,6 +21,7 @@ enum ScopedToolStep {
         case "read_file": return "Reading the file…"
         case "read_selection": return "Reading your selection…"
         case "find_files": return "Searching for files…"
+        case "write_output_file": return "Writing the file…"
         case "read_attachment": return "Reading the attachment…"
         case "find_capability", "find_route": return "Looking for a way to do this…"
         case "run_capability", "run_route": return "Running it…"
