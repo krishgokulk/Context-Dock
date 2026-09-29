@@ -129,6 +129,13 @@ struct FrontmostAppTaskPlan: Equatable {
         if id.contains("finder") || fileTerms.contains(where: { (" " + lower).contains($0) }) {
             tools.insert("find_files")
         }
+        // A file to hand back (a csv, a markdown note, a Word document). It is a write and always
+        // asks, so it is offered only when the sentence names one of those outputs.
+        let outputTerms = ["csv", "markdown", ".md", "docx", "word document", "text file",
+                           "spreadsheet", "save it as a file", "output file", "export"]
+        if outputTerms.contains(where: { lower.contains($0) }) {
+            tools.insert("write_output_file")
+        }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
         // operate_app is offered on action turns even when Computer Use is switched off for
         // this app, because its refusal *is* the offer: it tells the model to ask the user for

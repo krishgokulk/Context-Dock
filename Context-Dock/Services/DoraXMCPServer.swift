@@ -455,6 +455,29 @@ final class DoraXMCPServer: ObservableObject {
             ],
         ],
         [
+            "name": "dorax_write_output_file",
+            "description":
+                "Write a new .md, .txt, .csv or .docx file into the user's DoraX Outputs folder "
+                + "(~/Documents/DoraX Outputs) and return its full path. Never overwrites. The "
+                + "user must approve each file in DoraX; when DoraX is not showing them the "
+                + "approval (an unattended agent), the call is refused and nothing is written.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": [
+                        "type": "string",
+                        "description": "Plain file name, no folders.",
+                    ],
+                    "format": [
+                        "type": "string",
+                        "description": "One of: md, txt, csv, docx.",
+                    ],
+                    "content": ["type": "string", "description": "The whole file content."],
+                ] as [String: Any],
+                "required": ["name", "format", "content"],
+            ],
+        ],
+        [
             "name": "dorax_browser_tabs",
             "description":
                 "The pages the user has open in Safari, with titles and URLs. Call this when "
@@ -621,6 +644,14 @@ final class DoraXMCPServer: ObservableObject {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return "dorax_find_files needs a query." }
             return await AgentToolRegistry.runFileSearch(query: query).1
+
+        case "dorax_write_output_file":
+            let result = await AgentToolRegistry.runWriteOutputFile(
+                name: arguments["name"] as? String ?? "",
+                format: arguments["format"] as? String ?? "",
+                content: arguments["content"] as? String ?? "",
+                scope: nil, attended: attended)
+            return result.output
 
         case "dorax_browser_tabs":
             let tabs = SafariTabManager.shared.cachedTabs(maxAge: 30)

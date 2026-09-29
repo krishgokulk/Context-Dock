@@ -387,7 +387,9 @@ enum ScopedAppPromptBuilder {
             + "\"these\" is answered by reading it first, never from memory and never with "
             + "\"I don't have access\". find_files looks for a file by name (Spotlight, then a scan of Desktop, "
             + "Documents, Downloads and iCloud Drive) — use it, not mdfind, and quote the full "
-            + "paths it returns. If you are unsure what an app can do, find_route "
+            + "paths it returns. write_output_file saves a .md, .txt, .csv or .docx the user asked "
+            + "for into ~/Documents/DoraX Outputs (they approve it) and returns its path — quote it. "
+            + "If you are unsure what an app can do, find_route "
             + "lists what actually exists.")
         return lines.joined(separator: "\n")
     }
