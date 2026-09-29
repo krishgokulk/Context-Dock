@@ -114,6 +114,12 @@ at the keyboard. It also makes evaluation better: the question becomes "was the 
 requested?", which DoraX owns, rather than "did the side effect happen?", which depends on a
 person.
 
+The refusal is scoped to the run (`AICapabilityApprovalCenter.withUnattendedRun`, a task-local), so
+an eval in flight never refuses an approval another chat asked for. DoraX's own CLI turns are not
+unattended: the MCP config DoraX writes for its Claude CLI carries an `X-DoraX-Turn` key minted per
+app launch, and requests bearing it show the user's normal approval sheet. A caller without that
+key — anything registered with `claude mcp add` — stays unattended.
+
 ### Privacy at the provider boundary
 
 `AIPrivacyApprovalCenter` asks before private context is sent to a provider. `AIContextBudget`
