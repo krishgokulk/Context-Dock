@@ -113,6 +113,7 @@ struct RoutingPhrasebookTests {
 
     /// The noise behind the original report: Find My's persisted menu snapshot.
     private static let findMyCopy = menu("Find My", ["Edit", "Copy"])
+    private static let shortcutsRun = menu("Shortcuts", ["Shortcut", "Run"])
     private static let finderFind = menu("Finder", ["File", "Find"])
 
     // MARK: - The phrasebook
@@ -186,6 +187,28 @@ struct RoutingPhrasebookTests {
                found: [menu("Safari", ["File", "Share"])], expected: .none),
         Phrase(surface: .generalChat, sentence: "summarize this page",
                found: [], expected: .none),
+
+        // 16d hand test: "shortcut" is a noun (the user's own shortcuts, run by run_shortcut),
+        // not the Shortcuts app. Its menu's "Shortcut > Run" must never be offered for these.
+        Phrase(surface: .generalChat, sentence: "run make pdf shortcut",
+               found: [shortcutsRun], expected: .model),
+        Phrase(surface: .generalChat, sentence: "run my make pdf shortcut",
+               found: [shortcutsRun], expected: .model),
+        Phrase(surface: .generalChat, sentence: "run the DayEnd shortcut",
+               found: [shortcutsRun], expected: .model),
+        Phrase(surface: .generalChat, sentence: "what shortcuts do I have",
+               found: [], expected: .none),
+        Phrase(surface: .finderChat, sentence: "run make pdf shortcut",
+               found: [shortcutsRun], expected: .model),
+        Phrase(surface: .finderChat, sentence: "run my make pdf shortcut",
+               found: [shortcutsRun], expected: .model),
+        Phrase(surface: .finderChat, sentence: "run the DayEnd shortcut",
+               found: [shortcutsRun], expected: .model),
+        Phrase(surface: .finderChat, sentence: "what shortcuts do I have",
+               found: [], expected: .none),
+        // A genuine app request still names the app.
+        Phrase(surface: .finderChat, sentence: "open Shortcuts",
+               found: [launch("Shortcuts")], expected: .crossAppOffer),
     ]
 
     // MARK: - Running a row
@@ -193,7 +216,7 @@ struct RoutingPhrasebookTests {
     /// Which of the fixture apps the sentence names, judged by the same rule the resolver
     /// applies to every installed name (`isAppReference`). Offline stand-in for
     /// `namedInstalledApp`, which reads the machine's app catalogue.
-    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music"]
+    private static let knownApps = ["Find My", "Notes", "Photos", "Safari", "Finder", "Music", "Shortcuts"]
 
     static func namedApp(in sentence: String) -> String? {
         let lowered = sentence.lowercased()
@@ -288,6 +311,64 @@ struct RoutingPhrasebookTests {
                 named?.name != "Find My" && named?.name != "Notes" && named?.name != "Photos",
                 "\"\(sentence)\" named \(named?.name ?? "")")
         }
+    }
+
+    // MARK: - 16d: shortcut is a noun
+
+    @Test func shortcutNounSentencesNameNoApp() {
+        for sentence in ["run make pdf shortcut", "run my make pdf shortcut",
+                         "run the DayEnd shortcut", "what shortcuts do I have",
+                         "Run My Make PDF Shortcut", "list my shortcuts", "run my shortcuts"] {
+            let lowered = sentence.lowercased()
+            for phrase in ["shortcut", "shortcuts"] {
+                guard let range = lowered.range(of: phrase) else { continue }
+                let start = lowered.distance(from: lowered.startIndex, to: range.lowerBound)
+                #expect(
+                    !GeneralAIActionResolver.isAppReference(
+                        in: lowered, original: sentence, phrase: phrase, start: start),
+                    "\"\(sentence)\" read \(phrase) as the app")
+            }
+            let named = GeneralAIActionResolver.shared.namedInstalledApps(in: sentence)
+            #expect(!named.contains { $0.bundleId.lowercased() == "com.apple.shortcuts" },
+                    "\"\(sentence)\" named the Shortcuts app")
+        }
+    }
+
+    @Test func aGenuineAppRequestStillNamesShortcuts() {
+        for (sentence, phrase) in [("open Shortcuts", "shortcuts"), ("open shortcuts app", "shortcuts"),
+                                   ("launch the shortcuts app", "shortcuts"),
+                                   ("open the shortcut app", "shortcut app"),
+                                   ("shortcuts", "shortcuts")] {
+            let lowered = sentence.lowercased()
+            let start = lowered.distance(
+                from: lowered.startIndex, to: lowered.range(of: phrase)!.lowerBound)
+            #expect(
+                GeneralAIActionResolver.isAppReference(
+                    in: lowered, original: sentence, phrase: phrase, start: start),
+                "\"\(sentence)\" should name the app")
+        }
+    }
+
+    @Test func theAccessGateDoesNotAskToEnableShortcutsForARun() {
+        for sentence in ["run make pdf shortcut", "run my make pdf shortcut",
+                         "run the DayEnd shortcut", "what shortcuts do I have"] {
+            let request = AppScopedChatService.appNeedingAccess(
+                query: sentence, scope: .general, attachedAppNames: [])
+            #expect(request?.bundleId.lowercased() != "com.apple.shortcuts",
+                    "\"\(sentence)\" asked to enable the Shortcuts app")
+        }
+    }
+
+    @Test func shortcutSentencesAreOfferedTheToolsInEveryChat() {
+        for sentence in ["run make pdf shortcut", "run my make pdf shortcut",
+                         "run the DayEnd shortcut", "what shortcuts do I have"] {
+            let plan = FrontmostAppTaskPlan.make(
+                query: sentence, bundleId: "com.apple.finder", appName: "Finder")
+            #expect(plan.allowedToolNames.contains("run_shortcut"), "\(sentence)")
+            #expect(plan.allowedToolNames.contains("list_shortcuts"), "\(sentence)")
+        }
+        // General Chat passes no allow-list: every registered tool is offered.
+        #expect(AgentToolRegistry.shared.tool(named: "run_shortcut") != nil)
     }
 
     @Test func theModelIsToldWhatMatchedAndHowToRunIt() {

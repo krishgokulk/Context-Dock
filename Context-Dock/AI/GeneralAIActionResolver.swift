@@ -1053,8 +1053,15 @@ final class GeneralAIActionResolver {
         "find my", "photos", "music", "notes", "maps", "books", "preview", "clock",
         "calendar", "contacts", "shortcuts", "reminders", "stocks", "weather", "news",
         "home", "mail", "messages", "freeform", "journal", "passwords", "files", "tips",
-        "podcasts",
+        "podcasts", "shortcut",
     ]
+
+    /// "shortcut" and "shortcuts" are nouns before they are an app: "run make pdf shortcut",
+    /// "run my shortcuts", "what shortcuts do I have" are about the user's own shortcuts, run
+    /// by the `run_shortcut` tool, never the Shortcuts app's menu bar. Only an explicit
+    /// destination ("open Shortcuts", "in Shortcuts", "the Shortcuts app") names the app, so a
+    /// possessive or a capital letter does not count as a cue for these two words.
+    private static let shortcutNounNames: Set<String> = ["shortcuts", "shortcut"]
 
     /// Words that, standing directly in front of one of those names, make it a name: a
     /// preposition that takes a destination or a source, a verb that only makes sense
@@ -1094,11 +1101,12 @@ final class GeneralAIActionResolver {
         let next = wordAfter(phrase, at: start, in: lowered)
         if next == "app" || next == "application" { return true }
 
-        if let before = wordBefore(phrase, at: start, in: lowered),
-            appTargetCues.contains(before)
-        {
+        let cues = shortcutNounNames.contains(phrase)
+            ? appTargetCues.subtracting(["my", "our", "your"]) : appTargetCues
+        if let before = wordBefore(phrase, at: start, in: lowered), cues.contains(before) {
             return true
         }
+        if shortcutNounNames.contains(phrase) { return false }
 
         // Written the way the app writes itself. Only past the first character: a capital
         // at the very start of a sentence says nothing about what the word is.

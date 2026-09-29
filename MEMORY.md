@@ -43,3 +43,5 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-29 (Mac coordinator): #123 (18) merged after owner hand test; 16c is next; #122 docs merging.
 - 2026-09-29 Task 16c (subagent): output files — `write_output_file` agent tool + `dorax_write_output_file` MCP tool (`OutputFileWriter.swift`, `OutputFileTool.swift`); ~/Documents/DoraX Outputs, never overwrites, approval sheet (medium), refused unattended; .docx via a pure-Swift stored-zip writer. Branch claude/task-16c-output-files.
 - 2026-09-29 (Mac coordinator): #125 (16c) merged after owner hand test; 16d (Shortcuts connector) started in a subagent.
+- 2026-09-29 Task 16d (subagent): Shortcuts connector — `list_shortcuts` (read-only) + `run_shortcut` (high-risk approval, exact name checked pre-sheet, 60s timeout, 20KB output cap, input via temp file) + MCP `dorax_list_shortcuts`/`dorax_run_shortcut` (`ShortcutsService.swift`, `ShortcutsTool.swift`); injected runner. Branch claude/task-16d-shortcuts.
+- 2026-09-30 (Mac coordinator): #127 (16d Shortcuts) merged after owner hand test; queue empty pending owner decisions D9/D11/D12 and small follow-ups.

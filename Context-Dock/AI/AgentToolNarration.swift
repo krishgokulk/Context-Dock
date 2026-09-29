@@ -53,6 +53,8 @@ enum AgentToolNarration {
         case "read_selection": return "Reading the selection"
         case "find_files": return "Searching for files"
         case "write_output_file": return "Writing a file"
+        case "list_shortcuts": return "Listing shortcuts"
+        case "run_shortcut": return "Running the shortcut"
         case "run_command": return "Running"
         case "run_menu_command": return "Pressing"
         case "operate_app": return "Looking in the live menu bar for"

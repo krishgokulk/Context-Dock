@@ -389,6 +389,8 @@ enum ScopedAppPromptBuilder {
             + "Documents, Downloads and iCloud Drive) — use it, not mdfind, and quote the full "
             + "paths it returns. write_output_file saves a .md, .txt, .csv or .docx the user asked "
             + "for into ~/Documents/DoraX Outputs (they approve it) and returns its path — quote it. "
+            + "list_shortcuts names the user's Shortcuts; run_shortcut runs one (exact name, they "
+            + "approve each run) — never run one they did not ask for. "
             + "If you are unsure what an app can do, find_route "
             + "lists what actually exists.")
         return lines.joined(separator: "\n")

@@ -1048,6 +1048,8 @@ final class AgentToolRegistry {
         registerAppAgentScriptTool()
         // A file the model writes for the user, on the approval sheet. See OutputFileTool.swift.
         registerOutputFileTool()
+        // The user's Shortcuts: list freely, run on the approval sheet. See ShortcutsTool.swift.
+        registerShortcutsTools()
 
         register(AgentTool(
             name: "read_tool_result",
