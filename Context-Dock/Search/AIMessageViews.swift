@@ -796,6 +796,8 @@ struct AIChatMessageView: View {
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
     @State private var isEvaluationExpanded = false
+    /// Files the finished answer named (`TurnFileCards`), loaded off the main thread.
+    @State private var turnFiles: CapabilityResultTable?
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -1510,6 +1512,21 @@ struct AIChatMessageView: View {
         ActivityNarration.durableTrace(completedStepLines)
     }
 
+    /// File cards wait for the turn to finish: paths mid-stream are half-written, and
+    /// a card that appears and vanishes as the text grows is noise.
+    private var showsTurnFiles: Bool {
+        message.role == .assistant && !message.isError && !isStreaming
+            && liveSteps.isEmpty && liveActivity.isEmpty
+    }
+
+    private var turnFilesSource: TurnFileCards.Source? {
+        guard showsTurnFiles else { return nil }
+        return TurnFileCards.Source(
+            answer: message.content,
+            stepOutputs: finishedActivity.map(\.output) + [message.runOutput].compactMap { $0 },
+            excluding: message.attachments + message.recentFiles.map(\.url))
+    }
+
     /// What ran for this answer: the recorded steps, or one per receipt for a path that
     /// only wrote receipts.
     private var finishedActivity: [ActivityStep] {
@@ -1680,6 +1697,13 @@ struct AIChatMessageView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
 
+                // Files the finished answer named, as cards — every surface, every provider.
+                if showsTurnFiles, let turnFiles {
+                    CapabilityResultCard(table: turnFiles)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Files in this answer")
+                }
+
                 if !message.appLaunches.isEmpty {
                     appLaunchButtons
                 }
@@ -1768,6 +1792,15 @@ struct AIChatMessageView: View {
             // `.assistant` received this spacer, so `.tool` expanded across the row and its
             // compact success bubble appeared centred.
             if message.role != .user { Spacer(minLength: 52) }
+        }
+        .task(id: turnFilesSource) {
+            guard let source = turnFilesSource else {
+                turnFiles = nil
+                return
+            }
+            let table = await TurnFileCards.table(for: source)
+            guard !Task.isCancelled else { return }
+            turnFiles = table
         }
     }
 

@@ -22,6 +22,7 @@ All notable changes to Context-Dock are tracked here.
 ### Added
 
 - General Chat can read your Global Commands' current state ("is Bluetooth on?") without an approval prompt; commands are grouped into System packs (Bluetooth, Wi-Fi, Sound, Appearance, …).
+- Files a chat answer names — in any chat, any provider — appear as cards under it with Quick Look, Open, Reveal in Finder and drag out.
 
 ### Fixed
 
