@@ -245,7 +245,7 @@ final class GeneralAIActionResolver {
         // no, ask the index instead of giving up. Retrieve, then decide.
         let verbShaped = isLikelyExecutable(trimmed)
         let nounShapedTarget = verbShaped
-            ? nil : nounShapedAppTarget(lowered, scopedApp: scopedApp)
+            ? nil : nounShapedAppTarget(lowered, original: trimmed, scopedApp: scopedApp)
         guard verbShaped || nounShapedTarget != nil else {
             // Last chance before giving up. A Global Command is named by keyword, not by
             // verb — "trash bin", "dark mode", whatever the user called their own — so it
@@ -271,7 +271,7 @@ final class GeneralAIActionResolver {
         // particular, “open deleted message in Messages” is a Messages menu lookup, not
         // a request to compose/share a message.  Resolve the app before the broad intent
         // detectors so app menus and adapters get the first chance to answer it.
-        if let target = resolveTargetApp(in: lowered) {
+        if let target = resolveTargetApp(in: lowered, original: trimmed) {
             return await appScopedResolution(
                 target: target, trimmed: trimmed,
                 chatAllowedBundleIds: chatAllowedBundleIds)
@@ -490,12 +490,13 @@ final class GeneralAIActionResolver {
     /// - that remainder is short. "duckduckgo ai" is a target; "safari keeps crashing when I
     ///   open three windows" is a complaint, and belongs in conversation.
     private func nounShapedAppTarget(
-        _ lowered: String, scopedApp: (name: String, bundleId: String)? = nil
+        _ lowered: String, original: String? = nil,
+        scopedApp: (name: String, bundleId: String)? = nil
     ) -> TargetApp? {
         guard !isQuestionShaped(lowered) else { return nil }
         guard !LauncherView.isBrowserLibraryReadPhrase(lowered) else { return nil }
         // In a scoped chat the app is the surface, so "private window" needs no app name.
-        guard let target = resolveTargetApp(in: lowered)
+        guard let target = resolveTargetApp(in: lowered, original: original)
             ?? scopedTargetApp(scopedApp, lowered: lowered)
         else { return nil }
         let remainder = target.remainingPhrase.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -603,7 +604,8 @@ final class GeneralAIActionResolver {
     /// with vs code?") that are NOT executable but must be answered from real app
     /// state instead of provider guesses.
     func namedInstalledApp(in query: String) -> (name: String, bundleId: String)? {
-        guard let target = resolveTargetApp(in: query.lowercased()) else { return nil }
+        guard let target = resolveTargetApp(in: query.lowercased(), original: query)
+        else { return nil }
         return (target.name, target.bundleId)
     }
 
@@ -622,7 +624,7 @@ final class GeneralAIActionResolver {
         // by position and length, so repeating it walks the sentence left to right without
         // needing a second ranking rule that could disagree with the first.
         for _ in 0..<4 {
-            guard let target = resolveTargetApp(in: remaining) else { break }
+            guard let target = resolveTargetApp(in: remaining, original: query) else { break }
             if !found.contains(where: {
                 $0.bundleId.caseInsensitiveCompare(target.bundleId) == .orderedSame
             }) {
@@ -1001,15 +1003,16 @@ final class GeneralAIActionResolver {
 
     // MARK: - App names that are also English
 
-    /// Nouns a person owns *inside* their machine. When one of these follows a possessive,
-    /// the sentence is about the user's own data, not about an app that happens to be
-    /// named like the phrase.
-    private static let possessedDataNouns: Set<String> = [
-        "note", "notes", "bookmark", "bookmarks", "file", "files", "folder", "folders",
-        "reminder", "reminders", "email", "emails", "mail", "tab", "tabs", "photo",
-        "photos", "document", "documents", "doc", "docs", "message", "messages",
-        "download", "downloads", "password", "passwords", "screenshot", "screenshots",
-        "calendar", "event", "events", "project", "projects", "task", "tasks",
+    /// The things a device-finding app can actually locate. Everything else a person can
+    /// own — a passport, a pdf, a note, a file with somebody's name in it — is data on this
+    /// Mac, so a sentence about it is English rather than a reference to the app.
+    ///
+    /// This list is the *exception*, not the rule: see `isPossessiveEnglish`.
+    private static let locatableThings: Set<String> = [
+        "iphone", "ipad", "ipod", "mac", "macbook", "imac", "watch", "airpods", "airpod",
+        "airtag", "airtags", "phone", "laptop", "device", "devices", "friend", "friends",
+        "family", "people", "keys", "wallet", "car", "headphones", "beats", "everyone",
+        "stuff", "things", "items",
     ]
 
     /// Whether an app-name match is really a possessive English phrase.
@@ -1019,23 +1022,123 @@ final class GeneralAIActionResolver {
     /// at position 0, and ranking is leftmost-first, so it beat the word "note" further
     /// along the sentence and the user was asked to enable Find My.
     ///
-    /// Not a special case for one app: the test is structural. A matched phrase ending in a
-    /// possessive pronoun, followed by something the user owns on this machine, is English.
-    /// Followed by anything else — a device, a person, nothing at all — it is the app, so
-    /// "find my iphone" and "open Find My" keep working.
+    /// The first fix listed the nouns that make the phrase English, which only moved the
+    /// bug one word along: "find my passport pdfs gokulakannan" has no such noun in it, so
+    /// Find My won again — and this time in a Finder chat, where the file search the user
+    /// wanted was one route away. The default is now the other way round. A matched phrase
+    /// ending in a possessive pronoun is English *unless* what follows is a thing the
+    /// finding app can find, or nothing follows at all. So "find my iphone" and the bare
+    /// "open Find My" keep working, and every sentence about the user's own files stays in
+    /// the app they were typed into.
     static func isPossessiveEnglish(_ lowered: String, phrase: String, start: Int) -> Bool {
         let pronouns: Set<String> = ["my", "our", "your"]
         guard let last = phrase.split(separator: " ").last.map(String.init),
             pronouns.contains(last)
         else { return false }
+        // Nothing after the possessive: "open find my" is the app, plainly.
+        guard let next = wordAfter(phrase, at: start, in: lowered) else { return false }
+        return !locatableThings.contains(next)
+    }
 
+    // MARK: - App names that are ordinary words
+
+    /// Installed app names that are also everyday English. A match on one of these is not
+    /// an app reference on its own — the sentence has to point at the app.
+    ///
+    /// Apple ships most of them, which is why every Mac hits this: "take a note about the
+    /// lease" contains Notes, "show photos of the beach" contains Photos, "what's the
+    /// weather" contains Weather. Nothing here is a special case for one app; the list only
+    /// says which names need a cue, and `isAppReference` says what a cue is.
+    static let phraseLikeAppNames: Set<String> = [
+        "find my", "photos", "music", "notes", "maps", "books", "preview", "clock",
+        "calendar", "contacts", "shortcuts", "reminders", "stocks", "weather", "news",
+        "home", "mail", "messages", "freeform", "journal", "passwords", "files", "tips",
+        "podcasts",
+    ]
+
+    /// Words that, standing directly in front of one of those names, make it a name: a
+    /// preposition that takes a destination or a source, a verb that only makes sense
+    /// against an application, or a possessive ("save it to my notes").
+    private static let appTargetCues: Set<String> = [
+        "in", "into", "inside", "from", "to", "with", "using", "via", "on", "through",
+        "open", "opens", "opened", "reopen", "launch", "launched", "relaunch", "quit",
+        "close", "activate", "focus", "switch", "my", "our", "your",
+    ]
+
+    /// Whether a name the sentence contains is being used as an app name.
+    ///
+    /// Non-ambiguous names ("safari", "ghostty", "visual studio code") pass straight
+    /// through — this gate exists only for names that are also ordinary words, and it must
+    /// not start suppressing the rest.
+    ///
+    /// - Parameter original: the query as typed, when the caller has it. Capitalisation is
+    ///   a cue in its own right: somebody who writes "save it to Notes" means the app.
+    static func isAppReference(
+        in lowered: String, original: String? = nil, phrase: String, start: Int
+    ) -> Bool {
+        let pronouns: Set<String> = ["my", "our", "your"]
+        let endsInPossessive = phrase.split(separator: " ").last
+            .map { pronouns.contains(String($0)) } ?? false
+        // A possessive phrase has its own, older rule, and it is the stricter one: the noun
+        // that follows decides. Going through the cue list instead would drop "find my
+        // iphone", which is the app's whole job.
+        if endsInPossessive {
+            return !isPossessiveEnglish(lowered, phrase: phrase, start: start)
+        }
+        guard phraseLikeAppNames.contains(phrase) else { return true }
+
+        // The request is the name and nothing else — a launcher-style target, and how
+        // `installedAppMatch(named:)` asks this question.
+        if lowered.trimmingCharacters(in: .whitespacesAndNewlines) == phrase { return true }
+
+        let next = wordAfter(phrase, at: start, in: lowered)
+        if next == "app" || next == "application" { return true }
+
+        if let before = wordBefore(phrase, at: start, in: lowered),
+            appTargetCues.contains(before)
+        {
+            return true
+        }
+
+        // Written the way the app writes itself. Only past the first character: a capital
+        // at the very start of a sentence says nothing about what the word is.
+        if start > 0, let original, containsTitleCased(phrase, in: original) { return true }
+
+        return false
+    }
+
+    /// The name as an app writes it — "find my" → "Find My" — found on word boundaries.
+    private static func containsTitleCased(_ phrase: String, in original: String) -> Bool {
+        let titled = phrase
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+        guard let range = original.range(of: titled) else { return false }
+        let before = range.lowerBound == original.startIndex
+            ? nil : original[original.index(before: range.lowerBound)]
+        let after = range.upperBound == original.endIndex ? nil : original[range.upperBound]
+        let boundary = { (c: Character?) in c == nil || !(c!.isLetter || c!.isNumber) }
+        return boundary(before) && boundary(after)
+    }
+
+    /// The first word after `phrase`, which starts at `start` in `lowered`.
+    private static func wordAfter(_ phrase: String, at start: Int, in lowered: String) -> String? {
         let afterIndex = lowered.index(
             lowered.startIndex, offsetBy: min(start + phrase.count, lowered.count))
-        let remainder = lowered[afterIndex...]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let next = remainder.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).first
-        else { return false }
-        return possessedDataNouns.contains(String(next))
+        return lowered[afterIndex...]
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .first
+            .map(String.init)
+    }
+
+    /// The last word before `phrase`, which starts at `start` in `lowered`.
+    private static func wordBefore(_ phrase: String, at start: Int, in lowered: String) -> String? {
+        guard start > 0 else { return nil }
+        let beforeIndex = lowered.index(lowered.startIndex, offsetBy: min(start, lowered.count))
+        return lowered[..<beforeIndex]
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .last
+            .map(String.init)
     }
 
 
@@ -1061,7 +1164,10 @@ final class GeneralAIActionResolver {
         return lhsName < rhsName
     }
 
-    private func resolveTargetApp(in lowered: String) -> TargetApp? {
+    /// - Parameter original: the query as typed, when the caller still has it. Only used as
+    ///   a capitalisation cue for app names that are also ordinary words; every decision
+    ///   here is otherwise made on `lowered`.
+    private func resolveTargetApp(in lowered: String, original: String? = nil) -> TargetApp? {
         // Every name that appears in the sentence competes, whether it came from the alias
         // table or from the installed-apps catalog.
         //
@@ -1113,7 +1219,8 @@ final class GeneralAIActionResolver {
         // Drop the ones that are only English. Done after collection rather than inside
         // each loop so alias and catalog matches are judged by the same rule.
         matches.removeAll {
-            Self.isPossessiveEnglish(lowered, phrase: $0.matchedPhrase, start: $0.start)
+            !Self.isAppReference(
+                in: lowered, original: original, phrase: $0.matchedPhrase, start: $0.start)
         }
 
         let best = matches.min { lhs, rhs in
