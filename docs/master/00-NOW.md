@@ -10,33 +10,15 @@
 
 ## In progress
 
-Run by the cloud coordinator in parallel cloud sessions (owner 2026-09-28: "continue all tasks, list
-every test at the end"). Cloud sessions cannot build or screenshot: CI (macOS) is their build gate,
-and the owner hand-tests the batch at the end.
-
-**9. Fix: sensitive pages in chat.** The chat's page reading (`browserPage` / `read_page`) skips
-`SensitivePageGuard`, so "summarise this page" on a bank page sends it (found in #102). A refused page
-is never sent; the chat says why. Both shells.
-
-**10. Fix: the Dock's menu reader never runs System Events on the main thread.** Since #100 it is a
-freeze, not a crash, for apps with an empty AX menu tree (Finder, Electron apps). The Corner is AX-only
-since #98; the Dock matches.
+*None.* Tasks 9–14 are merged and wait on the owner's batch hand test (checklist in the Done PRs).
 
 ## Next, in order
 
-**11. The Dock gets ⌘R** (re-read the app's live menus), as its Hotkeys page already advertises and the
-Corner has since #98.
-
-**12. App Packs + System connectors, step 1** (proposed 2026-09-28; the name is the owner's to veto).
-One name, "App Pack", for an app's adapter (actions, skills, menus, tools) everywhere in the UI; Global
-Commands regrouped into System packs (Bluetooth, Wi-Fi, Display, Sound, Focus…) whose value scripts
-become read tools and whose scripts become write tools, registered in `AgentToolRegistry` so General
-Chat and app chats can use them (reads free, writes ask); Settings lists installed packs with one
-switch each and a detail page reusing the settings card's groups; a "sends data out" label. No
-Discover/marketplace in 1.0. Global rows stay as they are — same code, two views.
-
-**13. Owner decisions** D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip;
+**15. Owner decisions** D9 / D11 / D12. Settings card follow-ups: ⚙ on the scope-from-Global chip;
 keys inside the card.
+Follow-ups: a read-back that disagrees after a System connector write reports success with the
+mismatch in text — make it a failed step (#115); cloud sessions must never merge their own PR (#114
+merged before review).
 
 ## Done
 
@@ -59,6 +41,12 @@ keys inside the card.
 | 2026-09-28 | Per-app settings card: pin beside +, ⚙ in the app chip opens Can do / Sees now / Allowed | #105 |
 | 2026-09-28 | Remaining scopes (task 7): a Global Command's row steps in, never runs (D4, D5); attach Finder's front folder (D7); D14 marked; D6 left for the owner | #106 |
 | 2026-09-28 | Plugins from search open in the Corner's board (D6); Finder in front lists its menus; the Dock's window layouts in the app field | #107, #108 |
+| 2026-09-28 | Sensitive pages never reach the chat: the page reader keeps only the origin and the guard's reason; `read_page` returns the refusal; sensitive tabs listed by origin (task 9) | #111 |
+| 2026-09-28 | The Dock's menu reader never runs System Events on the main thread; the walk runs off-main and fills in (task 10) | #110 |
+| 2026-09-28 | ⌘R in the Dock re-reads the app's menus, one rule and one re-read shared with the Corner (task 11, C12) | #112 |
+| 2026-09-28 | System connectors: Global Commands as chat tools — reads free, writes ask, same runner as the Global row (task 12a) | #113 |
+| 2026-09-29 | App Packs page in Settings: one switch per pack, detail page with the card's sections, "Sends data out" (task 12b) | #114 |
+| 2026-09-29 | Activity rows: one row per real step in General Chat, Dock and Corner; read-back results; picker risk Medium; status reads preferred (task 14) | #115 |
 
 ## Owner decisions (append-only)
 
@@ -89,6 +77,7 @@ keys inside the card.
 | 2026-09-26 | Build Safari **"Ask AI about this page"** and **"Save as Markdown"** as app actions (task 6, after task 5). |
 | 2026-09-26 | While typing, every Context Dock is compact: no tabs pill, no pinned pages, no extensions — just attach (+), send and pin; no expand. Replaces "Safari's tabs stay while a question is typed" (2026-09-25). An app's pins show in its bar and the field's pill at rest, ahead of the tabs. |
 | 2026-09-26 | B2 (Backspace into inline text pills) is "—" in the Corner: its scope is one chip outside the text; leaving it is B3. (Accepted by merging #98, which asked for it.) |
+| 2026-09-28 | "App Pack" is the name for an app's bundle of actions, skills, menus and tools; System packs group Global Commands. No Discover/marketplace in 1.0. |
 
 ## Open decisions (owner)
 
