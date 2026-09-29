@@ -12,10 +12,9 @@
 
 Owner rule (2026-09-29): strictly in order — finish 16 and 17, hand test, merge, then 18.
 
-**17. Model-first routing** (#121, draft; base merged, CI green) — the keyword shortcut preempts the
-model only on an exact command; the model chooses from the scoped app's commands; a phrasebook test
-of the owner's real sentences (append every sentence that fails a hand test). Waiting on the owner's
-hand test (checklist in the PR). Merge only on "merge 121".
+**18. File search with Spotlight off** — Spotlight first, then a bounded scan of Desktop,
+Documents, Downloads, iCloud Drive; full paths out; in-app agent, Finder pack and DoraX MCP server.
+Starting in a subagent worktree; draft PR to follow.
 
 Coordinator (2026-09-29): this branch (`claude/jev-popularity-comparison-t530yd`) runs in a local
 Mac session. It edits only `00-NOW.md` and `MEMORY.md`, runs each task in a subagent in its own
@@ -23,9 +22,6 @@ worktree, watches the PRs, and merges only when the owner says so.
 
 ## Next, in order
 
-**18. File search with Spotlight off** — Spotlight first, then a bounded scan of Desktop,
-Documents, Downloads, iCloud Drive; full paths out; in-app agent, Finder pack and DoraX MCP server.
-Starts after 17 merges.
 
 **16c. Output files** — the model writes a real file (.md/.csv/.docx) into a DoraX outputs folder,
 shown as a card. **16d. Shortcuts connector** — list and run the user's Shortcuts with approval
@@ -67,6 +63,7 @@ merged before review).
 | 2026-09-29 | Activity rows: one row per real step in General Chat, Dock and Corner; read-back results; picker risk Medium; status reads preferred (task 14) | #115 |
 | 2026-09-29 | Result cards for every chat turn: paths in an answer or step output become Open / Reveal / Quick Look / drag cards in Dock, Corner and the Chat Window; owner hand-tested (task 16b). Follow-up: paths under `~/Library` from step output are noise | #118 |
 | 2026-09-29 | "find my …" no longer routes to Find My: phrase-like app names need a real cue, discovery never launches an app, a generic Edit row is not an answer to a search; owner hand-tested (task 16e) | #119 |
+| 2026-09-29 | Model-first routing: the keyword shortcut preempts the model only on an exact command; the model picks from the scoped app's commands; phrasebook tests of the owner's real sentences (task 17) | #121 |
 | 2026-09-29 | Approval bridge: a CLI turn DoraX launched gets the normal approval sheet; unattended refusal is per-run (task 16a) | #117 |
 
 ## Owner decisions (append-only)
