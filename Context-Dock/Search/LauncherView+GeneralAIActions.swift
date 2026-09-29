@@ -303,24 +303,21 @@ extension LauncherView {
         }
     }
 
-    /// Resolve the scoped request against the complete App Adapter inventory. Menu and
-    /// keyboard routes are offered as a Computer Use button; data routes continue into the
-    /// MCP/API/provider pipeline. The trace remains attached either way.
+    /// Resolve the scoped request against the complete App Adapter inventory, and offer a
+    /// native action only when the sentence IS that command (Task 17). Menu and keyboard
+    /// routes are offered as a Computer Use button. Anything else is declined and the model
+    /// takes the turn, with the partly-matching commands handed to it as candidates — the
+    /// decision is `ScopedRoutePolicy.decide`, which `RoutingPhrasebookTests` pins.
     func offerScopedNativeAppAction(
         query: String, bundleId: String, appName: String, requestID: UUID
-    ) async -> Bool {
-        guard !bundleId.isEmpty else { return false }
-        // "Group those results and save them as Markdown" derives a new artifact from the
-        // previous chat receipt. Code's File > Save As menu only saves the active editor and
-        // cannot perform that transformation, so keep this turn in the agent/tool pipeline.
-        guard !DerivedArtifactIntent.shouldBypassNativeAppMenu(query) else { return false }
-        // A question is answered, never offered as an action. Without this the gate below
-        // is "some capability's keywords overlap the sentence, or it looks executable" —
-        // which turned "is this page related to our contextdock project in any ways you
-        // think?" into "I found an enabled Safari tool for this task. Run it? → Run Open
-        // Social". The guard existed on the General AI path and not on this one; a rule
-        // that lives in one caller is not a rule.
-        guard !GeneralAIActionResolver.shared.asksOnly(query) else { return false }
+    ) async -> ScopedRoutePolicy.Outcome {
+        let declined = ScopedRoutePolicy.Outcome.declined(modelCandidates: "")
+        guard !bundleId.isEmpty else { return declined }
+        // A question is answered, never offered as an action, and "group those results and
+        // save them as Markdown" derives a new artifact from the previous receipt — no menu
+        // command does that. "is this page related to our contextdock project?" once became
+        // "Run Open Social" because this guard lived on the General AI path only.
+        guard ScopedRoutePolicy.considersActions(query) else { return declined }
         // Read-style verbs such as "summarize" are conversation-shaped globally, but in a
         // Notes scope they name an enabled tool. Resolve the scoped catalog before applying
         // the generic executable-intent gate so the provider cannot guess "I can't read it".
@@ -328,21 +325,17 @@ extension LauncherView {
             appName: appName, bundleID: bundleId, query: query)
         guard !scopedRegistered.isEmpty
             || GeneralAIActionResolver.shared.looksExecutable(query)
-        else { return false }
+        else { return declined }
         await MainActor.run {
             l2.routerTrace = []
             dockTraceStep("Scanning \(appName) App Adapter…")
         }
         // Always use the complete resolver. It already includes registered adapter tools,
         // saved actions, cached menus, known shortcuts, MCP/API/CLI and accessibility routes.
-        // Short-circuiting when one registered tool matched hid better native commands and
-        // made user-added adapters behave differently from apps without adapters.
         // The app the sentence names, if it is not this one. Resolution only — nothing runs
         // without the consent prompt below. Without it a cross-app request could produce no
-        // capability candidates at all, because the other app's tools were filtered out
-        // while its cached MENUS still matched on a word: "add current page to bookmarks
-        // note" found Notes' `Edit → Add Link…` and never saw notes.append, which is the
-        // thing that actually does this.
+        // capability candidates at all ("add current page to bookmarks note" found Notes'
+        // `Edit → Add Link…` and never saw notes.append).
         let namedElsewhere = await MainActor.run {
             GeneralAIActionResolver.shared.namedInstalledApp(in: query)
         }
@@ -370,77 +363,43 @@ extension LauncherView {
             }(),
             scopedTo: appName)
 
-        // Preference by ROUTE, not by position in the resolver's list.
-        //
-        // `first(where:)` over a predicate that accepted menus and capabilities equally meant
-        // whichever the ranker happened to put first won — and word overlap puts a menu item
-        // called "Add Link…" above notes.append for a sentence containing "add". So a click
-        // on someone's screen, in an app they had not opened, outranked the tool written to
-        // do exactly this. The order below is the one ChatRouteResolver already documents:
-        // the app's own tools first, structured data next, inspectable commands after that,
-        // and driving the screen last, because it is the only one with a visible cost and
-        // the only one that fails when the app is in the wrong state — which is precisely how
-        // `Edit → Add Link…` failed: disabled unless a note is already open.
-        func preference(_ candidate: DoraXActionCandidate) -> Int {
-            switch candidate.route {
-            case .adapter: return candidate.capabilityID != nil ? 0 : 1
-            case .mcp: return 2
-            case .api: return 3
-            case .cli: return 4
-            case .shortcutRunner: return 5
-            case .automation: return 6
-            case .verifiedMenu: return 7
-            case .keyboardShortcut: return 8
-            case .axFallback, .appLaunch: return 9
-            }
-        }
         guard case .candidates(let candidates) = resolution else {
             await MainActor.run { dockTraceStep("No exact native action selected") }
-            return false
+            return declined
         }
-        var runnable: [DoraXActionCandidate] = []
-        for option in candidates {
-            let isRunnable: Bool
-            switch option.route {
-            case .verifiedMenu, .keyboardShortcut, .mcp, .cli:
-                isRunnable = true
-            case .adapter:
-                isRunnable = option.capabilityID != nil
-            default:
-                isRunnable = false
+        // The scoped app wins unless the sentence named another one (16e); only a runnable,
+        // offerable candidate whose title IS the sentence may preempt the model (17); among
+        // those, the app's own tools beat driving its menus. See ScopedRoutePolicy.
+        let namedApp = namedElsewhere.flatMap {
+            $0.bundleId.caseInsensitiveCompare(bundleId) == .orderedSame ? nil : $0.name
+        }
+        let decision = ScopedRoutePolicy.decide(
+            query: query, scopedApp: appName, namedApp: namedApp,
+            candidates: candidates,
+            aliases: { candidate in
+                guard let actionID = candidate.adapterActionID,
+                    let bundleID = candidate.bundleID,
+                    let adapter = AppAdapterManager.shared.adapter(for: bundleID),
+                    let action = adapter.actions.first(where: { $0.id == actionID })
+                else { return [] }
+                return [action.name] + action.triggers
+            })
+        guard let candidate = decision.offer else {
+            let block = ScopedRoutePolicy.modelCandidatesBlock(
+                decision.modelCandidates, scopedApp: appName)
+            await MainActor.run {
+                dockTraceStep(
+                    decision.modelCandidates.isEmpty
+                        ? "Not an exact command — the model decides"
+                        : "Not an exact command — \(decision.modelCandidates.count) "
+                            + "candidate\(decision.modelCandidates.count == 1 ? "" : "s") for the model")
             }
-            // The scoped app wins unless the sentence named another one. Resolution is
-            // already scoped to this app plus whatever `namedElsewhere` found, but a rule
-            // that only lives in the scope set is a rule one refactor away from being
-            // gone — and what it protects is the owner being asked to let a Finder chat
-            // drive Find My because the words "find my" opened the request.
-            guard ActionReadiness.mayOfferCrossApp(
-                candidateApp: option.appName, scopedApp: appName,
-                namedApp: namedElsewhere?.name)
-            else { continue }
-            // Runnable by route is not the same as runnable at all. A capability whose
-            // required inputs are empty fails the moment it is approved — the owner tapped
-            // "Run it?" and got `Missing capability input: title` — and a create capability
-            // is the wrong kind of thing entirely when the sentence is about a note that
-            // already exists. See ActionReadiness.
-            if isRunnable, ActionReadiness.isOfferable(option, query: query) {
-                runnable.append(option)
-            }
-        }
-        let best = runnable.min { left, right in
-            let leftRank = preference(left)
-            let rightRank = preference(right)
-            if leftRank != rightRank { return leftRank < rightRank }
-            return left.confidence > right.confidence
-        }
-        guard let candidate = best else {
-            await MainActor.run { dockTraceStep("No exact native menu action selected") }
-            return false
+            return .declined(modelCandidates: block)
         }
         await MainActor.run {
             let isComputerUse = candidate.route == .verifiedMenu || candidate.route == .keyboardShortcut
             let path = candidate.menuPath?.joined(separator: " → ") ?? candidate.title
-            dockTraceStep("Ready: \(candidate.routeLabel) · \(path)")
+            dockTraceStep("Exact command: \(candidate.routeLabel) · \(path)")
             pendingActionCandidates = candidates
             pendingActionQuery = query
             // The button names the app it will operate. "Use Safari" on a button that drives
@@ -460,7 +419,7 @@ extension LauncherView {
                     actionChoices: [choice]))
             finishL2AIRequest(requestID)
         }
-        return true
+        return .offered
     }
 
     private func scopedActionPrompt(_ candidate: DoraXActionCandidate, appName: String) -> String {
@@ -626,11 +585,20 @@ extension LauncherView {
     /// Model-first affects ambiguous language, not an exact action installed in the sole
     /// app the user explicitly selected. Returning true here keeps deterministic work local
     /// while preserving model-first behaviour for ordinary and cross-app requests.
+    ///
+    /// "Strong" alone is not exact: the adapter score counts one string containing the
+    /// other, so an action called "Find" scored strong for "find my passport pdf". The
+    /// sentence has to BE the action — its name or one of its triggers (Task 17).
     func hasExactSelectedAdapterAction(query: String) -> Bool {
         guard chatFocusApps.count == 1 else { return false }
         let app = chatFocusApps[0]
         return AppAdapterManager.shared.scoredActions(for: app.bundleId, query: query)
-            .contains { $0.score >= AppAdapterManager.adapterActionStrongMatchScore }
+            .contains {
+                $0.score >= AppAdapterManager.adapterActionStrongMatchScore
+                    && ExactCommand.matches(
+                        query: query, titles: [$0.action.name] + $0.action.triggers,
+                        appNames: [app.name])
+            }
     }
 
     /// Execute an ordered compound plan ("save and quit vscode"): activate the app, warm its
