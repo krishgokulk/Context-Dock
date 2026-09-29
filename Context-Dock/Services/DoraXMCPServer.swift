@@ -455,6 +455,31 @@ final class DoraXMCPServer: ObservableObject {
             ],
         ],
         [
+            "name": "dorax_list_shortcuts",
+            "description":
+                "List the names of the user's shortcuts in the Shortcuts app. Read-only.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [String: Any](),
+            ],
+        ],
+        [
+            "name": "dorax_run_shortcut",
+            "description":
+                "Run one of the user's shortcuts by its exact name (from dorax_list_shortcuts), "
+                + "with optional short text input. The user must approve each run in DoraX; when "
+                + "DoraX is not showing them the approval (an unattended agent), the call is "
+                + "refused and nothing runs. Returns the shortcut's output and exit status.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": ["type": "string", "description": "Exact shortcut name."],
+                    "input": ["type": "string", "description": "Optional short text input."],
+                ] as [String: Any],
+                "required": ["name"],
+            ],
+        ],
+        [
             "name": "dorax_write_output_file",
             "description":
                 "Write a new .md, .txt, .csv or .docx file into the user's DoraX Outputs folder "
@@ -644,6 +669,16 @@ final class DoraXMCPServer: ObservableObject {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return "dorax_find_files needs a query." }
             return await AgentToolRegistry.runFileSearch(query: query).1
+
+        case "dorax_list_shortcuts":
+            return await AgentToolRegistry.runListShortcuts().1
+
+        case "dorax_run_shortcut":
+            let result = await AgentToolRegistry.runRunShortcut(
+                name: arguments["name"] as? String ?? "",
+                input: arguments["input"] as? String,
+                scope: nil, attended: attended)
+            return result.output
 
         case "dorax_write_output_file":
             let result = await AgentToolRegistry.runWriteOutputFile(

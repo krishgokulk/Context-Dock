@@ -136,6 +136,11 @@ struct FrontmostAppTaskPlan: Equatable {
         if outputTerms.contains(where: { lower.contains($0) }) {
             tools.insert("write_output_file")
         }
+        // The user's Shortcuts: offered only when the sentence is about them. Running one asks.
+        let shortcutTerms = ["shortcut", "automation", "run my ", "siri"]
+        if shortcutTerms.contains(where: { lower.contains($0) }) {
+            tools.formUnion(["list_shortcuts", "run_shortcut"])
+        }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
         // operate_app is offered on action turns even when Computer Use is switched off for
         // this app, because its refusal *is* the offer: it tells the model to ask the user for
