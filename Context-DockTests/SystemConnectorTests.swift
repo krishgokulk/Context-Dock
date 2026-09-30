@@ -235,8 +235,64 @@ struct SystemConnectorTests {
     }
 
     @Test func aReadBackThatDisagreesSaysSo() {
-        #expect(GlobalCommandCapabilities.readBackMatches(requested: "off", readBack: "false"))
-        #expect(GlobalCommandCapabilities.readBackMatches(requested: "dark", readBack: "true"))
-        #expect(!GlobalCommandCapabilities.readBackMatches(requested: "30", readBack: "55"))
+        #expect(ReadBackComparison.compare(requested: "off", readBack: "false") == .matches)
+        #expect(ReadBackComparison.compare(requested: "dark", readBack: "true") == .matches)
+        #expect(ReadBackComparison.compare(requested: "30", readBack: "55") == .differs)
+    }
+
+    // MARK: Read-back that disagrees fails the step
+
+    @Test func aReadBackThatDisagreesFailsTheStepWithBothValues() async throws {
+        let recorder = RecordingRuntime([defaultCommand("Volume")])
+        recorder.values["Volume"] = "0"  // muted: the Mac ignores the write
+        let volume = try #require(capabilities(recorder).first(where: { $0.id == "globalcmd.volume" }))
+
+        let result = try await volume.executor(
+            AICapabilityExecutionRequest(input: ["value": "50"], context: .none))
+
+        #expect(!result.success)
+        #expect(result.output.contains("asked for 50"))
+        #expect(result.output.contains("the Mac reports 0"))
+        #expect(!result.output.contains("✓"))
+    }
+
+    @Test func aReadBackWithinToleranceStillSucceeds() async throws {
+        let recorder = RecordingRuntime([defaultCommand("Volume")])
+        recorder.values["Volume"] = "31"
+        let volume = try #require(capabilities(recorder).first(where: { $0.id == "globalcmd.volume" }))
+
+        let result = try await volume.executor(
+            AICapabilityExecutionRequest(input: ["value": "30"], context: .none))
+
+        #expect(result.success)
+        #expect(result.output == "Volume 30 ✓ (read back 31)")
+    }
+
+    @Test func aSettingThatCannotBeReadIsNotAFailure() async throws {
+        let recorder = RecordingRuntime([defaultCommand("Volume")])  // no value to read back
+        let volume = try #require(capabilities(recorder).first(where: { $0.id == "globalcmd.volume" }))
+
+        let result = try await volume.executor(
+            AICapabilityExecutionRequest(input: ["value": "30"], context: .none))
+
+        #expect(result.success)
+        #expect(result.readBack == nil)
+        #expect(!result.output.contains("✓"))
+    }
+
+    @Test func theStepFlagAndTheTextTheModelSeesAgree() {
+        let command = defaultCommand("Volume")
+        let bad = GlobalCommandCapabilities.readBackResult(
+            command: command, requested: "50", readBack: "0")
+        let good = GlobalCommandCapabilities.readBackResult(
+            command: command, requested: "50", readBack: "50")
+        #expect(!bad.success)
+        #expect(bad.output.contains("asked for 50") && bad.output.contains("reports 0"))
+        #expect(good.success)
+        #expect(good.output.contains("read back 50"))
+        // The unified result never adds a tick to a failure, and never calls it verified.
+        let line = ActivitySummary.resultLine(
+            result: bad.output, isWrite: true, verification: .unverified, readBack: bad.readBack)
+        #expect(!line.contains("✓"))
     }
 }

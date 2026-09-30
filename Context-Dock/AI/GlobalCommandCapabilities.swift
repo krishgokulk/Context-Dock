@@ -120,39 +120,23 @@ enum GlobalCommandCapabilities {
         return formattedStateAnswer(command: command, raw: raw)
     }
 
-    /// True when the command can report its current value: a value script, or one of the
-    /// radios read natively rather than through a script.
     /// The write's result once the setting has been read back. "Volume 30 ✓ (read back
-    /// 30)" when the Mac reports what was asked; the reading, plainly, when it does not.
+    /// 30)" when the Mac reports what was asked; a failure naming both values when it does
+    /// not, so the step fails and the answer cannot claim success.
     static func readBackResult(
         command: SystemCommand, requested: String, readBack: String
     ) -> AICapabilityExecutionResult {
-        guard readBackMatches(requested: requested, readBack: readBack) else {
+        if ReadBackComparison.compare(requested: requested, readBack: readBack) == .differs {
             return AICapabilityExecutionResult(
-                success: true,
-                output: "\(command.name) was set to \(requested), but reading it back gives "
-                    + "\(readBack).",
+                success: false,
+                output: ReadBackComparison.mismatchMessage(
+                    name: command.name, requested: requested, readBack: readBack),
                 readBack: readBack)
         }
         return AICapabilityExecutionResult(
             success: true,
             output: "\(command.name) \(requested) ✓ (read back \(readBack))",
             readBack: readBack)
-    }
-
-    /// Whether a reading says what was asked. Toggles compare as on/off whatever the words
-    /// ("dark" and "true" are both on for Appearance); sliders compare as numbers.
-    static func readBackMatches(requested: String, readBack: String) -> Bool {
-        let want = requested.lowercased().trimmingCharacters(in: .whitespaces)
-        let got = readBack.lowercased().trimmingCharacters(in: .whitespaces)
-        if want == got { return true }
-        if let a = Double(want), let b = Double(got) { return abs(a - b) < 1 }
-        let on: Set<String> = ["on", "true", "yes", "1", "enabled", "dark"]
-        let off: Set<String> = ["off", "false", "no", "0", "disabled", "light"]
-        if on.contains(want) { return on.contains(got) }
-        if off.contains(want) { return off.contains(got) }
-        // "auto" and free text: nothing to compare against, so the reading stands as shown.
-        return true
     }
 
     /// A question about a setting's current state — "is Bluetooth on?", "what's the
@@ -166,6 +150,8 @@ enum GlobalCommandCapabilities {
             || q.hasSuffix(" off?")
     }
 
+    /// True when the command can report its current value: a value script, or one of the
+    /// radios read natively rather than through a script.
     static func canReadState(_ command: SystemCommand) -> Bool {
         command.keywords.contains("provider:bluetooth")
             || command.keywords.contains("provider:wifi")
