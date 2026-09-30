@@ -209,6 +209,19 @@ struct RoutingPhrasebookTests {
         // A genuine app request still names the app.
         Phrase(surface: .finderChat, sentence: "open Shortcuts",
                found: [launch("Shortcuts")], expected: .crossAppOffer),
+
+        // Issue 132: the old name-match route is gone. A sentence that merely CONTAINS a
+        // shortcut's name (here "Make PDF") is not a request to run it: nothing is offered,
+        // and no code but run_shortcut can run a shortcut. "run make pdf shortcut" itself is
+        // the model's, which calls list_shortcuts then run_shortcut at High risk.
+        Phrase(surface: .generalChat, sentence: "I need to make pdf copies of the invoices",
+               found: [], expected: .model),
+        Phrase(surface: .finderChat, sentence: "I need to make pdf copies of the invoices",
+               found: [], expected: .model),
+        Phrase(surface: .generalChat, sentence: "run make pdf shortcut",
+               found: [], expected: .model),
+        Phrase(surface: .generalChat, sentence: "open Shortcuts",
+               found: [], expected: .model),
     ]
 
     // MARK: - Running a row
