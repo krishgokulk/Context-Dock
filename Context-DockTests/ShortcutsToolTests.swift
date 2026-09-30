@@ -189,6 +189,37 @@ struct ShortcutsToolTests {
         #expect(fake.runCalls.first?.prefix(2) == ["run", "Morning"])
     }
 
+    // Issue 132: the old name-match route is retired. "run make pdf shortcut" reaches the one
+    // run path, at High risk, with the exact listed name; a sentence merely containing a name
+    // is not a name and runs nothing.
+    @Test func runMakePDFShortcutAsksOnceAtHighRiskWithTheExactName() async {
+        let fake = FakeShortcuts()
+        fake.names = "Make PDF\nMorning\n"
+        var asked: [(AIActionPlan, AICapability)] = []
+        let result = await AgentToolRegistry.runRunShortcut(
+            name: "make pdf", input: nil, scope: nil, attended: true, runner: fake.runner
+        ) { plan, capability in asked.append((plan, capability)); return true }
+        #expect(result.success)
+        #expect(asked.count == 1)
+        #expect(asked[0].0.input["shortcut"] == "Make PDF")
+        #expect(ApprovalRisk(asked[0].1.riskLevel) == .high)
+        #expect(fake.runCalls.count == 1)
+        #expect(fake.runCalls.first?.prefix(2) == ["run", "Make PDF"])
+    }
+
+    @Test func aSentenceContainingAShortcutNameRunsNothingAndAsksNothing() async {
+        let fake = FakeShortcuts()
+        fake.names = "Make PDF\nMorning\n"
+        var asked = 0
+        let result = await AgentToolRegistry.runRunShortcut(
+            name: "I need to make pdf copies of the invoices", input: nil, scope: nil,
+            attended: true, runner: fake.runner
+        ) { _, _ in asked += 1; return true }
+        #expect(!result.success)
+        #expect(asked == 0)
+        #expect(fake.runCalls.isEmpty)
+    }
+
     @Test func aFuzzyNameIsRefusedWithTheClosestNames() async {
         let fake = FakeShortcuts()
         fake.names = "Make PDF Of Page\nDay End\nMorning\n"
