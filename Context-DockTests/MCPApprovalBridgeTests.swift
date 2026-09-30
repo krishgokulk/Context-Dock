@@ -13,7 +13,9 @@ import Testing
 @MainActor
 @Suite("MCP approval bridge", .serialized)
 struct MCPApprovalBridgeTests {
-    private let center = AICapabilityApprovalCenter.shared
+    /// Its own center, not `shared`: other suites ask the shared one for approvals in parallel,
+    /// and `.serialized` only orders the tests inside this suite.
+    private let center = AICapabilityApprovalCenter()
 
     private func capability(_ id: String) -> AICapability {
         AICapability(

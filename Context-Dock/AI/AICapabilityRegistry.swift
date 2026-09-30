@@ -933,7 +933,9 @@ final class AICapabilityApprovalCenter: ObservableObject {
     private var expiryTask: Task<Void, Never>?
     private var isResolving = false
 
-    private init() {}
+    /// `internal` so a test can drive its own center. The app only ever uses `shared`; a test
+    /// on `shared` hears every other suite that asks for an approval while it runs.
+    init() {}
 
     /// Refuse every approval without showing one, and record what was asked.
     ///
