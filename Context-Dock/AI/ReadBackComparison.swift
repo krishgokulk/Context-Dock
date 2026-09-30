@@ -53,9 +53,50 @@ nonisolated enum ReadBackComparison {
     /// The comparison for a requested value and its reading, by the type they show.
     static func compare(requested: String, readBack: String) -> Outcome {
         if clean(requested) == clean(readBack) { return .matches }
+        // 1 and 0 are on and off, not two numbers one step apart.
+        let bits: Set<String> = ["0", "1"]
+        if bits.contains(clean(requested)), bits.contains(clean(readBack)) {
+            return toggle(requested: requested, readBack: readBack)
+        }
         let asNumber = number(requested: requested, readBack: readBack)
         if asNumber != .notComparable { return asNumber }
         return toggle(requested: requested, readBack: readBack)
+    }
+
+    /// The result of waiting for a reading to settle.
+    struct Settled: Equatable, Sendable {
+        var outcome: Outcome
+        /// The last reading taken.
+        var reading: String
+    }
+
+    /// Only a settled disagreement is a failure. Bluetooth, Wi-Fi and dark mode apply a
+    /// moment after the script exits, so a differing first reading is re-read (up to
+    /// `attempts` times, `delay` apart) until it matches, cannot be compared, or the
+    /// attempts run out. Cancellation stops the wait and is never a failure.
+    static func settle(
+        requested: String,
+        first: String,
+        attempts: Int = 4,
+        delay: Duration = .milliseconds(300),
+        reread: () async -> String?
+    ) async -> Settled {
+        var reading = first
+        var outcome = compare(requested: requested, readBack: reading)
+        var remaining = attempts
+        while outcome == .differs, remaining > 0 {
+            remaining -= 1
+            do { try await Task.sleep(for: delay) } catch {
+                return Settled(outcome: .notComparable, reading: reading)
+            }
+            if Task.isCancelled { return Settled(outcome: .notComparable, reading: reading) }
+            guard let next = await reread()?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !next.isEmpty
+            else { continue }
+            reading = next
+            outcome = compare(requested: requested, readBack: reading)
+        }
+        return Settled(outcome: outcome, reading: reading)
     }
 
     /// What the model and the activity row are told when the reading disagrees.

@@ -280,12 +280,12 @@ struct SystemConnectorTests {
         #expect(!result.output.contains("✓"))
     }
 
-    @Test func theStepFlagAndTheTextTheModelSeesAgree() {
+    @Test func theStepFlagAndTheTextTheModelSeesAgree() async {
         let command = defaultCommand("Volume")
-        let bad = GlobalCommandCapabilities.readBackResult(
-            command: command, requested: "50", readBack: "0")
-        let good = GlobalCommandCapabilities.readBackResult(
-            command: command, requested: "50", readBack: "50")
+        let bad = await GlobalCommandCapabilities.readBackResult(
+            command: command, requested: "50", readBack: "0", delay: .zero)
+        let good = await GlobalCommandCapabilities.readBackResult(
+            command: command, requested: "50", readBack: "50", delay: .zero)
         #expect(!bad.success)
         #expect(bad.output.contains("asked for 50") && bad.output.contains("reports 0"))
         #expect(good.success)

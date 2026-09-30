@@ -124,9 +124,15 @@ enum GlobalCommandCapabilities {
     /// 30)" when the Mac reports what was asked; a failure naming both values when it does
     /// not, so the step fails and the answer cannot claim success.
     static func readBackResult(
-        command: SystemCommand, requested: String, readBack: String
-    ) -> AICapabilityExecutionResult {
-        if ReadBackComparison.compare(requested: requested, readBack: readBack) == .differs {
+        command: SystemCommand, requested: String, readBack: String,
+        attempts: Int = 4, delay: Duration = .milliseconds(300),
+        reread: () async -> String? = { nil }
+    ) async -> AICapabilityExecutionResult {
+        let settled = await ReadBackComparison.settle(
+            requested: requested, first: readBack, attempts: attempts, delay: delay,
+            reread: reread)
+        let readBack = settled.reading
+        if settled.outcome == .differs {
             return AICapabilityExecutionResult(
                 success: false,
                 output: ReadBackComparison.mismatchMessage(
@@ -483,7 +489,9 @@ enum GlobalCommandCapabilities {
                         .trimmingCharacters(in: .whitespacesAndNewlines),
                     !after.isEmpty
                 {
-                    return readBackResult(command: live, requested: value, readBack: after)
+                    return await readBackResult(
+                        command: live, requested: value, readBack: after,
+                        reread: { await runtime.readValue(live) })
                 }
                 return AICapabilityExecutionResult(
                     success: true,
