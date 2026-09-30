@@ -6,6 +6,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Changed
 
+- Result cards no longer list cache and system files from `~/Library`, `/Library`, `/System` and `/private` that a search passed through; iCloud Drive files and files the answer names still show.
 - File search now works with Spotlight off: `find_files` tries Spotlight, then scans Desktop, Documents, Downloads and iCloud Drive, for the in-app agent, the Finder pack and the DoraX MCP server.
 - Improved Global Context app-scope ranking so apps, useful menus, and recent menu use surface first.
 - Stabilized Context Dock result sheet sizing and row identity while typing.

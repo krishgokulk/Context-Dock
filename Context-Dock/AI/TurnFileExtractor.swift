@@ -70,6 +70,7 @@ nonisolated enum TurnFileExtractor {
         func take(_ text: String, allowDirectories: Bool) {
             for path in paths(in: text, homeDirectory: homeDirectory, probe: counted) {
                 guard found.count < limit else { return }
+                if !allowDirectories, isSystemNoise(path, homeDirectory: homeDirectory) { continue }
                 guard !seen.contains(path), let kind = counted(path) else { continue }
                 if kind == .directory, !allowDirectories { continue }
                 seen.insert(path)
@@ -82,6 +83,17 @@ nonisolated enum TurnFileExtractor {
             take(output, allowDirectories: false)
         }
         return found
+    }
+
+    /// Caches, app support, preferences and system folders: what a search walks past on
+    /// the way to the files the user asked about. Applies to step output only; a path the
+    /// answer names itself stays. iCloud Drive lives under `~/Library` and is kept.
+    /// Components, not string prefixes: `/Users/me/LibraryNotes/a.pdf` is not under Library.
+    static func isSystemNoise(_ path: String, homeDirectory: String) -> Bool {
+        let home = lexical(homeDirectory)
+        func isInside(_ root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
+        if isInside(home + "/Library/Mobile Documents") { return false }
+        return [home + "/Library", "/Library", "/System", "/private"].contains(where: isInside)
     }
 
     static func diskProbe(_ path: String) -> Probe? {
