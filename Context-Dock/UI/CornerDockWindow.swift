@@ -1429,8 +1429,6 @@ final class CornerDockController: NSObject {
         hoverMonitors.removeAll()
     }
 
-    /// Routes the pointer to whichever pill is under it. Only one card is ever open: the
-    /// corner is one surface, not two competing ones.
     /// Let clicks and drags through the empty part of the shell to the app beneath it.
     /// See `CornerDockMouseRule`; driven from the pointer monitors because a window that
     /// ignores the mouse gets no events of its own to notice the pointer coming back.
@@ -1446,6 +1444,8 @@ final class CornerDockController: NSObject {
         if panel.ignoresMouseEvents != shouldIgnore { panel.ignoresMouseEvents = shouldIgnore }
     }
 
+    /// Routes the pointer to whichever pill is under it. Only one card is ever open: the
+    /// corner is one surface, not two competing ones.
     private func evaluateHover() {
         guard let panel else { return }
         syncMouseTransparency()
