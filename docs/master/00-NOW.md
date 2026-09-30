@@ -14,25 +14,25 @@ Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-compariso
 
 Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
 
-**#133 `~/Library` noise in result cards** — builder working; draft PR #138.
+**#139 A read-back that disagrees fails the step** — builder working; draft PR #142.
 
 ## Next, in order (GitHub issues)
 
-1. **#135 Skill audit of 16a–18** (`ready`) — run the installed review skills over #117–#127, fix P0/P1.
-2. **#139 A read-back that disagrees fails the step** (`ready`) — the #115 follow-up.
-3. **#134 Settings-card follow-ups** (`needs-owner`) — ⚙ on the scope-from-Global chip; keys inside the card. Waiting on two owner answers in the issue.
+1. **#134 Settings-card follow-ups** (`needs-owner`) — ⚙ on the scope-from-Global chip; keys inside the card. Waiting on two owner answers in the issue.
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
 
 ## Hand-check queue
 
-Empty. The owner hand-checked #118, #119, #121, #123, #125, #127 and #137 on 2026-09-29/30; all passed.
+Empty. The owner hand-checked #118, #119, #121, #123, #125, #127, #137 and #141 on 2026-09-29/30; all passed.
 A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
 
 ## Done
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-09-30 | Skill audit of 16a–18: 4 P1 fixed (approval queue instead of a dropped request, cancellable file search, `nonisolated ShortcutsService`, per-file VoiceOver labels on file cards); 15 P2 listed in the PR; owner hand-tested | #141 |
+| 2026-09-30 | Result cards skip `~/Library` / system paths from step output (iCloud Drive and paths the answer names are kept) | #138 |
 | 2026-09-30 | Flaky `AXMenuReaderScriptedFallbackTests` fixed: each reader posts as itself, each test listens to its own (5×2241 green) | #136 |
 | 2026-09-30 | Old Shortcuts route retired: only `run_shortcut` (16d) runs a shortcut; owner hand-tested | #137 |
 | 2026-09-24 | Plans, blueprint, harness, check.sh | #76 |
