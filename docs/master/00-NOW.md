@@ -10,60 +10,31 @@
 
 ## In progress
 
-Coordinator: Desktop app (Mac), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-29 23:39 UTC
+Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-30. The Mac Desktop session is the **builder** (`/loop 20m /builder`); it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
 
-Owner rules (2026-09-30): strict order below, one task at a time. **No `ship it` until the
-Hand-check queue is empty.** Merge only on the owner's words "merge <n>". The coordinator edits only
-`00-NOW.md` and `MEMORY.md` and runs each task in a subagent in its own worktree (see
-`docs/runbooks/coordinate-across-accounts.md`).
+Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
 
-**1. Flaky `AXMenuReaderScriptedFallbackTests`** — `anEmptyAXTreeReturnsAtOnceAndTheWalkLandsLater`
-and `anEmptyWalkIsNotRetriedWhileFresh` fail intermittently: a shared `scriptedMenusDidLoad`
-notification collects the same fake pid (999983) from parallel tests. Fix the isolation, not the
-assertions. Subagent starting; draft PR to follow.
+**#139 A read-back that disagrees fails the step** — builder working; draft PR #142.
 
-## Next, in order
+## Next, in order (GitHub issues)
 
-**2. Retire the old Shortcuts route** — `.shortcutRunner` (`matchingMacShortcut` / `ShortcutsCatalog`)
-offers "Run Shortcut …" at medium risk with no exact-name check, timeout or output cap and can
-compete with `run_shortcut` (#127).
-**3. `~/Library` noise in result cards** — paths under `~/Library` from step output are shown as
-cards (a Claude Code log, `local_….json`, an `.cache` file). Filter them out of step-output paths.
-**4. Settings-card follow-ups** — ⚙ on the scope-from-Global chip; keys inside the card.
+1. **#134 Settings-card follow-ups** (`needs-owner`) — ⚙ on the scope-from-Global chip; keys inside the card. Waiting on two owner answers in the issue.
 
-Also open: a read-back that disagrees after a System connector write reports success with the
-mismatch in text — make it a failed step (#115); cloud sessions must never merge their own PR (#114
-merged before review).
+Also open: cloud sessions must never merge their own PR (#114 merged before review).
 
 ## Hand-check queue
 
-Merged PRs the owner has not checked by hand yet. A failed check becomes a `Fix:` task at the top
-of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
-#127 (16d Shortcuts) is checked.
-
-- **#118 (16b result cards):** Finder chat "find my passport pdfs" → Files card, one row per file;
-  Quick Look (←/→), Open, Reveal, double-click, right-click, drag a row into Finder/Mail; same card
-  in Dock chat, Dock General Chat, Corner chats and the Chat Window; card only after the turn ends;
-  no card for a no-file or error answer; Corner resizes cleanly.
-- **#119 (16e routing):** Corner Finder chat `find my passport pdfs gokulakannan` stays in Finder (no
-  "Allow Find My", Find My does not open); General Chat `open Find My` still opens it;
-  `take a note about the roof quote` does not jump to Notes; `show photos of the beach` offers no
-  Photos while `open Photos` does.
-- **#121 (17 model-first routing):** Finder chat `find my passport pdf` → no action button, model
-  answers; `where are my passport PDFs?` → plain answer; `copy`, `new folder`, `empty trash` → one-tap
-  Use Finder button (Empty Trash still asks); `open Find My` → cross-app offer; Safari `summarize this
-  page` → summary, `copy` → Use Safari; General Chat `is bluetooth on?`, `turn dark mode off`,
-  `set volume to 30`, `open Find My`.
-- **#123 (18 file search, Spotlight off):** Finder chat and General Chat "find my passport pdfs" →
-  "Searching for files…" step, full paths, Files card; a no-match query says nothing was found.
-- **#125 (16c output files):** General Chat "write a csv of my three passport files to an output
-  file" → approval sheet (file, folder, preview) → card in `~/Documents/DoraX Outputs/`; same name →
-  " 2"; a .docx opens in Word/Pages; decline writes nothing.
+Empty. The owner hand-checked #118, #119, #121, #123, #125, #127, #137 and #141 on 2026-09-29/30; all passed.
+A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
 
 ## Done
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-09-30 | Skill audit of 16a–18: 4 P1 fixed (approval queue instead of a dropped request, cancellable file search, `nonisolated ShortcutsService`, per-file VoiceOver labels on file cards); 15 P2 listed in the PR; owner hand-tested | #141 |
+| 2026-09-30 | Result cards skip `~/Library` / system paths from step output (iCloud Drive and paths the answer names are kept) | #138 |
+| 2026-09-30 | Flaky `AXMenuReaderScriptedFallbackTests` fixed: each reader posts as itself, each test listens to its own (5×2241 green) | #136 |
+| 2026-09-30 | Old Shortcuts route retired: only `run_shortcut` (16d) runs a shortcut; owner hand-tested | #137 |
 | 2026-09-24 | Plans, blueprint, harness, check.sh | #76 |
 | 2026-09-24 | Corner fixes (restore, folder preview, pins, Dock navigation) | #79 |
 | 2026-09-25 | One-shell dock; → never runs a system command (D4); ↑ reaches Global (F2) | #80, #81 |
@@ -126,6 +97,7 @@ of the queue and its sentence goes into the matching test (routing: `RoutingPhra
 | 2026-09-26 | B2 (Backspace into inline text pills) is "—" in the Corner: its scope is one chip outside the text; leaving it is B3. (Accepted by merging #98, which asked for it.) |
 | 2026-09-29 | Strict order: finish 16 (a, b, e) and 17, hand test, merge, then 18. 16c/16d move after 18. |
 | 2026-09-28 | "App Pack" is the name for an app's bundle of actions, skills, menus and tools; System packs group Global Commands. No Discover/marketplace in 1.0. |
+| 2026-09-30 | Planner (cloud) and builder (Mac Desktop) roles; GitHub issue labels are the queue; hand-check queue emptied — all merged work through #137 checked by the owner. |
 
 ## Open decisions (owner)
 
