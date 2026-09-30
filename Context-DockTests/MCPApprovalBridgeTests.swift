@@ -13,7 +13,9 @@ import Testing
 @MainActor
 @Suite("MCP approval bridge", .serialized)
 struct MCPApprovalBridgeTests {
-    private let center = AICapabilityApprovalCenter.shared
+    /// Its own center, not `shared`: other suites ask the shared one for approvals in parallel,
+    /// and `.serialized` only orders the tests inside this suite.
+    private let center = AICapabilityApprovalCenter()
 
     private func capability(_ id: String) -> AICapability {
         AICapability(
@@ -115,5 +117,29 @@ struct MCPApprovalBridgeTests {
         let eval = await evalRun.value
         #expect(eval.result == false)
         #expect(eval.approvalsRequested == ["system.emptyTrash"])
+    }
+
+    /// Two chats can ask at once (an attended CLI turn while the user is in the dock). The
+    /// second used to be assigned over the first, whose continuation was never resumed — its
+    /// caller waited for an answer that could not come.
+    @Test func aSecondApprovalWaitsInsteadOfDroppingTheFirst() async {
+        let first = Task { await ask("globalcmd.volume") }
+        #expect(await waitForPending())
+        #expect(center.pending?.capability.id == "globalcmd.volume")
+
+        let second = Task { await ask("globalcmd.bluetooth") }
+        for _ in 0..<50 { await Task.yield() }
+        // The sheet on screen is still the first request.
+        #expect(center.pending?.capability.id == "globalcmd.volume")
+
+        center.approve()
+        #expect(await first.value)
+
+        // The waiting request is promoted rather than lost, and answers on its own.
+        #expect(await waitForPending())
+        #expect(center.pending?.capability.id == "globalcmd.bluetooth")
+        center.deny()
+        #expect(await second.value == false)
+        #expect(center.pending == nil)
     }
 }

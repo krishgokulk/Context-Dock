@@ -47,15 +47,19 @@ extension AgentToolRegistry {
     }
 
     /// The single entry point for both the in-app tool and the MCP tool.
+    ///
+    /// `@concurrent`, not `Task.detached`: the walk is blocking file I/O that must stay off the
+    /// main actor, but a detached task is cut off from the caller's cancellation, so a
+    /// cancelled turn waited out the whole scan. Here the search runs in the caller's own task
+    /// and `FileSearchService.scan` sees its cancellation.
+    @concurrent
     static func runFileSearch(query: String, folder: URL? = nil) async -> (Bool, String) {
-        await Task.detached(priority: .userInitiated) {
-            let options = folder.map { FileSearchService.Options(roots: [$0.path]) }
-                ?? FileSearchService.Options()
-            let outcome = FileSearchService.search(query: query, options: options)
-            return (
-                !outcome.paths.isEmpty,
-                FileSearchService.report(query: query, outcome: outcome)
-            )
-        }.value
+        let options = folder.map { FileSearchService.Options(roots: [$0.path]) }
+            ?? FileSearchService.Options()
+        let outcome = FileSearchService.search(query: query, options: options)
+        return (
+            !outcome.paths.isEmpty,
+            FileSearchService.report(query: query, outcome: outcome)
+        )
     }
 }

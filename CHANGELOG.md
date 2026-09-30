@@ -7,6 +7,7 @@ All notable changes to Context-Dock are tracked here.
 ### Changed
 
 - A System setting (volume, dark mode, Bluetooth) that the Mac reports differently from what was asked now fails the step and says so, instead of reporting success.
+- File cards: VoiceOver and Voice Control now name each Quick Look, Open and Reveal button after its file, so a card of many files no longer has a dozen identical "Open" buttons.
 - Result cards no longer list cache and system files from `~/Library`, `/Library`, `/System` and `/private` that a search passed through; iCloud Drive files and files the answer names still show.
 - File search now works with Spotlight off: `find_files` tries Spotlight, then scans Desktop, Documents, Downloads and iCloud Drive, for the in-app agent, the Finder pack and the DoraX MCP server.
 - Improved Global Context app-scope ranking so apps, useful menus, and recent menu use surface first.

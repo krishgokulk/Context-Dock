@@ -117,6 +117,10 @@ nonisolated enum FileSearchService {
                 truncated: false, searchedRoots: roots)
         }
 
+        // Spotlight can take seconds; a turn cancelled meanwhile should not start a walk.
+        guard !Task.isCancelled else {
+            return Outcome(paths: [], source: .none, truncated: true, searchedRoots: roots)
+        }
         let scanned = scan(tokens: tokens, roots: roots, options: options, now: now)
         return Outcome(
             paths: newestFirst(scanned.paths, limit: options.maxResults),
@@ -148,8 +152,10 @@ nonisolated enum FileSearchService {
 
             while let item = enumerator.nextObject() as? URL {
                 visited += 1
+                // The walk is synchronous, so a cancelled turn only stops it if it looks.
                 if visited > options.maxVisited
                     || now().timeIntervalSince(started) > options.scanTimeBudget
+                    || Task.isCancelled
                 {
                     truncated = true
                     break

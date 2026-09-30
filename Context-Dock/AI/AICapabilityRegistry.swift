@@ -928,10 +928,14 @@ final class AICapabilityApprovalCenter: ObservableObject {
     }
 
     @Published private(set) var pending: PendingApproval?
+    /// Requests that arrived while `pending` was on screen, oldest first.
+    private var waiting: [PendingApproval] = []
     private var expiryTask: Task<Void, Never>?
     private var isResolving = false
 
-    private init() {}
+    /// `internal` so a test can drive its own center. The app only ever uses `shared`; a test
+    /// on `shared` hears every other suite that asks for an approval while it runs.
+    init() {}
 
     /// Refuse every approval without showing one, and record what was asked.
     ///
@@ -974,19 +978,28 @@ final class AICapabilityApprovalCenter: ObservableObject {
             return false
         }
         return await withCheckedContinuation { continuation in
-            expiryTask?.cancel()
-            pending = PendingApproval(
+            let request = PendingApproval(
                 plan: plan,
                 capability: capability,
                 context: context,
                 chatScope: chatScope,
                 continuation: continuation
             )
-            expiryTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
-                guard !Task.isCancelled else { return }
-                self?.deny()
-            }
+            // One sheet at a time. A request that arrives while another is on screen waits its
+            // turn: assigning over `pending` would drop the first request's continuation, and
+            // its caller — a chat turn, or a CLI tool call — would wait for an answer forever.
+            if pending == nil { show(request) } else { waiting.append(request) }
+        }
+    }
+
+    /// Put `request` on screen and start its expiry.
+    private func show(_ request: PendingApproval) {
+        expiryTask?.cancel()
+        pending = request
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.deny()
         }
     }
 
@@ -1037,6 +1050,7 @@ final class AICapabilityApprovalCenter: ObservableObject {
         pending = nil
         isResolving = false
         request.continuation.resume(returning: granted)
+        if !waiting.isEmpty { show(waiting.removeFirst()) }
     }
 }
 
