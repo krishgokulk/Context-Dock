@@ -13,7 +13,11 @@
 
 import Foundation
 
-enum ShortcutsService {
+/// `nonisolated`: this is the blocking half of the Shortcuts tools. The module defaults to the
+/// main actor, and left at that the process runner, its pipe drain and its lock box were all
+/// main-actor code called from detached tasks — 12 compiler warnings that are errors in the
+/// Swift 6 language mode, and a "call it off the main actor" comment the types contradicted.
+nonisolated enum ShortcutsService {
 
     static let executablePath = "/usr/bin/shortcuts"
     /// Names returned to the model. A few hundred shortcuts is already more than a prompt wants.

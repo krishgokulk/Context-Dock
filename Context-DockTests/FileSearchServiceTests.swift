@@ -53,6 +53,25 @@ struct FileSearchServiceTests {
         #expect(!outcome.paths.contains { $0.contains(".hidden") || $0.hasSuffix(".txt") })
     }
 
+    /// A cancelled turn stops the walk: `scan` is synchronous, so it has to look.
+    @Test func aCancelledScanStopsAndSaysItDidNotFinish() async throws {
+        let fixture = try Self.makeFixture()
+        defer { fixture.cleanup() }
+        let options = FileSearchService.Options(roots: [fixture.docs], homeDirectory: fixture.home)
+        let scan = Task {
+            // Cancelled before the first entry is read.
+            withUnsafeCurrentTask { $0?.cancel() }
+            return FileSearchService.scan(tokens: ["passport"], roots: [fixture.docs], options: options)
+        }
+        let result = await scan.value
+        #expect(result.truncated)
+        #expect(result.paths.isEmpty)
+
+        // Not cancelled: the same scan finds the files.
+        let full = FileSearchService.scan(tokens: ["passport"], roots: [fixture.docs], options: options)
+        #expect(!full.paths.isEmpty)
+    }
+
     @Test func resultsAreNewestFirst() throws {
         let fixture = try Self.makeFixture()
         defer { fixture.cleanup() }
