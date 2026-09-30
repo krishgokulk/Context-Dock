@@ -720,7 +720,6 @@ extension LauncherView {
             case .mcp: return "MCP"
             case .api: return "API"
             case .cli: return "CLI"
-            case .shortcutRunner: return "Shortcut"
             case .keyboardShortcut: return "Keyboard Shortcut"
             case .verifiedMenu: return "Cached Menu"
             case .axFallback: return "Accessibility"
@@ -728,7 +727,7 @@ extension LauncherView {
             case .appLaunch: return nil  // a plain launch is not a "capability" to list
             }
         }
-        let order = ["App Adapter", "MCP", "API", "CLI", "Shortcut", "Keyboard Shortcut",
+        let order = ["App Adapter", "MCP", "API", "CLI", "Keyboard Shortcut",
                      "Cached Menu", "Automation", "Accessibility"]
         let found = Set(candidates.compactMap { label($0.route) })
         return order.filter(found.contains)
@@ -741,7 +740,6 @@ extension LauncherView {
         case .mcp: return "MCP tool"
         case .api: return "Connected API"
         case .cli: return "Command-line tool"
-        case .shortcutRunner: return "macOS Shortcut"
         case .keyboardShortcut: return "Keyboard shortcut"
         case .verifiedMenu: return "Verified menu command"
         case .axFallback: return "Accessibility action"
@@ -1069,8 +1067,6 @@ extension LauncherView {
             return "Calling connected API…"
         case .cli:
             return "Running linked CLI…"
-        case .shortcutRunner:
-            return "Running macOS Shortcut…"
         case .keyboardShortcut:
             let display = MenuShortcutFormatter.display(
                 char: candidate.shortcutChar,

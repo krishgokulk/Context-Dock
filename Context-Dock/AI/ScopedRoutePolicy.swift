@@ -137,7 +137,6 @@ enum ScopedRoutePolicy {
         case .mcp: return 2
         case .api: return 3
         case .cli: return 4
-        case .shortcutRunner: return 5
         case .automation: return 6
         case .verifiedMenu: return 7
         case .keyboardShortcut: return 8

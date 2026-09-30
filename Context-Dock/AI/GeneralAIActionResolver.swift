@@ -43,7 +43,6 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
         case mcp
         case api
         case cli
-        case shortcutRunner
         case keyboardShortcut
         case verifiedMenu
         case axFallback
@@ -107,7 +106,6 @@ struct DoraXActionCandidate: Identifiable, Codable, Hashable {
         case .mcp: return "MCP tool"
         case .api: return "API"
         case .cli: return "CLI tool"
-        case .shortcutRunner: return "macOS Shortcut"
         case .keyboardShortcut:
             let display = MenuShortcutFormatter.display(
                 char: shortcutChar, modifiers: shortcutModifiers) ?? ""
@@ -1401,26 +1399,7 @@ final class GeneralAIActionResolver {
             }
         }
 
-        // 4. User's macOS Shortcuts whose name matches the whole request.
-        if let shortcut = matchingMacShortcut(for: original) {
-            step("Your macOS Shortcuts: matched “\(shortcut.name)”")
-            candidates.append(DoraXActionCandidate(
-                id: "shortcutRunner.\(shortcut.name)",
-                title: "Run Shortcut “\(shortcut.name)”",
-                appName: "Shortcuts",
-                bundleID: "com.apple.shortcuts",
-                source: .shortcut,
-                route: .shortcutRunner,
-                capabilityID: nil,
-                requiredInputs: [],
-                riskLevel: .medium,
-                confidence: 0.7,
-                permissionKey: "generalAI.execute.shortcutRunner.\(stableKey(shortcut.name))",
-                debugReason: "Shortcuts catalog name match",
-                shortcutName: shortcut.name))
-        }
-
-        // 5. App-linked CLI tools. Product policy keeps these fallback-only: if an adapter,
+        // 4. App-linked CLI tools. Product policy keeps these fallback-only: if an adapter,
         // MCP/API, Shortcut, cached menu, or keyboard shortcut exists for the same app,
         // productRouteFiltered(_:) removes CLI before ranking.
         candidates.append(contentsOf: appLinkedCLICandidates(
@@ -1502,7 +1481,7 @@ final class GeneralAIActionResolver {
     }
 
     /// Hard route tier per the DoraX Action Chat spec: adapter > MCP/API > CLI >
-    /// shortcutRunner > keyboardShortcut > verifiedMenu > axFallback > launch. Tiers are
+    /// keyboardShortcut > verifiedMenu > axFallback > launch. Tiers are
     /// spaced 100 apart so learned adjustments (±40) can reorder WITHIN a tier but never
     /// cross one — AX can never outrank a native/adapter route.
     private func routeTier(_ c: DoraXActionCandidate) -> Int {
@@ -1522,7 +1501,6 @@ final class GeneralAIActionResolver {
         case .mcp: return 1
         case .api: return 2
         case .cli: return 3
-        case .shortcutRunner: return 4
         case .keyboardShortcut: return 5
         case .verifiedMenu: return 6
         case .automation: return 7
@@ -2386,14 +2364,6 @@ final class GeneralAIActionResolver {
                 confidence: 0.8, reason: "built-in known shortcut for \(appName)")
         }
         return nil
-    }
-
-    private func matchingMacShortcut(for query: String) -> MacShortcut? {
-        let lowered = query.lowercased()
-        return ShortcutsCatalog.shared.shortcuts.first { shortcut in
-            let name = shortcut.name.lowercased()
-            return name.count > 3 && lowered.contains(name)
-        }
     }
 
     // MARK: - Domain intents

@@ -46,7 +46,6 @@ missing. The problem is not absence — it is that each concept exists more than
 | `mcp` | **denied** | — | only via capability ID | `skipped` otherwise |
 | `api` | **denied** | — | only via capability ID | `skipped` otherwise |
 | `cli` | **denied** | — | `CommandOutcomeVerifier` (appearance, quit) + capability ID | **verified / contradicted**, else `notApplicable` |
-| `shortcutRunner` | **denied** | — | none | `skipped` |
 | `automation` | **denied** | — | none | `skipped` |
 
 `GeneralAIActionExecutor.verify(_:)` no longer has a `default:`. Every route is named, and
@@ -212,8 +211,7 @@ registry, Global Context, or the typing path.
    The rest are named instead of falling through a `default:`, each with the reason it has
    no read-back. `adapter` and `api` reach that line only when the capability-id verifiers
    found nothing. `mcp` returns what a server chose to return, and there is no second call
-   meaning "did that land". `shortcutRunner` hands off to Shortcuts, which reports its own
-   success and nothing about the world afterwards. `automation` composes in another app —
+   meaning "did that land". `automation` composes in another app —
    the window it opens is the outcome, and the user is looking at it. `axFallback` is
    reached only after a live menu verification has already passed.
 
