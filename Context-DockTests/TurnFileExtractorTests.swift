@@ -21,6 +21,12 @@ struct TurnFileExtractorTests {
         "/Users/me/Documents/Travel": .directory,
         "/Users/me/Documents": .directory,
         "/tmp/report.csv": .file,
+        "/Users/me/Library/Caches/com.x/a.pdf": .file,
+        "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/passport.pdf": .file,
+        "/Users/me/LibraryNotes/a.pdf": .file,
+        "/private/var/folders/x/b.pdf": .file,
+        "/System/Library/c.pdf": .file,
+        "/Library/Preferences/d.pdf": .file,
     ]
 
     private func probe(_ path: String) -> TurnFileExtractor.Probe? { disk[path] }
@@ -153,5 +159,38 @@ struct TurnFileExtractorTests {
 
     @Test func anAnswerWithNoPathsHasNoCards() {
         #expect(files("Your Mac has 12 GB free. Nothing else to do.").isEmpty)
+    }
+
+    // MARK: ~/Library noise (step output only)
+
+    @Test func libraryPathsFromStepOutputAreDropped() {
+        let steps = [
+            "~/Library/Caches/com.x/a.pdf\n/Users/me/Library/Caches/com.x/a.pdf\n"
+                + "/private/var/folders/x/b.pdf\n/System/Library/c.pdf\n/Library/Preferences/d.pdf\n"
+                + "/Users/me/Documents/Travel/passport.pdf",
+        ]
+        #expect(files("Done.", steps: steps) == ["/Users/me/Documents/Travel/passport.pdf"])
+    }
+
+    @Test func iCloudDriveUnderLibraryIsKept() {
+        let path = "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/passport.pdf"
+        #expect(files("Done.", steps: ["~/Library/Mobile Documents/com~apple~CloudDocs/passport.pdf"])
+            == [path])
+        #expect(files("Done.", steps: ["`\(path)`"]) == [path])
+    }
+
+    @Test func aLibraryPathTheAnswerNamesIsKept() {
+        #expect(files("The cache is at ~/Library/Caches/com.x/a.pdf.",
+            steps: ["/Users/me/Library/Caches/com.x/a.pdf"])
+            == ["/Users/me/Library/Caches/com.x/a.pdf"])
+        #expect(files("Look in /System/Library/c.pdf") == ["/System/Library/c.pdf"])
+    }
+
+    @Test func libraryIsMatchedOnComponentsNotPrefix() {
+        #expect(files("Done.", steps: ["/Users/me/LibraryNotes/a.pdf"])
+            == ["/Users/me/LibraryNotes/a.pdf"])
+        #expect(TurnFileExtractor.isSystemNoise("/Users/me/LibraryNotes/a.pdf", homeDirectory: home) == false)
+        #expect(TurnFileExtractor.isSystemNoise("/Users/other/Library/a.pdf", homeDirectory: home) == false)
+        #expect(TurnFileExtractor.isSystemNoise("/Users/me/Library/a.pdf", homeDirectory: home))
     }
 }
