@@ -133,14 +133,22 @@ struct CapabilityResultCard: View {
     @ViewBuilder
     private func rowActions(_ row: CapabilityResultRow) -> some View {
         HStack(spacing: 2) {
-            actionButton("eye", help: "Quick Look") { preview(row) }
-            actionButton("arrow.up.forward.app", help: "Open") { open(row) }
-            actionButton("folder", help: "Reveal in Finder") { reveal(row) }
+            actionButton("eye", help: "Quick Look", row: row) { preview(row) }
+            actionButton("arrow.up.forward.app", help: "Open", row: row) { open(row) }
+            actionButton("folder", help: "Reveal in Finder", row: row) { reveal(row) }
         }
     }
 
+    /// What VoiceOver, Voice Control and the "show names" overlay call a row's button. A card
+    /// holds up to a dozen rows, so a bare "Open" is a dozen identical names; the file is part
+    /// of the name.
+    static func actionLabel(_ action: String, for row: CapabilityResultRow) -> String {
+        let name = row.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? action : "\(action) \(name)"
+    }
+
     private func actionButton(
-        _ symbol: String, help: String, action: @escaping () -> Void
+        _ symbol: String, help: String, row: CapabilityResultRow, action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
@@ -151,7 +159,7 @@ struct CapabilityResultCard: View {
         }
         .buttonStyle(.plain)
         .help(help)
-        .accessibilityLabel(help)
+        .accessibilityLabel(Self.actionLabel(help, for: row))
     }
 
     @ViewBuilder
