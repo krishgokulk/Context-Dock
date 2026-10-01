@@ -33,6 +33,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Fixed
 
+- The app no longer freezes and spins at full CPU during a long chat turn, and it quits promptly (including on restart or log out): a command waiting for approval in the dock chat used to re-add its approval card over and over until the main thread was saturated.
 - An everyday phrase that happens to be an app name no longer hijacks a chat: asking a Finder chat to "find my passport pdfs" stays in Finder instead of offering to run a command in Find My. "open Find My" still reaches the app.
 - DoraX no longer opens an application while it is still working out what to offer — an app is launched only after you approve the action.
 - A generic Edit ▸ Copy / Paste / Cut / Select All / Undo command is no longer offered as the answer to a search.
