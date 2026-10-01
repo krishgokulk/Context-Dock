@@ -1911,36 +1911,26 @@ enum AppScopedChatService {
         }()
         if let call = prose {
             log.notice("recovering prose \(call.kind, privacy: .public)")
-            let capabilityID = call.id
-            if !capabilityID.isEmpty,
-                CapabilityRegistry.shared.capability(id: capabilityID) != nil
-            {
-                var input: [String: String] = [:]
-                for (key, value) in call.arguments { input[key] = String(describing: value) }
-                let plan = AIActionPlan(
-                    capability: capabilityID, input: input,
-                    explanation: "Requested in chat: \(query)")
-                let result = try? await AIExecutionEngine.shared.executeWithApproval(
-                    plan, context: context, chatScope: scope)
-                ChatConsoleLog.shared.append(
-                    .tool, title: capabilityID,
-                    output: result?.output ?? "(no output)",
-                    success: result?.success ?? false, scope: scope)
-                if let result, result.success {
-                    text = result.output.isEmpty
-                        ? "Done — \(capabilityID)."
-                        : result.output
-                } else {
-                    text = "\(capabilityID) didn't run."
-                }
+            // The same function the Dock and the Corner call: one executor, one approval, one
+            // set of named reasons.
+            var input: [String: String] = [:]
+            for (key, value) in call.arguments { input[key] = String(describing: value) }
+            let authorisation: AIConversationScope
+            if case .app(let bundleID) = scope {
+                authorisation = .contextDock(bundleID: bundleID, appName: appName)
             } else {
-                // An id that is not registered. Left alone, the JSON was stripped as
-                // scaffolding and the user got an empty bubble — the worst outcome, because
-                // it looks like the app simply had nothing to say.
-                text = capabilityID.isEmpty
-                    ? "I tried to run something but didn't name what."
-                    : "I tried to run `\(capabilityID)`, which isn't a capability on this Mac."
+                authorisation = .general
             }
+            let recovered = await ChatCapabilityCallRecovery.run(
+                capabilityID: call.id, arguments: input, query: query, context: context,
+                scope: authorisation, chatScope: scope)
+            if !call.id.isEmpty {
+                ChatConsoleLog.shared.append(
+                    .tool, title: call.id,
+                    output: recovered.output.isEmpty ? "(no output)" : recovered.output,
+                    success: recovered.succeeded, scope: scope)
+            }
+            text = recovered.text
         }
 
         // The model sometimes writes its tool call out as text instead of calling it. The

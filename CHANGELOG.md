@@ -38,6 +38,7 @@ All notable changes to Context-Dock are tracked here.
 - DoraX no longer opens an application while it is still working out what to offer — an app is launched only after you approve the action.
 - A generic Edit ▸ Copy / Paste / Cut / Select All / Undo command is no longer offered as the answer to a search.
 - In an app chat, a one-tap action is offered only when what you typed is the command itself ("copy", "new folder", "empty trash"). Any other sentence goes to the model, which sees the app's matching commands and picks one — or none.
+- A Finder (or any app) chat that picked a Finder action no longer ends in "couldn't carry it out on this surface" while still spinning: the action runs with its normal approval, or the answer says what is missing (for example a destination folder), and the reply bubble no longer shows that sentence while the answer is still being written.
 - Stabilized Context Dock result rows by using stable pill IDs instead of row indexes.
 - Stabilized Global Context app/menu result rows by using stable row IDs.
 - Reduced noisy Global Context matches by requiring 3+ characters for app search.

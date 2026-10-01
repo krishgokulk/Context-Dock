@@ -436,7 +436,8 @@ struct AIModeView: View {
     // MARK: - On-Device Streaming
 
     private func sendOnDeviceStreaming(message: String) {
-        let placeholder = AIChatMessage(role: .assistant, content: "")
+        let placeholder = AIChatMessage(
+            role: .assistant, content: "", isStreamingPlaceholder: true)
         chatMessages.append(placeholder)
         let msgId = placeholder.id
         streamingMessageId = msgId

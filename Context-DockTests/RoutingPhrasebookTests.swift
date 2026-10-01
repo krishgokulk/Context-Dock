@@ -222,6 +222,20 @@ struct RoutingPhrasebookTests {
                found: [], expected: .model),
         Phrase(surface: .generalChat, sentence: "open Shortcuts",
                found: [], expected: .model),
+
+        // Issue 146 (owner, Corner Finder chat): "resume" is a folder name here — a résumé
+        // folder — not a verb for any Finder command. Three near matches reached the model,
+        // and it wrote `finder.copyFiles` as text. Nothing may be offered as the exact
+        // command; the model gets the turn. The Dock and the Corner both call
+        // `ScopedRoutePolicy.decide` from `offerScopedNativeAppAction`, so one row per
+        // sentence covers both shells (Corner app chat IS the Dock's pipeline).
+        Phrase(surface: .finderChat, sentence: "can you resume 2026 folder for me?",
+               found: [capability("Finder", "finder.copyFiles", "Copy Finder Files"),
+                       menu("Finder", ["Edit", "Copy"]),
+                       menu("Finder", ["File", "Find"])],
+               expected: .model),
+        Phrase(surface: .finderChat, sentence: "can you resume 2026 folder for me?",
+               found: [], expected: .model),
     ]
 
     // MARK: - Running a row
