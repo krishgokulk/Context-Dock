@@ -108,22 +108,40 @@ enum OutboundGate {
     ///
     /// nil is the safe answer: the gate treats it as a host the user did not type. Rejected on
     /// purpose, because Swift and the converter that actually fetches (a Python tool) disagree
-    /// about them, and a disagreement is where an attacker's host hides:
-    /// userinfo (`https://good.com@evil.com`), backslashes, whitespace and control characters,
+    /// about them, and a disagreement is where an attacker's host hides: userinfo
+    /// (`https://good.com@evil.com`), backslashes, whitespace and control characters,
     /// percent-encoded or non-ASCII hosts, a leftover trailing dot.
     static func normalizedHost(fromURL urlString: String) -> String? {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty,
-            !trimmed.unicodeScalars.contains(where: {
-                $0 == "\\" || CharacterSet.whitespacesAndNewlines.contains($0)
-                    || CharacterSet.controlCharacters.contains($0)
-            }),
-            let components = URLComponents(string: trimmed),
-            let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
-            components.user == nil, components.password == nil,
-            let host = components.host, !host.isEmpty,
-            !(components.percentEncodedHost ?? "").contains("%")
+        // Interior whitespace is not a URL any two parsers will read alike.
+        guard !trimmed.isEmpty, !trimmed.contains(where: \.isWhitespace), URL(string: trimmed) != nil,
+            let schemeEnd = trimmed.range(of: "://")
         else { return nil }
+        let scheme = trimmed[..<schemeEnd.lowerBound].lowercased()
+        guard scheme == "http" || scheme == "https" else { return nil }
+        // The authority is everything up to the first / ? or #, and only it is held to a strict
+        // shape: a path or query may contain @, % and the rest. Parsed by hand rather than with
+        // URLComponents, which decodes punycode and percent-escapes in `host`, so two spellings
+        // of one host would compare unequal and a crafted spelling could read as another.
+        var host = String(
+            trimmed[schemeEnd.upperBound...].prefix { $0 != "/" && $0 != "?" && $0 != "#" })
+        guard !host.unicodeScalars.contains(where: {
+            $0 == "\\" || $0 == "%" || $0 == "@" || !$0.isASCII
+                || CharacterSet.whitespacesAndNewlines.contains($0)
+                || CharacterSet.controlCharacters.contains($0)
+        }) else { return nil }
+        if host.hasPrefix("[") {
+            // [IPv6] with an optional :port
+            guard let close = host.firstIndex(of: "]") else { return nil }
+            let tail = host[host.index(after: close)...]
+            guard tail.isEmpty || (tail.hasPrefix(":") && tail.dropFirst().allSatisfy(\.isNumber))
+            else { return nil }
+            host = String(host[host.index(after: host.startIndex)..<close])
+        } else if let colon = host.lastIndex(of: ":") {
+            let port = host[host.index(after: colon)...]
+            guard port.allSatisfy(\.isNumber) else { return nil }
+            host = String(host[..<colon])
+        }
         return normalizedHost(host)
     }
 

@@ -135,7 +135,7 @@ struct OutboundGateDecisionTests {
         for name in ["read_page", "read_file", "read_selection", "find_files", "list_shortcuts",
                      "verify_outcome", "find_capability", "write_output_file"]
         {
-            #expect(OutboundGate.target(toolName: name, arguments: [:]) == nil, name)
+            #expect(OutboundGate.target(toolName: name, arguments: [:]) == nil, "\(name)")
         }
     }
 
@@ -373,7 +373,8 @@ struct TurnTaintTrackerTests {
         tracker.begin(tainted, userText: [])
         tracker.begin(clean, userText: [])
 
-        async let first: TurnTaint = {
+        // Two turns interleaving on the main actor, as two chats do.
+        let first = Task { @MainActor () -> TurnTaint in
             for _ in 0..<20 {
                 tracker.notePrivateRead(tainted)
                 await Task.yield()
@@ -381,12 +382,13 @@ struct TurnTaintTrackerTests {
                 await Task.yield()
             }
             return tracker.taint(for: tainted)
-        }()
-        async let second: TurnTaint = {
+        }
+        let second = Task { @MainActor () -> TurnTaint in
             for _ in 0..<40 { await Task.yield() }
             return tracker.taint(for: clean)
-        }()
-        let (a, b) = await (first, second)
+        }
+        let a = await first.value
+        let b = await second.value
         #expect(a == both)
         #expect(b == TurnTaint())
     }
