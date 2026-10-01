@@ -14,23 +14,40 @@ Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-compariso
 
 Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
 
-**#139 A read-back that disagrees fails the step** — builder working; draft PR #142.
+**#149 E1 Security gate** (`ready`) — once a turn holds private data and untrusted content, outbound tools (`read_url` to a host the user didn't give, sending, network shell) ask first. Builder takes it next. Plan: `docs/master/00-AI-ENGINE-PLAN.md` (#161).
 
 ## Next, in order (GitHub issues)
 
-1. **#134 Settings-card follow-ups** (`needs-owner`) — ⚙ on the scope-from-Global chip; keys inside the card. Waiting on two owner answers in the issue.
+Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
+The planner labels the next issue `ready` when the one before it is in review.
+
+1. **#146** Finder chat "couldn't carry it out on this surface" leaves the turn spinning (bug)
+2. **#150 E2** Recorder — per-turn trace in the turn log
+3. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
+4. **#151 E3** Prompt order · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first)
+5. **#154 E6a → #155 E6b → #156 E7a · #157 E7b**
+6. **#158 E8a → #159 E8b → #160 E8c** (#160 `needs-owner`: which model grades the replays)
+7. **#134 Settings-card follow-ups** (`needs-owner`)
+
+Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget.
+Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
 
 ## Hand-check queue
 
-Empty. The owner hand-checked #118, #119, #121, #123, #125, #127, #137 and #141 on 2026-09-29/30; all passed.
+- **#148 (#145 transcript spin):** run a long Finder App Chat turn ("can you resume 2026 folder for me?"); Activity Monitor stays near idle; ⌘Q quits promptly during a turn.
+
+Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30).
 A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
 
 ## Done
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-01 | A read-back that disagrees with the request fails the step | #142 |
+| 2026-10-01 | Clipboard notice no longer blocks the frontmost app | #144 |
+| 2026-10-01 | Chat transcript rewrite loop no longer pins the main thread; app quits during a turn (hand check pending) | #148 |
 | 2026-09-30 | Skill audit of 16a–18: 4 P1 fixed (approval queue instead of a dropped request, cancellable file search, `nonisolated ShortcutsService`, per-file VoiceOver labels on file cards); 15 P2 listed in the PR; owner hand-tested | #141 |
 | 2026-09-30 | Result cards skip `~/Library` / system paths from step output (iCloud Drive and paths the answer names are kept) | #138 |
 | 2026-09-30 | Flaky `AXMenuReaderScriptedFallbackTests` fixed: each reader posts as itself, each test listens to its own (5×2241 green) | #136 |
@@ -98,8 +115,13 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-09-29 | Strict order: finish 16 (a, b, e) and 17, hand test, merge, then 18. 16c/16d move after 18. |
 | 2026-09-28 | "App Pack" is the name for an app's bundle of actions, skills, menus and tools; System packs group Global Commands. No Discover/marketplace in 1.0. |
 | 2026-09-30 | Planner (cloud) and builder (Mac Desktop) roles; GitHub issue labels are the queue; hand-check queue emptied — all merged work through #137 checked by the owner. |
+| 2026-10-01 | AI engine plan accepted: `docs/master/00-AI-ENGINE-PLAN.md` (#161). E1–E8c are 1.0; E9–E16 are Labs. |
+| 2026-10-01 | Security first: E1 (#149) runs next, then #146, E2, #147. #134 stays needs-owner. #44 closed (fixed in f2d3d5f). |
+| 2026-10-01 | On-device fixes (E5a, E5b) are 1.0: on-device chat ships today and loses its history. |
+| 2026-10-01 | The engine plan file defines tasks; this file sets the order. The owner's Master Blueprint pages are the study copy, not a second plan. |
 
 ## Open decisions (owner)
 
+- E5: in on-device-only mode, may DoraX *offer* a cloud model when a task is too big, or never mention it? Needed before #152.
 - What ⌥⌥ opens once the Dock retires (A1 end state). Until then: ⌥⌥ Dock, ⌘⌘ Corner (2026-09-25).
 - D9 Notifications, D11 Quick Note editor, D12 Mail in the Corner: move, or drop from v1?
