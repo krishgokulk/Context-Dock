@@ -582,6 +582,7 @@ final class CornerDockController: NSObject {
         guard let panel, hidden != isAutoHidden else { return }
         isAutoHidden = hidden
         panel.ignoresMouseEvents = hidden
+        if !hidden { syncMouseTransparency() }
         if hidden { pointerVisitedDock = false }
         let target = hidden ? hiddenPanelOrigin : shownPanelOrigin
         NSAnimationContext.runAnimationGroup { context in
@@ -622,6 +623,7 @@ final class CornerDockController: NSObject {
         }
         hostView.interactiveRects = rects
         if !rects.isEmpty { lastShownContentRect = shownContentRect }
+        syncMouseTransparency()
 
         let shouldShow = !rects.isEmpty
         if shouldShow {
@@ -1057,6 +1059,14 @@ final class CornerDockController: NSObject {
         {
             hoverMonitors.append(local)
         }
+        // A file dragged in from another app moves the pointer with the button down, which is
+        // not a `mouseMoved`; the shelf still has to become reachable when it gets there.
+        if let drag = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDragged],
+            handler: { [weak self] _ in self?.syncMouseTransparency() })
+        {
+            hoverMonitors.append(drag)
+        }
         if let swipe = NSEvent.addLocalMonitorForEvents(
             matching: [.scrollWheel],
             handler: { [weak self] event in self?.handleChatSwipe(event) ?? event })
@@ -1419,10 +1429,26 @@ final class CornerDockController: NSObject {
         hoverMonitors.removeAll()
     }
 
+    /// Let clicks and drags through the empty part of the shell to the app beneath it.
+    /// See `CornerDockMouseRule`; driven from the pointer monitors because a window that
+    /// ignores the mouse gets no events of its own to notice the pointer coming back.
+    private func syncMouseTransparency() {
+        guard let panel, let hostView else { return }
+        var cards = hostView.interactiveRects
+        if let dormant = dormantShelfRect() { cards.append(dormant) }
+        let origin = panel.frame.origin
+        let shouldIgnore = CornerDockMouseRule.shouldIgnoreMouse(
+            pointer: NSEvent.mouseLocation,
+            cards: cards.map { $0.offsetBy(dx: origin.x, dy: origin.y) },
+            slack: ClipboardPillMetrics.hoverTolerance, autoHidden: isAutoHidden)
+        if panel.ignoresMouseEvents != shouldIgnore { panel.ignoresMouseEvents = shouldIgnore }
+    }
+
     /// Routes the pointer to whichever pill is under it. Only one card is ever open: the
     /// corner is one surface, not two competing ones.
     private func evaluateHover() {
         guard let panel else { return }
+        syncMouseTransparency()
         // Hidden, the only thing the pointer can do is come back to the edge under it.
         if isAutoHidden {
             if CornerDockAutoHide.pointerReveals(
