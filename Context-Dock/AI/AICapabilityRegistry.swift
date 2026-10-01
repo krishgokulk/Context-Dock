@@ -817,7 +817,7 @@ final class AIExecutionEngine {
                 success: result.success,
                 output: result.output,
                 sideEffects: result.success ? [plan.explanation] : [],
-                verification: result.readBack == nil
+                verification: result.readBack == nil || !result.success
                     ? verificationStatus(
                         for: plan,
                         succeeded: result.success,
