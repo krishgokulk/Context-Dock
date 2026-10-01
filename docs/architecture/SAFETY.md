@@ -120,6 +120,24 @@ unattended: the MCP config DoraX writes for its Claude CLI carries an `X-DoraX-T
 app launch, and requests bearing it show the user's normal approval sheet. A caller without that
 key — anything registered with `claude mcp add` — stays unattended.
 
+### Outbound gate: private data + untrusted content + a way out
+
+`OutboundGate.decide` (one pure function) is the host's answer to the "lethal trifecta". Each turn
+has a record (`TurnTaintTracker`, owned by `AgentToolRegistry`, keyed by `AgentTurnToken`, ended
+with the turn) of two flags: it read **private data** (Mail, Messages, Notes, Contacts, Calendar,
+files, clipboard, or the chat is scoped to such an app) and it holds **untrusted content**
+(anything wrapped by `UntrustedContent.fenced`, in the prompt or a tool result). Either alone runs
+freely. With both, an outbound tool — `read_url` to a host the user did not type, a message or
+mail, `run_shortcut`, a shell command that can reach the network, an app script, an adapter action
+that sends, an extension tool — asks first on the one approval card ("This turn read your private
+data and a web page; DoraX is about to contact <host>."), or is refused when unattended, through
+the same task-local as the unattended run above. The gate sits in `AgentToolRegistry.dispatch`, so
+the Dock, the Corner, the Chat Window and the MCP server's menu tool share it. A host counts as
+typed only when it appears in the user's own messages (`TurnUserText`), by exact match on the
+parsed host; a call with no known turn is treated as having read everything.
+Not covered: see the PR for #149 (on-device tools, the CLI's own tools, redirects, a typed host
+carrying data in its query).
+
 ### Privacy at the provider boundary
 
 `AIPrivacyApprovalCenter` asks before private context is sent to a provider. `AIContextBudget`

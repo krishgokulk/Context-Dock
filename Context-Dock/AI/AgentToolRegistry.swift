@@ -412,11 +412,15 @@ final class AgentToolRegistry {
     ///     it are the ones the outbound gate lets a tainted turn contact without asking.
     ///   - promptBlocks: text already in the prompt. A fence in it means the turn starts with
     ///     untrusted content in front of the model.
-    func beginTurn(userText: [String] = [], promptBlocks: [String] = []) -> AgentTurnToken {
+    ///   - startsPrivate: the prompt already carries private data (a chat scoped to Mail...).
+    func beginTurn(
+        userText: [String] = [], promptBlocks: [String] = [], startsPrivate: Bool = false
+    ) -> AgentTurnToken {
         let token = AgentTurnToken()
         callsByTurn[token] = [:]
         settledByTurn[token] = []
-        taint.begin(token, userText: userText, promptBlocks: promptBlocks)
+        taint.begin(
+            token, userText: userText, promptBlocks: promptBlocks, startsPrivate: startsPrivate)
         turnOrder.append(token)
         while turnOrder.count > maxLiveTurns {
             let evicted = turnOrder.removeFirst()

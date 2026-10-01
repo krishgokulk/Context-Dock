@@ -381,6 +381,19 @@ enum OutboundGate {
         }
     }
 
+    /// Apps whose whole content is the user's private data. A turn scoped to one starts with that
+    /// data already in the prompt (a mailbox snapshot, a thread), with no tool call to see it by.
+    static func isPrivateDataApp(bundleID: String?) -> Bool {
+        guard let id = bundleID?.lowercased() else { return false }
+        return privateDataApps.contains(id)
+    }
+
+    private static let privateDataApps: Set<String> = [
+        "com.apple.mail", "com.apple.mobilesms", "com.apple.notes", "com.apple.addressbook",
+        "com.apple.ical", "com.apple.reminders", "com.apple.photos", "com.apple.journal",
+        "com.apple.passwords", "com.apple.stickies", "com.apple.voicememos", "com.apple.health",
+    ]
+
     private static let privateCapabilityPrefixes: [String] = [
         "mail.", "messages.", "notes.", "contacts.", "calendar.", "reminders.", "clipboard.",
         "photos.", "quicknotes.", "memory.", "files.", "finder.readfile", "finder.grepfiles",
@@ -403,6 +416,39 @@ enum OutboundGate {
             input: ["call": what],
             explanation: reason + "\n\nThe page may be asking for this, not you. Allow it only "
                 + "if it is what you meant.")
+    }
+}
+
+// MARK: - What the user typed
+
+/// The text the USER typed for the turn running in this task.
+///
+/// A provider loop is handed a `message` and a `history` and, normally, the message is the
+/// user's own sentence. A follow-up pass is not: the "look again" retry, the answer corrector
+/// and the verifier each hand the loop a prompt DoraX composed, and it quotes the model's
+/// previous answer and the tools it ran. A host named there is not a host the user typed, and
+/// treating it as one would let an injected page widen its own allowlist.
+///
+/// A task-local, like `UnattendedRun`, so the three provider loops and eight adapters between
+/// the caller and the registry do not each grow a parameter. Bound by the caller that knows.
+nonisolated enum TurnUserText {
+    @TaskLocal static var current: [String]?
+
+    /// What the loops treat as typed: the bound text when a follow-up pass bound one, else the
+    /// user's messages in the thread plus the message being answered.
+    static func resolve(history: [ChatMessage], message: String) -> [String] {
+        current ?? (history.filter { $0.role == .user }.map(\.content) + [message])
+    }
+
+    /// Run `body` with the thread's user messages and the user's own `query` as the typed text.
+    static func bind<T>(
+        history: [ChatMessage], query: String, _ body: () async throws -> T
+    ) async rethrows -> T {
+        try await bind(typed: history.filter { $0.role == .user }.map(\.content) + [query], body)
+    }
+
+    static func bind<T>(typed: [String], _ body: () async throws -> T) async rethrows -> T {
+        try await $current.withValue(typed, operation: body)
     }
 }
 
@@ -430,8 +476,14 @@ final class TurnTaintTracker {
     ///   - userText: what the USER typed in this thread (their messages only).
     ///   - promptBlocks: text already placed in the prompt (context, history). A fence in any
     ///     of them means the turn starts with untrusted content in front of the model.
-    func begin(_ token: AgentTurnToken, userText: [String], promptBlocks: [String] = []) {
+    ///   - startsPrivate: the prompt already carries the user's private data (a chat scoped to
+    ///     Mail, Messages, Notes...), so no read is needed to have it.
+    func begin(
+        _ token: AgentTurnToken, userText: [String], promptBlocks: [String] = [],
+        startsPrivate: Bool = false
+    ) {
         var entry = Entry()
+        entry.taint.readPrivateData = startsPrivate
         entry.typedHosts = OutboundGate.typedHosts(in: userText)
         entry.taint.readUntrustedContent = promptBlocks.contains(where: UntrustedContent.containsFence)
         entries[token] = entry

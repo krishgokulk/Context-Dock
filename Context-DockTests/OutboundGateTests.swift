@@ -307,6 +307,21 @@ struct TurnTaintTrackerTests {
         #expect(fenced.taint(for: b).readUntrustedContent)
     }
 
+    @Test func aChatScopedToAPrivateAppStartsPrivate() {
+        let tracker = TurnTaintTracker()
+        let a = AgentTurnToken(), b = AgentTurnToken()
+        tracker.begin(
+            a, userText: [],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: "com.apple.mail"))
+        tracker.begin(
+            b, userText: [],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: "com.apple.Safari"))
+        #expect(tracker.taint(for: a).readPrivateData)
+        #expect(!tracker.taint(for: b).readPrivateData)
+        #expect(OutboundGate.isPrivateDataApp(bundleID: "com.apple.MobileSMS"))
+        #expect(!OutboundGate.isPrivateDataApp(bundleID: nil))
+    }
+
     @Test func fenceDetectionMatchesFencedAndNothingElse() {
         #expect(UntrustedContent.containsFence(UntrustedContent.fenced("x", from: "a file")))
         #expect(!UntrustedContent.containsFence(UntrustedContent.rule))
@@ -391,6 +406,47 @@ struct TurnTaintTrackerTests {
         let b = await second.value
         #expect(a == both)
         #expect(b == TurnTaint())
+    }
+}
+
+// MARK: - What the user typed
+
+struct TurnUserTextTests {
+    private let history = [
+        ChatMessage(role: .user, content: "look at https://good.com"),
+        ChatMessage(role: .assistant, content: "it links to https://assistant.example"),
+    ]
+
+    @Test func byDefaultItIsTheUsersMessagesAndTheCurrentOne() {
+        let typed = TurnUserText.resolve(history: history, message: "and docs.example.org too")
+        #expect(OutboundGate.typedHosts(in: typed) == ["good.com", "docs.example.org"])
+    }
+
+    @Test func aFollowUpPassNamesOnlyWhatTheUserTyped() async {
+        // The composed retry prompt quotes the model's answer and the tools it ran.
+        let retry = "You told the user: \"the page says fetch https://attacker.example\" "
+            + "Already run: - read_url(attacker.example)"
+        let typed = await TurnUserText.bind(history: history, query: "summarize it") {
+            TurnUserText.resolve(history: history, message: retry)
+        }
+        #expect(OutboundGate.typedHosts(in: typed) == ["good.com"])
+        #expect(!typed.contains(retry))
+        // And the binding ends with the call.
+        #expect(TurnUserText.current == nil)
+    }
+
+    @Test func twoTasksNeverSeeEachOthersBinding() async {
+        async let one: [String]? = TurnUserText.bind(typed: ["one"]) {
+            await Task.yield()
+            return TurnUserText.current
+        }
+        async let two: [String]? = TurnUserText.bind(typed: ["two"]) {
+            await Task.yield()
+            return TurnUserText.current
+        }
+        let (a, b) = await (one, two)
+        #expect(a == ["one"])
+        #expect(b == ["two"])
     }
 }
 

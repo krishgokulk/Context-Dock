@@ -69,8 +69,10 @@ extension AIProviderService {
         // outbound gate knows which hosts they pointed it at, and whether untrusted content is
         // already in the prompt.
         let turn = await AgentToolRegistry.shared.beginTurn(
-            userText: history.filter { $0.role == .user }.map(\.content) + [message],
-            promptBlocks: [contextPrompt])
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
@@ -286,8 +288,10 @@ extension AIProviderService {
         // outbound gate knows which hosts they pointed it at, and whether untrusted content is
         // already in the prompt.
         let turn = await AgentToolRegistry.shared.beginTurn(
-            userText: history.filter { $0.role == .user }.map(\.content) + [message],
-            promptBlocks: [contextPrompt])
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
@@ -518,8 +522,10 @@ extension AIProviderService {
         // outbound gate knows which hosts they pointed it at, and whether untrusted content is
         // already in the prompt.
         let turn = await AgentToolRegistry.shared.beginTurn(
-            userText: history.filter { $0.role == .user }.map(\.content) + [message],
-            promptBlocks: [contextPrompt])
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
