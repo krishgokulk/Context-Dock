@@ -38,6 +38,11 @@ private struct LoopProbe: View {
                 if guarded {
                     guard !CommandApprovalCard.isShown(id: pending, in: transcript.messages)
                     else { return }
+                } else {
+                    // The unguarded handler never stops on its own: run for real it livelocks
+                    // the main thread inside one SwiftUI update turn (the test host sat at 100 %
+                    // CPU for 20 minutes). The cap only lets the reproduction finish.
+                    guard transcript.messages.count < 50 else { return }
                 }
                 transcript.messages.append(
                     CommandApprovalCard.message(
@@ -77,7 +82,7 @@ struct ChatTranscriptLoopTests {
         let count = await appendsAfterPending(guarded: false)
         // One pending approval must be one card. Unguarded, every append re-renders the view,
         // the fresh publisher replays the pending value, and the handler appends again.
-        #expect(count > 1, "expected the replay loop to reproduce; got \(count) append(s)")
+        #expect(count == 50, "expected the replay loop to run to the cap; got \(count) append(s)")
     }
 
     @Test func aGuardedHandlerWritesTheCardExactlyOnce() async {
