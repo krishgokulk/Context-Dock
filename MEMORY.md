@@ -47,3 +47,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-09-30 (Mac coordinator): #127 (16d Shortcuts) merged after owner hand test; queue empty pending owner decisions D9/D11/D12 and small follow-ups.
 - 2026-09-30 (Mac coordinator): #126 and #128 merged; Coordinator line + Hand-check queue (#118 #119 #121 #123 #125) added to 00-NOW; order: 1 flaky AX test, 2 retire old Shortcuts route, 3 ~/Library card noise, 4 settings-card follow-ups; no ship until the queue is empty.
 - 2026-09-30: cloud planner took the Coordinator line; hand-check queue empty (#118–#137 checked); #133 in build, #135/#139 ready, #134 needs owner.
+- 2026-10-01: engine plan (#161) ordered into 00-NOW; E1 #149 labeled ready; #146/#147 queued after it.
