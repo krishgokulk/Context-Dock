@@ -274,7 +274,7 @@ enum OutboundGate {
             return sendTarget
         }
         let reachingOut = ["extension.run", "mcp.call", "appadapter.run", "starter.youtube",
-                           "starter.ddg", "starter.maps", "starter.downie", "api."]
+                           "starter.ddg", "starter.maps", "starter.downie"]
         if reachingOut.contains(where: { lower.hasPrefix($0) || lower == $0 }) { return adapterTarget }
         // An id that is not a registered capability is an adapter action; the registry knows
         // whether that one sends anything.
@@ -384,7 +384,7 @@ enum OutboundGate {
             capability: approvalCapabilityID,
             input: ["call": what],
             explanation: reason + "\n\nThe page may be asking for this, not you. Allow it only "
-                + "if it is what you meant.\n\n\(what)")
+                + "if it is what you meant.")
     }
 }
 
