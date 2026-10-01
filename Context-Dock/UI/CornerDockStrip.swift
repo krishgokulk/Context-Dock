@@ -434,7 +434,7 @@ struct CornerDockStrip: View {
             // As the field's pill, resting on an app asks for the dock back, as the field's
             // own pill did.
             guard isDock else {
-                if inside { _ = model.foldToDock() }
+                if inside, model.hoverMayFold { _ = model.foldToDock() }
                 return
             }
             // Still spreading out of the pill: an icon arriving under the pointer is not

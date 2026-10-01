@@ -51,11 +51,13 @@ struct CornerDockPhaseTests {
         #expect(model.phase == .mini)
     }
 
-    @Test func typedTextKeepsThePromptFromDocking() {
+    /// Typed text keeps the field itself: it neither docks nor shrinks to the badge
+    /// (owner 2026-09-27: "don't hide if input is in the field").
+    @Test func typedTextKeepsThePromptOpen() {
         let (model, _) = globalModel()
         model.query = "saf"
         model.standDown()
-        #expect(model.phase == .mini)
+        #expect(model.phase == .prompt)
     }
 
     /// The pin's own block is the shared `standDown` guard, held by `AppChatPromptTests`;
