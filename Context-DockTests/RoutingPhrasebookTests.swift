@@ -228,14 +228,19 @@ struct RoutingPhrasebookTests {
         // and it wrote `finder.copyFiles` as text. Nothing may be offered as the exact
         // command; the model gets the turn. The Dock and the Corner both call
         // `ScopedRoutePolicy.decide` from `offerScopedNativeAppAction`, so one row per
-        // sentence covers both shells (Corner app chat IS the Dock's pipeline).
-        Phrase(surface: .finderChat, sentence: "can you resume 2026 folder for me?",
+        // sentence covers both shells (Corner app chat IS the Dock's pipeline). With the
+        // question mark the sentence is question-shaped and no action is even considered
+        // (.none); without it the model takes the turn with the near matches as candidates.
+        Phrase(surface: .finderChat, sentence: "can you resume 2026 folder for me",
                found: [capability("Finder", "finder.copyFiles", "Copy Finder Files"),
                        menu("Finder", ["Edit", "Copy"]),
                        menu("Finder", ["File", "Find"])],
                expected: .model),
         Phrase(surface: .finderChat, sentence: "can you resume 2026 folder for me?",
-               found: [], expected: .model),
+               found: [capability("Finder", "finder.copyFiles", "Copy Finder Files"),
+                       menu("Finder", ["Edit", "Copy"]),
+                       menu("Finder", ["File", "Find"])],
+               expected: .none),
     ]
 
     // MARK: - Running a row

@@ -116,6 +116,11 @@ enum ChatCapabilityCallRecovery {
                     ? "\(displayTitle) didn't run."
                     : "\(displayTitle) didn't run — \(reason)",
                 succeeded: false, output: result.output)
+        } catch is CancellationError {
+            // The user pressed stop. Not a failure to explain, and not a reason to leave the
+            // turn open: the caller still ends it, with an answer that says nothing ran.
+            return Outcome(
+                text: "Stopped — \(displayTitle) did not run.", succeeded: false, output: "")
         } catch let error as AICapabilityError {
             if case .approvalRequired = error {
                 // A "no" is an answer, not a failure: nothing changed, and saying so is the

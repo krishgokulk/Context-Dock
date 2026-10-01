@@ -132,6 +132,15 @@ struct ChatCapabilityCallRecoveryTests {
         #expect(outcome.text == "Copy Finder Files wasn't approved, so nothing ran.")
     }
 
+    @Test func aStoppedTurnSaysNothingRanAndStillAnswers() async {
+        let outcome = await ChatCapabilityCallRecovery.run(
+            capabilityID: "finder.copyFiles", arguments: ["destination": "/tmp"],
+            query: "q", scope: .general, lookup: lookup,
+            execute: { _ in throw CancellationError() })
+        #expect(!outcome.succeeded)
+        #expect(outcome.text == "Stopped — Copy Finder Files did not run.")
+    }
+
     @Test func anExecutorFailureCarriesItsReason() async {
         let failed = await ChatCapabilityCallRecovery.run(
             capabilityID: "finder.copyFiles", arguments: ["destination": "/nope"],
