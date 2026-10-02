@@ -48,7 +48,8 @@ Each time you run:
      behaviour change. Say what proves it (tests, local runs, CI).
    Then the owner's hand-check list, then
    `gh issue edit <n> --remove-label in-progress --add-label needs-hand-check` (plus
-   `--add-label hand-check-optional` when the PR says optional; the issue label is what the
+   `--add-label hand-check-optional` when the PR says optional — create it once with
+   `gh label create hand-check-optional --force` if missing; the issue label is what the
    hand-check limit counts) and comment the PR link.
 
 Never: merge a PR or enable auto-merge; take an issue not labeled `ready`; work two issues at once;
