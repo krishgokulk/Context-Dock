@@ -196,6 +196,58 @@ enum ClaudeCodeCLIService {
         }
     }
 
+    /// Adds what one stream-json line says to the turn record: the model, the CLI's own tool
+    /// calls, the first output, and the usage on the closing `result` line. Never the text.
+    nonisolated static func trace(streamLine line: String, into recorder: TurnRecorder) {
+        guard let object = jsonObject(line) else { return }
+        switch object["type"] as? String {
+        case "system":
+            if let model = object["model"] as? String { recorder.noteModel(model) }
+        case "assistant":
+            recorder.noteFirstToken()
+            let message = object["message"] as? [String: Any]
+            if let model = message?["model"] as? String { recorder.noteModel(model) }
+            let content = message?["content"] as? [[String: Any]] ?? []
+            recorder.noteToolCalls(content.compactMap { block in
+                block["type"] as? String == "tool_use" ? block["name"] as? String : nil
+            })
+        case "result":
+            if let round = traceRound(payload: object, streamed: true) {
+                recorder.noteRound(round)
+            }
+        default:
+            break
+        }
+    }
+
+    /// The one round a CLI run reports, from its `result` line. Nil for any other line.
+    nonisolated static func traceRound(streamLine line: String) -> TurnTrace.Round? {
+        guard let object = jsonObject(line), object["type"] as? String == "result" else {
+            return nil
+        }
+        return traceRound(payload: object, streamed: true)
+    }
+
+    /// The CLI's usage block, which counts input the way the Anthropic API does: without the
+    /// cached part.
+    nonisolated static func traceRound(payload: [String: Any], streamed: Bool) -> TurnTrace.Round? {
+        guard let usage = payload["usage"] as? [String: Any] else { return nil }
+        return .anthropicShaped(
+            uncachedInput: usage["input_tokens"] as? Int,
+            cacheRead: usage["cache_read_input_tokens"] as? Int,
+            cacheWrite: usage["cache_creation_input_tokens"] as? Int,
+            output: usage["output_tokens"] as? Int,
+            finishReason: payload["subtype"] as? String,
+            streamed: streamed,
+            duration: (payload["duration_ms"] as? Double).map { $0.rounded() / 1000 })
+    }
+
+    nonisolated private static func jsonObject(_ line: String) -> [String: Any]? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
     /// The exact argument list for one invocation. Pure, so the flags can be asserted without
     /// running the binary — they were guessed once and silently disabled every tool.
     static func arguments(
@@ -262,7 +314,28 @@ enum ClaudeCodeCLIService {
         /// Supplying it switches the CLI to streaming output.
         onProgress: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
+        // Its own turn record when nothing upstream started one; part of the caller's when
+        // something did (a scoped turn, sendWithTools).
+        try await TurnRecorder.run(provider: AIProvider.claudeCode.rawValue) {
+            try await sendUntraced(
+                prompt: prompt, systemPrompt: systemPrompt, model: model, access: access,
+                workingDirectory: workingDirectory, onProgress: onProgress)
+        }
+    }
+
+    private static func sendUntraced(
+        prompt: String,
+        systemPrompt: String?,
+        model: String?,
+        access: ToolAccess?,
+        workingDirectory: URL?,
+        onProgress: (@Sendable (String) -> Void)?
+    ) async throws -> String {
         guard let binary = binaryPath() else { throw Failure.notInstalled }
+        // Read here, in the turn's task, for the same reason as the activity recorder below.
+        let recorder = TurnRecorder.current
+        recorder?.notePass()
+        if let model { recorder?.noteModel(model) }
 
         let access = access ?? AppSettings.shared.claudeCodeToolAccess
         // Answering needs no folder, and reading project settings from wherever DoraX happened
@@ -316,6 +389,7 @@ enum ClaudeCodeCLIService {
                     for event in CLIActivityEvent.claudeCode(streamLine: line) {
                         activity?.apply(event)
                     }
+                    if let recorder { trace(streamLine: line, into: recorder) }
                     switch parse(streamLine: line) {
                     case .progress(let step): onProgress?(step)
                     case .result(let text): answer = text
@@ -338,6 +412,13 @@ enum ClaudeCodeCLIService {
                 throw Failure.notAuthenticated
             }
             throw Failure.failed(String(output.prefix(300)))
+        }
+
+        if let recorder {
+            if let model = payload["model"] as? String { recorder.noteModel(model) }
+            if let round = traceRound(payload: payload, streamed: false) {
+                recorder.noteRound(round)
+            }
         }
 
         if let usage = payload["usage"] as? [String: Any] {
