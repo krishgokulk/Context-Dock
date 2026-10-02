@@ -320,9 +320,10 @@ extension LauncherView {
             // screen actually usable in the chat (e.g. "summarize this error").
             var blocks: [String] = []
             for url in imageFiles {
-                let text = ocrTextFromImageFile(url)
+                let outcome = ocrOutcomeFromImageFile(url)
+                let text = outcome.text
                 if text.isEmpty {
-                    blocks.append("- \(url.lastPathComponent) (screenshot — no text recognized)")
+                    blocks.append("- " + outcome.summary(label: url.lastPathComponent))
                 } else {
                     blocks.append(
                         "### \(url.lastPathComponent) (screenshot, recognized text)\n"
@@ -352,19 +353,13 @@ extension LauncherView {
 
     /// Local Vision OCR for an image file the user attached/captured in the scoped chat.
     /// Synchronous (Vision `perform` is sync) — fine for a single user-initiated capture.
-    func ocrTextFromImageFile(_ url: URL) -> String {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        do {
-            try VNImageRequestHandler(url: url, options: [:]).perform([request])
-            return (request.results ?? [])
-                .compactMap { $0.topCandidates(1).first?.string }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return ""
+    /// The shared recogniser (`ScreenCaptureService`), so the Dock and the Corner read an
+    /// attached screenshot the same way and both can tell "no text" from "could not read".
+    func ocrOutcomeFromImageFile(_ url: URL) -> OCROutcome {
+        guard let data = try? Data(contentsOf: url) else {
+            return .failed(reason: "the file could not be read")
         }
+        return ScreenCaptureService.recognizeTextOutcome(in: data)
     }
 
     func buildIntelligentL2Prompt(

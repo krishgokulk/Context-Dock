@@ -296,6 +296,10 @@ enum ScopedAppPromptBuilder {
         }
 
         lines.append("")
+        // The same rule on every surface and at every size: what to say when the app in front
+        // exposes nothing. Kept in the compact (on-device) prompt too.
+        lines.append(ReadabilityFacts.instruction)
+        lines.append("")
         if compact {
             lines.append(
                 "Tool choice order: exact saved adapter action → exact live app menu for visible "
