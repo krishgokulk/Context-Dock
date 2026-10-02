@@ -5461,7 +5461,7 @@ extension LauncherView {
                 // place to reason about what a small-context model is given up. The dock
                 // had this ordering and the window had its own; keeping two was how they
                 // answered the same question differently.
-                let activeContextPrompt: String = {
+                let activeContextAssembly: (prompt: String, sections: [String: Int]) = {
                     var prompt = ScopedPromptAssembler()
                     prompt.set(.sourceRule, frontmostTaskPlan.promptRule + "\n\n" + sourceDecision.promptRule)
                     prompt.append(
@@ -5481,8 +5481,13 @@ extension LauncherView {
                     prompt.set(.userProfile, profileBlock)
                     prompt.set(.memory, memoryBlock)
                     prompt.set(.cli, runtimeCLIContextPrompt)
-                    return prompt.assemble(for: provider)
+                    // Section sizes only when the turn log will record them.
+                    return (
+                        prompt.assemble(for: provider),
+                        DoraXTurnLog.standard.isEnabled ? prompt.characterCounts(for: provider) : [:]
+                    )
                 }()
+                let activeContextPrompt = activeContextAssembly.prompt
 
                 if let guardedAnswer = await MainActor.run(body: {
                     self.scopedChatMissingInternalDataAnswer(
@@ -5538,6 +5543,7 @@ extension LauncherView {
                         apiKey: apiKey,
                         history: chatHistory,
                         imageAttachments: scopedImageAttachments,
+                        promptSections: activeContextAssembly.sections,
                         onStream: { event in
                             Task { @MainActor in
                                 self.applyDockStreamEvent(

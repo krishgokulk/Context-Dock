@@ -277,8 +277,11 @@ nonisolated final class TurnRecorder: Sendable {
         state.withLock { $0.toolsCalled += names }
     }
 
+    /// The first pass's sizes stand. A verifier pass re-sends the same prompt with a short
+    /// correction as its message, and letting that overwrite the first would describe a
+    /// prompt the turn mostly did not send.
     func notePromptSections(_ sections: [String: Int]) {
-        state.withLock { $0.promptSections.merge(sections) { _, new in new } }
+        state.withLock { $0.promptSections.merge(sections) { first, _ in first } }
     }
 
     func noteVerifier(_ name: String) {
@@ -333,6 +336,15 @@ nonisolated final class TurnRecorder: Sendable {
         let elapsed = instant.duration(to: .now).components
         let seconds = Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18
         return (seconds * 1000).rounded() / 1000
+    }
+
+    /// The tool schemas' size as a prompt section: they are sent every round, and with a full
+    /// catalogue they can outweigh the system prompt.
+    static func toolSchemaSection(_ schemas: [[String: Any]]) -> [String: Int] {
+        guard !schemas.isEmpty, JSONSerialization.isValidJSONObject(schemas),
+            let data = try? JSONSerialization.data(withJSONObject: schemas)
+        else { return [:] }
+        return ["tools": data.count]
     }
 
     /// Tool names out of the schemas a loop is about to send, whichever provider's shape they

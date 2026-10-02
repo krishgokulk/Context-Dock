@@ -336,6 +336,9 @@ enum ClaudeCodeCLIService {
         let recorder = TurnRecorder.current
         recorder?.notePass()
         if let model { recorder?.noteModel(model) }
+        recorder?.notePromptSections([
+            "system": systemPrompt?.count ?? 0, "message": prompt.count,
+        ])
 
         let access = access ?? AppSettings.shared.claudeCodeToolAccess
         // Answering needs no folder, and reading project settings from wherever DoraX happened

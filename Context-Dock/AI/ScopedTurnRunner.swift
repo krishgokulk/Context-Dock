@@ -62,9 +62,36 @@ enum ScopedTurnRunner {
         /// Apps this conversation may reach, by lowercased name and bundle id.
         grantedApps: [String: String] = [:],
         imageAttachments: [URL] = [],
+        /// Characters per section of `systemPrompt`, for the turn record. The surface
+        /// assembled the prompt, so only the surface knows its parts.
+        promptSections: [String: Int] = [:],
         onStream: (@Sendable (AIProviderStreamEvent) -> Void)? = nil,
         onStatus: ((String) -> Void)? = nil
     ) async throws -> Outcome {
+        // The whole stage is one turn in the turn log: the first pass, and every retry and
+        // verifier pass below, land in one record with the checks that fired.
+        try await TurnRecorder.run(provider: provider.rawValue) {
+            TurnRecorder.current?.notePromptSections(promptSections)
+            return try await runUntraced(
+                query: query, systemPrompt: systemPrompt, scope: scope, provider: provider,
+                apiKey: apiKey, history: history, grantedApps: grantedApps,
+                imageAttachments: imageAttachments, onStream: onStream, onStatus: onStatus)
+        }
+    }
+
+    private static func runUntraced(
+        query: String,
+        systemPrompt: String,
+        scope: Scope,
+        provider: AIProvider,
+        apiKey: String?,
+        history: [ChatMessage],
+        grantedApps: [String: String],
+        imageAttachments: [URL],
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)?,
+        onStatus: ((String) -> Void)?
+    ) async throws -> Outcome {
+        let recorder = TurnRecorder.current
 
         let executorBuilder = ScopedCommandExecutor(
             configuration: .init(
@@ -140,6 +167,7 @@ enum ScopedTurnRunner {
                 answer: text, executed: executed, roundsAllowed: complexity.maxToolIterations)
         {
             onStatus?("Looking again — that wasn't an answer…")
+            recorder?.noteVerifier("evidence_sufficiency")
             log.notice("evidence insufficient; retrying with \(executed.count, privacy: .public) receipts")
             // The retry prompt carries the model's own words and the tools it ran; only what the
             // user typed may name a host the outbound gate lets through (see TurnUserText).
@@ -174,6 +202,7 @@ enum ScopedTurnRunner {
             AgentAnswerVerifier.claimsUnperformedWork(answer: text, executed: executed)
         {
             onStatus?("Checking that actually happened…")
+            recorder?.noteVerifier("answer_verifier.unperformed_work")
             if let (corrected, extra) = try? await TurnUserText.bind(history: history, query: query, {
                 try await AIProviderService.shared.sendWithTools(
                     AgentAnswerVerifier.correctionPrompt(
@@ -193,6 +222,7 @@ enum ScopedTurnRunner {
             AgentAnswerVerifier.claimsUnverifiedWork(answer: text, executed: executed)
         {
             onStatus?("Verifying the result…")
+            recorder?.noteVerifier("answer_verifier.unverified_work")
             if let (verified, extra) = try? await TurnUserText.bind(history: history, query: query, {
                 try await AIProviderService.shared.sendWithTools(
                     AgentAnswerVerifier.verificationPrompt(originalQuery: query, answer: text),
@@ -214,6 +244,7 @@ enum ScopedTurnRunner {
                 query: query, executed: executed)
         {
             onStatus?("Checking the requested criterion…")
+            recorder?.noteVerifier("answer_verifier.explicit_verification")
             if let verification = await AgentAnswerVerifier.executeRequiredVerification(
                 query: query, commandExecutor: executor)
             {
@@ -226,6 +257,7 @@ enum ScopedTurnRunner {
             AgentAnswerVerifier.explicitExecutionIsMissing(query: query, executed: executed)
         {
             onStatus?("Running the requested command…")
+            recorder?.noteVerifier("answer_verifier.explicit_execution")
             if let repair = await AgentAnswerVerifier.executeMissingExplicitContract(
                 query: query, executed: executed, commandExecutor: executor)
             {
@@ -240,6 +272,7 @@ enum ScopedTurnRunner {
         var evaluation: SubjectiveEvaluation?
         if !Task.isCancelled, FreshResultEvaluator.shouldEvaluate(query) {
             onStatus?("Reviewing result independently…")
+            recorder?.noteVerifier("fresh_result_evaluator")
             evaluation = await FreshResultEvaluator.evaluate(
                 request: query, result: text, evidence: executed,
                 provider: provider, apiKey: apiKey)

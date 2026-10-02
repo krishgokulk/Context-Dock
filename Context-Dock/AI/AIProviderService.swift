@@ -1263,6 +1263,22 @@ class AIProviderService: ObservableObject {
             return await commandExecutor(command, purpose, approval)
         }
 
+        // One record per turn in the turn log, when it is on. A verifier pass or a retry
+        // inside a scoped turn joins that turn's record instead of writing its own.
+        return try await TurnRecorder.run(provider: provider.rawValue) {
+        let recorder = TurnRecorder.current
+        // The first fragment of the answer the user could read. Observed here, once, rather
+        // than in each provider's stream parser.
+        let observedStream: (@Sendable (AIProviderStreamEvent) -> Void)?
+        if let onStream, let recorder {
+            observedStream = { event in
+                if case .text = event { recorder.noteFirstToken() }
+                onStream(event)
+            }
+        } else {
+            observedStream = onStream
+        }
+
         return try await TaskRunStore.shared.track(
             request: resume.source?.request ?? message,
             provider: String(describing: provider),
@@ -1321,7 +1337,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1343,7 +1359,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1362,7 +1378,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1383,7 +1399,7 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OllamaToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1408,7 +1424,7 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1435,7 +1451,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus)
 
         case .claudeBridge:
@@ -1461,7 +1477,7 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1488,12 +1504,15 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
         default:
+            // The caller falls back to the plain path, which is not part of this record.
+            recorder?.noteFallback("on_device_plain_path")
             throw AIServiceError.unsupportedProvider("onDevice_fallback")
+        }
         }
         }
     }
