@@ -95,8 +95,8 @@ Rules that keep it safe when accounts change:
 - **Usage limit reached:** the builder's session stops mid-step; nothing is lost (pushed branch,
   issue label). When the account has usage again the loop's next run continues the `in-progress`
   issue. If the session was closed, start `/loop 20m /builder` again.
-- **Hand checks:** the builder keeps building while PRs wait for the owner, up to **two PRs marked
-  `Hand check: required`**; then it pauses and says which ones it is waiting on. Optional checks
+- **Hand checks:** the builder keeps building past PRs whose check is optional; after **one PR marked
+  `Hand check: required`** it pauses until the owner checks it or says "merge N without hand check". Optional checks
   never pause it.
 - **Skipping a hand check:** the owner may say "merge N without hand check" for any PR. The planner
   merges, records it under *Skipped hand checks* in `00-NOW.md`, and all skipped checks are done in

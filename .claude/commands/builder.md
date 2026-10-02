@@ -13,10 +13,10 @@ Each time you run:
    - One is yours and its subagent is still running → report its status in one line and stop.
    - One is yours but its work stopped (a new session, a used-up account) → continue it from its
      pushed branch and draft PR; do not restart it.
-   - None → **hand-check limit:** if 2 or more open issues are labeled `needs-hand-check` and
+   - None → **hand-check limit:** if any open issue is labeled `needs-hand-check` and
      **not** `hand-check-optional`
      (`gh issue list --label needs-hand-check --state open --search "-label:hand-check-optional"`),
-     say "waiting on the owner's hand check for #a, #b" in one line and stop. Otherwise take the **oldest** open issue labeled `ready`
+     say "waiting on the owner's hand check for #n" in one line and stop. Otherwise take the **oldest** open issue labeled `ready`
      (`gh issue list --label ready --state open --search "sort:created-asc"`). None → say
      "queue empty" in one line and stop.
 2. Claim it: `gh issue edit <n> --remove-label ready --add-label in-progress`, and comment
