@@ -523,8 +523,7 @@ struct AppChatControlsTests {
     /// Pinning writes a real UserDefaults key so the preference survives a relaunch — one
     /// process, one shared domain, so a value left over from an earlier test (or an earlier
     /// run of the app itself on this machine) would otherwise leak into the next model
-    /// constructed. Started at a known value and put back exactly as found, the same way
-    /// DoraXTurnLogTests isolates its own real default.
+    /// constructed. Started at a known value and put back exactly as found.
     private func resetPinDefault() -> Bool {
         let previous = AppChatPromptModel.pinStore.bool(forKey: AppChatPromptModel.pinnedDefaultsKey)
         AppChatPromptModel.pinStore.set(false, forKey: AppChatPromptModel.pinnedDefaultsKey)
