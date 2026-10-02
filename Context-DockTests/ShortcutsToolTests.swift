@@ -9,6 +9,7 @@ private final class FakeShortcuts: @unchecked Sendable {
     private(set) var calls: [[String]] = []
     private(set) var inputExistedDuringRun: Bool?
     private(set) var inputText: String?
+    private(set) var inputPath: String?
     var names = "Morning\n  Resize Images  \n\nSend Report\n"
     var runOutcome = ShortcutsService.ProcessOutcome(status: 0, stdout: "")
 
@@ -22,6 +23,7 @@ private final class FakeShortcuts: @unchecked Sendable {
             }
             if let flag = arguments.firstIndex(of: "-i"), flag + 1 < arguments.count {
                 let path = arguments[flag + 1]
+                inputPath = path
                 inputExistedDuringRun = FileManager.default.fileExists(atPath: path)
                 inputText = try? String(contentsOfFile: path, encoding: .utf8)
             }
@@ -32,9 +34,17 @@ private final class FakeShortcuts: @unchecked Sendable {
     var runCalls: [[String]] { calls.filter { $0.first == "run" } }
 }
 
-private func leftoverInputFiles() -> [String] {
-    ((try? FileManager.default.contentsOfDirectory(
-        atPath: FileManager.default.temporaryDirectory.path)) ?? [])
+/// A directory only this test can see, so a parallel Shortcuts test that is mid-run (its input
+/// file exists) can never show up in the scan (#169).
+private func ownTempDirectory() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("shortcuts-tests-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+private func leftoverInputFiles(in directory: URL) -> [String] {
+    ((try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [])
         .filter { $0.hasPrefix("dorax-shortcut-") }
 }
 
@@ -65,25 +75,31 @@ struct ShortcutsServiceTests {
         #expect(ShortcutsService.allNames(runner: bad) == .failure(.listFailed("nope")))
     }
 
-    @Test func inputFileIsCreatedPassedAndDeleted() {
+    @Test func inputFileIsCreatedPassedAndDeleted() throws {
+        let directory = try ownTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let fake = FakeShortcuts()
         fake.runOutcome = .init(status: 0, stdout: "done\n")
-        let outcome = ShortcutsService.run(name: "Morning", input: "hello there", runner: fake.runner)
+        let outcome = ShortcutsService.run(name: "Morning", input: "hello there",
+            tempDirectory: directory, runner: fake.runner)
         #expect(outcome.success)
         #expect(fake.inputExistedDuringRun == true)
         #expect(fake.inputText == "hello there")
         #expect(fake.runCalls[0].prefix(2) == ["run", "Morning"])
         #expect(fake.runCalls[0].contains("-i"))
-        #expect(leftoverInputFiles().isEmpty)
+        #expect(leftoverInputFiles(in: directory).isEmpty)
     }
 
-    @Test func inputFileIsDeletedWhenTheRunFails() {
+    @Test func inputFileIsDeletedWhenTheRunFails() throws {
+        let directory = try ownTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let fake = FakeShortcuts()
         fake.runOutcome = .init(status: 1, stdout: "", stderr: "boom")
-        let outcome = ShortcutsService.run(name: "Morning", input: "x", runner: fake.runner)
+        let outcome = ShortcutsService.run(name: "Morning", input: "x",
+            tempDirectory: directory, runner: fake.runner)
         #expect(!outcome.success)
         #expect(fake.inputExistedDuringRun == true)
-        #expect(leftoverInputFiles().isEmpty)
+        #expect(leftoverInputFiles(in: directory).isEmpty)
     }
 
     @Test func noInputMeansNoFlagAndNoFile() {
@@ -157,7 +173,7 @@ struct ShortcutsToolTests {
         #expect(fake.runCalls.isEmpty)
     }
 
-    @Test func approvedRunShowsNameAndInputAndReturnsOutput() async {
+    @Test func approvedRunShowsNameAndInputAndReturnsOutput() async throws {
         let fake = FakeShortcuts()
         fake.runOutcome = .init(status: 0, stdout: "42\n")
         var asked: [AIActionPlan] = []
@@ -175,7 +191,10 @@ struct ShortcutsToolTests {
         #expect(asked[0].capability == ShortcutsTool.capabilityID)
         #expect(asked[0].input["shortcut"] == "Morning")
         #expect(asked[0].input["input"] == "hi")
-        #expect(leftoverInputFiles().isEmpty)
+        // The registry offers no temp-directory seam, so check the one file this run was
+        // handed rather than scanning the shared temp directory.
+        let path = try #require(fake.inputPath)
+        #expect(!FileManager.default.fileExists(atPath: path))
     }
 
     @Test func caseInsensitiveNameResolvesToTheListedName() async {
