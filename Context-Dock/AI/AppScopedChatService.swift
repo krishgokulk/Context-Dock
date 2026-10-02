@@ -1134,6 +1134,29 @@ enum AppScopedChatService {
         /// without passes nil and loses nothing.
         onStatus: ((String) -> Void)? = nil
     ) async throws -> Answer {
+        // One record per turn in the turn log, when it is on: the prompt's sections, every
+        // provider pass, and the checks that fired, whichever route the turn takes below.
+        try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
+            try await sendUntraced(
+                scope: scope, appName: appName, query: query, history: history,
+                attachments: attachments, extraAppNames: extraAppNames,
+                finderSelection: finderSelection, skillOverride: skillOverride,
+                onStream: onStream, onStatus: onStatus)
+        }
+    }
+
+    private static func sendUntraced(
+        scope: GeneralChatScope,
+        appName: String,
+        query: String,
+        history: [ChatMessage],
+        attachments: [URL],
+        extraAppNames: [String],
+        finderSelection: [URL],
+        skillOverride: String?,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)?,
+        onStatus: ((String) -> Void)?
+    ) async throws -> Answer {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
@@ -1788,6 +1811,8 @@ enum AppScopedChatService {
             }
         }()
         let systemPrompt = prompt.assemble(for: provider, preserving: preservedSources)
+        TurnRecorder.current?.notePromptSections(
+            prompt.characterCounts(for: provider, preserving: preservedSources))
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, and Claude Code is deliberately

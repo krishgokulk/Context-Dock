@@ -76,6 +76,9 @@ extension AIProviderService {
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
+        // This turn's record, if the turn log is on. Read once: it is a task-local.
+        let recorder = TurnRecorder.current
+        recorder?.notePass()
 
         var executedCommands: [ExecutedCommand] = []
         /// Set when a streaming attempt fails on an endpoint that turned out not to speak
@@ -90,7 +93,13 @@ extension AIProviderService {
         ]
         // Budgeted by size, not by a fixed count of turns, and told when something was
         // left out — see ChatHistoryBudget.
-        for msg in ChatHistoryBudget.fit(history, provider: .openAI) {
+        let fittedHistory = ChatHistoryBudget.fit(history, provider: .openAI)
+        recorder?.notePromptSections([
+            "system": contextPrompt.count,
+            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
+            "message": message.count,
+        ])
+        for msg in fittedHistory {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
         // Vision: when the user attached/captured images, send the first user turn as a
@@ -111,6 +120,9 @@ extension AIProviderService {
 
         let allTools = await AgentToolRegistry.shared.schemas(format: .openAI) + customTools
         onStatus?("Found \(allTools.count) available tools; choosing the best route…")
+        recorder?.noteModel(model)
+        recorder?.noteToolsSent(TurnRecorder.toolNames(in: allTools))
+        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(allTools))
         // Whether the endpoint even engages with tools is otherwise unknowable from the
         // outside: a proxy that drops the `tools` field answers in one round with prose, and
         // looks exactly like a model that chose not to call anything. One line per turn says
@@ -147,6 +159,7 @@ extension AIProviderService {
             // would otherwise answer a buffered request with an event stream the transport
             // cannot decode.
             if !mayStream { body["stream"] = false }
+            let roundStarted = ContinuousClock.now
             var streamed: OpenAIToolResponse?
             if mayStream, let onStream {
                 do {
@@ -162,6 +175,7 @@ extension AIProviderService {
                     // improved by asking again without streaming.
                     if case .authenticationFailed = error { throw error }
                     streamingUnavailable = true
+                    recorder?.noteFallback("stream_to_buffered")
                 }
             }
             let decoded: OpenAIToolResponse
@@ -184,6 +198,17 @@ extension AIProviderService {
                     inputTokens: usage.prompt_tokens ?? 0,
                     outputTokens: usage.completion_tokens ?? 0)
             }
+            // prompt_tokens already includes the cached part, which is what the record means
+            // by input. A streamed round reports no usage and is recorded without counts.
+            recorder?.noteRound(
+                TurnTrace.Round(
+                    inputTokens: decoded.usage?.prompt_tokens,
+                    cacheReadTokens: decoded.usage?.prompt_tokens_details?.cached_tokens,
+                    outputTokens: decoded.usage?.completion_tokens,
+                    toolCalls: decoded.choices.first?.message.tool_calls?.map(\.function.name) ?? [],
+                    finishReasons: decoded.choices.first?.finish_reason.map { [$0] },
+                    streamed: streamed != nil,
+                    duration: TurnRecorder.seconds(since: roundStarted)))
             guard let choice = decoded.choices.first else { throw AIServiceError.emptyResponse("No response") }
 
             toolCallsSeen += choice.message.tool_calls?.count ?? 0
@@ -295,12 +320,21 @@ extension AIProviderService {
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
+        // This turn's record, if the turn log is on. Read once: it is a task-local.
+        let recorder = TurnRecorder.current
+        recorder?.notePass()
 
         var executedCommands: [ExecutedCommand] = []
         var streamingUnavailable = false
 
         var messages: [[String: Any]] = []
-        for msg in ChatHistoryBudget.fit(history, provider: .anthropic) {
+        let fittedHistory = ChatHistoryBudget.fit(history, provider: .anthropic)
+        recorder?.notePromptSections([
+            "system": contextPrompt.count,
+            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
+            "message": message.count,
+        ])
+        for msg in fittedHistory {
             messages.append(["role": msg.role.rawValue, "content": msg.content])
         }
         // Vision: attach captured/uploaded images as image blocks before the text so the
@@ -325,6 +359,9 @@ extension AIProviderService {
 
         let registryTools = await AgentToolRegistry.shared.schemas(format: .anthropic)
         onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
+        recorder?.noteModel(model)
+        recorder?.noteToolsSent(TurnRecorder.toolNames(in: registryTools + customTools))
+        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(registryTools + customTools))
         var roundsUsed = 0
         var toolCallsSeen = 0
         defer {
@@ -363,6 +400,7 @@ extension AIProviderService {
                 body["thinking"] = ["type": "adaptive"]
                 body["output_config"] = ["effort": "high"]
             }
+            let roundStarted = ContinuousClock.now
             var streamed: AnthropicToolResponse?
             if onStream != nil, !streamingUnavailable, let onStream {
                 do {
@@ -371,6 +409,7 @@ extension AIProviderService {
                 } catch let error as AIServiceError {
                     if case .authenticationFailed = error { throw error }
                     streamingUnavailable = true
+                    recorder?.noteFallback("stream_to_buffered")
                 }
             }
             let decoded: AnthropicToolResponse
@@ -393,6 +432,16 @@ extension AIProviderService {
             let textBlocks   = decoded.content.filter { $0.type == "text" }
             let toolUseBlocks = decoded.content.filter { $0.type == "tool_use" }
             toolCallsSeen += toolUseBlocks.count
+            recorder?.noteRound(
+                .anthropicShaped(
+                    uncachedInput: decoded.usage?.input_tokens,
+                    cacheRead: decoded.usage?.cache_read_input_tokens,
+                    cacheWrite: decoded.usage?.cache_creation_input_tokens,
+                    output: decoded.usage?.output_tokens,
+                    toolCalls: toolUseBlocks.compactMap(\.name),
+                    finishReason: decoded.stop_reason,
+                    streamed: streamed != nil,
+                    duration: TurnRecorder.seconds(since: roundStarted)))
 
             // Safety classifiers decline with HTTP 200 + stop_reason "refusal" — content is
             // empty or partial, so reading it as an answer produces a blank or half reply.
@@ -529,6 +578,9 @@ extension AIProviderService {
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
+        // This turn's record, if the turn log is on. Read once: it is a task-local.
+        let recorder = TurnRecorder.current
+        recorder?.notePass()
 
         var executedCommands: [ExecutedCommand] = []
         var streamingUnavailable = false
@@ -537,7 +589,13 @@ extension AIProviderService {
             ["role": "user",  "parts": [["text": contextPrompt]]],
             ["role": "model", "parts": [["text": "Understood. I'll help with the context provided."]]]
         ]
-        for msg in ChatHistoryBudget.fit(history, provider: .googleGemini) {
+        let fittedHistory = ChatHistoryBudget.fit(history, provider: .googleGemini)
+        recorder?.notePromptSections([
+            "system": contextPrompt.count,
+            "history": fittedHistory.reduce(0) { $0 + $1.content.count },
+            "message": message.count,
+        ])
+        for msg in fittedHistory {
             let role = msg.role == .assistant ? "model" : "user"
             contents.append(["role": role, "parts": [["text": msg.content]]])
         }
@@ -551,6 +609,9 @@ extension AIProviderService {
 
         let registryTools = await AgentToolRegistry.shared.schemas(format: .gemini)
         onStatus?("Found \(registryTools.count + customTools.count) available tools; choosing the best route…")
+        recorder?.noteModel(AppSettings.shared.selectedGeminiModel)
+        recorder?.noteToolsSent(TurnRecorder.toolNames(in: registryTools + customTools))
+        recorder?.notePromptSections(TurnRecorder.toolSchemaSection(registryTools + customTools))
 
         for _ in 0..<maxIterations {
             // Stop is a decision the user already made. Without this check the loop kept
@@ -569,6 +630,7 @@ extension AIProviderService {
                 ],
             ]
             let geminiModel = AppSettings.shared.selectedGeminiModel
+            let roundStarted = ContinuousClock.now
             var streamed: GeminiToolResponse?
             if onStream != nil, !streamingUnavailable, let onStream {
                 do {
@@ -577,6 +639,7 @@ extension AIProviderService {
                 } catch let error as AIServiceError {
                     if case .authenticationFailed = error { throw error }
                     streamingUnavailable = true
+                    recorder?.noteFallback("stream_to_buffered")
                 }
             }
             let decoded: GeminiToolResponse
@@ -594,6 +657,17 @@ extension AIProviderService {
                     cachedInputTokens: usage.cachedContentTokenCount ?? 0,
                     outputTokens: usage.candidatesTokenCount ?? 0)
             }
+            // promptTokenCount already includes the cached part.
+            recorder?.noteRound(
+                TurnTrace.Round(
+                    inputTokens: decoded.usageMetadata?.promptTokenCount,
+                    cacheReadTokens: decoded.usageMetadata?.cachedContentTokenCount,
+                    outputTokens: decoded.usageMetadata?.candidatesTokenCount,
+                    toolCalls: decoded.candidates.first?.content.parts
+                        .compactMap { $0.functionCall?.name } ?? [],
+                    finishReasons: decoded.candidates.first?.finishReason.map { [$0] },
+                    streamed: streamed != nil,
+                    duration: TurnRecorder.seconds(since: roundStarted)))
             guard let candidate = decoded.candidates.first else { throw AIServiceError.emptyResponse("No response") }
 
             let textParts     = candidate.content.parts.filter { $0.text != nil }

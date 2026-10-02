@@ -27,6 +27,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Added
 
+- Turn log (opt-in, `doraxTurnLogEnabled`): each chat turn now writes one `turn.trace` record with its provider, model, tools sent and called, tokens per round including prompt-cache reads and writes, prompt section sizes, which answer checks fired, fallbacks, and time to first token and total; never the question or answer. `python3 scripts/turn-cache-ratio.py` prints the cache-read ratio over the last 50 turns.
 - Security gate: once a chat turn has read your private data (mail, messages, notes, files) and a web page or other outside text, anything that could send data out (a link to a site you did not type, a message, a Shortcut, a command that reaches the network) asks first, saying why; unattended runs refuse instead.
 - General Chat can read your Global Commands' current state ("is Bluetooth on?") without an approval prompt; commands are grouped into System packs (Bluetooth, Wi-Fi, Sound, Appearance, …).
 - General Chat can write a .md, .txt, .csv or .docx for you into ~/Documents/DoraX Outputs (never overwrites; you approve each file) and shows it as a card; also `dorax_write_output_file` for the DoraX MCP server.
