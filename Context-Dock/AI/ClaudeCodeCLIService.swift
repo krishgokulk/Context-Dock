@@ -275,9 +275,24 @@ enum ClaudeCodeCLIService {
         // cannot see the screen it is being asked about, and the app printed a `claude mcp add`
         // line and left the wiring to the user — so a turn under this provider had DoraX's
         // context in its prompt and none of DoraX's tools in its hands.
-        let mcpConfigPath = UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey)
-            ? DoraXMCPServer.writeCLIConfig()?.path
-            : nil
+        //
+        // The CLI's turn is a turn of DoraX's own too: it gets a record in the registry and its own
+        // MCP config naming it, so what the CLI reads through DoraX's tools (screen, selection,
+        // tabs) is held against that turn alone, and ends with it. See OutboundGate.
+        var mcpConfigPath: String?
+        var cliTurn: AgentTurnToken?
+        if UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey) {
+            let turn = AgentToolRegistry.shared.beginTurn(
+                promptBlocks: [prompt, systemPrompt ?? ""])
+            cliTurn = turn
+            mcpConfigPath = DoraXMCPServer.writeCLIConfig(turn: turn)?.path
+        }
+        defer {
+            if let cliTurn {
+                AgentToolRegistry.shared.endTurn(cliTurn)
+                if let mcpConfigPath { try? FileManager.default.removeItem(atPath: mcpConfigPath) }
+            }
+        }
         // The turn's activity record, read here in the turn's task: the line handler runs
         // on the pipe's thread, where the task-local is not visible. A turn that records
         // activity streams, because the one-shot JSON says nothing about the tools it ran.

@@ -141,17 +141,20 @@ enum ScopedTurnRunner {
         {
             onStatus?("Looking again — that wasn't an answer…")
             log.notice("evidence insufficient; retrying with \(executed.count, privacy: .public) receipts")
-            if let (retried, extra) = try? await AIProviderService.shared.sendWithTools(
-                EvidenceSufficiency.retryPrompt(
-                    query: query, answer: text, executed: executed),
-                context: scope.userContext, provider: provider, apiKey: apiKey,
-                conversationHistory: history, commandExecutor: executor,
-                maxIterations: complexity.maxToolIterations,
-                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-                chatScope: scope.chatScope, grantedApps: grantedApps,
-                allowedToolNames: scope.taskPlan.allowedToolNames,
-                onStream: onStream)
-            {
+            // The retry prompt carries the model's own words and the tools it ran; only what the
+            // user typed may name a host the outbound gate lets through (see TurnUserText).
+            if let (retried, extra) = try? await TurnUserText.bind(history: history, query: query, {
+                try await AIProviderService.shared.sendWithTools(
+                    EvidenceSufficiency.retryPrompt(
+                        query: query, answer: text, executed: executed),
+                    context: scope.userContext, provider: provider, apiKey: apiKey,
+                    conversationHistory: history, commandExecutor: executor,
+                    maxIterations: complexity.maxToolIterations,
+                    additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
+                    chatScope: scope.chatScope, grantedApps: grantedApps,
+                    allowedToolNames: scope.taskPlan.allowedToolNames,
+                    onStream: onStream)
+            }) {
                 // Kept only if the second look actually did something. A retry that also
                 // found nothing must not overwrite the first answer with a worse-worded
                 // version of the same admission.
@@ -171,15 +174,16 @@ enum ScopedTurnRunner {
             AgentAnswerVerifier.claimsUnperformedWork(answer: text, executed: executed)
         {
             onStatus?("Checking that actually happened…")
-            if let (corrected, extra) = try? await AIProviderService.shared.sendWithTools(
-                AgentAnswerVerifier.correctionPrompt(
-                    originalQuery: query, answer: text, executed: executed),
-                context: scope.userContext, provider: provider, apiKey: apiKey,
-                conversationHistory: history, commandExecutor: executor,
-                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-                chatScope: scope.chatScope,
-                allowedToolNames: scope.taskPlan.allowedToolNames)
-            {
+            if let (corrected, extra) = try? await TurnUserText.bind(history: history, query: query, {
+                try await AIProviderService.shared.sendWithTools(
+                    AgentAnswerVerifier.correctionPrompt(
+                        originalQuery: query, answer: text, executed: executed),
+                    context: scope.userContext, provider: provider, apiKey: apiKey,
+                    conversationHistory: history, commandExecutor: executor,
+                    additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
+                    chatScope: scope.chatScope,
+                    allowedToolNames: scope.taskPlan.allowedToolNames)
+            }) {
                 text = corrected
                 executed += extra
             }
@@ -189,14 +193,15 @@ enum ScopedTurnRunner {
             AgentAnswerVerifier.claimsUnverifiedWork(answer: text, executed: executed)
         {
             onStatus?("Verifying the result…")
-            if let (verified, extra) = try? await AIProviderService.shared.sendWithTools(
-                AgentAnswerVerifier.verificationPrompt(originalQuery: query, answer: text),
-                context: scope.userContext, provider: provider, apiKey: apiKey,
-                conversationHistory: history, commandExecutor: executor,
-                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
-                chatScope: scope.chatScope,
-                allowedToolNames: scope.taskPlan.allowedToolNames)
-            {
+            if let (verified, extra) = try? await TurnUserText.bind(history: history, query: query, {
+                try await AIProviderService.shared.sendWithTools(
+                    AgentAnswerVerifier.verificationPrompt(originalQuery: query, answer: text),
+                    context: scope.userContext, provider: provider, apiKey: apiKey,
+                    conversationHistory: history, commandExecutor: executor,
+                    additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt,
+                    chatScope: scope.chatScope,
+                    allowedToolNames: scope.taskPlan.allowedToolNames)
+            }) {
                 text = verified
                 executed += extra
             }

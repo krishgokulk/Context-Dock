@@ -26,6 +26,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Added
 
+- Security gate: once a chat turn has read your private data (mail, messages, notes, files) and a web page or other outside text, anything that could send data out (a link to a site you did not type, a message, a Shortcut, a command that reaches the network) asks first, saying why; unattended runs refuse instead.
 - General Chat can read your Global Commands' current state ("is Bluetooth on?") without an approval prompt; commands are grouped into System packs (Bluetooth, Wi-Fi, Sound, Appearance, …).
 - General Chat can write a .md, .txt, .csv or .docx for you into ~/Documents/DoraX Outputs (never overwrites; you approve each file) and shows it as a card; also `dorax_write_output_file` for the DoraX MCP server.
 - General Chat can list your Shortcuts and run one by exact name (you approve each run and see the name and input; never run unattended); also `dorax_list_shortcuts` / `dorax_run_shortcut` for the DoraX MCP server.
