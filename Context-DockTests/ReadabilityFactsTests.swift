@@ -49,7 +49,7 @@ struct ReadabilityFactsTests {
                 ## What I could and could not read (facts, read just now)
                 - Frontmost app: Notes (com.apple.Notes)
                 - Window title: "Shopping list" (readable)
-                - Accessibility text: 240 characters read
+                - Text that reached DoraX: 240 characters (selection or web page)
                 - Missing permission: none
                 Verdict: text from Notes was read; answer from it and say which part you used.
                 """)
@@ -64,9 +64,9 @@ struct ReadabilityFactsTests {
                 ## What I could and could not read (facts, read just now)
                 - Frontmost app: Claude (com.anthropic.claudefordesktop)
                 - Window title: "Claude" (readable)
-                - Accessibility text: none exposed (0 characters)
+                - Text that reached DoraX: none (DoraX reads only your selection or a web page; nothing like that is available from Claude)
                 - Missing permission: none
-                Verdict: the content of Claude is NOT readable; only the window title "Claude" is readable, because the app exposes no text to macOS accessibility. Next step: select the text and ask again, or paste it.
+                Verdict: the content of Claude is NOT available to me; only the window title "Claude" is readable, because DoraX only reads your selection or a web page and there is none right now. Next step: select the text and ask again, or paste it.
                 """)
     }
 
@@ -79,7 +79,22 @@ struct ReadabilityFactsTests {
                 "- Missing permission: Accessibility (System Settings ▸ Privacy & Security ▸ Accessibility)"
             ))
         #expect(block.contains("Next step: grant Accessibility in System Settings"))
-        #expect(!block.contains("exposes no text to macOS accessibility"))
+        #expect(!block.contains("there is none right now"))
+    }
+
+    /// TextEdit has text on screen but nothing is selected. The host only knows no text
+    /// reached DoraX; it must not claim the app cannot expose text, nor blame accessibility.
+    @Test func anAppWithTextButNoSelectionIsNotSaidToExposeNothing() {
+        let facts = ReadabilityFacts(
+            appName: "TextEdit", bundleId: "com.apple.TextEdit", windowTitle: "Untitled",
+            axTextCharacterCount: 0)
+        let all = facts.block() + "\n" + facts.guidance()
+        #expect(!all.contains("exposes no text"))
+        #expect(!all.contains("none exposed"))
+        #expect(!all.lowercased().contains("accessibility"))
+        #expect(all.contains("select the text"))
+        #expect(all.contains("paste"))
+        #expect(all.contains("DoraX only reads your selection or a web page"))
     }
 
     // MARK: Screenshot and OCR
@@ -178,8 +193,9 @@ struct ReadabilityFactsTests {
             snapshot, query: Self.ownersQuestion, permissions: .allGranted)
         #expect(block.contains("- Window: Claude"))
         #expect(block.contains("- Frontmost app: Claude (\(Self.claudeBundle))"))
-        #expect(block.contains("Accessibility text: none exposed (0 characters)"))
-        #expect(block.contains("the app exposes no text to macOS accessibility"))
+        #expect(block.contains("Text that reached DoraX: none"))
+        #expect(block.contains("DoraX only reads your selection or a web page"))
+        #expect(!block.contains("none exposed"))
     }
 
     // MARK: The instruction
@@ -220,6 +236,6 @@ struct ReadabilityFactsTests {
         let verdict = appWithNothing.guidance()
         #expect(verdict.contains("Claude"))
         #expect(!verdict.lowercased().contains("re-read"))
-        #expect(!verdict.contains("page"))
+        #expect(!verdict.contains("this page"))
     }
 }

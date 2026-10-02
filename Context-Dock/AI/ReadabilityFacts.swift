@@ -143,10 +143,13 @@ struct ReadabilityFacts: Equatable {
         } else {
             lines.append("- Window title: not exposed")
         }
+        // Only what is known: how much text reached DoraX. Whether the app could expose more
+        // is not something the host can tell, so it is never claimed.
         lines.append(
             axTextCharacterCount > 0
-                ? "- Accessibility text: \(axTextCharacterCount) characters read"
-                : "- Accessibility text: none exposed (0 characters)")
+                ? "- Text that reached DoraX: \(axTextCharacterCount) characters (selection or web page)"
+                : "- Text that reached DoraX: none (DoraX reads only your selection or a web "
+                    + "page; nothing like that is available from \(name))")
         if screenshotTaken {
             if let failure = ocrFailureReason {
                 lines.append("- Screenshot: taken; OCR failed (\(failure))")
@@ -184,13 +187,13 @@ struct ReadabilityFacts: Equatable {
             return "Verdict: the content of \(name) is NOT readable; \(seen), and screenshot OCR "
                 + "failed (\(failure)). Next step: select the text and ask again, or paste it."
         case .ocrFoundNothing:
-            return "Verdict: the content of \(name) is NOT readable; \(seen), the app exposes no "
-                + "accessibility text, and screenshot OCR found no text. Next step: select the "
-                + "text and ask again, or paste it."
+            return "Verdict: the content of \(name) is NOT available to me; \(seen), there is no "
+                + "selection or web page, and screenshot OCR found no text. Next step: select "
+                + "the text and ask again, or paste it."
         case .appExposesNoText:
-            return "Verdict: the content of \(name) is NOT readable; \(seen), because the app "
-                + "exposes no text to macOS accessibility. Next step: select the text and ask "
-                + "again, or paste it."
+            return "Verdict: the content of \(name) is NOT available to me; \(seen), because "
+                + "DoraX only reads your selection or a web page and there is none right now. "
+                + "Next step: select the text and ask again, or paste it."
         }
     }
 
@@ -200,8 +203,8 @@ struct ReadabilityFacts: Equatable {
         "WHEN THE APP EXPOSES NOTHING. If the content the question asks about is not in the "
         + "context above, answer in your own words: name the app that is in front, say what IS "
         + "readable (the window title, a selection), give the reason from the \"What I could and "
-        + "could not read\" block (the app exposes no accessibility text, a permission is "
-        + "missing, or screenshot OCR found nothing or failed), and give one concrete next step "
+        + "could not read\" block (nothing is selected and it is not a web page, a "
+        + "permission is missing, or screenshot OCR found nothing or failed), and give one concrete next step "
         + "(select the text and ask again, paste it, or grant the named permission in System "
         + "Settings). Never offer to re-read, reload or try again unless something has "
         + "changed: a second read returns the same nothing. Say \"app\", not \"page\", unless "
