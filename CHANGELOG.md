@@ -6,6 +6,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Changed
 
+- When the front app exposes nothing readable, the chat now names the app, says what it can see (the window title) and why the rest is unreadable, and suggests selecting or pasting the text instead of offering a pointless re-read; an attached screenshot's OCR says "found no text" or "could not run", not "recognized zero text".
 - A System setting (volume, dark mode, Bluetooth) that the Mac reports differently from what was asked now fails the step and says so, instead of reporting success.
 - The clipboard notice in the corner no longer blocks the app you are working in: clicks outside the notice itself now reach the app underneath.
 - File cards: VoiceOver and Voice Control now name each Quick Look, Open and Reveal button after its file, so a card of many files no longer has a dozen identical "Open" buttons.
