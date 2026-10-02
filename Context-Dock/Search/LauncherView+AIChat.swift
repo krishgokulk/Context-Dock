@@ -5595,7 +5595,8 @@ extension LauncherView {
                         scopeName: scopedAppName.isEmpty
                             ? (frontmostName ?? frontmost.name) : scopedAppName,
                         userQuery: query,
-                        requestID: l2RequestID)
+                        requestID: l2RequestID,
+                        context: scopedConversationContext)
                     {
                         finalResponse = applied.answer
                         toolsRan += applied.toolsRan
@@ -5652,7 +5653,8 @@ extension LauncherView {
                     // to avoid "Exceeded model context window size" from Foundation Models.
                     let onDeviceHistory = Array(chatHistory.suffix(4))
                     let placeholder = AIChatMessage(
-                        role: .assistant, content: "", mcpToolsRan: memoryToolChips)
+                        role: .assistant, content: "", mcpToolsRan: memoryToolChips,
+                        isStreamingPlaceholder: true)
                     await MainActor.run { l2.chatMessages.append(placeholder) }
                     let msgId = placeholder.id
                     // Pass the raw query — buildContextPrompt inside streamOnDeviceResponse handles
@@ -5789,7 +5791,12 @@ extension LauncherView {
                         )
                     }
                     if Task.isCancelled {
-                        await MainActor.run { finishL2AIRequest(l2RequestID) }
+                        await MainActor.run {
+                            // Nothing was said, so the empty bubble the turn reserved goes
+                            // with it rather than lingering as a blank row.
+                            l2.chatMessages.removeAll { $0.id == msgId && $0.content.isEmpty }
+                            finishL2AIRequest(l2RequestID)
+                        }
                         return
                     }
                     // On-device MCP: if the streamed reply was a tool-call directive, run the
@@ -5817,7 +5824,8 @@ extension LauncherView {
                         scopedBundleId: scopedBundleId,
                         scopeName: onDeviceScopeName,
                         userQuery: query,
-                        requestID: l2RequestID)
+                        requestID: l2RequestID,
+                        context: scopedConversationContext)
                     {
                         // The on-device model routes actions as plain-text directives; without
                         // this the raw {"adapter_call":…} line was printed to the user.
@@ -5873,7 +5881,8 @@ extension LauncherView {
                             scopeName: scopedAppName.isEmpty
                                 ? (frontmostName ?? frontmost.name) : scopedAppName,
                             userQuery: query,
-                            requestID: l2RequestID)
+                            requestID: l2RequestID,
+                        context: scopedConversationContext)
                         {
                             finalReply = applied.answer
                             toolsRan += applied.toolsRan
@@ -5998,7 +6007,8 @@ extension LauncherView {
         scopedBundleId: String,
         scopeName: String,
         userQuery: String,
-        requestID: UUID
+        requestID: UUID,
+        context: UserContext = .none
     ) async -> (answer: String, toolsRan: [String])? {
         guard let invocation = AITypedInvocationResolver.invocation(from: response) else {
             return nil
@@ -6067,6 +6077,29 @@ extension LauncherView {
             let result = await ComputerUseRunner.run(
                 target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
             return (result.output, [result.displayCommand])
+
+        case .capability:
+            // `{"finder.copyFiles": {…}}` or `{"capability_call": …}` arriving as final text.
+            // This case was missing, so the call fell to `default`, nothing ran, and the
+            // bubble was replaced by "couldn't carry it out on this surface" — on the Dock
+            // and the Corner alike, because the Corner is this pipeline. It now goes through
+            // the executor every other capability uses, with its approval, and a refusal
+            // names its reason.
+            await setL2LoadingStatus(
+                "Running \(invocation.capabilityID)…", requestID: requestID)
+            let outcome = await ChatCapabilityCallRecovery.run(
+                capabilityID: invocation.capabilityID,
+                arguments: invocation.arguments,
+                query: userQuery,
+                context: context,
+                scope: bundle.isEmpty
+                    ? .general : .contextDock(bundleID: bundle, appName: scopeName),
+                chatScope: GeneralChatScope(dockBundleId: bundle))
+            ChatConsoleLog.shared.append(
+                .tool, title: invocation.capabilityID,
+                output: outcome.output.isEmpty ? "(no output)" : outcome.output,
+                success: outcome.succeeded, scope: GeneralChatScope(dockBundleId: bundle))
+            return (outcome.text, outcome.succeeded ? [invocation.capabilityID] : [])
 
         default:
             return nil

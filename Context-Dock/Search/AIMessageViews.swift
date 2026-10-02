@@ -580,8 +580,15 @@ struct AIChatMessage: Identifiable, Equatable {
     /// This sits in the initialiser on purpose. There are fifty-odd places that append an
     /// assistant message across the surfaces, and an invariant enforced at fifty call sites
     /// is one that the fifty-first will break. Every bubble is built here.
-    private static func presentable(_ content: String, role: ChatRole) -> String {
+    private static func presentable(
+        _ content: String, role: ChatRole, isStreamingPlaceholder: Bool
+    ) -> String {
         guard role == .assistant else { return content }
+        // The bubble a turn is about to write into. It is empty because nothing has been
+        // said yet, not because the app had nothing to say — turning it into the fallback
+        // showed "couldn't carry it out on this surface" under a spinner for a turn that was
+        // still running, and the first streamed token was then appended to that sentence.
+        if isStreamingPlaceholder { return content }
         // An empty assistant bubble is the same failure wearing a quieter face: it happens
         // when scaffolding was stripped and nothing was left, so the user sees the app
         // apparently having nothing to say about a request it understood. Say what
@@ -609,11 +616,13 @@ struct AIChatMessage: Identifiable, Equatable {
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
         // Defaults to now, which is right for a message being said. A message being
         // *loaded* has a time of its own and must pass it, or history claims to be current.
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        isStreamingPlaceholder: Bool = false
     ) {
         self.id = UUID()
         self.role = role
-        self.content = Self.presentable(content, role: role)
+        self.content = Self.presentable(
+            content, role: role, isStreamingPlaceholder: isStreamingPlaceholder)
         self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
@@ -652,13 +661,15 @@ struct AIChatMessage: Identifiable, Equatable {
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
         // Defaults to now, which is right for a message being said. A message being
         // *loaded* has a time of its own and must pass it, or history claims to be current.
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        isStreamingPlaceholder: Bool = false
     ) {
         self.id = id
         self.role = role
         // Streaming too: a partial object is not valid JSON and passes through untouched,
         // so this only bites once the message has actually settled into a complete call.
-        self.content = Self.presentable(content, role: role)
+        self.content = Self.presentable(
+            content, role: role, isStreamingPlaceholder: isStreamingPlaceholder)
         self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
