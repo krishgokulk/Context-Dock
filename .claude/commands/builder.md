@@ -13,7 +13,9 @@ Each time you run:
    - One is yours and its subagent is still running → report its status in one line and stop.
    - One is yours but its work stopped (a new session, a used-up account) → continue it from its
      pushed branch and draft PR; do not restart it.
-   - None → take the **oldest** open issue labeled `ready`
+   - None → **hand-check limit:** if 2 or more open issues are labeled `needs-hand-check` with
+     `Hand check: required`, say "waiting on the owner's hand check for #a, #b" in one line and
+     stop. Otherwise take the **oldest** open issue labeled `ready`
      (`gh issue list --label ready --state open --search "sort:created-asc"`). None → say
      "queue empty" in one line and stop.
 2. Claim it: `gh issue edit <n> --remove-label ready --add-label in-progress`, and comment
@@ -37,7 +39,13 @@ Each time you run:
    | App Intents, Shortcuts, Siri, Spotlight | `app-intents` |
    | Core Data | `core-data-expert` |
 
-5. Mark the PR ready for review, put the owner's hand-check list in its description, then
+5. Mark the PR ready for review. Put one line at the top of its description:
+   - `Hand check: required` — anything the owner can see or feel: UI, wording, routing, approvals,
+     permissions, security, privacy, data written to disk, or anything the tests cannot drive.
+   - `Hand check: optional — <why>` — only when the change is invisible to the owner and fully
+     covered by tests: test-only fixes, docs, pure logic with new tests, refactors with no
+     behaviour change. Say what proves it (tests, local runs, CI).
+   Then the owner's hand-check list, then
    `gh issue edit <n> --remove-label in-progress --add-label needs-hand-check` and comment the PR
    link.
 
