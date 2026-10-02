@@ -13,7 +13,10 @@ Each time you run:
    - One is yours and its subagent is still running → report its status in one line and stop.
    - One is yours but its work stopped (a new session, a used-up account) → continue it from its
      pushed branch and draft PR; do not restart it.
-   - None → take the **oldest** open issue labeled `ready`
+   - None → **hand-check limit:** if any open issue is labeled `needs-hand-check` and
+     **not** `hand-check-optional`
+     (`gh issue list --label needs-hand-check --state open --search "-label:hand-check-optional"`),
+     say "waiting on the owner's hand check for #n" in one line and stop. Otherwise take the **oldest** open issue labeled `ready`
      (`gh issue list --label ready --state open --search "sort:created-asc"`). None → say
      "queue empty" in one line and stop.
 2. Claim it: `gh issue edit <n> --remove-label ready --add-label in-progress`, and comment
@@ -37,9 +40,17 @@ Each time you run:
    | App Intents, Shortcuts, Siri, Spotlight | `app-intents` |
    | Core Data | `core-data-expert` |
 
-5. Mark the PR ready for review, put the owner's hand-check list in its description, then
-   `gh issue edit <n> --remove-label in-progress --add-label needs-hand-check` and comment the PR
-   link.
+5. Mark the PR ready for review. Put one line at the top of its description:
+   - `Hand check: required` — anything the owner can see or feel: UI, wording, routing, approvals,
+     permissions, security, privacy, data written to disk, or anything the tests cannot drive.
+   - `Hand check: optional — <why>` — only when the change is invisible to the owner and fully
+     covered by tests: test-only fixes, docs, pure logic with new tests, refactors with no
+     behaviour change. Say what proves it (tests, local runs, CI).
+   Then the owner's hand-check list, then
+   `gh issue edit <n> --remove-label in-progress --add-label needs-hand-check` (plus
+   `--add-label hand-check-optional` when the PR says optional — create it once with
+   `gh label create hand-check-optional --force` if missing; the issue label is what the
+   hand-check limit counts) and comment the PR link.
 
 Never: merge a PR or enable auto-merge; take an issue not labeled `ready`; work two issues at once;
 edit `docs/master/00-NOW.md` or `MEMORY.md`; run `scripts/ship.sh`. If an issue is unclear or

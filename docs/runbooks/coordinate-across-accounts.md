@@ -89,3 +89,18 @@ Rules that keep it safe when accounts change:
 - The builder never edits `00-NOW.md` or `MEMORY.md`; the planner records merges there.
 - When the Mac sleeps, the app closes or the account runs out, the loop stops. Nothing is lost:
   the issue label and the pushed branch say exactly where it was.
+
+## Pausing and skipping (how the loop behaves)
+
+- **Usage limit reached:** the builder's session stops mid-step; nothing is lost (pushed branch,
+  issue label). When the account has usage again the loop's next run continues the `in-progress`
+  issue. If the session was closed, start `/loop 20m /builder` again.
+- **Hand checks:** the builder keeps building past PRs whose check is optional; after **one PR marked
+  `Hand check: required`** it pauses until the owner checks it or says "merge N without hand check". Optional checks
+  never pause it.
+- **Skipping a hand check:** the owner may say "merge N without hand check" for any PR. The planner
+  merges, records it under *Skipped hand checks* in `00-NOW.md`, and all skipped checks are done in
+  one pass before `ship it`. Merging still needs the owner's words; nothing merges itself.
+- **Next task:** the planner keeps two issues `ready` ahead of the builder, so a finished task is
+  followed by the next one on the builder's next run without anyone sending it.
+
