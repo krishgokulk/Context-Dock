@@ -18,8 +18,23 @@ extension AIProviderService {
     // MARK: - Tool Definitions
 
     /// Dispatch a custom L2 extension tool call. Returns (success, output).
-    private func dispatchCustomTool(name: String, arguments: [String: Any]) async -> (Bool, String) {
+    ///
+    /// An extension is arbitrary code nobody has judged, so it goes through the same outbound
+    /// gate as every registered tool: once the turn holds private data and untrusted content it
+    /// asks first, or refuses when unattended.
+    private func dispatchCustomTool(
+        name: String, arguments: [String: Any], turn: AgentTurnToken, chatScope: GeneralChatScope?
+    ) async -> (Bool, String) {
+        let registry = AgentToolRegistry.shared
+        if let stopped = await registry.gateOutbound(
+            target: OutboundGate.unknownToolTarget, what: "extension tool: \(name)",
+            turn: turn, chatScope: chatScope)
+        {
+            return (false, stopped.output)
+        }
         let (success, output) = await L2ExtensionManager.shared.execute(toolName: name, arguments: arguments)
+        await registry.taint.record(
+            toolName: name, arguments: arguments, output: output, succeeded: success, turn: turn)
         return (success, output)
     }
 
@@ -49,7 +64,15 @@ extension AIProviderService {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
         // the next message is the user asking again, and deserves a fresh reading.
-        let turn = await AgentToolRegistry.shared.beginTurn()
+        //
+        // The turn also learns what the USER typed (their messages, never the model's) so the
+        // outbound gate knows which hosts they pointed it at, and whether untrusted content is
+        // already in the prompt.
+        let turn = await AgentToolRegistry.shared.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
@@ -209,7 +232,7 @@ extension AIProviderService {
                                 output: output))
                     } else {
                         // Not a registered tool — an L2 extension, resolved by name at run time.
-                        (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args)
+                        (success, output) = await dispatchCustomTool(name: tc.function.name, arguments: args, turn: turn, chatScope: chatScope)
                         executedCommands.append(ExecutedCommand(command: "\(tc.function.name)(\(args))", output: output, success: success))
                     }
                     messages.append([
@@ -260,7 +283,15 @@ extension AIProviderService {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
         // the next message is the user asking again, and deserves a fresh reading.
-        let turn = await AgentToolRegistry.shared.beginTurn()
+        //
+        // The turn also learns what the USER typed (their messages, never the model's) so the
+        // outbound gate knows which hosts they pointed it at, and whether untrusted content is
+        // already in the prompt.
+        let turn = await AgentToolRegistry.shared.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
@@ -436,7 +467,7 @@ extension AIProviderService {
                             output: output))
                 } else {
                     // Not a registered tool — an L2 extension, resolved by name at run time.
-                    (success, output) = await dispatchCustomTool(name: toolName, arguments: args)
+                    (success, output) = await dispatchCustomTool(name: toolName, arguments: args, turn: turn, chatScope: chatScope)
                     executedCommands.append(ExecutedCommand(command: "\(toolName)(\(args))", output: output, success: success))
                 }
 
@@ -486,7 +517,15 @@ extension AIProviderService {
 
         // A repeated call is only pointless *within* one turn. Asking the same question in
         // the next message is the user asking again, and deserves a fresh reading.
-        let turn = await AgentToolRegistry.shared.beginTurn()
+        //
+        // The turn also learns what the USER typed (their messages, never the model's) so the
+        // outbound gate knows which hosts they pointed it at, and whether untrusted content is
+        // already in the prompt.
+        let turn = await AgentToolRegistry.shared.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: message),
+            promptBlocks: [contextPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
         defer { AgentToolRegistry.shared.endTurn(turn) }
@@ -610,7 +649,7 @@ extension AIProviderService {
                             output: output))
                 } else {
                     // Not a registered tool — an L2 extension, resolved by name at run time.
-                    (success, output) = await dispatchCustomTool(name: fc.name, arguments: args)
+                    (success, output) = await dispatchCustomTool(name: fc.name, arguments: args, turn: turn, chatScope: chatScope)
                     executedCommands.append(ExecutedCommand(command: "\(fc.name)(\(args))", output: output, success: success))
                 }
 

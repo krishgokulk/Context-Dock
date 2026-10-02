@@ -300,7 +300,9 @@ final class AgentToolRegistry {
     private var tools: [String: AgentTool] = [:]
     private var didRegisterBuiltIns = false
 
-    private init() {}
+    /// Internal so a test can drive its own registry; the app only ever uses `shared`. A test on
+    /// `shared` hears every other suite that runs a turn while it does.
+    init() {}
 
     // MARK: - Registration
 
@@ -391,18 +393,49 @@ final class AgentToolRegistry {
     private var settledByTurn: [AgentTurnToken: [String]] = [:]
     private let maxLiveTurns = 8
 
+    /// What each live turn has read (private data, untrusted content) and which hosts its user
+    /// typed. One record per turn, so two chats never share a flag. See OutboundGate.
+    let taint = TurnTaintTracker()
+
+    /// Raises the outbound gate's card on the shared approval inbox. A property so a test can
+    /// answer it without a sheet; the default is the real card.
+    var approveOutbound: (_ plan: AIActionPlan, _ chatScope: GeneralChatScope?) async -> Bool = {
+        plan, chatScope in
+        await AICapabilityApprovalCenter.shared.requestApprovalForOutbound(
+            plan: plan, chatScope: chatScope)
+    }
+
     /// Opens a turn. Hand the token to every `AgentToolContext` built for it.
-    func beginTurn() -> AgentTurnToken {
+    ///
+    /// - Parameters:
+    ///   - userText: what the USER typed in this thread, their own messages only. The hosts in
+    ///     it are the ones the outbound gate lets a tainted turn contact without asking.
+    ///   - promptBlocks: text already in the prompt. A fence in it means the turn starts with
+    ///     untrusted content in front of the model.
+    ///   - startsPrivate: the prompt already carries private data (a chat scoped to Mail...).
+    func beginTurn(
+        userText: [String] = [], promptBlocks: [String] = [], startsPrivate: Bool = false
+    ) -> AgentTurnToken {
         let token = AgentTurnToken()
         callsByTurn[token] = [:]
         settledByTurn[token] = []
+        taint.begin(
+            token, userText: userText, promptBlocks: promptBlocks, startsPrivate: startsPrivate)
         turnOrder.append(token)
         while turnOrder.count > maxLiveTurns {
             let evicted = turnOrder.removeFirst()
             callsByTurn.removeValue(forKey: evicted)
             settledByTurn.removeValue(forKey: evicted)
+            taint.end(evicted)
         }
         return token
+    }
+
+    /// The live turn with this id, if it is still open. The MCP server uses it to attach a call
+    /// from DoraX's own CLI turn to that turn's record.
+    func liveTurn(id: String?) -> AgentTurnToken? {
+        guard let id, let uuid = UUID(uuidString: id) else { return nil }
+        return turnOrder.first { $0.id == uuid }
     }
 
     /// Closes a turn. Optional — an abandoned turn is evicted by age — but calling it keeps
@@ -410,6 +443,7 @@ final class AgentToolRegistry {
     func endTurn(_ token: AgentTurnToken) {
         callsByTurn.removeValue(forKey: token)
         settledByTurn.removeValue(forKey: token)
+        taint.end(token)
         turnOrder.removeAll { $0 == token }
     }
 
@@ -550,6 +584,21 @@ final class AgentToolRegistry {
                 displayCommand: "\(name) (repeat suppressed)")
         }
 
+        // The security gate: once this turn holds private data AND untrusted content, a tool that
+        // can carry data out asks first (or refuses, unattended). Before the budget is spent and
+        // before anything runs; a refusal is remembered so a retry is not asked again.
+        if let target = OutboundGate.target(
+            toolName: name, arguments: arguments, lookups: outboundLookups),
+            let stopped = await gateOutbound(
+                target: target, what: Self.outboundDescription(name: name, arguments: arguments),
+                turn: context.turn, chatScope: context.chatScope)
+        {
+            if let turn = context.turn, callsByTurn[turn] != nil {
+                callsByTurn[turn]?[signature] = String(stopped.output.prefix(400))
+            }
+            return stopped
+        }
+
         if let budgetMessage = TaskRunStore.shared.reserveToolCall(name) {
             return AgentToolResult(
                 success: false, output: budgetMessage,
@@ -570,6 +619,10 @@ final class AgentToolRegistry {
 
         let stepID = Self.beginActivityStep(name: name, arguments: arguments)
         let result = await tool.handler(arguments, context)
+        // What this call touched, for the next one's gate.
+        taint.record(
+            toolName: name, arguments: arguments, output: result.output,
+            succeeded: result.success, turn: context.turn)
         if let stepID {
             ActivityRecorder.active?.finish(
                 stepID,
@@ -1463,14 +1516,16 @@ final class AgentToolRegistry {
             let ext = url.pathExtension.lowercased()
             var text = ""
             if imageTypes.contains(ext) {
-                text = ScreenCaptureService.recognizeText(in: data)
+                let outcome = ScreenCaptureService.recognizeTextOutcome(in: data)
+                text = outcome.text
                 if text.isEmpty {
                     // An image with no text is a real answer, not a failure — and saying so
-                    // stops the model inventing content it cannot see.
+                    // stops the model inventing content it cannot see. A recogniser that
+                    // could not run is not that answer: the summary says which one it was.
                     return AgentToolResult(
                         success: true,
-                        output: "\(label) is an image with no readable text in it. If the user "
-                            + "is asking about what it depicts, describe it from the image you "
+                        output: outcome.summary(label: label) + " If the user is asking "
+                            + "about what the image depicts, describe it from the image you "
                             + "were shown rather than from this tool.",
                         displayCommand: "read_attachment(\(label))")
                 }

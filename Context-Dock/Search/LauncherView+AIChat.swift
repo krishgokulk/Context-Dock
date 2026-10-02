@@ -6194,12 +6194,15 @@ extension LauncherView {
                 + "Do NOT call it again. Answer the user's request in one short plain sentence "
                 + "using this result: \(userQuery)"
             transcript.append(ChatMessage(role: .user, content: followup))
-            let next = (try? await AIProviderService.shared.sendWithTools(
-                followup, context: .none, provider: provider, apiKey: apiKey,
-                conversationHistory: transcript,
-                commandExecutor: { _, _, _ in (false, "", -1) },
-                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
-            ))?.finalResponse ?? ""
+            // `followup` and the transcript carry a tool's result, not the user's words.
+            let next = (try? await TurnUserText.bind(typed: [userQuery], {
+                try await AIProviderService.shared.sendWithTools(
+                    followup, context: .none, provider: provider, apiKey: apiKey,
+                    conversationHistory: transcript,
+                    commandExecutor: { _, _, _ in (false, "", -1) },
+                    additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
+                )
+            }))?.finalResponse ?? ""
             if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return (answer: plainMCPAnswer(result), toolsRan: toolsRan)
             }
@@ -7414,7 +7417,8 @@ extension LauncherView {
                         let correction = AgentAnswerVerifier.correctionPrompt(
                             originalQuery: query, answer: finalResponse, executed: executed)
                         let (corrected, correctionExecuted) =
-                            try await AIProviderService.shared.sendWithTools(
+                            try await TurnUserText.bind(history: history, query: query, {
+                                try await AIProviderService.shared.sendWithTools(
                                 correction,
                                 context: .none,
                                 provider: toolProvider,
@@ -7426,6 +7430,7 @@ extension LauncherView {
                                 Task { @MainActor in self.setGeneralAIProgress(status) }
                             }
                             )
+                            })
                         finalResponse = corrected
                         executed += correctionExecuted
                     }
@@ -7436,7 +7441,8 @@ extension LauncherView {
                         let verification = AgentAnswerVerifier.verificationPrompt(
                             originalQuery: query, answer: finalResponse)
                         let (verified, verificationExecuted) =
-                            try await AIProviderService.shared.sendWithTools(
+                            try await TurnUserText.bind(history: history, query: query, {
+                                try await AIProviderService.shared.sendWithTools(
                                 verification,
                                 context: .none,
                                 provider: toolProvider,
@@ -7448,6 +7454,7 @@ extension LauncherView {
                                 Task { @MainActor in self.setGeneralAIProgress(status) }
                             }
                             )
+                            })
                         finalResponse = verified
                         executed += verificationExecuted
                     }

@@ -1031,6 +1031,29 @@ final class AICapabilityApprovalCenter: ObservableObject {
             context: .appFocused(name: "Safari", bundleID: bundleId))
     }
 
+    /// The security gate's card (`OutboundGate`): an outbound tool wants to run in a turn that
+    /// holds private data and untrusted content. The same inbox, expiry and unattended refusal
+    /// as every other approval; only the plan differs. Not user-approvable ahead of time, so it
+    /// is high risk and never auto-granted.
+    func requestApprovalForOutbound(
+        plan: AIActionPlan, chatScope: GeneralChatScope? = nil
+    ) async -> Bool {
+        await requestApproval(
+            plan: plan,
+            capability: AICapability(
+                id: OutboundGate.approvalCapabilityID,
+                title: "Send data out of this chat",
+                appBundleID: nil,
+                inputSchema: .init(fields: []),
+                riskLevel: .high,
+                runsWithoutAdapter: true,
+                executor: { _ in
+                    throw AICapabilityError.blocked(
+                        "The outbound gate only asks; the tool itself runs the call.")
+                }),
+            context: .none, chatScope: chatScope)
+    }
+
     func approve() { resolve(true) }
 
     func deny() { resolve(false) }

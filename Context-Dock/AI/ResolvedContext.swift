@@ -42,6 +42,8 @@ struct ResolvedContext {
     let bundleId: String
     var slots: [Slot] = []
     var gaps: [Gap] = []
+    /// What could and could not be read from the app, when the scope is a running app.
+    var readability: ReadabilityFacts?
 
     var isEmpty: Bool { slots.isEmpty }
 
@@ -53,7 +55,7 @@ struct ResolvedContext {
     /// prompt says where each line came from so the model can weigh a cached menu against
     /// a live window read.
     func promptBlock() -> String {
-        guard !slots.isEmpty || !gaps.isEmpty else { return "" }
+        guard !slots.isEmpty || !gaps.isEmpty || readability != nil else { return "" }
         var lines = ["## Current context for \(appName) (read just now, factual)"]
         for slot in slots {
             lines.append("- \(slot.name) [\(slot.source)]: \(slot.value)")
@@ -66,6 +68,10 @@ struct ResolvedContext {
             for gap in gaps {
                 lines.append("- \(gap.name): \(gap.reason)")
             }
+        }
+        if let readability {
+            lines.append("")
+            lines.append(readability.block())
         }
         return lines.joined(separator: "\n")
     }
@@ -242,8 +248,26 @@ enum ContextResolver {
         }
 
         appendCapabilityCounts(&context, bundleId: bundleId, appName: appName)
+        context.readability = readabilityFacts(for: context, permissions: .current)
         log.notice("resolved \(bundleId, privacy: .public): \(context.summary, privacy: .public)")
         return context
+    }
+
+    /// Pure: what was and was not readable, derived from the slots a resolution filled. The
+    /// permissions are passed in so a test never asks the OS. Text counts are the selection
+    /// and a browser page: the only app text any reader here returns.
+    static func readabilityFacts(
+        for context: ResolvedContext, permissions: ReadabilityPermissions
+    ) -> ReadabilityFacts {
+        let characters = ["selection", "page"].reduce(0) { total, name in
+            total + (context.value(name)?.count ?? 0)
+        }
+        return ReadabilityFacts(
+            appName: context.appName,
+            bundleId: context.bundleId,
+            windowTitle: context.value("window"),
+            axTextCharacterCount: characters,
+            missingPermissions: permissions.missing)
     }
 
     private static func resolveCLI(

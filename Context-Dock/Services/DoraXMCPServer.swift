@@ -176,6 +176,8 @@ final class DoraXMCPServer: ObservableObject {
         let authorization: String?
         /// `X-DoraX-Turn`: present only on requests from a CLI turn DoraX itself launched.
         var turnKey: String? = nil
+        /// `X-DoraX-Turn-Id`: which live turn of DoraX's own CLI this call belongs to.
+        var turnID: String? = nil
         let body: Data
     }
 
@@ -187,6 +189,7 @@ final class DoraXMCPServer: ObservableObject {
         var contentLength = 0
         var authorization: String?
         var turnKey: String?
+        var turnID: String?
         for line in head.components(separatedBy: "\r\n").dropFirst() {
             let parts = line.split(separator: ":", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
@@ -196,12 +199,13 @@ final class DoraXMCPServer: ObservableObject {
             case "content-length": contentLength = Int(parts[1]) ?? 0
             case "authorization": authorization = parts[1]
             case attendedHeader.lowercased(): turnKey = parts[1]
+            case turnIDHeader.lowercased(): turnID = parts[1]
             default: break
             }
         }
         guard body.count >= contentLength else { return nil }
         return Request(
-            authorization: authorization, turnKey: turnKey,
+            authorization: authorization, turnKey: turnKey, turnID: turnID,
             body: Data(body.prefix(contentLength)))
     }
 
@@ -241,6 +245,10 @@ final class DoraXMCPServer: ObservableObject {
         }
 
         let attended = Self.isAttendedCaller(turnKey: request.turnKey)
+        // Which turn this call belongs to, for the outbound gate: only a request carrying the
+        // attended key AND the id of a turn that is still live has one. Everyone else has none,
+        // and the gate treats a call with no turn as having touched everything.
+        let turn = attended ? AgentToolRegistry.shared.liveTurn(id: request.turnID) : nil
         log.notice("\(method, privacy: .public) attended=\(attended, privacy: .public)")
         lastRequest = method
 
@@ -261,7 +269,8 @@ final class DoraXMCPServer: ObservableObject {
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             lastRequest = name
-            let text = await callTool(named: name, arguments: arguments, attended: attended)
+            let text = await callTool(
+                named: name, arguments: arguments, attended: attended, turn: turn)
             result = ["content": [["type": "text", "text": text]]]
 
         default:
@@ -281,6 +290,11 @@ final class DoraXMCPServer: ObservableObject {
 
     /// The header that marks a request as coming from a CLI turn DoraX launched itself.
     static let attendedHeader = "X-DoraX-Turn"
+
+    /// The header that says which live turn of DoraX's own CLI a call belongs to. Minted per
+    /// CLI turn (`AgentToolRegistry.beginTurn`) and written into that turn's own MCP config, so
+    /// two CLI turns at once never share what they have read.
+    static let turnIDHeader = "X-DoraX-Turn-Id"
 
     /// Minted per app launch and only ever written into the config DoraX hands its own CLI.
     /// The bearer token says a caller may talk to this server; this says the user is at the
@@ -304,7 +318,11 @@ final class DoraXMCPServer: ObservableObject {
     /// Rewritten on every launch rather than cached, so rotating the token cannot leave a
     /// stale file authorising nothing while the CLI reports a connection failure the user
     /// cannot explain.
-    static func writeCLIConfig() -> URL? {
+    ///
+    /// `turn` names the live turn this config belongs to. It gets its own file (so two CLI turns
+    /// at once do not overwrite each other's) and a header carrying the turn's id; the caller
+    /// deletes it when the turn ends.
+    static func writeCLIConfig(turn: AgentTurnToken? = nil) -> URL? {
         guard let directory = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Context-Dock")
@@ -312,16 +330,19 @@ final class DoraXMCPServer: ObservableObject {
         try? FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
 
-        let url = directory.appendingPathComponent("claude-mcp-config.json")
+        let url = directory.appendingPathComponent(
+            turn.map { "claude-mcp-config-\($0.id.uuidString).json" } ?? "claude-mcp-config.json")
+        var headers: [String: String] = [
+            "Authorization": "Bearer \(token)",
+            attendedHeader: attendedTurnKey,
+        ]
+        if let turn { headers[turnIDHeader] = turn.id.uuidString }
         let config: [String: Any] = [
             "mcpServers": [
                 serverName: [
                     "type": "http",
                     "url": "http://127.0.0.1:\(port)/mcp",
-                    "headers": [
-                        "Authorization": "Bearer \(token)",
-                        attendedHeader: attendedTurnKey,
-                    ],
+                    "headers": headers,
                 ]
             ]
         ]
@@ -617,8 +638,19 @@ final class DoraXMCPServer: ObservableObject {
     }
 
     private func callTool(
-        named name: String, arguments: [String: Any], attended: Bool
+        named name: String, arguments: [String: Any], attended: Bool, turn: AgentTurnToken? = nil
     ) async -> String {
+        let registry = AgentToolRegistry.shared
+        // What the CLI turn has now read, for the outbound gate. These tools hand over the
+        // user's screen, selection, tabs and file names (private) from apps whose text the
+        // user did not write (untrusted).
+        switch name {
+        case "dorax_frontmost_app", "dorax_selection", "dorax_screenshot", "dorax_browser_tabs",
+            "dorax_find_files":
+            registry.taint.notePrivateRead(turn)
+            registry.taint.noteUntrusted(turn)
+        default: break
+        }
         switch name {
         case "dorax_frontmost_app":
             // Read live rather than trusting the shared snapshot. That snapshot updates on
@@ -674,6 +706,15 @@ final class DoraXMCPServer: ObservableObject {
             return await AgentToolRegistry.runListShortcuts().1
 
         case "dorax_run_shortcut":
+            if let target = OutboundGate.target(toolName: "run_shortcut", arguments: arguments),
+                let stopped = await registry.gateOutbound(
+                    target: target,
+                    what: AgentToolRegistry.outboundDescription(
+                        name: "run_shortcut", arguments: arguments),
+                    turn: turn, chatScope: nil, attended: attended)
+            {
+                return stopped.output
+            }
             let result = await AgentToolRegistry.runRunShortcut(
                 name: arguments["name"] as? String ?? "",
                 input: arguments["input"] as? String,
@@ -718,6 +759,17 @@ final class DoraXMCPServer: ObservableObject {
                 grantedApps[app.lowercased()] = bundleId
                 grantedApps[bundleId.lowercased()] = bundleId
             }
+            // An outside agent (unattended) cannot answer the gate's card, so it is held back
+            // here; a CLI turn DoraX launched is asked inside `dispatch` below.
+            if !attended,
+                let target = OutboundGate.target(
+                    toolName: "run_menu_command", arguments: ["app": app, "path": path]),
+                let stopped = await registry.gateOutbound(
+                    target: target, what: "run_menu_command: \(path)", turn: turn,
+                    chatScope: nil, attended: false)
+            {
+                return "Did not run — \(stopped.output)"
+            }
             let context = AgentToolContext(
                 // An outside agent gets no shell through this door. It asked for a menu
                 // command; the menu command is what it may have.
@@ -725,7 +777,7 @@ final class DoraXMCPServer: ObservableObject {
                     (false, "Running shell commands is not available through the DoraX MCP server.", 1)
                 },
                 userRequest: "Menu command requested by a connected coding agent: \(app) ▸ \(path)",
-                grantedApps: grantedApps)
+                grantedApps: grantedApps, turn: turn)
             let result = await AgentToolRegistry.shared.dispatch(
                 name: "run_menu_command",
                 arguments: ["app": app, "path": path],

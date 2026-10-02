@@ -33,6 +33,9 @@ extension AgentToolRegistry {
     @MainActor
     private static var offeredRoutes: [String: ChatRoute] = [:]
 
+    /// What `run_route` would run for this id, for the outbound gate to classify before it does.
+    static func offeredRoute(id: String) -> ChatRoute? { offeredRoutes[id] }
+
     private func makeFindRouteTool() -> AgentTool {
         AgentTool(
             name: "find_route",
