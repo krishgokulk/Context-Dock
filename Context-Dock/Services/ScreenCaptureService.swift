@@ -240,19 +240,29 @@ final class ScreenCaptureService: @unchecked Sendable {
     /// attached screenshot with the same recogniser Capture Text uses, instead of a second
     /// implementation drifting alongside it.
     static func recognizeText(in data: Data) -> String {
+        recognizeTextOutcome(in: data).text
+    }
+
+    /// Same recogniser, but says which of three things happened: text was read, the image
+    /// held none, or the recogniser could not run. `recognizeText` collapsed the last two into
+    /// an empty string, which the chat then reported as "recognized zero text".
+    static func recognizeTextOutcome(in data: Data) -> OCROutcome {
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
             let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else { return "" }
+        else { return .failed(reason: "the image could not be decoded") }
 
-        if let text = recognize(image), !text.isEmpty { return text }
+        let first = recognize(image)
+        if let text = first, !text.isEmpty { return .recognized(text) }
 
         // A tight snip around a single word or a line of small UI text can be too few
         // pixels for the recogniser. One upscaled retry costs milliseconds and rescues
         // exactly the captures a text snipper is used for.
-        guard let upscaled = upscale(image, factor: 3), let text = recognize(upscaled) else {
-            return ""
-        }
-        return text
+        let retry = upscale(image, factor: 3).flatMap { recognize($0) }
+        if let text = retry, !text.isEmpty { return .recognized(text) }
+
+        // Nil means the recogniser threw. If either pass ran cleanly, the image held no text.
+        if first != nil || retry != nil { return .nothingFound }
+        return .failed(reason: "the text recogniser returned an error")
     }
 
     private static func recognize(_ image: CGImage) -> String? {

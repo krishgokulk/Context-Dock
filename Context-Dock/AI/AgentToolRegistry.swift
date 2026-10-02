@@ -1516,14 +1516,16 @@ final class AgentToolRegistry {
             let ext = url.pathExtension.lowercased()
             var text = ""
             if imageTypes.contains(ext) {
-                text = ScreenCaptureService.recognizeText(in: data)
+                let outcome = ScreenCaptureService.recognizeTextOutcome(in: data)
+                text = outcome.text
                 if text.isEmpty {
                     // An image with no text is a real answer, not a failure — and saying so
-                    // stops the model inventing content it cannot see.
+                    // stops the model inventing content it cannot see. A recogniser that
+                    // could not run is not that answer: the summary says which one it was.
                     return AgentToolResult(
                         success: true,
-                        output: "\(label) is an image with no readable text in it. If the user "
-                            + "is asking about what it depicts, describe it from the image you "
+                        output: outcome.summary(label: label) + " If the user is asking "
+                            + "about what the image depicts, describe it from the image you "
                             + "were shown rather than from this tool.",
                         displayCommand: "read_attachment(\(label))")
                 }
