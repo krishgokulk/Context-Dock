@@ -130,8 +130,9 @@ struct DropShelfRowTests {
         #expect(shelf.phase == .expanded)
         #expect(model.focusedPillIndex == nil)
 
+        // Back onto the shelf the same way (← from the first pill would leave to the field).
         #expect(model.applyPillRowKey(.tab, shelf: shelf))
-        #expect(model.applyPillRowKey(.left, shelf: shelf))
+        #expect(model.applyPillRowKey(.right, shelf: shelf))
         #expect(model.applyPillRowKey(.right, shelf: shelf))
         #expect(model.isShelfFocused)
         #expect(model.applyPillRowKey(.returnKey, shelf: shelf))
