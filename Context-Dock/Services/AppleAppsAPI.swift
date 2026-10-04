@@ -985,7 +985,8 @@ class AppleAppsAPI {
                     set emailSender to sender of m
                     set emailDate to date received of m as text
                     set emailRead to read status of m
-                    set emailList to emailList & emailSubject & "|||" & emailSender & "|||" & emailDate & "|||" & (emailRead as text) & "^^^"
+                    set emailId to id of m as text
+                    set emailList to emailList & emailSubject & "|||" & emailSender & "|||" & emailDate & "|||" & (emailRead as text) & "|||" & emailId & "^^^"
                 end repeat
                 return emailList
             end tell
@@ -1002,6 +1003,7 @@ class AppleAppsAPI {
                         "sender": parts[1],
                         "date": parts[2],
                         "read": parts[3] == "true",
+                        "id": parts.count >= 5 ? parts[4] : "",
                     ])
                 }
             }
@@ -1012,31 +1014,92 @@ class AppleAppsAPI {
     /// The message the user currently has selected, or nil when Mail is not running, no
     /// viewer is open, or nothing is selected. Never launches Mail to read — the same rule
     /// getRecentEmails follows.
+    ///
+    /// Looks at every message viewer (not just the first: a second window put the selection
+    /// in a viewer this used to skip), then at Mail's own `selection`.
     func getSelectedEmail() -> [String: Any]? {
         guard Self.isRunning("com.apple.mail") else { return nil }
+        return runEmailScript(
+            pick: """
+                set m to missing value
+                try
+                    repeat with v in message viewers
+                        set sel to selected messages of v
+                        if (count of sel) > 0 then
+                            set m to item 1 of sel
+                            exit repeat
+                        end if
+                    end repeat
+                end try
+                if m is missing value then
+                    try
+                        set sel to selection
+                        if (count of sel) > 0 then set m to item 1 of sel
+                    end try
+                end if
+                """)
+    }
+
+    /// The newest inbox message, body included. Mail must already be running; the caller
+    /// decides whether to start it (`MailReader` does, for an explicit "read my latest mail").
+    func getLatestEmail() -> [String: Any]? {
+        guard Self.isRunning("com.apple.mail") else { return nil }
+        return runEmailScript(
+            pick: """
+                set m to missing value
+                try
+                    set m to message 1 of inbox
+                end try
+                """)
+    }
+
+    /// One inbox message by the id `getRecentEmails` reported, body included.
+    func getEmail(id: Int) -> [String: Any]? {
+        guard Self.isRunning("com.apple.mail") else { return nil }
+        return runEmailScript(
+            pick: """
+                set m to missing value
+                try
+                    set m to first message of inbox whose id is \(id)
+                end try
+                """)
+    }
+
+    /// Runs `pick` (which must leave `m` set to a message or `missing value`) and returns
+    /// that message's fields and body. The body comes last and is rejoined, so a body that
+    /// contains the field separator is not cut short.
+    private func runEmailScript(pick: String) -> [String: Any]? {
         let script = """
             tell application "Mail"
-                if (count of message viewers) is 0 then return ""
-                set viewerRef to item 1 of message viewers
-                set selectedMsgs to selected messages of viewerRef
-                if (count of selectedMsgs) is 0 then return ""
-                set m to item 1 of selectedMsgs
+                \(pick)
+                if m is missing value then return ""
                 set msgBody to ""
                 try
                     set msgBody to content of m
                 end try
-                return (subject of m) & "|||" & (sender of m) & "|||" & \
-                    ((date received of m) as text) & "|||" & msgBody
+                set msgRead to ""
+                try
+                    set msgRead to (read status of m) as text
+                end try
+                return ((id of m) as text) & "|||" & (subject of m) & "|||" & (sender of m) & "|||" & ((date received of m) as text) & "|||" & msgRead & "|||" & msgBody
             end tell
             """
         guard let result = runAppleScript(script), !result.isEmpty else { return nil }
-        let parts = result.components(separatedBy: "|||")
-        guard parts.count >= 3 else { return nil }
+        return Self.parseEmailRecord(result)
+    }
+
+    /// `id|||subject|||sender|||date|||read|||body`. Split at most five times so everything
+    /// after the fifth separator is the body, whatever it contains.
+    nonisolated static func parseEmailRecord(_ raw: String) -> [String: Any]? {
+        let parts = raw.split(separator: "|||", maxSplits: 5, omittingEmptySubsequences: false)
+        guard parts.count >= 5 else { return nil }
         return [
-            "subject": parts[0],
-            "sender": parts[1],
-            "date": parts[2],
-            "body": parts.count >= 4 ? parts[3] : "",
+            "id": String(parts[0]),
+            "subject": String(parts[1]),
+            "sender": String(parts[2]),
+            "date": String(parts[3]),
+            "read": String(parts[4]) == "true",
+            "body": parts.count >= 6 ? String(parts[5]) : "",
         ]
     }
 
