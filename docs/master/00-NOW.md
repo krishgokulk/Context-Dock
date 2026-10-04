@@ -36,12 +36,9 @@ Also open: cloud sessions must never merge their own PR (#114 merged before revi
 
 ## Hand-check queue
 
-- **#163 (#146 Finder chat):** in Finder App Chat ask it to copy a file to a folder; it runs the copy or says why not; the turn never spins on "couldn't carry it out on this surface".
-- **#170 (E2 Recorder):** turn the turn log on, run one Anthropic App Chat turn; `turns.log` gains one trace line for that turn; with the log off nothing is written.
-- **#164 (E1 outbound gate):** in a chat holding a private file, ask it to fetch an unknown URL; it asks first.
-- **#148 (#145 transcript spin):** run a long Finder App Chat turn ("can you resume 2026 folder for me?"); Activity Monitor stays near idle; ⌘Q quits promptly during a turn.
+Empty.
 
-Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30).
+Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30); #148, #163, #164, #170 (2026-10-04).
 A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
 
 ## Done
@@ -49,13 +46,13 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | Date | Task | PR |
 |---|---|---|
 | 2026-10-02 | Flaky turn-log and Shortcuts temp-file tests fixed (hand check optional) | #171 |
-| 2026-10-02 | E2 Recorder: one trace per turn in the turn log (hand check pending) | #170 |
+| 2026-10-02 | E2 Recorder: one trace per turn in the turn log; owner hand-tested | #170 |
 | 2026-10-02 | Builder pauses after one required hand check; `hand-check-optional` label; "merge N without hand check" | #168 |
-| 2026-10-02 | Finder chat carries out a resolved call or says why not (hand check pending) | #163 |
-| 2026-10-01 | E1 outbound gate: private + untrusted turns ask before sending out (hand check pending; gaps in #165) | #164 |
+| 2026-10-02 | Finder chat carries out a resolved call or says why not; owner hand-tested | #163 |
+| 2026-10-01 | E1 outbound gate: private + untrusted turns ask before sending out (owner hand-tested; gaps in #165) | #164 |
 | 2026-10-01 | A read-back that disagrees with the request fails the step | #142 |
 | 2026-10-01 | Clipboard notice no longer blocks the frontmost app | #144 |
-| 2026-10-01 | Chat transcript rewrite loop no longer pins the main thread; app quits during a turn (hand check pending) | #148 |
+| 2026-10-01 | Chat transcript rewrite loop no longer pins the main thread; app quits during a turn; owner hand-tested | #148 |
 | 2026-09-30 | Skill audit of 16a–18: 4 P1 fixed (approval queue instead of a dropped request, cancellable file search, `nonisolated ShortcutsService`, per-file VoiceOver labels on file cards); 15 P2 listed in the PR; owner hand-tested | #141 |
 | 2026-09-30 | Result cards skip `~/Library` / system paths from step output (iCloud Drive and paths the answer names are kept) | #138 |
 | 2026-09-30 | Flaky `AXMenuReaderScriptedFallbackTests` fixed: each reader posts as itself, each test listens to its own (5×2241 green) | #136 |

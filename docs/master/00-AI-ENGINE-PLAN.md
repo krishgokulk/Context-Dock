@@ -79,6 +79,7 @@ takes `ready` issues, so nothing starts until the owner labels one.
 | E14 | Graph gate: 30 real multi-hop questions from the turn log | No graph without them |
 | E15 | Knowledge graph: typed edges from receipts in SQLite + `graph_neighbors` | Replaces the dashboard-only `KnowledgeGraph` |
 | E16 | Nightly consolidation: dedupe facts, rebuild graph and embeddings | Extends `Services/BrainMaintenance.swift` |
+| E17 | Import the `SKILL.md` of CLIs the user installed (CLI-Anything convention: JSON output, `--help`, skill file) into the capability index, so `find_capability` finds them | Never bundled or installed by DoraX; every command is a write that asks; only after E1b (#165) |
 
 ## 6. Order the owner chose (2026-10-01) — for the planner to apply in `00-NOW.md`
 
