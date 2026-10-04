@@ -142,8 +142,8 @@ enum CornerGeneralChatMetrics {
     @MainActor
     static func clarificationOptionCount(for model: GeneralChatWindowModel) -> Int {
         guard !model.isSending, model.input.isEmpty,
-            let last = model.messages.last, last.role == .assistant, !last.isError,
-            let clarification = ChatClarification.parse(last.content)
+            let last = model.messages.last,
+            let clarification = ChatClarification.offered(by: last)
         else { return 0 }
         return clarification.options.count
     }
@@ -425,12 +425,8 @@ struct CornerGeneralChatView: View {
     /// Only the newest message, and only when the turn has finished: an older question has
     /// already been answered, and one still being written is not a question yet.
     private var clarification: ChatClarification? {
-        guard !model.isSending,
-            let last = model.messages.last,
-            last.role == .assistant,
-            !last.isError
-        else { return nil }
-        return ChatClarification.parse(last.content)
+        guard !model.isSending, let last = model.messages.last else { return nil }
+        return ChatClarification.offered(by: last)
     }
 
     /// Answering by pointing sends what the option says, so the next turn reads a request

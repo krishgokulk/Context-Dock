@@ -563,6 +563,13 @@ struct AIChatMessage: Identifiable, Equatable {
     /// `trace`, it describes the turn that produced the answer.
     var activity: [ActivityStep] = []
 
+    /// True when the turn that produced this message executed something: a recorded step, a
+    /// receipt, or a tool chip other than the routing lookup (which is only a search).
+    var ranAStep: Bool {
+        !activity.isEmpty || !evidenceReceipts.isEmpty
+            || mcpToolsRan.contains { $0 != "DoraX route lookup" }
+    }
+
     enum ChatRole {
         case user
         case assistant

@@ -499,6 +499,36 @@ struct MailRouteChoiceTests {
         #expect(answer.rows.isEmpty)
         #expect(answer.files.isEmpty)
     }
+
+    // The Corner and the chat window read their pick card through
+    // `ChatClarification.offered(by:)`. A turn that ran a step must not also ask.
+    private static let routeList =
+        "Mail can do that more than one way. Which should I use?\n"
+        + "1. Get New Mail\n2. Mail Assistant Basics\n3. Mail — what this app is"
+
+    @Test func aTurnThatRanAStepOffersNoPickCard() {
+        let ran = AIChatMessage(
+            role: .assistant, content: "Mail quit. Verified.\n\n" + Self.routeList,
+            mcpToolsRan: ["run_route(Mail ▸ Quit Mail)"])
+        #expect(ChatClarification.offered(by: ran) == nil)
+        let receipted = AIChatMessage(
+            role: .assistant, content: Self.routeList,
+            evidenceReceipts: [DoraXActionReceipt(
+                command: "run_route(Mail ▸ Quit Mail)", output: "Verified", success: true)])
+        #expect(ChatClarification.offered(by: receipted) == nil)
+        var stepped = AIChatMessage(role: .assistant, content: Self.routeList)
+        stepped.activity = [ActivityStep(kind: .tool, title: "Quit Mail")]
+        #expect(ChatClarification.offered(by: stepped) == nil)
+    }
+
+    @Test func aTurnThatRanNothingStillOffersItsPickCard() {
+        let asked = AIChatMessage(role: .assistant, content: Self.routeList)
+        #expect(ChatClarification.offered(by: asked)?.options.count == 3)
+        // The routing lookup is a search, not a step.
+        let looked = AIChatMessage(
+            role: .assistant, content: Self.routeList, mcpToolsRan: ["DoraX route lookup"])
+        #expect(ChatClarification.offered(by: looked) != nil)
+    }
 }
 
 // MARK: - What counts as the command itself

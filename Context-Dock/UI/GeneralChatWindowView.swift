@@ -865,10 +865,9 @@ struct GeneralChatWindowView: View {
     /// The question the newest answer asked, if it asked one and the user has not started
     /// typing over it. Same reading as the corner: one surface, two sizes.
     private var clarification: ChatClarification? {
-        guard !model.isSending, model.input.isEmpty,
-            let last = model.messages.last, last.role == .assistant, !last.isError
+        guard !model.isSending, model.input.isEmpty, let last = model.messages.last
         else { return nil }
-        return ChatClarification.parse(last.content)
+        return ChatClarification.offered(by: last)
     }
 
     private var composer: some View {
