@@ -26,5 +26,12 @@ next; the builder on the owner's Mac builds it.
 5. **Merge only on the owner's words "merge <n>".** Then move the task to *Done* in `00-NOW.md`,
    keep the hand-check queue current, and queue the next issue.
 
+**Token use:**
+- Watch only builder PRs. A docs-only planner PR is not watched: after the owner's "merge <n>",
+  enable auto-merge and move on.
+- Check-ins at most every 4 hours while nothing is moving; none while waiting only on the owner.
+- When this session gets long, write the state into `00-NOW.md` and tell the owner to start a
+  fresh `/planner` session — the repo is the handoff.
+
 Never build queue tasks yourself while a builder is running, and never label two issues
 `in-progress`.

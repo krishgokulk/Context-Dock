@@ -1,5 +1,5 @@
 ---
-description: Builder loop — take the next "ready" issue, build and test it on this Mac, open a PR. Run as `/loop 20m /builder`.
+description: Builder loop — take the next "ready" issue, build and test it on this Mac, open a PR. Run as `/loop /builder`.
 ---
 
 You are the **builder** for Context-Dock on the owner's Mac. Follow AGENTS.md and the "Planner and
@@ -52,7 +52,21 @@ Each time you run:
    `gh label create hand-check-optional --force` if missing; the issue label is what the
    hand-check limit counts) and comment the PR link.
 
-Never: merge a PR or enable auto-merge; take an issue not labeled `ready`; work two issues at once;
+## Pacing and token use
+
+- This loop paces itself (`/loop /builder`, no interval). After a run that **worked** on an
+  issue, wake again in ~20 min. After a run that **stopped** (hand-check limit, queue empty,
+  waiting on CI), wake again in **60 min**. A stopped run makes the one `gh` call it needs and
+  answers in one line: no re-reading docs, no summaries of the queue.
+- **Push before you stop.** Commits never wait on a hand check or an owner reply; a stopped
+  session must leave nothing that exists only on this Mac.
+- **One issue, one session.** Once an issue's PR is marked ready, end with the line "start a
+  new builder session for the next issue". The next session reads the issue, not this chat.
+- Hand a subagent the issue body and the files it names; do not ask it to re-explore the repo.
+- Keep test output short: `./scripts/test.sh 2>&1 | tail -40`; paste only failing test names.
+
+Never: merge a PR or enable auto-merge, even after the owner says a check passed (the planner
+merges on "merge <n>"); take an issue not labeled `ready`; work two issues at once;
 edit `docs/master/00-NOW.md` or `MEMORY.md`; run `scripts/ship.sh`. If an issue is unclear or
 needs an owner decision, comment the question, label it `needs-owner` (remove `in-progress`), and
 stop.
