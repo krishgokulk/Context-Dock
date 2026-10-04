@@ -919,17 +919,22 @@ final class AppChatPromptModel: ObservableObject {
         hiddenRunningBundleIDs.insert(bundleID)
     }
 
-    /// The corner's own affordances that join the strip: the clipboard when a copy just
-    /// happened, the selection when there is one, the result of an action for a few seconds
-    /// after it ran. Same rules as the field's own row.
-    func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
+    /// The tools at the strip's end, in the order they are drawn, shelf last. The corner's
+    /// own affordances — the clipboard when a copy just happened, the selection when there is
+    /// one, the result of an action for a few seconds after it ran — and then the Drop Shelf,
+    /// which is always there: every dock row ends with it, pinned or not.
+    func dockTools(clipboardVisible: Bool, feedbackVisible: Bool = false) -> [DockToolKind] {
         // An app bar is the app's own things (owner 2026-09-25) — plus, at its end after the
         // pins and tabs, a copy's clipboard icon for its few seconds and the selection icon
         // while something is selected (owner 2026-09-26). No action results.
-        guard !showsTabBar else {
-            return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
-        }
-        return (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0) + (feedbackVisible ? 1 : 0)
+        DockTools.row(
+            showsTabBar: showsTabBar, clipboard: clipboardVisible, selection: selection != nil,
+            feedback: feedbackVisible)
+    }
+
+    /// How many of those there are, which the strip's width is measured for.
+    func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
+        dockTools(clipboardVisible: clipboardVisible, feedbackVisible: feedbackVisible).count
     }
 
     /// The first printable character brings the field back and lands in it. Anything the

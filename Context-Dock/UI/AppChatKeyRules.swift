@@ -12,10 +12,21 @@ extension AppChatPromptModel {
     /// The field's pills as the pill rule sees them: on screen only while nothing is typed
     /// (the same test the field draws them by), and never inside a conversation.
     var pillRowIsAvailable: Bool {
+        // The Drop Shelf is the row's last pill and is always there, so the row exists even
+        // when no app is running.
         phase.showsInput && phase != .chat && showsFieldPills
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !globalMatchIcons.isEmpty
     }
+
+    /// The row's destinations as the key rule walks them: the field's app pills, then the
+    /// Drop Shelf — one past the last pill.
+    var pillRowCount: Int { globalMatchIcons.count + 1 }
+
+    /// The pill index the Drop Shelf holds in the row.
+    var shelfPillIndex: Int { globalMatchIcons.count }
+
+    /// Tab and ←/→ have the highlight on the Drop Shelf's icon.
+    var isShelfFocused: Bool { focusedPillIndex == shelfPillIndex }
 
     /// The pill Tab and ←/→ have highlighted — the id the strip and the field draw it by.
     var focusedPill: MatchDockIcon? {
@@ -63,13 +74,16 @@ extension AppChatPromptModel {
     /// whether the key was spent. Entering the row is Tab's alone; every other key is only
     /// the pills' while one of them is highlighted.
     @discardableResult
-    func applyPillRowKey(_ key: DockKey) -> Bool {
+    func applyPillRowKey(
+        _ key: DockKey, shelf: DropShelfPresentation? = nil
+    ) -> Bool {
         // A highlighted result row outranks the pills: Tab takes that row first.
         if focusedPillIndex == nil, focusedRow != nil { return false }
         let pills = globalMatchIcons
         switch DockKeyRules.pillRow(
             key, focused: focusedPillIndex,
-            separators: pills.map { _ in false },
+            // The app pills, then the Drop Shelf — a destination like the rest.
+            separators: Array(repeating: false, count: pillRowCount),
             rowIsAvailable: pillRowIsAvailable)
         {
         case .pass:
@@ -86,6 +100,11 @@ extension AppChatPromptModel {
             return true
         case .open(let index):
             focusedPillIndex = nil
+            // What a click on the Drop Shelf's icon does.
+            if index == shelfPillIndex {
+                (shelf ?? DropShelfController.shared.presentation).toggle()
+                return true
+            }
             guard pills.indices.contains(index) else { return true }
             // What a click on the pill does, so the key and the pointer agree.
             openGlobalMatchIcon(pills[index])

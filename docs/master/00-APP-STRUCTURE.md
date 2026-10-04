@@ -107,7 +107,7 @@ Context-Dock/
 │   └── Labs/               ← off by default in v1 (Settings → Labs)
 │       ├── MediaDock/      MediaDockSurface · MiniPlayerOverlay
 │       ├── Dashboard/      today's UI/Dashboard/*
-│       ├── DropShelf/      DropShelfWindow · DropShelfPill · DropShelfPresentation
+│       ├── DropShelf/      DropShelfWindow · DropShelfIcon · DropShelfCard · DropShelfPresentation
 │       └── Notepad/        NotepadScopeView
 │
 ├── Settings/
