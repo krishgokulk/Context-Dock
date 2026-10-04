@@ -14,7 +14,7 @@ Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-compariso
 
 Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
 
-**#147 Drop Shelf icon** (`ready`) and **#151 E3 Prompt order** (`ready`) — the builder takes #147 first. Hand-check pause limit is 1 required check (#168). #165 E1b waits on the owner's "E1b yes".
+**#147 Drop Shelf icon** (`ready`), then **#165 E1b** (`ready`, owner said "E1b yes" 2026-10-04), then **#151 E3**. Hand-check pause limit is 1 required check (#168).
 
 ## Next, in order (GitHub issues)
 
@@ -22,8 +22,8 @@ Owner order (2026-10-01): security first, then the AI engine plan, with the two 
 The planner labels the next issue `ready` when the one before it is in review.
 
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
-2. **#165 E1b** outbound-gate gaps (`needs-owner`: say "E1b yes")
-3. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
+2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
+3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
 4. **#151 E3** Prompt order · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first)
 5. **#154 E6a → #155 E6b → #156 E7a · #157 E7b**
 6. **#158 E8a → #159 E8b → #160 E8c** (#160 `needs-owner`: which model grades the replays)
@@ -127,6 +127,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-01 | Security first: E1 (#149) runs next, then #146, E2, #147. #134 stays needs-owner. #44 closed (fixed in f2d3d5f). |
 | 2026-10-01 | On-device fixes (E5a, E5b) are 1.0: on-device chat ships today and loses its history. |
 | 2026-10-01 | The engine plan file defines tasks; this file sets the order. The owner's Master Blueprint pages are the study copy, not a second plan. |
+| 2026-10-04 | E1b yes (#165): Mail/Messages/Notes reads count as untrusted; shell commands use an allow-list; only the exact typed URL is trusted. Runs after #147, before E3. |
 
 ## Open decisions (owner)
 
