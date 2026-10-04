@@ -24,6 +24,16 @@ enum AppScopedChatService {
         subsystem: "com.krishgokul.ContextDock", category: "AppScopedChat")
 
     struct Answer {
+        /// A turn that asks which route to take. It is the whole turn: no step ran and none
+        /// may run until the user picks, so this carries no chips, receipts or rows.
+        static func asking(_ text: String, choices: [ActionChoice]) -> Answer {
+            Answer(text: text, toolChips: [], routeChoices: choices)
+        }
+
+        /// True when the turn is waiting on the user to pick a route, which is only valid if
+        /// nothing ran in it.
+        var isWaitingOnRouteChoice: Bool { !routeChoices.isEmpty }
+
         let text: String
         /// What actually ran, for the receipt chips — derived from execution, never from
         /// words in the question.
@@ -1382,11 +1392,20 @@ enum AppScopedChatService {
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")
-                return Answer(
-                    text:
-                        "\(routingAppName) can do that more than one way. Which should I use?",
-                    toolChips: [],
-                    routeChoices: routes.map(\.asActionChoice))
+                return Answer.asking(
+                    "\(routingAppName) can do that more than one way. Which should I use?",
+                    choices: routes.map(\.asActionChoice))
+            }
+            // The sentence IS one of the routes ("quit mail" is Mail ▸ Quit Mail): run it,
+            // rather than asking about it or leaving it to a model.
+            if let route = ChatRouteResolver.soleExactRoute(
+                routes, query: query, appName: routingAppName)
+            {
+                log.notice("stage: exact route \(route.kind.rawValue, privacy: .public)")
+                return await execute(
+                    route: route, query: query, history: history, scope: scope,
+                    appName: appName, attachments: attachments,
+                    extraAppNames: extraAppNames, finderSelection: finderSelection)
             }
             // Already answered for this app and this kind of request: take that route
             // without asking again.
@@ -1417,10 +1436,9 @@ enum AppScopedChatService {
             {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which invocation (\(routes.count, privacy: .public))")
-                return Answer(
-                    text: "There's more than one \(command) command for that. Which should I run?",
-                    toolChips: [],
-                    routeChoices: routes.map(\.asActionChoice))
+                return Answer.asking(
+                    "There's more than one \(command) command for that. Which should I run?",
+                    choices: routes.map(\.asActionChoice))
             }
             // A single read-only invocation is just the answer: run it and report.
             if routes.count == 1, let route = routes.first, route.isReadOnly {
@@ -2112,7 +2130,9 @@ enum AppScopedChatService {
             workspace: ChatWorkingDirectory.resolve(for: nil))
         let installedWorkers = AIWorkerRegistry.shared.installed
         if AIWorkerOffer.shouldOffer(
-            hasLinkedRoute: !sendChoices.isEmpty, task: workerTask, workers: installedWorkers),
+            // A turn that already ran something is not asking where to start.
+            hasLinkedRoute: !sendChoices.isEmpty || !outcome.mcpToolsRan.isEmpty || !executed.isEmpty,
+            task: workerTask, workers: installedWorkers),
             let workerTask
         {
             sendChoices = AIWorkerOffer.choices(for: workerTask, workers: installedWorkers)
