@@ -17,7 +17,7 @@ final class CornerDockPanel: NSPanel {
     override var canBecomeKey: Bool { true }
 }
 
-/// Hosts both pills. Mouse events are answered only where a pill actually is, so the
+/// Hosts the shell. Mouse events are answered only where a pill actually is, so the
 /// transparent remainder of the shell never swallows a click meant for the app beneath.
 final class CornerDockHostView: NSView {
     weak var controller: CornerDockController?
@@ -36,17 +36,16 @@ final class CornerDockHostView: NSView {
         return super.hitTest(point)
     }
 
+    /// Sees a drag over the shell, accepts none of it: the shelf's icon (and, open, its card)
+    /// is the one drop target, so a release anywhere else on the shell does what it did
+    /// before the shelf existed.
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         DropShelfController.shared.dragEntered()
-        return .copy
+        return []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         DropShelfController.shared.dragExitedPill()
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        DropShelfController.shared.acceptDrop(sender.draggingPasteboard)
     }
 }
 
@@ -182,7 +181,7 @@ final class CornerDockController: NSObject {
         ) { _ in
             MainActor.assumeIsolated {
                 ClipboardPanelController.shared.model.userLeftTheSpace()
-                DropShelfController.shared.presentation.autoHide()
+                DropShelfController.shared.presentation.collapse()
                 CornerDockController.shared.prompt.userLeftTheSpace()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     guard
@@ -443,7 +442,7 @@ final class CornerDockController: NSObject {
             hoverCardShowing: showsHoverCard,
             selectionShowing: selection.phase.isVisible,
             clipboardExpanded: clipboardModel.phase == .expanded,
-            shelfNeedsAttention: shelf.phase == .inviting || shelf.phase == .expanded,
+            shelfNeedsAttention: shelf.phase != .collapsed,
             pluginEditing: PluginKeyboardClaim.shared.isEditing,
             menuOpen: openMenuCount > 0 || stripMenuOpen)
     }
@@ -578,6 +577,36 @@ final class CornerDockController: NSObject {
         setAutoHidden(false)
     }
 
+    /// Whether the shell is on screen only because a drag asked for it, so it goes again when
+    /// the drag does.
+    private var shelfRevealedTheShell = false
+
+    /// A drag was sighted and the shelf's icon — in the shell's row — is where it drops. If
+    /// nothing has the shell on screen, bring the resting dock up for the drag, without the
+    /// keys: a drag is not a request to type.
+    func revealForShelfDrag() {
+        guard panel != nil else { return }
+        cancelPendingAutoHide()
+        if !chatPresentation.isVisible {
+            chatPresentation.showGlobalContext()
+            _ = prompt.restAsDockNow()
+            shelfRevealedTheShell = true
+        }
+        setAutoHidden(false)
+        // Above the edge strip that spotted the drag, which declines it: the icon has to be
+        // the window under the pointer.
+        panel?.orderFrontRegardless()
+    }
+
+    /// The drag ended — dropped or not. A shell the drag raised puts itself away, unless the
+    /// shelf is open: that one is the user's now.
+    func shelfDragEnded() {
+        guard shelfRevealedTheShell else { return }
+        shelfRevealedTheShell = false
+        guard !shelf.phase.isCardShown else { return }
+        chatPresentation.dismiss()
+    }
+
     private func setAutoHidden(_ hidden: Bool) {
         guard let panel, hidden != isAutoHidden else { return }
         isAutoHidden = hidden
@@ -634,13 +663,7 @@ final class CornerDockController: NSObject {
             startHoverWatch()
         } else {
             panel.orderOut(nil)
-            // The corner keeps answering the pointer while the shelf still holds
-            // something, or a stood-down shelf would strand its items.
-            if DropShelfController.shared.store.items.isEmpty {
-                stopHoverWatch()
-            } else {
-                startHoverWatch()
-            }
+            stopHoverWatch()
         }
     }
 
@@ -653,8 +676,7 @@ final class CornerDockController: NSObject {
         )
     {
         CornerDockLayout.slots(
-            shelf: shelf.phase.isVisible
-                ? DropShelfMetrics.cardSize(for: shelf.phase) : nil,
+            shelf: DropShelfMetrics.cardSize(for: shelf.phase),
             preview: showsClipPreview ? ClipboardPreviewMetrics.size : nil,
             clipboard: clipboardModel.phase.isVisible
                 ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
@@ -885,26 +907,6 @@ final class CornerDockController: NSObject {
             fitsContent: prompt.fitsField,
             maximumWidth: DockStripPlan.screenBudget,
             appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: prompt))
-    }
-
-    /// Where a stood-down shelf pill would reappear, so the corner can be reached again.
-    private func dormantShelfRect() -> CGRect? {
-        guard !DropShelfController.shared.store.items.isEmpty else { return nil }
-        return CornerDockLayout.slots(
-            shelf: DropShelfMetrics.collapsedSize,
-            clipboard: clipboardModel.phase.isVisible
-                ? ClipboardPillMetrics.cardSize(for: clipboardModel.phase) : nil,
-            selection: selection.phase.isVisible
-                ? SelectionScopeMetrics.size(
-                    rows: selection.rows.count, answering: selection.isShowingAnswer,
-                    consent: selection.isAsking,
-                    outcome: selection.showsOutcome,
-                    folderPreview: selection.showsFolderPreview,
-                    sendConfirm: selection.pendingSend != nil) : nil,
-            list: showsAppChatList ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt)) : nil,
-            prompt: prompt.phase.isVisible ? promptSize : nil,
-            anchor: anchor, panelWidth: panel?.frame.width
-        ).shelf
     }
 
     // MARK: - Keyboard
@@ -1205,6 +1207,16 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // Esc puts an open shelf away — the same key that closes every other card here.
+        if event.keyCode == 53,
+            event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+            let panel, event.window === panel,
+            shelf.phase.isCardShown
+        {
+            shelf.collapse()
+            return nil
+        }
+
         // A plugin's field has the caret: every key is its. The dock's own reading of a
         // typed letter — bring the field back — is exactly what put the "5" in the wrong
         // place.
@@ -1434,8 +1446,7 @@ final class CornerDockController: NSObject {
     /// ignores the mouse gets no events of its own to notice the pointer coming back.
     private func syncMouseTransparency() {
         guard let panel, let hostView else { return }
-        var cards = hostView.interactiveRects
-        if let dormant = dormantShelfRect() { cards.append(dormant) }
+        let cards = hostView.interactiveRects
         let origin = panel.frame.origin
         let shouldIgnore = CornerDockMouseRule.shouldIgnoreMouse(
             pointer: NSEvent.mouseLocation,
@@ -1474,30 +1485,28 @@ final class CornerDockController: NSObject {
         }
 
         let slots = currentSlots()
-        let overShelf = contains(slots.shelf) || contains(dormantShelfRect())
+        let overShelf = contains(slots.shelf)
         let overClipboard = contains(slots.clipboard)
         let overPrompt = contains(slots.prompt)
 
+        // The shelf opens by click, not by hover: a pointer passing over its card is not a
+        // request to keep it open, and not one to close it either.
         if overPrompt {
-            shelf.hoverEnded()
             clipboardModel.hoverEnded()
             chatPresentation.hoverBegan()
         } else if overShelf {
             clipboardModel.hoverEnded()
-            shelf.hoverBegan()
         } else if overClipboard {
-            shelf.hoverEnded()
             clipboardModel.hoverBegan()
         } else {
-            shelf.hoverEnded()
             clipboardModel.hoverEnded()
             chatPresentation.hoverEnded()
         }
     }
 }
 
-/// Both pills in the one shell: the shelf above, the clipboard in the corner, each
-/// dropping out of the stack when it has nothing to show.
+/// The one shell: the field and its boards, the clipboard in the corner, the open shelf
+/// above — each dropping out of the stack when it has nothing to show.
 struct CornerDockSurface: View {
     @ObservedObject private var clipboardModel = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
@@ -1525,13 +1534,22 @@ struct CornerDockSurface: View {
     }
 
     var body: some View {
-        // Centred, the shell is a row: shelf, field, clipboard side by side, with what
-        // answers the field stacked over the field itself. Anchored to an edge it stays a
+        // Centred, the shell is a row: field, clipboard side by side, with what answers the
+        // field — and the open shelf — stacked over the field itself. Anchored to an edge it stays a
         // column, because a row against the screen's corner would run off it.
         if anchor == .center {
             centredRow
         } else {
             column
+        }
+    }
+
+    /// The open shelf — a card in the shell, from the shelf icon at the end of the row.
+    @ViewBuilder
+    private var shelfCard: some View {
+        if shelf.phase.isCardShown {
+            DropShelfCard(presentation: shelf, store: shelfStore)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
 
@@ -1610,7 +1628,7 @@ struct CornerDockSurface: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .padding(CornerDockLayout.pad)
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isVisible)
+        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isCardShown)
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84), value: clipboardModel.phase.isVisible)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: prompt.phase)
@@ -1638,10 +1656,6 @@ struct CornerDockSurface: View {
 
     private var centredRowContent: some View {
         HStack(alignment: .bottom, spacing: CornerDockLayout.gap) {
-            if shelf.phase.isVisible {
-                DropShelfPill(presentation: shelf, store: shelfStore)
-            }
-
             // Pinned to the composer's own width, not whatever it happens to be showing:
             // the mini badge collapses to 52pt and Global Context's list is 372pt, and
             // this row centers itself on the sum of its children's widths. Without this,
@@ -1654,6 +1668,9 @@ struct CornerDockSurface: View {
                 // The strip's hover cards step sideways to stand over their icon, the way
                 // an icon's menu does; every other board keeps the field's centre, because
                 // it belongs to the field and not to one icon.
+                // The open shelf stands over the field with the other boards — never beside
+                // it, where it read as a second container next to the shell.
+                shelfCard
                 chatBoards
                     .offset(x: CornerDockController.shared.hoverCardDrawOffset)
                     .animation(
@@ -1667,9 +1684,7 @@ struct CornerDockSurface: View {
 
     private var column: some View {
         VStack(alignment: anchor.horizontalAlignment, spacing: CornerDockLayout.gap) {
-            if shelf.phase.isVisible {
-                DropShelfPill(presentation: shelf, store: shelfStore)
-            }
+            shelfCard
             if CornerDockController.shared.showsClipPreview,
                 let focused = clipboardModel.focusedEntry
             {
@@ -1694,7 +1709,7 @@ struct CornerDockSurface: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: anchor.frameAlignment)
         .padding(CornerDockLayout.pad)
         .animation(
-            .spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isVisible
+            .spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isCardShown
         )
         .animation(
             .spring(response: 0.34, dampingFraction: 0.84),

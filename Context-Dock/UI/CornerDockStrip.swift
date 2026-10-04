@@ -9,6 +9,8 @@ struct CornerDockStrip: View {
     @ObservedObject private var pins = DockPinStore.shared
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var feedback = CornerActionFeedback.shared
+    @ObservedObject private var shelf = DropShelfController.shared.presentation
+    @ObservedObject private var shelfStore = DropShelfController.shared.store
     /// A pin draws only when the search index resolves it; a rebuilt index is a redraw.
     @ObservedObject private var index = GlobalSearchIndexStatus.shared
     @State private var hoveredID: String?
@@ -132,6 +134,8 @@ struct CornerDockStrip: View {
         var trailing: CGFloat = 14
         if clipboard.phase.announcesCopy { trailing += control }
         if model.selection != nil { trailing += control }
+        // The Drop Shelf's control closes the field's row in every scope.
+        trailing += control
         let pillEnd = AppChatPromptMetrics.boardWidth(for: model) - trailing
         let pillStart = pillEnd - AppChatPromptMetrics.appBarPillWidth(for: model)
         // Pins lead, so an icon is past the hairline when it is a tab with a pin before it.
@@ -310,34 +314,11 @@ struct CornerDockStrip: View {
                 appBarToolsDivider
                 // The corner's own cards, not the field's scope chips: a dock icon opens a
                 // surface beside the dock, it does not bring the field back with a chip in it.
-                if clipboard.phase.announcesCopy {
-                    toolIcon("doc.on.clipboard", title: "Clipboard") {
-                        ClipboardPanelController.shared.show()
-                    }
-                    .modifier(StripToolVisibility(shown: toolsShown))
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                    // Hovering opens the card without taking the keyboard; a click arms it.
-                    .onHover { inside in
-                        guard inside else { return }
-                        let controller = ClipboardPanelController.shared
-                        controller.model.reload()
-                        controller.model.summon()
-                    }
-                }
                 // An app bar carries the clipboard and the selection, not action results
                 // (`dockToolCount`): drawing more than it counts would overrun its width.
-                if model.selection != nil {
-                    toolIcon("text.cursor", title: "Selection") {
-                        CornerDockController.shared.showSelectionScopeFromDock()
-                    }
-                    .modifier(StripToolVisibility(shown: toolsShown))
-                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
-                }
-                // What the last action came to, for a few seconds — the dock's inline
-                // result, in the corner's own idiom: the clipboard's slot and lifetime.
-                if let result = feedback.glyph, !model.showsTabBar {
-                    ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
-                        .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                // The Drop Shelf is the last of them in every scope, pinned or not.
+                ForEach(toolKinds, id: \.self) { kind in
+                    toolView(kind)
                 }
             }
         }
@@ -553,6 +534,50 @@ struct CornerDockStrip: View {
                 .accessibilityAddTraits(.isButton)
         } else {
             toolIcon("magnifyingglass", title: "Search", action: action)
+        }
+    }
+
+    /// What the row's end holds, from the one rule the shell is measured by.
+    private var toolKinds: [DockToolKind] {
+        model.dockTools(
+            clipboardVisible: clipboard.phase.announcesCopy,
+            feedbackVisible: feedback.glyph != nil)
+    }
+
+    @ViewBuilder
+    private func toolView(_ kind: DockToolKind) -> some View {
+        switch kind {
+        case .clipboard:
+            toolIcon("doc.on.clipboard", title: "Clipboard") {
+                ClipboardPanelController.shared.show()
+            }
+            .modifier(StripToolVisibility(shown: toolsShown))
+            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            // Hovering opens the card without taking the keyboard; a click arms it.
+            .onHover { inside in
+                guard inside else { return }
+                let controller = ClipboardPanelController.shared
+                controller.model.reload()
+                controller.model.summon()
+            }
+        case .selection:
+            toolIcon("text.cursor", title: "Selection") {
+                CornerDockController.shared.showSelectionScopeFromDock()
+            }
+            .modifier(StripToolVisibility(shown: toolsShown))
+            .transition(.opacity.combined(with: .scale(scale: 0.8)))
+        case .feedback:
+            // What the last action came to, for a few seconds — the dock's inline result, in
+            // the corner's own idiom: the clipboard's slot and lifetime.
+            if let result = feedback.glyph {
+                ActionFeedbackGlyph(feedback: result, size: M.dockIconSize)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        case .shelf:
+            DropShelfIcon(
+                presentation: shelf, store: shelfStore, style: .strip,
+                isKeyboardFocused: !isDock && model.isShelfFocused)
+                .modifier(StripToolVisibility(shown: toolsShown))
         }
     }
 

@@ -84,6 +84,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | D12 | Mail find actions | ❌ | No Corner code found |
 | D13 | Safari page actions | ✅ | Tabs, in Safari's **Context Dock** (owner 2026-09-25): the field folds away at rest — on idle or hovering its pill — into a bar of the app's own things, its open tabs (no Global pins or tools), the way Global Context folds into its running apps; typing or the app icon expands it back; the field carries the tabs as a small pill, "+N" past what fits; a click on a tab (big or small) switches Safari. Same shell and height as Global. From the Dock's loader (`SafariTabManager`) through the shared `BrowserTabList`. Pinned actions and pinned tabs: task 5 in `00-NOW.md`. Checked on the app 2026-09-25. `CornerSafariTabsTests` |
 | D14 | Share actions | ✅ | Share of the selection runs in the Selection card with the Mac's share destinations (X1: `shareSelectionInTheCard`, `typingNarrowsTheDestinations`, `shareTheAnswer`); an app's bar carries Share (the Safari bar's share icon). Hand check owed for the bar's Share |
+| D15 | Drop Shelf: an icon at the end of the row, in every scope, even with no pins; click opens the shelf inside the shell; a drag over it makes it the drop target; no separate "Drop to Shelf" card (#147) | ✅ | One implementation for both shells: `DropShelfIcon` (three sizes), `DropShelfCardContent` (Corner glass card / Dock sheet section), `DockTools.row` (the row's trailing tools, shelf always last, which the strip draws and is measured by), `DropShelfDragRule` (the drag-target rule). The Corner's icon is the strip's last tool and the field's last control (Global's field shows the strip's); the Dock's is the last control of the input bar. Esc closes it in both. Corner: Tab / ←→ reach it as the pill row's last pill (`DockKeyRules.pillRow`, `tabReachesTheShelfWhenNothingElseIsThere`, `returnTogglesTheShelf`). Tests: `DropShelfRowTests`, `DropShelfPresentationTests`, `DropShelfDragRuleTests`, `DropShelfProviderIngestTests`. **Dock gap:** the Dock's pill cascade is not a `DockKeyRules.pillRow` row, so there the icon is a button reached by VoiceOver / Full Keyboard Access, not by ←/→. Hand check owed |
 
 ## E. Chat
 
@@ -134,6 +135,7 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 *2026-09-26: B3, B4, C1, C3, C10, C11, C12, E4 → ✅; B2 → — (task 5 part 2, #98).*
 *2026-09-28: D4, D5, D7, D14 → ✅; D6 stays 🟡 with an owner question (task 7, #106).*
 *2026-09-28: D6 → ✅ (owner: search opens plugins in the Corner); D7's desktop-only mode confirmed not needed.*
+*2026-10-04: D15 added ✅ (Drop Shelf icon at the end of every row, both shells, #147).*
 *2026-09-29: E8 added ✅ — result cards for every chat turn, one shared view (task 16b).*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):

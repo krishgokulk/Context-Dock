@@ -45,16 +45,20 @@ struct CornerDockAnchorTests {
         #expect(abs((slots.prompt?.midX ?? 0) - width / 2) < 0.5)
     }
 
-    @Test("Centred, the shelf and the field are centred as one row")
-    func centreCentresTheRow() {
+    @Test("Centred, the field is centred and an open shelf stands over it, never beside it")
+    func centreCentresTheFieldAndStacksTheShelfOverIt() {
         let width: CGFloat = 1800
         let slots = CornerDockLayout.slots(
-            shelf: pill, clipboard: pill, prompt: card, anchor: .center, panelWidth: width)
-        let left = slots.shelf!.minX
-        let right = slots.prompt!.maxX
+            shelf: card, clipboard: pill, prompt: card, anchor: .center, panelWidth: width)
+        let prompt = slots.prompt!
+        let shelf = slots.shelf!
 
-        #expect(abs((left + right) / 2 - width / 2) < 0.5)
-        #expect(slots.shelf!.maxX + CornerDockLayout.gap == slots.prompt!.minX)
+        #expect(abs(prompt.midX - width / 2) < 0.5)
+        // Over the field, on its centre line, one gap above it: not a second container in
+        // the row beside the shell.
+        #expect(abs(shelf.midX - prompt.midX) < 0.5)
+        #expect(shelf.minY == prompt.maxY + CornerDockLayout.gap)
+        #expect(!shelf.intersects(prompt))
     }
 
     @Test("Centred, what answers the field still sits above the field")

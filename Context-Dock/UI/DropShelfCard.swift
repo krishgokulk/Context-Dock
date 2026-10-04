@@ -1,27 +1,24 @@
-// DropShelfPill.swift
+// DropShelfCard.swift
 // Context-Dock
 //
-// The Drop Shelf's pill and card. Same shell, metrics, and morph as the clipboard pill,
-// because the corner should read as one place with two things in it rather than two
-// widgets that happen to be near each other. The window never resizes — the morph is a
-// SwiftUI frame change inside a fixed transparent panel.
+// What the Drop Shelf shows when it is open: the held items and their footer. Opened from the
+// shelf's icon at the end of the dock row (`DropShelfIcon`), in the same shell, with the same
+// glass as the other cards. The window never resizes — the card appears and goes inside the
+// shell's fixed transparent panel.
 
 import AppKit
 import SwiftUI
 
-struct DropShelfPill: View {
+/// The open shelf in the Corner: the items in the shell's own glass, above the field like
+/// the selection card and the commands list.
+struct DropShelfCard: View {
     @ObservedObject var presentation: DropShelfPresentation
     @ObservedObject var store: DropShelfStore
 
-    private var expanded: Bool { presentation.phase == .expanded }
-    private var cardSize: CGSize { DropShelfMetrics.cardSize(for: presentation.phase) }
-
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            collapsedContent.opacity(expanded ? 0 : 1)
-            expandedContent.opacity(expanded ? 1 : 0)
-        }
-        .frame(width: cardSize.width, height: cardSize.height, alignment: .bottomLeading)
+        DropShelfCardContent(
+            presentation: presentation, store: store, size: DropShelfMetrics.expandedSize
+        )
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -31,67 +28,60 @@ struct DropShelfPill: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
                         .strokeBorder(
-                            presentation.phase == .inviting
+                            presentation.isDragOverIcon
                                 ? Color.accentColor.opacity(0.85) : Color.white.opacity(0.16),
-                            lineWidth: presentation.phase == .inviting ? 2 : 1)
+                            lineWidth: presentation.isDragOverIcon ? 2 : 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
-        .animation(.spring(response: 0.34, dampingFraction: 0.84), value: presentation.phase)
+        // A drop on the open card lands on the shelf too — the card is the shelf.
+        .dropShelfTarget(presentation)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Drop shelf")
     }
+}
 
-    // MARK: - Collapsed
+/// The items and the footer, with no chrome of its own: the Corner wraps it in glass, the
+/// Dock draws it inside its sheet. One view, so the two cannot drift apart.
+struct DropShelfCardContent: View {
+    @ObservedObject var presentation: DropShelfPresentation
+    @ObservedObject var store: DropShelfStore
+    let size: CGSize
 
-    private var collapsedContent: some View {
-        HStack(spacing: 10) {
-            Image(systemName: presentation.phase == .inviting ? "tray.and.arrow.down.fill" : "tray.full.fill")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(presentation.phase == .inviting ? Color.accentColor : .secondary)
-                .frame(width: 30)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(presentation.phase == .inviting ? "Drop to Shelf" : "Shelf")
-                    .font(.system(size: 13, weight: .semibold))
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            if !store.items.isEmpty {
-                Text("\(store.items.count)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(Color.primary.opacity(0.09), in: Capsule())
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(
-            width: DropShelfMetrics.collapsedSize.width,
-            height: DropShelfMetrics.collapsedSize.height)
-    }
-
-    private var subtitle: String {
-        if presentation.phase == .inviting { return "Files, text, or links" }
-        return store.items.count == 1 ? "1 item held" : "\(store.items.count) items held"
-    }
-
-    // MARK: - Expanded
-
-    private var expandedContent: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             rows
             Divider().opacity(0.2)
             footer
         }
-        .frame(
-            width: DropShelfMetrics.expandedSize.width,
-            height: DropShelfMetrics.expandedSize.height)
+        .frame(width: size.width, height: size.height)
     }
 
     private var rows: some View {
+        Group {
+            if store.items.isEmpty { emptyState } else { itemList }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// An open shelf with nothing on it says what it is for, instead of showing a blank card.
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "tray")
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(.secondary)
+            Text("Nothing on the shelf")
+                .font(.system(size: 12.5, weight: .semibold))
+            Text("Drop files, text, or links on the tray icon.")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+        }
+        .multilineTextAlignment(.center)
+        .padding(16)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var itemList: some View {
         ScrollView {
             LazyVStack(spacing: 3) {
                 ForEach(store.items) { item in
@@ -101,7 +91,6 @@ struct DropShelfPill: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func row(_ item: DropShelfItem) -> some View {
@@ -126,6 +115,7 @@ struct DropShelfPill: View {
             }
             .buttonStyle(.plain)
             .help("Remove from shelf")
+            .accessibilityLabel("Remove \(item.originalName) from shelf")
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)

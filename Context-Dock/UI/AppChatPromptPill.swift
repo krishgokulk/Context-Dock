@@ -85,8 +85,9 @@ enum AppChatPromptMetrics {
     /// — which the strip's pill must end before. Global's field has neither, so there the
     /// pill ends at the strip's trailing region; in a Context Dock it sat over both buttons.
     static func appFieldTrailingReserve(typed: Bool) -> CGFloat {
-        // "+" is a 22-point control, send a 26-point circle, 10 of row spacing before each.
-        typed ? 68 : 32
+        // "+" is a 22-point control, send and the Drop Shelf's 26-point circles, 10 of row
+        // spacing before each.
+        typed ? 104 : 68
     }
 
     /// How many icons the 372-point field was built to hold. Past this it grows.
@@ -359,6 +360,8 @@ struct AppChatPromptPill: View {
     /// Watched, not asked once: the clipboard can arm while this field is already up, and
     /// the caret has to leave when it does.
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
+    @ObservedObject private var shelf = DropShelfController.shared.presentation
+    @ObservedObject private var shelfStore = DropShelfController.shared.store
     @ObservedObject private var selection = CornerDockController.shared.selection
     @ObservedObject private var actionFeedback = CornerActionFeedback.shared
     @FocusState private var fieldFocused: Bool
@@ -1124,6 +1127,12 @@ struct AppChatPromptPill: View {
                 }
             }
 
+            // The Drop Shelf, last of the field's icons in every scope: Global's is the strip's,
+            // drawn over this end of the field, so the field adds none there.
+            if !model.isGlobalScope {
+                shelfControl
+            }
+
             if model.isAnswering {
                 Button { model.cancelTurn() } label: {
                     controlGlyph("stop.fill", tinted: true)
@@ -1193,6 +1202,15 @@ struct AppChatPromptPill: View {
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
         .animation(.easeOut(duration: 0.16), value: model.selection)
         .animation(.easeOut(duration: 0.16), value: model.isShowingSelectionScope)
+    }
+
+    /// The Drop Shelf's icon at the end of the field's controls — click opens the shelf above
+    /// the field, a drag over it drops onto it.
+    private var shelfControl: some View {
+        DropShelfIcon(
+            presentation: shelf, store: shelfStore, style: .control,
+            isKeyboardFocused: model.isShelfFocused)
+            .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
     /// Opens the frontmost app's selection as its own corner card — the same surface the

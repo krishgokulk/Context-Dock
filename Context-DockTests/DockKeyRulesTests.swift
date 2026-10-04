@@ -208,6 +208,10 @@ struct CornerDockKeyRulesTests {
         #expect(model.applyPillRowKey(.right))
         #expect(model.focusedPill?.id == "b")
         #expect(model.applyPillRowKey(.right))
+        #expect(model.focusedPill?.id == "c")
+        // Past the last app is the Drop Shelf, the row's last pill; past that, the field.
+        #expect(model.applyPillRowKey(.right))
+        #expect(model.isShelfFocused)
         #expect(model.applyPillRowKey(.right))
         #expect(model.focusedPillIndex == nil)
         #expect(model.applyPillRowKey(.tab))

@@ -19,6 +19,9 @@ struct GeneralChatFocusApp: Identifiable, Hashable {
 }
 
 struct LauncherView: View {
+    /// The Drop Shelf's state in this shell — the Dock keeps its own, so opening the shelf here
+    /// never opens a card in the Corner. The store is the one shelf.
+    @ObservedObject var dockShelf = DropShelfController.shared.dockPresentation
     @State var searchState = SearchState()
     @State var queryChangeTask: Task<Void, Never>? = nil
     @State var queryChangeGeneration: Int = 0
