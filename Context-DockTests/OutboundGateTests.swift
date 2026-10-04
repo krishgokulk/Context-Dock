@@ -294,7 +294,8 @@ struct TurnTaintTrackerTests {
         let tracker = TurnTaintTracker()
         let turn = AgentTurnToken()
         tracker.begin(turn, userText: [])
-        tracker.record(toolName: "search_messages", arguments: [:], output: "3 messages",
+        // A file read is private; a message read is private AND untrusted (aMailReadAlone…).
+        tracker.record(toolName: "read_file", arguments: [:], output: "notes.txt",
                        succeeded: true, turn: turn)
         #expect(tracker.taint(for: turn) == privateOnly)
         tracker.record(
