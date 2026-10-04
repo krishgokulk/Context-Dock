@@ -52,6 +52,9 @@ enum OutboundGate {
         /// Normalised host for `.fetch`; nil when there is none, or when it cannot be read
         /// unambiguously (which the gate treats as "not one the user typed").
         let host: String?
+        /// The exact URL for `.fetch` in the form `canonicalURL(fromURL:)` gives; nil when the
+        /// address cannot be read unambiguously, which no typed URL can match.
+        var url: String? = nil
         /// Short noun phrase for the card, e.g. "run a shortcut".
         let label: String
     }
@@ -71,16 +74,17 @@ enum OutboundGate {
     /// - Parameters:
     ///   - taint: what this turn has touched.
     ///   - target: what the call would reach.
-    ///   - typedHosts: normalised hosts the USER typed in this thread (never tool output or
-    ///     model text; see `typedHosts(in:)`).
+    ///   - typedURLs: canonical URLs the USER typed in this thread (never tool output or model
+    ///     text; see `typedURLs(in:)`).
     ///   - attended: a person is at the keyboard and can answer a card.
     static func decide(
-        taint: TurnTaint, target: Target, typedHosts: Set<String>, attended: Bool
+        taint: TurnTaint, target: Target, typedURLs: Set<String>, attended: Bool
     ) -> Decision {
         guard taint.isBoth else { return .allow }
-        // The user pointed DoraX at this host themselves. Exact match only: a subdomain, a
-        // lookalike or a host with userinfo never reaches this line with a typed host.
-        if target.kind == .fetch, let host = target.host, typedHosts.contains(host) {
+        // The user pointed DoraX at this exact address themselves: scheme, host, port, path and
+        // query all equal. Another path or query on the same host is a page's idea (a link, an
+        // injected "fetch https://site/log?d=<data>"), so it asks once.
+        if target.kind == .fetch, let url = target.url, typedURLs.contains(url) {
             return .allow
         }
         let reason = cardReason(target: target)
@@ -145,6 +149,23 @@ enum OutboundGate {
         return normalizedHost(host)
     }
 
+    /// The whole address as the gate compares it: lower-case scheme and authority (the host's
+    /// one trailing dot dropped), the path and query exactly as written, the fragment dropped
+    /// (it is never sent), an empty path read as `/`. nil whenever `normalizedHost(fromURL:)` is.
+    static func canonicalURL(fromURL urlString: String) -> String? {
+        guard normalizedHost(fromURL: urlString) != nil else { return nil }
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let schemeEnd = trimmed.range(of: "://") else { return nil }
+        let scheme = trimmed[..<schemeEnd.lowerBound].lowercased()
+        let afterScheme = trimmed[schemeEnd.upperBound...]
+        var authority = String(afterScheme.prefix { $0 != "/" && $0 != "?" && $0 != "#" }).lowercased()
+        if authority.hasSuffix(".") { authority.removeLast() }
+        var rest = String(afterScheme.drop { $0 != "/" && $0 != "?" && $0 != "#" })
+        if let hash = rest.firstIndex(of: "#") { rest = String(rest[..<hash]) }
+        if rest.isEmpty { rest = "/" } else if rest.hasPrefix("?") { rest = "/" + rest }
+        return "\(scheme)://\(authority)\(rest)"
+    }
+
     /// Lower-case, one trailing dot dropped, ASCII only. nil for anything else.
     static func normalizedHost(_ host: String) -> String? {
         var h = host.lowercased()
@@ -174,10 +195,40 @@ enum OutboundGate {
         return found
     }
 
+    /// The exact addresses the user typed in `texts`: each full http(s) URL, and for a bare
+    /// domain (with or without a path) the http and https forms of that address. A trailing
+    /// sentence mark is read both ways, because "see https://a.site/x." means `/x`.
+    static func typedURLs(in texts: [String]) -> Set<String> {
+        var found = Set<String>()
+        func add(_ candidate: String) {
+            if let url = canonicalURL(fromURL: candidate) { found.insert(url) }
+        }
+        let marks = CharacterSet(charactersIn: ".,;:!?")
+        for text in texts {
+            for match in matches(urlPattern, in: text) {
+                add(match)
+                add(match.trimmingCharacters(in: marks))
+            }
+            for match in matches(barePathPattern, in: text) {
+                for candidate in [match, match.trimmingCharacters(in: marks)] {
+                    let hostPart = String(candidate.prefix { $0 != "/" && $0 != "?" && $0 != "#" })
+                    guard let host = normalizedHost(hostPart), looksLikeDomainOrIPv4(host) else {
+                        continue
+                    }
+                    add("https://" + candidate)
+                    add("http://" + candidate)
+                }
+            }
+        }
+        return found
+    }
+
     private static let urlPattern = #"https?://[^\s<>"'`\)\]\}]+"#
     // A dotted name not glued to an @ (email), a word or a path on its left.
     private static let barePattern =
         #"(?<![@\w.\-/])[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?)+(?![\w\-])"#
+
+    private static let barePathPattern = barePattern + #"(?:[/?][^\s<>"'`\)\]\}]*)?"#
 
     private static func matches(_ pattern: String, in text: String) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
@@ -215,7 +266,9 @@ enum OutboundGate {
         switch toolName {
         case "read_url":
             let raw = (arguments["url"] as? String ?? "")
-            return Target(kind: .fetch, host: normalizedHost(fromURL: raw), label: "contact a web address")
+            return Target(
+                kind: .fetch, host: normalizedHost(fromURL: raw), url: canonicalURL(fromURL: raw),
+                label: "contact a web address")
 
         case "run_shortcut":
             return Target(kind: .shortcut, host: nil, label: "run a Shortcut, which can send data out")
@@ -258,10 +311,41 @@ enum OutboundGate {
 
         default:
             // A tool this table does not know is, by construction, one nobody has judged.
-            // Registered built-ins are all listed above or are local reads; an extension tool
-            // resolved at run time is not, and comes through `unknownToolTarget`.
+            // Registered built-ins are all listed above or in `localTools` / `ungatedTools`
+            // (a test holds the registry to that); an extension tool resolved at run time is
+            // not, and comes through `unknownToolTarget`.
             return nil
         }
+    }
+
+    // MARK: - Every tool is judged
+
+    /// Tools `target` can classify as outbound (its switch above).
+    static let outboundTools: Set<String> = [
+        "read_url", "run_shortcut", "compose_message", "run_command", "spawn_worker",
+        "run_menu_command", "run_app_script", "run_adapter_action", "run_route", "run_capability",
+    ]
+
+    /// Built-in tools judged to be local: they read, search or write on this Mac and cannot
+    /// carry data to another host.
+    static let localTools: Set<String> = [
+        "read_page", "read_file", "read_attachment", "read_selection", "read_tool_result",
+        "find_files", "find_capability", "find_route", "list_shortcuts", "verify_outcome",
+        "write_output_file", "search_messages", "get_messages_conversations",
+    ]
+
+    /// Built-in tools that can reach further than the table above judges, left ungated on
+    /// purpose and listed here so that is a decision on the record, not an omission: an MCP
+    /// tool, and the three that drive another app's UI (the owner's call, #164).
+    static let ungatedTools: Set<String> = [
+        "run_mcp_tool", "operate_app", "send_keys", "window_control",
+    ]
+
+    /// Whether a tool name has been judged. The registry test requires it of every built-in, so
+    /// a new network tool cannot ship ungated by being left out of `target`.
+    static func isClassified(toolName: String) -> Bool {
+        outboundTools.contains(toolName) || localTools.contains(toolName)
+            || ungatedTools.contains(toolName)
     }
 
     /// An L2 extension tool, resolved by name at run time: arbitrary code nobody has judged.
@@ -314,51 +398,87 @@ enum OutboundGate {
 
     // MARK: - Shell
 
-    /// Whether a shell command could reach the network. Over-reports: a command too opaque to
-    /// read (substitution, escapes, an interpreter) counts as reaching it.
+    /// Whether a shell command could reach the network. An allow-list: it does not, only when
+    /// EVERY segment is a known local command (`knownLocalCommands`). Anything else, and anything
+    /// too opaque to read (substitution, escapes, subshells, a device that is a socket), counts
+    /// as reaching it. An empty command runs nothing.
     static func shellReachesNetwork(_ command: String) -> Bool {
-        let lower = command.lowercased()
-        if lower.contains("://") || lower.contains("mailto:") { return true }
-        if lower.contains("$(") || lower.contains("`") || lower.contains("\\") || lower.contains("${") {
-            return true
-        }
-        // A quote in the middle of a word (c"u"rl) hides a name from a word split.
-        if lower.range(of: #"[a-z0-9]["'][a-z0-9]"#, options: .regularExpression) != nil { return true }
-        let separators = CharacterSet(charactersIn: " \t\n;|&()<>\"'=,")
-        let words = lower.components(separatedBy: separators).filter { !$0.isEmpty }
-            .map { $0.split(separator: "/").last.map(String.init) ?? $0 }
-        for word in words {
-            if word == "git" {
-                if words.contains(where: gitNetworkWords.contains) { return true }
-            } else if networkWords.contains(word) {
-                return true
-            }
-        }
-        return false
+        !shellIsLocalOnly(command)
     }
 
-    private static let networkWords: Set<String> = [
-        // transfer and remote shells
-        "curl", "wget", "nc", "ncat", "netcat", "telnet", "socat", "ssh", "scp", "sftp", "rsync",
-        "ftp", "tftp", "aria2c", "http", "https", "httpie", "xh", "lftp", "mosh",
-        // name lookups carry data in the name
-        "ping", "dig", "nslookup", "host", "traceroute", "whois",
-        // mail
-        "mail", "mailx", "sendmail", "mutt", "msmtp", "swaks",
-        // fetches hidden behind a package or VCS command
-        "npm", "npx", "yarn", "pnpm", "pip", "pip3", "pipx", "brew", "gem", "cargo",
-        "pod", "go", "docker", "gh", "composer", "bundle",
-        // interpreters and shells can open a socket themselves
-        "python", "python3", "node", "ruby", "perl", "php", "osascript", "swift", "deno", "bun",
-        "lua", "java", "sh", "bash", "zsh", "dash", "fish", "eval", "exec", "source", "xargs",
-        "expect", "awk", "gawk",
-        "shortcuts",
+    static func shellIsLocalOnly(_ command: String) -> Bool {
+        let lower = command.lowercased()
+        if lower.contains("://") || lower.contains("mailto:") { return false }
+        if lower.contains("$(") || lower.contains("`") || lower.contains("\\") || lower.contains("${")
+            || lower.contains("<(") || lower.contains(">(")
+        {
+            return false
+        }
+        // /dev/tcp and /dev/udp are sockets that `>` and `<` can open without any command.
+        if lower.contains("/dev/tcp") || lower.contains("/dev/udp") { return false }
+        // A quote in the middle of a word (c"u"rl) hides a name from a word split.
+        if lower.range(of: #"[a-z0-9]["'][a-z0-9]"#, options: .regularExpression) != nil { return false }
+        // Subshells, groups and function bodies: not read, so asked about.
+        if command.contains(where: { "(){}".contains($0) }) { return false }
+        // Every separator splits (a superset of what the shell splits on, so a quoted `;` only
+        // makes the check stricter): each segment must be a known command on its own.
+        let segments = command.split(
+            omittingEmptySubsequences: true,
+            whereSeparator: { ";|&\n\r".contains($0) })
+        for segment in segments {
+            let words = segment.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard let first = words.first else { continue }
+            guard let name = localCommandName(first), knownLocalCommands.contains(name) else {
+                return false
+            }
+            if !localArguments(name, Array(words.dropFirst())) { return false }
+        }
+        return true
+    }
+
+    /// `ls`, or `/bin/ls` and `/usr/bin/ls`; any other path could be any program.
+    private static func localCommandName(_ word: String) -> String? {
+        guard word.contains("/") else { return word }
+        for prefix in ["/bin/", "/usr/bin/"] where word.hasPrefix(prefix) {
+            let name = String(word.dropFirst(prefix.count))
+            return name.contains("/") ? nil : name
+        }
+        return nil
+    }
+
+    /// The few allow-listed commands that can still run another program or open a connection
+    /// through an argument.
+    private static func localArguments(_ name: String, _ args: [String]) -> Bool {
+        switch name {
+        case "git":
+            // The subcommand must come first (no `-c`, `--exec-path`...) and be a read.
+            guard let sub = args.first else { return false }
+            return gitLocalSubcommands.contains(sub)
+                && !args.contains(where: { $0.hasPrefix("--ext-diff") || $0.hasPrefix("--upload-pack") })
+        case "find":
+            let running: Set<String> = ["-exec", "-execdir", "-ok", "-okdir"]
+            return !args.contains(where: running.contains)
+        case "sort":
+            return !args.contains(where: { $0.hasPrefix("--compress-program") })
+        default:
+            return true
+        }
+    }
+
+    /// Commands that read or list this Mac and cannot open a connection or start another program
+    /// from their arguments alone (`find` and `sort` and `git` are checked in `localArguments`).
+    /// Deliberately short: a command not here asks, only when the turn holds both kinds of data.
+    private static let knownLocalCommands: Set<String> = [
+        "ls", "cat", "head", "tail", "grep", "egrep", "fgrep", "find", "wc", "pwd", "echo",
+        "printf", "cd", "stat", "file", "du", "df", "date", "whoami", "which", "uname",
+        "basename", "dirname", "tree", "diff", "cmp", "sort", "uniq", "cut", "tr", "sw_vers",
+        "hostname", "id", "true", "false", "git",
     ]
 
-    /// `git` only reaches the network through these.
-    private static let gitNetworkWords: Set<String> = [
-        "push", "pull", "fetch", "clone", "remote", "ls-remote", "submodule", "request-pull",
-        "send-email", "archive", "svn", "lfs", "bundle",
+    /// The `git` subcommands that only read the local repository.
+    private static let gitLocalSubcommands: Set<String> = [
+        "status", "log", "diff", "show", "rev-parse", "ls-files", "blame", "describe",
+        "shortlog", "grep",
     ]
 
     // MARK: - Private reads
@@ -379,6 +499,30 @@ enum OutboundGate {
         default:
             return false
         }
+    }
+
+    /// Whether a SUCCESSFUL call just read text a third party wrote: a mail, a message, a note
+    /// (shared notes, pasted text). The model's view of it is unchanged, so it is not fenced;
+    /// the gate alone counts it as untrusted, next to private.
+    static func readsThirdPartyContent(toolName: String, arguments: [String: Any]) -> Bool {
+        switch toolName {
+        case "get_messages_conversations", "search_messages":
+            return true
+        case "run_capability":
+            let id = (arguments["capability_id"] as? String ?? "").lowercased()
+            return thirdPartyCapabilityPrefixes.contains { id.hasPrefix($0) }
+        default:
+            return false
+        }
+    }
+
+    private static let thirdPartyCapabilityPrefixes = ["mail.", "messages.", "notes."]
+
+    /// Apps whose content is mostly written by other people (the mailbox, the threads, shared
+    /// notes). A chat scoped to one starts with that text already in the prompt.
+    static func isThirdPartyContentApp(bundleID: String?) -> Bool {
+        guard let id = bundleID?.lowercased() else { return false }
+        return ["com.apple.mail", "com.apple.mobilesms", "com.apple.notes"].contains(id)
     }
 
     /// Apps whose whole content is the user's private data. A turn scoped to one starts with that
@@ -464,7 +608,7 @@ nonisolated enum TurnUserText {
 final class TurnTaintTracker {
     private struct Entry {
         var taint = TurnTaint()
-        var typedHosts = Set<String>()
+        var typedURLs = Set<String>()
     }
 
     private var entries: [AgentTurnToken: Entry] = [:]
@@ -478,14 +622,17 @@ final class TurnTaintTracker {
     ///     of them means the turn starts with untrusted content in front of the model.
     ///   - startsPrivate: the prompt already carries the user's private data (a chat scoped to
     ///     Mail, Messages, Notes...), so no read is needed to have it.
+    ///   - startsUntrusted: the prompt already carries text other people wrote (the same chats:
+    ///     a mailbox snapshot, a thread).
     func begin(
         _ token: AgentTurnToken, userText: [String], promptBlocks: [String] = [],
-        startsPrivate: Bool = false
+        startsPrivate: Bool = false, startsUntrusted: Bool = false
     ) {
         var entry = Entry()
         entry.taint.readPrivateData = startsPrivate
-        entry.typedHosts = OutboundGate.typedHosts(in: userText)
-        entry.taint.readUntrustedContent = promptBlocks.contains(where: UntrustedContent.containsFence)
+        entry.typedURLs = OutboundGate.typedURLs(in: userText)
+        entry.taint.readUntrustedContent = startsUntrusted
+            || promptBlocks.contains(where: UntrustedContent.containsFence)
         entries[token] = entry
     }
 
@@ -501,9 +648,9 @@ final class TurnTaintTracker {
         return entry.taint
     }
 
-    func typedHosts(for token: AgentTurnToken?) -> Set<String> {
+    func typedURLs(for token: AgentTurnToken?) -> Set<String> {
         guard let token else { return [] }
-        return entries[token]?.typedHosts ?? []
+        return entries[token]?.typedURLs ?? []
     }
 
     func notePrivateRead(_ token: AgentTurnToken?) {
@@ -523,6 +670,11 @@ final class TurnTaintTracker {
     ) {
         if succeeded, OutboundGate.readsPrivateData(toolName: toolName, arguments: arguments) {
             notePrivateRead(turn)
+        }
+        // Mail, Messages and Notes bodies are not fenced (the model reads them as they are), but
+        // a stranger wrote them: a hostile email is the textbook injection.
+        if succeeded, OutboundGate.readsThirdPartyContent(toolName: toolName, arguments: arguments) {
+            noteUntrusted(turn)
         }
         if UntrustedContent.containsFence(output) { noteUntrusted(turn) }
     }

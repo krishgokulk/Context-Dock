@@ -72,6 +72,8 @@ extension AIProviderService {
             userText: TurnUserText.resolve(history: history, message: message),
             promptBlocks: [contextPrompt, message],
             startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(
                 bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
@@ -316,6 +318,8 @@ extension AIProviderService {
             userText: TurnUserText.resolve(history: history, message: message),
             promptBlocks: [contextPrompt, message],
             startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(
                 bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
@@ -574,6 +578,8 @@ extension AIProviderService {
             userText: TurnUserText.resolve(history: history, message: message),
             promptBlocks: [contextPrompt, message],
             startsPrivate: OutboundGate.isPrivateDataApp(
+                bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)),
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(
                 bundleID: AgentToolRegistry.scopedBundleID(for: chatScope)))
         // However this loop leaves — answer, refusal, throw, or step limit — the turn's
         // record goes with it rather than sitting in the registry until age evicts it.
