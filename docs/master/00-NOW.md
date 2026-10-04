@@ -29,33 +29,31 @@ The planner labels the next issue `ready` when the one before it is in review.
 6. **#158 E8a → #159 E8b → #160 E8c** (#160 `needs-owner`: which model grades the replays)
 7. **#134 Settings-card follow-ups** (`needs-owner`)
 
-Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget.
+Labs, after 1.0 (no issues yet): E9–E16 from the engine plan, plus the blueprint's "Later" items — undo log and dry-run preview for writes, latency targets (first token under ~1 s), a per-turn "what left the Mac" view, a model-upgrade gate (rerun E8 before any new default model), proactive suggestions with an interruption budget (now E18 watch mode, rules in the engine plan §5).
 Study copy (diagrams, reasoning, interview notes; not the source of truth for tasks): the owner's DoraX Master Blueprint and its pages — [AI turn](https://claude.ai/artifact/4jFrmW4XwXuetpV7sp5YLD), [target architecture](https://claude.ai/artifact/CDYUTY2zVpMTQDcSbyCQzT), [harness and graph](https://claude.ai/artifact/NX49kAEX2FskD9XWM57MmS), [agent blueprint](https://claude.ai/artifact/T7U6PWYuhZvbgCCdLc56sf).
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
 
 ## Hand-check queue
 
-- **#163 (#146 Finder chat):** in Finder App Chat ask it to copy a file to a folder; it runs the copy or says why not; the turn never spins on "couldn't carry it out on this surface".
-- **#170 (E2 Recorder):** turn the turn log on, run one Anthropic App Chat turn; `turns.log` gains one trace line for that turn; with the log off nothing is written.
-- **#164 (E1 outbound gate):** in a chat holding a private file, ask it to fetch an unknown URL; it asks first.
-- **#148 (#145 transcript spin):** run a long Finder App Chat turn ("can you resume 2026 folder for me?"); Activity Monitor stays near idle; ⌘Q quits promptly during a turn.
+Empty.
 
-Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30).
+Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30); #148, #163, #164, #170, #174 (2026-10-04).
 A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
 
 ## Done
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-04 | Drop Shelf is an icon at the end of the dock in every app, Dock and Corner; the floating card is gone; owner hand-tested | #174 |
 | 2026-10-02 | Flaky turn-log and Shortcuts temp-file tests fixed (hand check optional) | #171 |
-| 2026-10-02 | E2 Recorder: one trace per turn in the turn log (hand check pending) | #170 |
+| 2026-10-02 | E2 Recorder: one trace per turn in the turn log; owner hand-tested | #170 |
 | 2026-10-02 | Builder pauses after one required hand check; `hand-check-optional` label; "merge N without hand check" | #168 |
-| 2026-10-02 | Finder chat carries out a resolved call or says why not (hand check pending) | #163 |
-| 2026-10-01 | E1 outbound gate: private + untrusted turns ask before sending out (hand check pending; gaps in #165) | #164 |
+| 2026-10-02 | Finder chat carries out a resolved call or says why not; owner hand-tested | #163 |
+| 2026-10-01 | E1 outbound gate: private + untrusted turns ask before sending out (owner hand-tested; gaps in #165) | #164 |
 | 2026-10-01 | A read-back that disagrees with the request fails the step | #142 |
 | 2026-10-01 | Clipboard notice no longer blocks the frontmost app | #144 |
-| 2026-10-01 | Chat transcript rewrite loop no longer pins the main thread; app quits during a turn (hand check pending) | #148 |
+| 2026-10-01 | Chat transcript rewrite loop no longer pins the main thread; app quits during a turn; owner hand-tested | #148 |
 | 2026-09-30 | Skill audit of 16a–18: 4 P1 fixed (approval queue instead of a dropped request, cancellable file search, `nonisolated ShortcutsService`, per-file VoiceOver labels on file cards); 15 P2 listed in the PR; owner hand-tested | #141 |
 | 2026-09-30 | Result cards skip `~/Library` / system paths from step output (iCloud Drive and paths the answer names are kept) | #138 |
 | 2026-09-30 | Flaky `AXMenuReaderScriptedFallbackTests` fixed: each reader posts as itself, each test listens to its own (5×2241 green) | #136 |

@@ -79,6 +79,59 @@ takes `ready` issues, so nothing starts until the owner labels one.
 | E14 | Graph gate: 30 real multi-hop questions from the turn log | No graph without them |
 | E15 | Knowledge graph: typed edges from receipts in SQLite + `graph_neighbors` | Replaces the dashboard-only `KnowledgeGraph` |
 | E16 | Nightly consolidation: dedupe facts, rebuild graph and embeddings | Extends `Services/BrainMaintenance.swift` |
+| E17 | Import the `SKILL.md` of CLIs the user installed (CLI-Anything convention: JSON output, `--help`, skill file) into the capability index, so `find_capability` finds them | Never bundled or installed by DoraX; every command is a write that asks; only after E1b (#165) |
+| E18 | Watch mode (= E19 layer 4): a scope notices things while you are away and leaves one suggestion. **Finder first**; Safari, then Mail/Calendar only after measured acceptance | Rules below. Needs E1b (#165), E7b (#157), E9 |
+| E19 | **App Assistant**: each app scope becomes a personal assistant for that app — remembers you, learns your routines, briefs you when you arrive, says what changed after an update | Plan in §5b. Pilot Finder + Mail. After 1.0 |
+
+### 5b. E19 App Assistant — the plan (owner confirmed 2026-10-04)
+
+**Goal.** Every app scope (Finder, Mail, Safari, any app) acts like a personal assistant for that app: it knows how *you* use it, offers the next step before you ask, and tells you what changed — inside the scope's existing Context Dock chat, never a new surface. Inspired by OpenAI Dots, built the DoraX way: local, read-only when proactive, approval to act.
+
+**Today vs. target.** Today a scope is smart only when asked: it reads the app (menus, Help menu, data readers) and acts with approval. It forgets your habits between threads and never speaks first.
+
+**Four layers** (each needs the one before):
+
+| Layer | What the owner sees | Works for | Built on |
+|---|---|---|---|
+| 1. Remembers you | Finder knows invoices go to `~/Documents/Invoices`; Mail knows who you answer fast. A "What I know about you here" list in the app's ⚙ card — every fact can be deleted | Every app | E9 memory, keyed by app |
+| 2. Learns routines | "You usually Export PDF, then email it to Sam — do both?" as one tap | Every app, even menu-only ones | Receipts (E7b) + saved workflows |
+| 3. Briefs you on arrival | One quiet line in the scope's strip when the app comes to the front: "Downloads has 40 new files — tidy?", "2 unread from people you answer within the hour", "Figma updated to 125.3 — 4 new commands" | Apps whose data DoraX can read (Finder, Safari, Mail, Calendar, Notes, Reminders); the "what's new" line works for every app | Read-only checks at app switch; menu diff between versions |
+| 4. Watches while away | "The pricing page you saved changed" | Watchable apps only (E18) | E18 |
+
+**App updates** (part of layer 3):
+- Re-learn an app when its version changes *while DoraX runs*, not only at DoraX start (`AppKnowledgeSkillRefresher` runs today only when adapters load).
+- On a version change, keep the owner's edits to the app's knowledge page (merge, never replace).
+- "What's new": diff the menu cache of the old and new version (`AppMenuCapabilityCache` is already keyed by `bundleVersion`); show it once.
+- Not built: checking the internet for *available* updates of other apps — it would send the owner's app list out past the gate; macOS already does it.
+
+**Rules** (all layers):
+1. No new surface — the scope's Dock/Corner chat and strip only (Unified Dock Surface rule).
+2. Proactive = read-only; any write waits for the owner through the same card and gate; an approved write runs once (E7b).
+3. Interruption budget: at most one briefing per app switch, a few per day; off per app until switched on; an ignored suggestion type is learned and goes quiet.
+4. Memory is visible and editable per app; nothing learned leaves the Mac.
+5. Measured: every suggestion is traced (E2); an app whose suggestions are accepted less than an agreed share goes quiet; E8 replays guard quality.
+
+**Prerequisites:** E1b (#165), #177 (a choice list never acts in the same turn), E7b (#157), E8 (replays), E9 (memory). Proactivity on top of wrong routing multiplies wrong guesses, so these land first.
+
+**Phases** (each its own issue when the queue reaches it; each ends with an owner hand check):
+
+| Phase | Scope | Done when |
+|---|---|---|
+| E19a | Layer 1 for Finder + Mail; ⚙ card shows and deletes facts | Facts learned in one thread are used in the next; deleting a fact stops its use (tests + hand check) |
+| E19b | Layer 3 for Finder + Mail, plus "what's new after an update" for every app; live re-learn on version change; owner edits survive | Briefing appears once per switch within budget; version bump shows the menu diff once; edits kept (tests + hand check) |
+| E19c | Two weeks of measured use | Acceptance per suggestion type reported from E2 traces; owner decides what expands |
+| E19d | Layer 2 (routines) for every app; layers 1/3 for Safari, Calendar, Notes | Same tests per app; parity in Dock and Corner |
+| E19e | Layer 4 = E18, Finder first | E18 rules hold; owner hand check |
+
+### Watch mode rules (from OpenAI Dots, owner 2026-10-04)
+
+OpenAI's Dots (2026-09-30) are always-on cloud agents that look for work on their own. DoraX scopes are not that today: they act only when asked. If DoraX adds background work (E18), it follows the rules that make Dots safe:
+
+1. **Background is read-only.** A watch may read (list folders, read pages, count files); it never writes, sends, fetches a new host or drives the screen. The gate (E1/E1b) blocks anything else.
+2. **Acting waits for the owner.** A watch ends in one suggestion ("3 duplicate PDFs in Downloads — move to Trash?"); the write runs only after approval, through the same card and receipt as a chat turn (E7b: an approved write runs once).
+3. **Interruption budget.** At most a few suggestions a day per scope, none while the owner is typing or in a call; off by default, one switch per scope.
+4. **Local first.** Watches run on the Mac (`FileSystemWatcher`, Safari's tab reader), never in a cloud sandbox; nothing leaves the Mac without the gate.
+5. **Recorded.** Every watch run writes a trace (E2) so E8 can measure whether suggestions were accepted.
 
 ## 6. Order the owner chose (2026-10-01) — for the planner to apply in `00-NOW.md`
 
