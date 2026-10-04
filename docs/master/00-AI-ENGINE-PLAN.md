@@ -80,6 +80,17 @@ takes `ready` issues, so nothing starts until the owner labels one.
 | E15 | Knowledge graph: typed edges from receipts in SQLite + `graph_neighbors` | Replaces the dashboard-only `KnowledgeGraph` |
 | E16 | Nightly consolidation: dedupe facts, rebuild graph and embeddings | Extends `Services/BrainMaintenance.swift` |
 | E17 | Import the `SKILL.md` of CLIs the user installed (CLI-Anything convention: JSON output, `--help`, skill file) into the capability index, so `find_capability` finds them | Never bundled or installed by DoraX; every command is a write that asks; only after E1b (#165) |
+| E18 | Watch mode per scope (Dots-style, local): a scope may notice things while you are away — Finder: a new download, a full disk, duplicates; Safari: a page you return to changed — and leave one suggestion card | Rules below. Not a new surface: suggestions appear in the scope's existing Dock/Corner chat. Needs E1b (#165), E7b (#157), E9 |
+
+### Watch mode rules (from OpenAI Dots, owner 2026-10-04)
+
+OpenAI's Dots (2026-09-30) are always-on cloud agents that look for work on their own. DoraX scopes are not that today: they act only when asked. If DoraX adds background work (E18), it follows the rules that make Dots safe:
+
+1. **Background is read-only.** A watch may read (list folders, read pages, count files); it never writes, sends, fetches a new host or drives the screen. The gate (E1/E1b) blocks anything else.
+2. **Acting waits for the owner.** A watch ends in one suggestion ("3 duplicate PDFs in Downloads — move to Trash?"); the write runs only after approval, through the same card and receipt as a chat turn (E7b: an approved write runs once).
+3. **Interruption budget.** At most a few suggestions a day per scope, none while the owner is typing or in a call; off by default, one switch per scope.
+4. **Local first.** Watches run on the Mac (`FileSystemWatcher`, Safari's tab reader), never in a cloud sandbox; nothing leaves the Mac without the gate.
+5. **Recorded.** Every watch run writes a trace (E2) so E8 can measure whether suggestions were accepted.
 
 ## 6. Order the owner chose (2026-10-01) — for the planner to apply in `00-NOW.md`
 
