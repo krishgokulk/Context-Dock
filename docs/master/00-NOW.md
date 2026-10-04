@@ -36,7 +36,7 @@ Also open: cloud sessions must never merge their own PR (#114 merged before revi
 
 ## Hand-check queue
 
-Empty.
+- **#174 (#147 Drop Shelf icon):** in the Dock (⌥⌥) and the Corner (⌘⌘), in an app with no pins, the shelf icon is the last item of the row; click opens the shelf in the same shell, click or Esc closes it; drag a Finder file over the shell — the icon highlights, a drop on it files the file; no separate "Drop to Shelf" card appears; in the Corner, Tab / → reaches the icon and Return toggles it.
 
 Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30); #148, #163, #164, #170 (2026-10-04).
 A failed check becomes a `Fix:` issue at the top of the queue and its sentence goes into the matching test (routing: `RoutingPhrasebookTests`).
@@ -45,6 +45,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-04 | Drop Shelf is an icon at the end of the dock in every app, Dock and Corner; the floating card is gone (hand check pending) | #174 |
 | 2026-10-02 | Flaky turn-log and Shortcuts temp-file tests fixed (hand check optional) | #171 |
 | 2026-10-02 | E2 Recorder: one trace per turn in the turn log; owner hand-tested | #170 |
 | 2026-10-02 | Builder pauses after one required hand check; `hand-check-optional` label; "merge N without hand check" | #168 |
