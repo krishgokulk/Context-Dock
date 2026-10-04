@@ -423,6 +423,80 @@ struct RoutingPhrasebookTests {
     }
 }
 
+// MARK: - Issue 177: Mail chat offers only routes that match the request
+
+@MainActor
+struct MailRouteChoiceTests {
+
+    private static let mailCommands = [
+        "Quit Mail", "Hide Mail", "Mail Help", "Get New Mail", "Mail Assistant Basics",
+        "Mail — what this app is",
+    ]
+
+    @Test func quitMailMatchesOnlyTheQuitRoute() {
+        let terms = ChatRouteResolver.contentTerms(query: "quit mail", appName: "Mail")
+        #expect(terms == ["quit"])
+        for title in Self.mailCommands {
+            let matched = ChatRouteResolver.termsMatch(title, terms: terms)
+            #expect(matched == (title == "Quit Mail"), "\"quit mail\" vs \(title)")
+        }
+        #expect(ChatRouteResolver.commandStronglyMatches("Quit Mail", terms: terms))
+        for title in ["Hide Mail", "Mail Help", "Get New Mail"] {
+            #expect(!ChatRouteResolver.commandStronglyMatches(title, terms: terms), "\(title)")
+        }
+    }
+
+    @Test func quitMailRunsTheQuitRouteWithoutAsking() {
+        func route(_ path: [String]) -> ChatRoute {
+            ChatRoute(
+                id: "menu:\(path.joined(separator: " ▸ "))", kind: .menuCommand,
+                title: path.joined(separator: " ▸ "),
+                payload: path.joined(separator: "\u{1}"), appName: "Mail",
+                bundleId: "com.apple.mail", isReadOnly: false)
+        }
+        let only = [route(["Mail", "Quit Mail"])]
+        #expect(ChatRouteResolver.soleExactRoute(only, query: "quit mail", appName: "Mail")?.title
+                == "Mail ▸ Quit Mail")
+        #expect(!ChatRouteResolver.shouldAsk(
+            routes: only, bundleId: "com.apple.mail", query: "quit mail"))
+        // Never a pick between the quit and its neighbours.
+        let mixed = [route(["Mail", "Quit Mail"]), route(["Mail", "Hide Mail"])]
+        #expect(ChatRouteResolver.soleExactRoute(mixed, query: "quit mail", appName: "Mail")?.title
+                == "Mail ▸ Quit Mail")
+        #expect(ChatRouteResolver.soleExactRoute(
+            [route(["Mail", "Hide Mail"])], query: "quit mail", appName: "Mail") == nil)
+    }
+
+    @Test func openInMailNamesNoCommandSoNothingUnrelatedIsOffered() {
+        for query in ["open in mail", "open in Mail", "open it in mail", "open mail"] {
+            let terms = ChatRouteResolver.contentTerms(query: query, appName: "Mail")
+            #expect(terms.isEmpty, "\"\(query)\" left \(terms)")
+            for title in Self.mailCommands {
+                #expect(!ChatRouteResolver.termsMatch(title, terms: terms), "\(query) → \(title)")
+            }
+        }
+    }
+
+    @Test func aRealCommandInTheSentenceSurvivesTheAppsName() {
+        #expect(ChatRouteResolver.contentTerms(query: "open mail preferences", appName: "Mail")
+                == ["preferences"])
+        // No app named: the sentence is left as it was.
+        #expect(ChatRouteResolver.contentTerms(query: "open", appName: "Mail") == ["open"])
+    }
+
+    @Test func aTurnThatAsksWhichRouteRanNothing() {
+        let choice = ActionChoice(id: "a", title: "A", routeLabel: "Menu", appName: "Mail")
+        let answer = AppScopedChatService.Answer.asking(
+            "Mail can do that more than one way. Which should I use?", choices: [choice])
+        #expect(answer.isWaitingOnRouteChoice)
+        #expect(answer.toolChips.isEmpty)
+        #expect(answer.evidenceReceipts.isEmpty)
+        #expect(answer.consoleOutput == nil)
+        #expect(answer.rows.isEmpty)
+        #expect(answer.files.isEmpty)
+    }
+}
+
 // MARK: - What counts as the command itself
 
 @MainActor

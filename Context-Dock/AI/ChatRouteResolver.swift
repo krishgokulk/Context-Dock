@@ -276,45 +276,93 @@ enum ChatRouteResolver {
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
     }
 
+    /// Words longer than two letters, lowercased.
+    nonisolated static func wordTerms(_ text: String) -> Set<String> {
+        Set(
+            text.lowercased().split { !$0.isLetter && !$0.isNumber }
+                .map(String.init).filter { $0.count > 2 })
+    }
+
+    /// Verbs that only point at an app. "open in Mail" names the app and a verb; it does not
+    /// name a command, so nothing in the app's menus is a route for it.
+    private nonisolated static let appPointingVerbs: Set<String> = [
+        "open", "launch", "start", "show", "switch", "use", "go",
+    ]
+
+    /// What the user asked for, with the app's own name taken out.
+    ///
+    /// Empty when nothing but the app and a pointing verb is left ("open in mail"), because
+    /// then there is no command to match and any list offered would be noise.
+    nonisolated static func contentTerms(query: String, appName: String) -> Set<String> {
+        let all = wordTerms(query)
+        let nameWords = wordTerms(appName)
+        guard !nameWords.isEmpty, !all.isDisjoint(with: nameWords) else { return all }
+        let rest = all.subtracting(nameWords)
+        return rest.isSubset(of: appPointingVerbs) ? [] : rest
+    }
+
+    /// True when the text shares a word with the request.
+    nonisolated static func termsMatch(_ haystack: String, terms: Set<String>) -> Bool {
+        let words = Set(
+            haystack.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        return !words.isDisjoint(with: terms)
+    }
+
+    /// A stricter test for commands that take the screen.
+    ///
+    /// One shared word is enough to match a tool that answers quietly and wrong; it is
+    /// not enough to justify driving someone's menu bar. "Open it" matched "File ▸ Open
+    /// and Close Window" on the word "open" alone, and a plan step that was supposed to
+    /// open a screenshot closed a window instead. So most of the command's own words
+    /// must be words the user said — short commands ("Open", "New Folder") still match
+    /// on one or two, while a four-word command needs real overlap.
+    nonisolated static func commandStronglyMatches(_ command: String, terms: Set<String>) -> Bool {
+        // Glue words carry no intent and are everywhere: "and" is what let "Open and
+        // Close Window" clear the bar for "…and open it".
+        let glue: Set<String> = [
+            "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
+            "me", "my", "this", "that", "then", "please",
+        ]
+        let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { !glue.contains($0) }
+        guard !words.isEmpty else { return false }
+        let matched = words.filter { terms.contains($0) }.count
+        if words.count <= 2 { return matched >= 1 }
+        return Double(matched) / Double(words.count) >= 0.5
+    }
+
+    /// The one route that IS the sentence ("quit mail" and `Mail ▸ Quit Mail`), when exactly
+    /// one does. A single exact command needs no question and no model.
+    static func soleExactRoute(
+        _ routes: [ChatRoute], query: String, appName: String
+    ) -> ChatRoute? {
+        let exact = routes.filter { route in
+            let leaf = route.kind == .menuCommand
+                ? (route.title.components(separatedBy: " ▸ ").last ?? route.title)
+                : route.title
+            return ExactCommand.matches(query: query, titles: [leaf], appNames: [appName])
+        }
+        return exact.count == 1 ? exact[0] : nil
+    }
+
     static func routes(
         for query: String, bundleId: String, appName: String
     ) async -> [ChatRoute] {
         guard !bundleId.isEmpty else { return [] }
         let lowered = query.lowercased()
-        let terms = Set(
-            lowered.split { !$0.isLetter && !$0.isNumber }
-                .map(String.init).filter { $0.count > 2 })
+        // The request's own words, without the app's name. In a Mail chat every command
+        // that contains "Mail" shares a word with "quit mail" — Hide Mail, Mail Help, Get
+        // New Mail, and every skill whose title starts with the app — so the name matched
+        // everything and the choice list held no answer to the question.
+        let terms = contentTerms(query: query, appName: appName)
         guard !terms.isEmpty else { return [] }
+        let contentQuery = terms.count < wordTerms(lowered).count
+            ? terms.sorted().joined(separator: " ") : query
 
-        func matches(_ haystack: String) -> Bool {
-            let words = Set(
-                haystack.lowercased().split { !$0.isLetter && !$0.isNumber }
-                    .map(String.init))
-            return !words.isDisjoint(with: terms)
-        }
-
-        /// A stricter test for commands that take the screen.
-        ///
-        /// One shared word is enough to match a tool that answers quietly and wrong; it is
-        /// not enough to justify driving someone's menu bar. "Open it" matched "File ▸ Open
-        /// and Close Window" on the word "open" alone, and a plan step that was supposed to
-        /// open a screenshot closed a window instead. So most of the command's own words
-        /// must be words the user said — short commands ("Open", "New Folder") still match
-        /// on one or two, while a four-word command needs real overlap.
+        func matches(_ haystack: String) -> Bool { termsMatch(haystack, terms: terms) }
         func stronglyMatches(_ command: String) -> Bool {
-            // Glue words carry no intent and are everywhere: "and" is what let "Open and
-            // Close Window" clear the bar for "…and open it".
-            let glue: Set<String> = [
-                "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
-                "me", "my", "this", "that", "then", "please",
-            ]
-            let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
-                .map(String.init)
-                .filter { !glue.contains($0) }
-            guard !words.isEmpty else { return false }
-            let matched = words.filter { terms.contains($0) && !glue.contains($0) }.count
-            if words.count <= 2 { return matched >= 1 }
-            return Double(matched) / Double(words.count) >= 0.5
+            commandStronglyMatches(command, terms: terms)
         }
 
         var routes: [ChatRoute] = []
@@ -378,7 +426,7 @@ enum ChatRouteResolver {
         }
 
         let menuItems = AppMenuCapabilityCache.shared.menuItems(
-            bundleIdentifier: bundleId, appName: appName, query: query, maxResults: 6)
+            bundleIdentifier: bundleId, appName: appName, query: contentQuery, maxResults: 6)
         for item in menuItems
         where item.isLeaf && !item.path.isEmpty
             // Match the command, not its menu. Matching any path component is what put
