@@ -28,6 +28,53 @@ struct ChatCapabilityCallRecoveryTests {
         var plans: [AIActionPlan] = []
     }
 
+    // MARK: - The outbound gate
+
+    /// A send-like capability written as text skips `AgentToolRegistry.dispatch`; the recovery
+    /// asks the gate itself, with the unknown turn read as having touched everything.
+    @Test func aSendLikeCapabilityIsHeldByTheOutboundGateAndNeverRuns() async {
+        let registry = AgentToolRegistry()
+        var cards: [AIActionPlan] = []
+        registry.approveOutbound = { plan, _ in
+            cards.append(plan)
+            return false
+        }
+        let spy = Spy()
+        let outcome = await ChatCapabilityCallRecovery.run(
+            capabilityID: "mail.createDraft", arguments: ["to": "a@b.c"], query: "send it",
+            scope: .general,
+            lookup: { _ in (title: "Create Draft", requiredInputs: []) },
+            outboundGate: { id, input in
+                guard let target = OutboundGate.capabilityTarget(id: id, input: input) else {
+                    return nil
+                }
+                return await registry.gateOutbound(
+                    target: target, what: id, turn: nil, chatScope: nil)
+            },
+            execute: { plan in
+                spy.plans.append(plan)
+                return AICapabilityExecutionResult(success: true, output: "sent")
+            })
+        #expect(cards.count == 1)
+        #expect(spy.plans.isEmpty)
+        #expect(!outcome.succeeded)
+        #expect(outcome.text == "Create Draft wasn't approved, so nothing ran.")
+    }
+
+    @Test func aGateThatLetsTheCallGoStillRunsIt() async {
+        let spy = Spy()
+        let outcome = await ChatCapabilityCallRecovery.run(
+            capabilityID: "finder.copyFiles", arguments: ["destination": "/tmp/d"], query: "copy",
+            scope: .general, lookup: lookup,
+            outboundGate: { _, _ in nil },
+            execute: { plan in
+                spy.plans.append(plan)
+                return AICapabilityExecutionResult(success: true, output: "Copied.")
+            })
+        #expect(outcome.succeeded)
+        #expect(spy.plans.count == 1)
+    }
+
     // MARK: - The call is parsed the way the surfaces parse it
 
     @Test func anIdAsKeyCallIsACapabilityInvocation() {

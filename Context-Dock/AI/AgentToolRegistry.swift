@@ -413,14 +413,17 @@ final class AgentToolRegistry {
     ///   - promptBlocks: text already in the prompt. A fence in it means the turn starts with
     ///     untrusted content in front of the model.
     ///   - startsPrivate: the prompt already carries private data (a chat scoped to Mail...).
+    ///   - startsUntrusted: the prompt already carries text other people wrote (the same chats).
     func beginTurn(
-        userText: [String] = [], promptBlocks: [String] = [], startsPrivate: Bool = false
+        userText: [String] = [], promptBlocks: [String] = [], startsPrivate: Bool = false,
+        startsUntrusted: Bool = false
     ) -> AgentTurnToken {
         let token = AgentTurnToken()
         callsByTurn[token] = [:]
         settledByTurn[token] = []
         taint.begin(
-            token, userText: userText, promptBlocks: promptBlocks, startsPrivate: startsPrivate)
+            token, userText: userText, promptBlocks: promptBlocks, startsPrivate: startsPrivate,
+            startsUntrusted: startsUntrusted)
         turnOrder.append(token)
         while turnOrder.count > maxLiveTurns {
             let evicted = turnOrder.removeFirst()

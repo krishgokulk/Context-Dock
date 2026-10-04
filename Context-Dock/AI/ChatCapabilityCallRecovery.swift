@@ -12,7 +12,10 @@ import Foundation
 ///
 /// The call goes through the same executor every other capability uses
 /// (`AIExecutionEngine.executeWithApproval`), so a risky capability still raises its approval
-/// card and a refused one still names its reason.
+/// card and a refused one still names its reason. It does not go through
+/// `AgentToolRegistry.dispatch`, where the outbound gate lives, so `run` asks the gate itself
+/// before executing a send-like capability: the turn that wrote the call is over, so its taint
+/// is unknown and read as "touched everything" (fail closed).
 @MainActor
 enum ChatCapabilityCallRecovery {
     struct Outcome: Equatable {
@@ -50,6 +53,15 @@ enum ChatCapabilityCallRecovery {
                     )
                 }
             },
+            outboundGate: { id, input in
+                let registry = AgentToolRegistry.shared
+                guard let target = OutboundGate.capabilityTarget(
+                    id: id, input: input, lookups: registry.outboundLookups)
+                else { return nil }
+                return await registry.gateOutbound(
+                    target: target, what: "run_capability: \(id)", turn: nil,
+                    chatScope: chatScope)
+            },
             execute: { plan in
                 try await AIExecutionEngine.shared.executeWithApproval(
                     plan, context: context, chatScope: chatScope, userRequest: query)
@@ -61,12 +73,16 @@ enum ChatCapabilityCallRecovery {
     ///
     /// - `lookup` returns the capability's display title and the inputs it cannot run
     ///   without, or nil when it is not registered.
+    /// - `outboundGate` is the host's outbound check for (capability id, input): nil lets the
+    ///   call go ahead, a result stops it. The real entry point always supplies it; a test that
+    ///   is not about the gate may leave it out.
     static func run(
         capabilityID: String,
         arguments: [String: String],
         query: String,
         scope: AIConversationScope,
         lookup: (String) -> (title: String, requiredInputs: [String])?,
+        outboundGate: ((String, [String: String]) async -> AgentToolResult?)? = nil,
         execute: (AIActionPlan) async throws -> AICapabilityExecutionResult
     ) async -> Outcome {
         let id = capabilityID.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -104,6 +120,16 @@ enum ChatCapabilityCallRecovery {
             capability: id, input: arguments, explanation: "Requested in chat: \(query)")
         do {
             try CapabilityAuthorizationGate.validatePlan(plan, scope: scope)
+            if let stopped = await outboundGate?(id, arguments) {
+                if stopped.deniedByUser {
+                    return Outcome(
+                        text: "\(displayTitle) wasn't approved, so nothing ran.",
+                        succeeded: false, output: "")
+                }
+                return Outcome(
+                    text: "\(displayTitle) didn't run — \(stopped.output)",
+                    succeeded: false, output: stopped.output)
+            }
             let result = try await execute(plan)
             if result.success {
                 return Outcome(

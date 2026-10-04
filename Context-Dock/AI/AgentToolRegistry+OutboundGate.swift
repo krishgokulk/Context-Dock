@@ -50,7 +50,7 @@ extension AgentToolRegistry {
     ) async -> AgentToolResult? {
         let decision = OutboundGate.decide(
             taint: taint.taint(for: turn), target: target,
-            typedHosts: taint.typedHosts(for: turn),
+            typedURLs: taint.typedURLs(for: turn),
             attended: attended && !AICapabilityApprovalCenter.refusesEveryApprovalUnattended)
         switch decision {
         case .allow:
