@@ -14,15 +14,15 @@ Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-compariso
 
 Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
 
-**#149 E1 Security gate** (`ready`) — once a turn holds private data and untrusted content, outbound tools (`read_url` to a host the user didn't give, sending, network shell) ask first. Builder takes it next. Plan: `docs/master/00-AI-ENGINE-PLAN.md` (#161).
+**#147 Drop Shelf icon** (`ready`) and **#151 E3 Prompt order** (`ready`) — the builder takes #147 first. Hand-check pause limit is 1 required check (#168). #165 E1b waits on the owner's "E1b yes".
 
 ## Next, in order (GitHub issues)
 
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-1. **#146** Finder chat "couldn't carry it out on this surface" leaves the turn spinning (bug)
-2. **#150 E2** Recorder — per-turn trace in the turn log
+1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
+2. **#165 E1b** outbound-gate gaps (`needs-owner`: say "E1b yes")
 3. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 4. **#151 E3** Prompt order · **#152 E5a → #153 E5b** On-device (E5 needs the owner's escalation answer first)
 5. **#154 E6a → #155 E6b → #156 E7a · #157 E7b**
@@ -36,6 +36,9 @@ Also open: cloud sessions must never merge their own PR (#114 merged before revi
 
 ## Hand-check queue
 
+- **#163 (#146 Finder chat):** in Finder App Chat ask it to copy a file to a folder; it runs the copy or says why not; the turn never spins on "couldn't carry it out on this surface".
+- **#170 (E2 Recorder):** turn the turn log on, run one Anthropic App Chat turn; `turns.log` gains one trace line for that turn; with the log off nothing is written.
+- **#164 (E1 outbound gate):** in a chat holding a private file, ask it to fetch an unknown URL; it asks first.
 - **#148 (#145 transcript spin):** run a long Finder App Chat turn ("can you resume 2026 folder for me?"); Activity Monitor stays near idle; ⌘Q quits promptly during a turn.
 
 Checked and passed: #118, #119, #121, #123, #125, #127, #137, #141 (2026-09-29/30).
@@ -45,6 +48,11 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-02 | Flaky turn-log and Shortcuts temp-file tests fixed (hand check optional) | #171 |
+| 2026-10-02 | E2 Recorder: one trace per turn in the turn log (hand check pending) | #170 |
+| 2026-10-02 | Builder pauses after one required hand check; `hand-check-optional` label; "merge N without hand check" | #168 |
+| 2026-10-02 | Finder chat carries out a resolved call or says why not (hand check pending) | #163 |
+| 2026-10-01 | E1 outbound gate: private + untrusted turns ask before sending out (hand check pending; gaps in #165) | #164 |
 | 2026-10-01 | A read-back that disagrees with the request fails the step | #142 |
 | 2026-10-01 | Clipboard notice no longer blocks the frontmost app | #144 |
 | 2026-10-01 | Chat transcript rewrite loop no longer pins the main thread; app quits during a turn (hand check pending) | #148 |
