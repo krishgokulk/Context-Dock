@@ -478,8 +478,12 @@ struct MailRouteChoiceTests {
     }
 
     @Test func aRealCommandInTheSentenceSurvivesTheAppsName() {
+        // Only the app's name goes; "open" stays, because "preferences" is a real command
+        // word and the verb still helps match "Open Mail Preferences".
         #expect(ChatRouteResolver.contentTerms(query: "open mail preferences", appName: "Mail")
-                == ["preferences"])
+                == ["open", "preferences"])
+        // Nothing but a pointing verb left: no command to match.
+        #expect(ChatRouteResolver.contentTerms(query: "open in mail", appName: "Mail").isEmpty)
         // No app named: the sentence is left as it was.
         #expect(ChatRouteResolver.contentTerms(query: "open", appName: "Mail") == ["open"])
     }
