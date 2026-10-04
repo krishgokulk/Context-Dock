@@ -10,7 +10,7 @@
 
 ## In progress
 
-Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-30. The Mac Desktop session is the **builder** (`/loop 20m /builder`); it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
+Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-30. The Mac Desktop session is the **builder** (`/loop /builder`); it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
 
 Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
 

@@ -70,7 +70,7 @@ Roles belong to **where a session runs**, not to which account is logged in.
 
 | Where | Role | Start it with |
 |---|---|---|
-| Claude Desktop on the owner's Mac, any account | **Builder** — builds, tests and screenshots one issue at a time | `/loop 20m /builder` |
+| Claude Desktop on the owner's Mac, any account | **Builder** — builds, tests and screenshots one issue at a time | `/loop /builder` |
 | A cloud session (claude.ai/code), any account | **Planner** — holds the Coordinator line, queues issues, reviews PRs | `/planner` |
 
 The two never message each other; **GitHub issues are the queue** between them:
@@ -83,7 +83,7 @@ The two never message each other; **GitHub issues are the queue** between them:
 Rules that keep it safe when accounts change:
 
 - **One builder at a time.** Switching accounts on the Mac: close the old session first, then
-  `/loop 20m /builder` in the new one. A new builder continues an `in-progress` issue from its
+  `/loop /builder` in the new one. A new builder continues an `in-progress` issue from its
   pushed branch; it never restarts it.
 - **One planner at a time** — the session holding the `Coordinator:` line.
 - The builder never edits `00-NOW.md` or `MEMORY.md`; the planner records merges there.
@@ -94,7 +94,7 @@ Rules that keep it safe when accounts change:
 
 - **Usage limit reached:** the builder's session stops mid-step; nothing is lost (pushed branch,
   issue label). When the account has usage again the loop's next run continues the `in-progress`
-  issue. If the session was closed, start `/loop 20m /builder` again.
+  issue. If the session was closed, start `/loop /builder` again.
 - **Hand checks:** the builder keeps building past PRs whose check is optional; after **one PR marked
   `Hand check: required`** it pauses until the owner checks it or says "merge N without hand check". Optional checks
   never pause it.

@@ -16,7 +16,7 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 - **Runbooks:** `docs/runbooks/` — ship a release, diagnose an AI turn.
 - **Any account, any session:** when the owner says "continue" or "take over", follow
   `docs/runbooks/coordinate-across-accounts.md` — the repo is the handoff, never the chat.
-  On the Mac: `/loop 20m /builder`. In the cloud: `/planner`.
+  On the Mac: `/loop /builder`. In the cloud: `/planner`.
 
 ## DoraX architecture rule
 

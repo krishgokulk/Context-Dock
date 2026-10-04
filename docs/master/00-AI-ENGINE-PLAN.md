@@ -155,7 +155,7 @@ Next, in order
 
 Engine planner (cloud, branch `claude/ai-engine-plan`) writes or updates the issue →
 cloud planner sets the order in `00-NOW.md` → owner labels the next issue `ready` →
-builder (`/loop 20m /builder`, on the Mac) builds and tests it on its own branch from
+builder (`/loop /builder`, on the Mac) builds and tests it on its own branch from
 `general-chat-agent` → engine planner reviews the PR against this file → owner hand-checks
 and says "merge <n>" → this file's baseline (§3) is updated in the next docs PR.
 

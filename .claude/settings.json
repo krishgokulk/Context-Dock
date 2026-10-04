@@ -9,7 +9,21 @@
       "Bash(graphify query *)",
       "Bash(graphify path *)",
       "Bash(graphify explain *)",
-      "Bash(graphify update .)"
+      "Bash(graphify update .)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git show*)",
+      "Bash(git fetch*)",
+      "Bash(git rev-parse*)",
+      "Bash(git ls-files*)",
+      "Bash(git branch --show-current)",
+      "Bash(git worktree list*)",
+      "Bash(gh pr list*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh issue list*)",
+      "Bash(gh issue view*)"
     ],
     "ask": [
       "Bash(./scripts/ship.sh)",
