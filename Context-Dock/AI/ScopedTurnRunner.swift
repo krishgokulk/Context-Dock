@@ -154,6 +154,39 @@ enum ScopedTurnRunner {
             )
         }
 
+        // A shell command written out as text instead of called — `[TERMINAL_COMMAND: …]` or
+        // `{"terminal_call": …}`. A provider without native tools (Claude Code, Apple
+        // Intelligence) can only ask this way, and nothing on the turn's path ran it: the
+        // Finder Dock answered "list the files in Downloads" with the directive itself.
+        // It goes through this turn's executor, so the scope boundary and the approval
+        // policy are the same ones a real tool call meets.
+        if !pageAnswerOnly, !Task.isCancelled,
+            let call = ChatAnswerSanitizer.terminalCall(in: text)
+        {
+            log.notice("recovering a terminal call written as text")
+            recorder?.noteVerifier("prose_terminal_call")
+            let (ok, output, _) = await executor(call.command, call.purpose, false)
+            executed.append(.init(command: call.command, output: output, success: ok))
+            if ok {
+                onStatus?("Reading the command output…")
+                let followUp = try await AIProviderService.shared.sendMessage(
+                    "Command output of `\(call.command)`:\n\n\(output.prefix(6_000))\n\n"
+                        + "Answer the original question from this output, in plain language: "
+                        + query,
+                    context: scope.userContext,
+                    provider: provider,
+                    apiKey: apiKey,
+                    conversationHistory: history,
+                    surfaceScoped: true)
+                // One recovery round: a second directive here is stripped, not chased.
+                text = ChatAnswerSanitizer.clean(followUp)
+            } else {
+                let said = ChatAnswerSanitizer.clean(text)
+                let reason = "`\(call.command)` didn't run — \(output.isEmpty ? "no reason given" : output)"
+                text = said.isEmpty ? reason : said + "\n\n" + reason
+            }
+        }
+
         onStatus?(executed.isEmpty ? "Preparing the response…" : "Reading the tool results…")
 
         // "I can't tell from what I have" is a request for another round.

@@ -3299,7 +3299,20 @@ extension LauncherView {
         // about — so the card itself is gated here, where the scope is known.
         extractedCmds = extractedCmds.filter { commandIsRunnableInCurrentScope($0.command) }
 
-        guard !extractedCmds.isEmpty else { return }
+        // No card to offer is not a reason to keep the directive on screen. Returning here
+        // before the message was rewritten is how a Finder answer read, verbatim,
+        // "[TERMINAL_COMMAND: ls -la ~/Downloads]".
+        guard !extractedCmds.isEmpty else {
+            let cleaned = ChatAnswerSanitizer.clean(response)
+            if cleaned != response.trimmingCharacters(in: .whitespacesAndNewlines),
+                let idx = l2.chatMessages.firstIndex(where: { $0.id == msgId })
+            {
+                var message = l2.chatMessages[idx]
+                message.content = cleaned.isEmpty ? ChatAnswerSanitizer.protocolFallback : cleaned
+                l2.chatMessages[idx] = message
+            }
+            return
+        }
 
         // Strip typed invocation lines from the displayed message; keep explanation if any.
         var cleanedResponse = cleanedLines.joined(separator: "\n")

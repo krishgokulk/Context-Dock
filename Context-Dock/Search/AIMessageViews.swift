@@ -539,7 +539,7 @@ struct PageLinkAction: Equatable, Identifiable {
 struct AIChatMessage: Identifiable, Equatable {
     let id: UUID
     let role: ChatRole
-    let content: String
+    var content: String
     let timestamp: Date
     var isError: Bool
     var structuredData: String?  // JSON data from extensions
