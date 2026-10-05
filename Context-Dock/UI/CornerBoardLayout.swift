@@ -21,6 +21,14 @@ enum CornerBoardPreview: Hashable {
     case app(bundleID: String, name: String)
     /// A menu command: where it lives in its app's menus.
     case command(title: String, path: [String], appName: String, bundleID: String)
+    /// A command-line tool: what it is, where it lives, its subcommands and its own help.
+    case cliTool(command: String, name: String)
+    /// One of a CLI tool's subcommands, inside that tool's scope: the tool's help for it.
+    case cliSubcommand(command: String, subcommand: String)
+    /// A Global Command: what it does and the script it runs.
+    case systemCommand(id: String, name: String)
+    /// A web page from the browser's history or tabs: the page itself, previewed.
+    case web(url: URL, title: String, domain: String, browserName: String)
 }
 
 enum CornerBoardLayout {
@@ -50,6 +58,7 @@ enum CornerBoardLayout {
     /// `searchDocumentLookup`), so a test can hand it documents without the index.
     static func preview(
         for row: AppChatRow?, appName: String = "", appBundleID: String = "",
+        cliCommand: String = "",
         lookup: (String) -> GlobalSearchService.SearchDocument? = { _ in nil }
     ) -> CornerBoardPreview? {
         guard let row else { return nil }
@@ -71,13 +80,29 @@ enum CornerBoardLayout {
                 title: item.title, path: item.path,
                 appName: item.sourceAppName.isEmpty ? appName : item.sourceAppName,
                 bundleID: appBundleID)
-        case .action, .cliSuggestion:
+        case .cliSuggestion(let word):
+            // A subcommand is only a subcommand inside its tool's scope.
+            guard !cliCommand.isEmpty else { return nil }
+            return .cliSubcommand(command: cliCommand, subcommand: word)
+        case .action:
             return nil
         }
     }
 
     /// A Global result: the file it stands for, the app it opens, or the command it runs.
     static func preview(for doc: GlobalSearchService.SearchDocument) -> CornerBoardPreview? {
+        // What the row *is* comes first: a CLI tool's document may carry its binary's path,
+        // and a tool is not previewed as a file.
+        switch doc.action {
+        case .cliScope(let command, let displayName):
+            return .cliTool(command: command, name: displayName.isEmpty ? command : displayName)
+        case .systemCommandScope(let key):
+            return .systemCommand(id: key, name: doc.title)
+        case .browserURL(let url, _, let browserName, _, let domain):
+            return .web(url: url, title: doc.title, domain: domain, browserName: browserName)
+        default:
+            break
+        }
         if let path = doc.filePath, !path.isEmpty, !path.hasSuffix(".app") {
             return .file(URL(fileURLWithPath: path))
         }
@@ -96,6 +121,32 @@ enum CornerBoardLayout {
         }
     }
 
+    /// The help's lines that name this subcommand as a word, each with the line under it
+    /// when that line is indented deeper — a description continued, not the next entry.
+    static func helpLines(mentioning subcommand: String, in help: String) -> [String] {
+        let lines = help.components(separatedBy: .newlines)
+        var picked: [String] = []
+        for (index, line) in lines.enumerated() {
+            let words = line.split(whereSeparator: { !$0.isLetter && !$0.isNumber && $0 != "-" })
+            guard words.contains(where: { $0 == subcommand }) else { continue }
+            picked.append(line)
+            if index + 1 < lines.count {
+                let next = lines[index + 1]
+                if !next.trimmingCharacters(in: .whitespaces).isEmpty,
+                    indent(of: next) > indent(of: line), !picked.contains(next)
+                {
+                    picked.append(next)
+                }
+            }
+            if picked.count >= 12 { break }
+        }
+        return picked
+    }
+
+    private static func indent(of line: String) -> Int {
+        line.prefix(while: { $0 == " " || $0 == "\t" }).count
+    }
+
     /// The whole card: always the list's width — the field's — and, while a preview shows,
     /// at least tall enough for it.
     static func boardSize(list: CGSize, preview: CornerBoardPreview?) -> CGSize {
@@ -110,7 +161,7 @@ extension AppChatPromptModel {
     var boardPreview: CornerBoardPreview? {
         CornerBoardLayout.preview(
             for: focusedRow, appName: appName, appBundleID: appBundleID,
-            lookup: searchDocumentLookup)
+            cliCommand: cliCommand, lookup: searchDocumentLookup)
     }
 
     /// The list card and its panel together: the size the window reserves for the board.

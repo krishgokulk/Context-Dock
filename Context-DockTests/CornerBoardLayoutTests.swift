@@ -82,12 +82,56 @@ struct CornerBoardLayoutTests {
     }
 
     @Test("Rows with nothing to show take no panel")
-    func actionsAndToolsTakeNoPanel() {
+    func actionsTakeNoPanel() {
+        // A subcommand outside its tool's scope is just a word.
         #expect(L.preview(for: .cliSuggestion("status")) == nil)
-        let cli = doc("cli://git", action: .cliScope(command: "git", displayName: "git"))
-        #expect(L.preview(for: .global(cli)) == nil)
         let bare = DockPill(id: "b", name: "Sleep", icon: "moon", badge: nil, execute: {})
         #expect(L.preview(for: .dock(bare)) == nil)
+    }
+
+    @Test("A CLI tool, a Global Command and a web page each get their card")
+    func toolsCommandsAndPagesPreview() {
+        // A tool's document may carry its binary's path; it is still the tool.
+        let brew = doc(
+            "cli://brew", title: "brew", filePath: "/opt/homebrew/bin/brew",
+            action: .cliScope(command: "brew", displayName: ""))
+        #expect(L.preview(for: .global(brew)) == .cliTool(command: "brew", name: "brew"))
+        // Inside the tool's scope, a subcommand row is that subcommand's help.
+        #expect(
+            L.preview(for: .cliSuggestion("up"), cliCommand: "tailscale")
+                == .cliSubcommand(command: "tailscale", subcommand: "up"))
+        let sleep = doc("syscmd://1", title: "Sleep", action: .systemCommandScope(commandKey: "1"))
+        #expect(L.preview(for: .global(sleep)) == .systemCommand(id: "1", name: "Sleep"))
+        let page = URL(string: "https://github.com/krishgokulk/Context-Dock/pull/190")!
+        let tab = doc(
+            "web", title: "Task 189",
+            action: .browserURL(
+                url: page, browserBundleId: "com.apple.Safari", browserName: "Safari",
+                kind: "history", domain: "github.com"))
+        #expect(
+            L.preview(for: .global(tab))
+                == .web(url: page, title: "Task 189", domain: "github.com", browserName: "Safari"))
+    }
+
+    @Test("A subcommand's card quotes the tool's help lines that name it")
+    func helpLinesForASubcommand() {
+        let help = """
+            Usage: tailscale [flags] <subcommand>
+
+            Subcommands:
+              up          Connect to Tailscale, logging in if needed
+              down        Disconnect from Tailscale
+              update      Update Tailscale to the latest version
+            """
+        // Its own line, not the next entry and not "update", which only contains it.
+        let up = L.helpLines(mentioning: "up", in: help)
+        #expect(up.count == 1)
+        #expect(up.first?.contains("Connect to Tailscale") == true)
+        // A description continued on a deeper-indented line comes with it.
+        let wrapped = "  login       Log in\n                to a tailnet\n  logout      Log out"
+        #expect(L.helpLines(mentioning: "login", in: wrapped).count == 2)
+        #expect(L.helpLines(mentioning: "down", in: help).first?.contains("Disconnect") == true)
+        #expect(L.helpLines(mentioning: "frobnicate", in: help).isEmpty)
     }
 
     @Test("One card at the field's width: the list on the left, the preview on the right")
