@@ -255,8 +255,10 @@ enum AppChatPromptMetrics {
         stripInset + dockIconSize / 2 - 11
     }
 
-    /// The Global field is the strip's height, so the pins at its trailing end sit still.
-    static func fieldHeight(global: Bool) -> CGFloat { global ? dockHeight : inputHeight }
+    /// Every open field is the Dock's input bar height, 56 (owner 2026-10-05: the Corner
+    /// stood taller than the Dock). Global's included: its strip keeps the dock's 68 at rest
+    /// and, while the field is up, centres its pins and shelf in the field's height.
+    static func fieldHeight(global: Bool) -> CGFloat { inputHeight }
 
     private static func runWidth(_ count: Int) -> CGFloat {
         guard count > 0 else { return 0 }
@@ -621,8 +623,12 @@ struct AppChatPromptPill: View {
     private var shellRadius: CGFloat {
         // The dock and its field are one bar of one height, so one capsule: a radius that
         // changed with the phase is what made opening the field read as a different shape.
-        [.dock, .prompt, .suggesting].contains(model.phase)
-            ? AppChatPromptMetrics.dockHeight / 2 : 22
+        switch model.phase {
+        case .dock: return AppChatPromptMetrics.dockHeight / 2
+        // The open field is shorter than the resting dock: a capsule of its own height.
+        case .prompt, .suggesting: return AppChatPromptMetrics.fieldHeight(global: true) / 2
+        default: return 22
+        }
     }
 
     /// The whole morph, one curve. `dockMorphDuration` is the single number to turn when
@@ -701,8 +707,8 @@ struct AppChatPromptPill: View {
     /// with a sheet over it keeps the 22-point card.
     private var legacyRadius: CGFloat {
         model.usesDockHeight && [.prompt, .suggesting].contains(model.phase)
-            && size.height <= AppChatPromptMetrics.dockHeight
-            ? AppChatPromptMetrics.dockHeight / 2 : 22
+            && size.height <= AppChatPromptMetrics.fieldHeight(global: true)
+            ? AppChatPromptMetrics.fieldHeight(global: true) / 2 : 22
     }
 
     /// What a click in the field does (`requestComposerFocus`), after the scope under the

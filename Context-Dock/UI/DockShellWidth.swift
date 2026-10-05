@@ -16,10 +16,13 @@ import AppKit
 import CoreGraphics
 
 enum DockShellWidth {
-    /// The launcher's width: Spotlight's, and the Dock's (`LauncherView.expandedDockWidth`
-    /// reads this), so the two shells are one size. Wide enough for an app's field — its
-    /// chip, text and bar — with room to spare.
-    static let base: CGFloat = 660
+    /// The Dock's window: `LauncherView.expandedDockWidth` reads this.
+    static let dockWindowWidth: CGFloat = 660
+    /// The Dock's input bar as drawn inside that window, its insets taken off (measured
+    /// 600 × 56 on the owner's Mac, 2026-10-05): the open Corner is exactly this, so the
+    /// two shells' bars are one size. Wide enough for an app's field — its chip, text and
+    /// bar — with room to spare.
+    static let base: CGFloat = 600
 
     /// What one more pin costs: one dock icon and the gap after it — what the strip draws
     /// for it.

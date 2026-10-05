@@ -332,7 +332,12 @@ struct CornerDockStrip: View {
         .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
         .animation(.smooth(duration: 0.25), value: model.selection != nil)
         .padding(.horizontal, plan.layout.leadingInset)
-        .frame(height: M.dockHeight)
+        // The dock's own height at rest; the open field's while it is up, so the pins and
+        // the shelf it keeps at the field's end sit on the field's centre line.
+        .frame(height: isDock
+            ? M.dockHeight
+            : DockFieldLines.fieldHeight(
+                base: M.fieldHeight(global: true), lines: model.fieldLines))
         // No capsule of its own any more: the field draws its pill (a fixed-width scroller,
         // #189) where these icons land, and they hand over to it.
         // The gaps between icons catch the pointer only while this is the dock. Over the

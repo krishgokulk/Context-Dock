@@ -46,8 +46,9 @@ struct CornerSafariTabsTests {
         // apps; open it is the compact field — fitted, never the bar's width.
         let model = scope()
         #expect(model.showsTabBar && model.usesDockShell && model.fitsField)
+        // Open, every field is the Dock's input bar height (owner 2026-10-05).
         #expect(AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight)
-            == AppChatPromptMetrics.dockHeight)
+            == AppChatPromptMetrics.inputHeight)
         #expect(model.canRestAsDock == model.autoShrinkEnabled())
         // Guarded on "keep open": the test host reads the developer's own setting.
         if model.autoShrinkEnabled(), !model.isPinned {

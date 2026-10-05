@@ -67,8 +67,10 @@ struct DockShellWidthTests {
 
     @Test("The launcher's width holds for a handful of pins, then grows a pin's span per pin, then caps")
     func pinsGrowTheWidthThenCap() {
-        // Spotlight's width, and the Dock's: the two shells are one size.
-        #expect(W.base == 660)
+        // The Dock's bar, inside its 660 window: the two shells' bars are one size.
+        #expect(W.base == 600)
+        #expect(W.dockWindowWidth == 660)
+        #expect(M.fieldHeight(global: true) == 56 && M.fieldHeight(global: false) == 56)
         #expect(W.pinSpan == M.dockIconSize + M.dockIconGap)
         let fixed = (0...30).filter { W.width(pins: $0, screenBudget: budget) == W.base }
         #expect(fixed.first == 0)
