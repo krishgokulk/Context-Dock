@@ -45,6 +45,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-05 | Mail chat reads the message body (selected, open or latest; Mail closed or open), fenced and capped; never routes Mail to Messages; owner hand-tested. Gate test moved to #184 | #183 |
 | 2026-10-04 | Mail chat: choices only for matching routes; a turn that ran a step shows no pick card (Corner, Dock, chat window); owner hand-tested ("quit mail") | #181 |
 | 2026-10-04 | E1b gate: Mail/Messages/Notes reads count as untrusted, shell allow-list, only the exact typed URL is trusted, every tool name classified; text-recovered sends go through the gate (injection hand check owed) | #175 |
 | 2026-10-04 | Drop Shelf is an icon at the end of the dock in every app, Dock and Corner; the floating card is gone; owner hand-tested | #174 |
@@ -128,6 +129,8 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-01 | On-device fixes (E5a, E5b) are 1.0: on-device chat ships today and loses its history. |
 | 2026-10-01 | The engine plan file defines tasks; this file sets the order. The owner's Master Blueprint pages are the study copy, not a second plan. |
 | 2026-10-04 | E1b yes (#165): Mail/Messages/Notes reads count as untrusted; shell commands use an allow-list; only the exact typed URL is trusted. Runs after #147, before E3. |
+| 2026-10-05 | Merges (A): only the cloud planner merges, on the owner's words "merge <n>" in the planner chat. The Mac builder never merges, even after a passed hand check. |
+| 2026-10-05 | Owner "yes": the owner's "N passed" (hand check) is also permission to merge that PR once CI is green; docs-only PRs (no hand check) the planner merges itself once CI is green. |
 
 ## Open decisions (owner)
 

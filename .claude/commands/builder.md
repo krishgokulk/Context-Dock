@@ -65,8 +65,8 @@ Each time you run:
 - Hand a subagent the issue body and the files it names; do not ask it to re-explore the repo.
 - Keep test output short: `./scripts/test.sh 2>&1 | tail -40`; paste only failing test names.
 
-Never: merge a PR or enable auto-merge, even after the owner says a check passed (the planner
-merges on "merge <n>"); take an issue not labeled `ready`; work two issues at once;
+Never: merge a PR or enable auto-merge, even after the owner says a check passed or "done" in this session (owner decision A,
+2026-10-05: the planner merges on "merge <n>"); take an issue not labeled `ready`; work two issues at once;
 edit `docs/master/00-NOW.md` or `MEMORY.md`; run `scripts/ship.sh`. If an issue is unclear or
 needs an owner decision, comment the question, label it `needs-owner` (remove `in-progress`), and
 stop.
