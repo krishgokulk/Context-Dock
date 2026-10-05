@@ -129,6 +129,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-10-01 | The engine plan file defines tasks; this file sets the order. The owner's Master Blueprint pages are the study copy, not a second plan. |
 | 2026-10-04 | E1b yes (#165): Mail/Messages/Notes reads count as untrusted; shell commands use an allow-list; only the exact typed URL is trusted. Runs after #147, before E3. |
 | 2026-10-05 | Merges (A): only the cloud planner merges, on the owner's words "merge <n>" in the planner chat. The Mac builder never merges, even after a passed hand check. |
+| 2026-10-05 | Owner "yes": the owner's "N passed" (hand check) is also permission to merge that PR once CI is green; docs-only PRs (no hand check) the planner merges itself once CI is green. |
 
 ## Open decisions (owner)
 

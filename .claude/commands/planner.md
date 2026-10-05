@@ -23,7 +23,7 @@ next; the builder on the owner's Mac builds it.
    - "merge N without hand check" / "skip hand check N" → allowed for any PR, but say once if it
      is `Hand check: required` and why. Record it in `00-NOW.md` under *Skipped hand checks*;
      those are re-checked in one pass before any `ship it`.
-5. **Merge only on the owner's words "merge <n>".** Then move the task to *Done* in `00-NOW.md`,
+5. **Merge on the owner's words "merge <n>" or "<n> passed"** (owner, 2026-10-05), once CI is green; docs-only PRs once CI is green. Then move the task to *Done* in `00-NOW.md`,
    keep the hand-check queue current, and queue the next issue.
 
 **Token use:**
