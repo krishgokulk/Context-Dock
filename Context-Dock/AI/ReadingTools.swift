@@ -235,7 +235,7 @@ extension AgentToolRegistry {
             properties: [:],
             required: []
         ) { _, _ in
-            let reading = await MainActor.run { () -> String? in
+            let (reading, frontBundleID) = await MainActor.run { () -> (String?, String) in
                 let context = AXContextReader.shared.current
                 var lines: [String] = []
                 if let text = context.selectedText?.trimmingCharacters(
@@ -249,7 +249,20 @@ extension AgentToolRegistry {
                         "SELECTED FILES (\(context.selectedFilePaths.count)):")
                     lines += context.selectedFilePaths.prefix(30).map { "- \($0)" }
                 }
-                return lines.isEmpty ? nil : lines.joined(separator: "\n")
+                return (lines.isEmpty ? nil : lines.joined(separator: "\n"), context.bundleId)
+            }
+            // Mail's message pane is a WebKit view that may not expose the highlighted text to
+            // Accessibility. Mail can still say which message is open, so read that instead of
+            // reporting an empty selection while a message is on screen.
+            if reading == nil, frontBundleID.lowercased() == "com.apple.mail" {
+                let outcome = await MailReader.selected(using: LiveMailSource())
+                if outcome.hasMessage {
+                    return AgentToolResult(
+                        success: true,
+                        output: "No highlighted text could be read in Mail; this is the "
+                            + "message open in Mail:\n" + outcome.output,
+                        displayCommand: "read_selection")
+                }
             }
             guard let reading else {
                 return AgentToolResult(

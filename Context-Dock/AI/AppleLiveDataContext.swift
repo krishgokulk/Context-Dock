@@ -118,14 +118,26 @@ enum AppleLiveDataContext {
 
         if ["email", "mail", "inbox", "message from"].contains(where: q.contains) {
             let emails = api.getRecentEmails(limit: 12)
+            // Headers only. Bodies are never in this block, so say where they are: without
+            // the pointer the model answered "body not returned" and asked the user to open
+            // the message by hand.
+            let bodyPointer =
+                "Only headers are listed here. To read a message's text, call mail.read (the "
+                + "newest message, or an id from this list); mail.currentMessage reads the one "
+                + "selected in Mail. Never ask the user to open a message so you can read it."
             if !emails.isEmpty {
                 let lines = emails.prefix(12).map { e -> String in
                     let subject = (e["subject"] as? String) ?? "(no subject)"
                     let sender = (e["sender"] as? String) ?? ""
                     let unread = (e["read"] as? Bool ?? true) ? "" : " [unread]"
-                    return "- \(subject) — \(sender)\(unread)"
+                    let id = (e["id"] as? String).flatMap { $0.isEmpty ? nil : " [id \($0)]" } ?? ""
+                    return "- \(subject) — \(sender)\(unread)\(id)"
                 }.joined(separator: "\n")
-                blocks.append("## Mail — recent inbox:\n\(lines)")
+                blocks.append("## Mail — recent inbox:\n\(lines)\n\(bodyPointer)")
+            } else if !AppleAppsAPI.isRunning("com.apple.mail") {
+                blocks.append(
+                    "## Mail: not running. mail.read still reads the newest message (it starts "
+                        + "Mail in the background); do not say mail cannot be read.")
             }
         }
 

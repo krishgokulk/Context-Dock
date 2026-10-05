@@ -432,6 +432,13 @@ enum AppScopedChatService {
             + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query))
             + subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
 
+        // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
+        // "read the latest message and do what it says" as a question for Messages sent the
+        // user to enable an app they never asked for, and Mail never got read.
+        if scopeBundleID?.lowercased() == "com.apple.mail", !namesMessagesApp(query) {
+            candidates.removeAll { Self.isMessagesApp(bundleId: $0.bundleId) }
+        }
+
         let attachedBundleIDs = Set(
             attachedAppNames.compactMap { name -> String? in
                 NSWorkspace.shared.runningApplications
@@ -464,6 +471,18 @@ enum AppScopedChatService {
             companions: candidates.dropFirst().map {
                 EnableAppRequest.AppRef(name: $0.name, bundleId: $0.bundleId)
             })
+    }
+
+    nonisolated static func isMessagesApp(bundleId: String) -> Bool {
+        ["com.apple.mobilesms", "com.apple.messages"].contains(bundleId.lowercased())
+    }
+
+    /// Whether a sentence asks for the Messages app itself, not a mail message: only these
+    /// words say so. A bare "message" or "text" inside a Mail chat means the email.
+    nonisolated static func namesMessagesApp(_ query: String) -> Bool {
+        let q = query.lowercased()
+        return ["imessage", "sms", "text message", "messages app", "in messages",
+                "to messages", "from messages", "open messages"].contains(where: q.contains)
     }
 
     /// Whether a candidate app *is* the app this chat is already about.
