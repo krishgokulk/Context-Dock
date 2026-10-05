@@ -275,7 +275,6 @@ struct DockStripPlan {
         }
         if layout.overflow > 0 { advance(layout.appSpread + M.dockIconSize) }
         guard !composition.otherPins.isEmpty else { return nil }
-        cursor += layout.appTrailingGap  // the shell's room past the apps (#189)
         advance(1)  // the hairline divider
         for pin in composition.otherPins {
             let width = composition.width(of: pin)

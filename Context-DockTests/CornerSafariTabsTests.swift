@@ -58,7 +58,8 @@ struct CornerSafariTabsTests {
         // Open, the field is the shell's one width (#189) — the bar's own width at rest too.
         let open = AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width
         #expect(open == AppChatPromptMetrics.boardWidth(for: model))
-        #expect(open == AppChatPromptMetrics.shellSize(for: model, phase: .dock).width)
+        // At rest the bar fits its icons, never wider than the field it opens into.
+        #expect(AppChatPromptMetrics.shellSize(for: model, phase: .dock).width <= open)
         #expect(open == DockShellWidth.current)
     }
 

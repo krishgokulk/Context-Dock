@@ -27,10 +27,7 @@ struct DockShellWidthTests {
     func everySurfaceTakesTheSameWidth() {
         for pins in 0...4 {
             let width = W.width(pins: pins, screenBudget: budget)
-            // Global: its strip at rest and its field open.
-            let strip = M.size(
-                for: .dock, suggestions: 0, running: 7, pinned: pins, tools: 1,
-                maximumWidth: budget, shellWidth: width)
+            // Global's field open (its strip at rest is compact: see below).
             let globalField = M.size(
                 for: .prompt, suggestions: 0, running: 7, pinned: pins, tools: 1,
                 promptIcons: M.matchIconBaseCount, fieldHeight: M.dockHeight,
@@ -44,7 +41,7 @@ struct DockShellWidthTests {
                 fitsContent: true, shellWidth: width)
             // An app's conversation.
             let appChat = M.size(for: .chat, suggestions: 0, messages: 3, shellWidth: width)
-            for size in [strip, globalField, appField, bareAppField, appChat] {
+            for size in [globalField, appField, bareAppField, appChat] {
                 #expect(size.width == width, "pins \(pins)")
             }
             // The board over the field takes the field's width.
@@ -61,7 +58,7 @@ struct DockShellWidthTests {
         // A fresh model is Global Context; its board and its shell share the width.
         let global = AppChatPromptModel(conversation: AppChatConversation())
         #expect(M.boardWidth(for: global) == live)
-        #expect(M.shellSize(for: global, phase: .dock).width == live)
+        #expect(M.shellSize(for: global, phase: .dock).width <= live)
         #expect(M.shellSize(for: global, phase: .prompt).width == live)
         global.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
         #expect(M.boardWidth(for: global) == live)
@@ -98,32 +95,47 @@ struct DockShellWidthTests {
         #expect(W.width(pins: 40, screenBudget: 100) == W.base)
     }
 
-    @Test("Running apps never change the width")
+    @Test("Running apps never change the open field's width; at rest the dock fits its icons, up to it")
     func runningAppsDoNotMoveTheShell() {
         let width = W.width(pins: 2, screenBudget: budget)
-        var seen: Set<CGFloat> = []
+        var fields: Set<CGFloat> = []
+        var previousDock: CGFloat = 0
         for running in 0...30 {
             for tools in 1...3 {
                 let layout = M.dockLayout(
                     running: running, pinned: 2, tools: tools, maximumWidth: budget,
                     fieldIcons: M.matchIconBaseCount, shellWidth: width)
-                seen.insert(layout.width)
-                // What does not fit is `+N`, never a wider row.
+                // Compact: exactly what is drawn, and never past the launcher's width —
+                // what does not fit is `+N`.
                 let drawn = M.dockSearchStubSpan + 2 * M.dockInset
                     + CGFloat(max(1, layout.shownRunning + (layout.overflow > 0 ? 1 : 0)))
                     * (M.dockIconSize + M.dockIconGap) - M.dockIconGap
-                    + layout.trailingRegion + layout.appTrailingGap
+                    + layout.trailingRegion
                 #expect(abs(drawn - layout.width) < 0.001, "running \(running), tools \(tools)")
+                #expect(layout.width <= width)
                 #expect(layout.shownRunning + layout.overflow == running)
             }
-            seen.insert(
+            let dock = M.size(
+                for: .dock, suggestions: 0, running: running, pinned: 2, tools: 1,
+                maximumWidth: budget, shellWidth: width
+            ).width
+            #expect(dock >= previousDock, "the resting dock grows with what runs")
+            #expect(dock <= width)
+            previousDock = dock
+            fields.insert(
                 M.size(
                     for: .prompt, suggestions: 0, running: running, pinned: 2, tools: 1,
                     promptIcons: M.matchIconBaseCount, maximumWidth: budget,
                     shellWidth: width
                 ).width)
         }
-        #expect(seen == [width])
+        #expect(fields == [width])
+        // Few apps: a dock no wider than its icons; many: the launcher's width, at most.
+        #expect(
+            M.size(
+                for: .dock, suggestions: 0, running: 2, pinned: 0, tools: 1,
+                maximumWidth: budget, shellWidth: width
+            ).width < width)
         // The field's pills are fixed too.
         #expect(AppChatPromptModel.pillFieldCapacity == M.matchIconBaseCount)
         #expect(M.runningPillWidth == M.pillWidth(icons: M.matchIconBaseCount, overflow: true))
@@ -136,16 +148,6 @@ struct DockShellWidthTests {
         // Global's field: the magnifier, the text, the fixed pill and the shelf.
         let shelf = M.dockDividerSpan + M.dockIconSize
         #expect(M.fieldMinimumWidth(icons: M.matchIconBaseCount) + shelf <= W.base)
-    }
-
-    @Test("The strip keeps the apps together and the pins on the trailing edge")
-    func theLeftoverRoomSitsBeforeThePins() {
-        let width = W.width(pins: 1, screenBudget: budget)
-        let layout = M.dockLayout(
-            running: 2, pinned: 1, tools: 1, maximumWidth: budget, shellWidth: width)
-        #expect(layout.appSpread == 0)
-        #expect(layout.appTrailingGap > 0)
-        #expect(layout.width == width)
     }
 
     // MARK: The field grows upward

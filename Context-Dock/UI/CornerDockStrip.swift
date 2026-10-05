@@ -294,9 +294,6 @@ struct CornerDockStrip: View {
                 Rectangle()
                     .fill(Color.primary.opacity(0.18))
                     .frame(width: 1, height: M.dockIconSize * 0.7)
-                    // The shell's room past the apps (#189): the apps stay together from the
-                    // magnifier, the pins stay on the trailing edge.
-                    .padding(.leading, plan.layout.appTrailingGap)
                 ForEach(plan.composition.otherPins) { pin in
                     if plan.composition.widgetSlots[pin.id] != nil,
                         let pluginID = pin.kind.pluginID,
@@ -317,9 +314,6 @@ struct CornerDockStrip: View {
             }
             if plan.layout.tools > 0 {
                 appBarToolsDivider
-                    .padding(
-                        .leading,
-                        plan.composition.otherPins.isEmpty ? plan.layout.appTrailingGap : 0)
                 // The corner's own cards, not the field's scope chips: a dock icon opens a
                 // surface beside the dock, it does not bring the field back with a chip in it.
                 // An app bar carries the clipboard and the selection, not action results

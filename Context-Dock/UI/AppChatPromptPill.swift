@@ -222,11 +222,6 @@ enum AppChatPromptMetrics {
         /// The pins and the corner's tools, from the last app to the trailing inset. This
         /// region stays put when the field opens — only what is before it morphs.
         var trailingRegion: CGFloat = 0
-        /// The shell's one width is wider than the row (#189): the room left over, kept
-        /// after the apps and before the trailing region, so the apps stay together from the
-        /// magnifier and the pins stay on the trailing edge. The apps' own region, in effect,
-        /// is a fixed width.
-        var appTrailingGap: CGFloat = 0
     }
 
     /// The least text the field keeps room for beside its pills.
@@ -278,8 +273,10 @@ enum AppChatPromptMetrics {
         /// field are one width — the shell does not change size when the magnifier opens,
         /// only what is drawn in it.
         fieldIcons: Int? = nil,
-        /// The shell's one width (`DockShellWidth`, #189). Given, the row is cut to it and
-        /// drawn at it, whatever is running: what does not fit becomes `+N`.
+        /// The shell's one width (`DockShellWidth`, #189). Given, the row is cut to it —
+        /// what does not fit becomes `+N` — and drawn at its own width, compact: at rest the
+        /// dock is as wide as its icons, and only the field opens to the launcher's width
+        /// (owner 2026-10-05).
         shellWidth: CGFloat? = nil
     ) -> DockLayout {
         let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) + pinnedExtraWidth : 0
@@ -306,13 +303,12 @@ enum AppChatPromptMetrics {
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
         let natural = dockSearchStubSpan + 2 * dockInset
             + runWidth(max(1, pinnedApps + runningSlots)) + pinsWidth + toolsWidth
-        if let shellWidth {
+        if shellWidth != nil {
             // Wider than the shell only when the pins alone overrun the screen: they are
             // never dropped.
-            let width = max(natural, shellWidth)
             return DockLayout(
-                shownRunning: shownRunning, overflow: overflow, tools: tools, width: width,
-                trailingRegion: pinsWidth + toolsWidth, appTrailingGap: width - natural)
+                shownRunning: shownRunning, overflow: overflow, tools: tools, width: natural,
+                trailingRegion: pinsWidth + toolsWidth)
         }
         guard let fieldIcons else {
             return DockLayout(
@@ -390,11 +386,14 @@ enum AppChatPromptMetrics {
             // One width for the strip and the field it opens into, so the magnifier opening
             // is the only thing that moves: the wider of the row's own width and what the
             // field needs for its pills.
-            let width = dockLayout(
+            // With the shell's width (#189): the dock at rest fits its icons, and the field
+            // opens to the launcher's width — never narrower than the row it opened from.
+            let row = dockLayout(
                 running: running, pinnedApps: pinnedApps, pinned: pinned,
                 pinnedExtraWidth: pinnedExtraWidth, tools: tools,
                 maximumWidth: maximumWidth, fieldIcons: promptIcons, shellWidth: shellWidth
             ).width
+            let width = phase == .dock ? row : max(row, shellWidth ?? row)
             return phase == .dock
                 ? CGSize(width: width, height: dockHeight)
                 : CGSize(
