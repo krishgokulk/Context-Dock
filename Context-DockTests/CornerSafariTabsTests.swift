@@ -46,8 +46,9 @@ struct CornerSafariTabsTests {
         // apps; open it is the compact field — fitted, never the bar's width.
         let model = scope()
         #expect(model.showsTabBar && model.usesDockShell && model.fitsField)
+        // Open, every field is the Dock's input bar height (owner 2026-10-05).
         #expect(AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight)
-            == AppChatPromptMetrics.dockHeight)
+            == AppChatPromptMetrics.inputHeight)
         #expect(model.canRestAsDock == model.autoShrinkEnabled())
         // Guarded on "keep open": the test host reads the developer's own setting.
         if model.autoShrinkEnabled(), !model.isPinned {
@@ -55,11 +56,12 @@ struct CornerSafariTabsTests {
             #expect(model.foldToDock())
             #expect(model.phase == .dock)
         }
-        // Open, the field is its own compact width, not the strip's.
-        let open = AppChatPromptMetrics.size(
-            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
-            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model)).width
+        // Open, the field is the shell's one width (#189) — the bar's own width at rest too.
+        let open = AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width
         #expect(open == AppChatPromptMetrics.boardWidth(for: model))
+        // At rest the bar fits its icons, never wider than the field it opens into.
+        #expect(AppChatPromptMetrics.shellSize(for: model, phase: .dock).width <= open)
+        #expect(open == DockShellWidth.current)
     }
 
     @Test("The open tabs are the bar's icons, all of them, in order")

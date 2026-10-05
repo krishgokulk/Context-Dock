@@ -16,7 +16,8 @@ import AppKit
 import SwiftUI
 
 enum AppChatListMetrics {
-    static let width = AppChatPromptMetrics.width
+    /// The board stands exactly as wide as the field below it: the shell's one width (#189).
+    static var width: CGFloat { DockShellWidth.current }
     static let rowHeight: CGFloat = 40
     static let headerHeight: CGFloat = 30
     /// Room above and below the rows.

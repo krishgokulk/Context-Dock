@@ -348,10 +348,20 @@ final class CornerChatPresentation: ObservableObject {
         mode = .general
         isVisible = true
         generalPhase = .expanded
-        generalChat.reloadFromStore()
         generalChat.openSession(.general, title: "General Chat")
         armGeneralStandDown(after: AppChatPromptModel.idleDwell)
+        // The switch is drawn from what is already in memory; the disk catches up once it
+        // has landed. Reloading first — listing the dock's chat folder and decoding the
+        // thread index on the main thread — held every switch into General on the disk,
+        // which is the lag the owner saw (2026-10-05).
+        generalReloadTask?.cancel()
+        generalReloadTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, let self, self.mode == .general else { return }
+            self.generalChat.reloadFromStore()
+        }
     }
+    private var generalReloadTask: Task<Void, Never>?
 
     func composerInteracted() {
         guard mode == .general else { return }

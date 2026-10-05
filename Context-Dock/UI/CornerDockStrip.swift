@@ -91,9 +91,8 @@ struct CornerDockStrip: View {
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let end = layout.width - layout.leadingInset - layout.trailingRegion
             - (model.showsTabBar ? M.appFieldTrailingReserve(typed: typed) : 0)
-        let width = M.pillWidth(
-            icons: model.globalMatchIcons.count, overflow: model.globalOverflowCount > 0)
-        return (end - width, end)
+        // One fixed width, whatever is running (#189): the field's pill scrolls.
+        return (end - M.runningPillWidth, end)
     }
 
     /// One after another. Folding in, the icon nearest the pill goes first, so the row
@@ -259,20 +258,23 @@ struct CornerDockStrip: View {
                         .allowsHitTesting(isDock)
                         .padding(.leading, plan.layout.appSpread)
                 } else {
-                    let stays = isDock || (isPill && inPill(slot.bundleID))
+                    // Flies and shrinks to its slot in the field's pill, then hands over to
+                    // it — the field's pill is a fixed-width scroller of every running app
+                    // (#189), the way an app bar's pill already was. An app the pill does
+                    // not show goes as it leaves.
+                    let landsInPill = inPill(slot.bundleID)
                     appIcon(slot, ids: ids)
                         .scaleEffect(gathered ? M.pillIconScale : 1)
                         .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
                         .animation(gatherAnimation(index: index, count: count), value: gathered)
-                        // An app the pill does not carry goes as it leaves; the rest are the pill.
-                        .opacity(stays ? 1 : 0)
-                        .animation(.easeInOut(duration: 0.2), value: stays)
-                        .allowsHitTesting(stays)
+                        .opacity(isDock ? 1 : 0)
+                        .animation(landsInPill ? movingFade : .easeIn(duration: 0.12), value: isDock)
+                        .allowsHitTesting(isDock)
                         .padding(.leading, plan.layout.appSpread)
                 }
             }
             if plan.layout.overflow > 0 {
-                let stays = isDock || (isPill && model.globalOverflowCount > 0)
+                let stays = isDock
                 overflowPill(plan.layout.overflow)
                     .scaleEffect(gathered ? M.pillIconScale : 1)
                     .offset(
@@ -282,7 +284,7 @@ struct CornerDockStrip: View {
                             : 0)
                     .animation(gatherAnimation(index: count - 1, count: count), value: gathered)
                     .opacity(stays ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.2), value: stays)
+                    .animation(stays ? .easeInOut(duration: 0.2) : movingFade, value: stays)
                     .allowsHitTesting(isDock)
                     .padding(.leading, plan.layout.appSpread)
             }
@@ -330,27 +332,14 @@ struct CornerDockStrip: View {
         .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
         .animation(.smooth(duration: 0.25), value: model.selection != nil)
         .padding(.horizontal, plan.layout.leadingInset)
-        .frame(height: M.dockHeight)
-        // The pill's capsule, drawn behind the icons that became it — it arrives once they
-        // have, so what the eye follows is the icons, not a second shape appearing.
-        .background(alignment: .leading) {
-            let span = pillSpan(plan)
-            Capsule(style: .continuous)
-                .fill(.regularMaterial)
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7))
-                .frame(width: max(0, span.end - span.start), height: 30)
-                .offset(x: span.start)
-                .opacity(isPill ? 1 : 0)
-                .animation(
-                    isPill
-                        ? .easeOut(duration: M.dockMorphDuration * 0.3)
-                            .delay(M.dockMorphDuration * 0.35)
-                        : .easeIn(duration: M.dockMorphDuration * 0.15),
-                    value: isPill)
-                .allowsHitTesting(false)
-        }
+        // The dock's own height at rest; the open field's while it is up, so the pins and
+        // the shelf it keeps at the field's end sit on the field's centre line.
+        .frame(height: isDock
+            ? M.dockHeight
+            : DockFieldLines.fieldHeight(
+                base: M.fieldHeight(global: true), lines: model.fieldLines))
+        // No capsule of its own any more: the field draws its pill (a fixed-width scroller,
+        // #189) where these icons land, and they hand over to it.
         // The gaps between icons catch the pointer only while this is the dock. Over the
         // field the strip is drawn on top, and an empty stretch of it must not swallow a
         // click on the text. A background, not the strip's own content shape: that shape

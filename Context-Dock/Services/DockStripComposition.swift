@@ -169,7 +169,9 @@ struct DockStripPlan {
     static func make(
         running: [MatchDockIcon], pins: [DockPin], tools: Int, fieldIcons: Int? = nil
     ) -> DockStripPlan {
-        let environment = Self.environment(pins: pins)
+        // An app bar's strip draws no Global pins, but the cache this fills is the one the
+        // shell's width reads next: filled from none, a widget pin read as one icon wide.
+        let environment = Self.environment(pins: pins.isEmpty ? DockPinStore.shared.pins : pins)
         return make(
             running: running, pins: pins, runningBundleIDs: environment.running,
             unresolvedDocumentIDs: environment.unresolved, widgetSlots: environment.widgetSlots,
@@ -180,7 +182,29 @@ struct DockStripPlan {
             // the environment so a layout pass does not ask the window server per frame.
             maximumWidth: AppChatPromptMetrics.dockMaximumWidth(
                 onScreenOf: environment.screenWidth),
-            fieldIcons: fieldIcons)
+            fieldIcons: fieldIcons,
+            // One width for every surface (#189), set by the user's pins — all of them, not
+            // only the ones this strip draws: an app's bar shows its own things, and its
+            // shell still has to stand exactly as wide as Global's.
+            shellWidth: shellWidth)
+    }
+
+    /// The shell's one width on the screen the corner is on (`DockShellWidth`, #189): the
+    /// user's pins, composed the way the strip composes them — a pin this build cannot
+    /// resolve is not drawn, so it takes no room — against the screen's budget. Running
+    /// apps are not read: they never change it.
+    @MainActor
+    static var shellWidth: CGFloat {
+        let pins = DockPinStore.shared.pins
+        let environment = Self.environment(pins: pins)
+        let composition = DockStripComposition.compose(
+            running: [], pins: pins, runningBundleIDs: environment.running,
+            unresolvedDocumentIDs: environment.unresolved,
+            widgetSlots: environment.widgetSlots)
+        return DockShellWidth.width(
+            for: composition,
+            screenBudget: AppChatPromptMetrics.dockMaximumWidth(
+                onScreenOf: environment.screenWidth))
     }
 
     /// What is running, what resolves, which pins are widgets, and how wide the screen is —
@@ -263,7 +287,8 @@ struct DockStripPlan {
     static func make(
         running: [MatchDockIcon], pins: [DockPin], runningBundleIDs: Set<String>,
         unresolvedDocumentIDs: Set<String> = [], widgetSlots: [UUID: Int] = [:], tools: Int,
-        maximumWidth: CGFloat = AppChatPromptMetrics.dockMaximumWidth, fieldIcons: Int? = nil
+        maximumWidth: CGFloat = AppChatPromptMetrics.dockMaximumWidth, fieldIcons: Int? = nil,
+        shellWidth: CGFloat? = nil
     ) -> DockStripPlan {
         let full = DockStripComposition.compose(
             running: running, pins: pins, runningBundleIDs: runningBundleIDs,
@@ -271,7 +296,7 @@ struct DockStripPlan {
         let layout = AppChatPromptMetrics.dockLayout(
             running: full.unpinnedRunningCount, pinnedApps: full.pinnedAppCount,
             pinned: full.otherPins.count, pinnedExtraWidth: full.widgetExtraWidth, tools: tools,
-            maximumWidth: maximumWidth, fieldIcons: fieldIcons)
+            maximumWidth: maximumWidth, fieldIcons: fieldIcons, shellWidth: shellWidth)
         guard layout.overflow > 0 else { return DockStripPlan(composition: full, layout: layout) }
         return DockStripPlan(
             composition: DockStripComposition.compose(
