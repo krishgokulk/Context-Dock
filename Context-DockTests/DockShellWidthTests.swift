@@ -141,6 +141,20 @@ struct DockShellWidthTests {
         #expect(M.runningPillWidth == M.pillWidth(icons: M.matchIconBaseCount, overflow: true))
     }
 
+    @Test("An app's bar pill fits its icons, up to the cap, past which they scroll")
+    func theAppBarPillFitsItsIcons() {
+        let one = M.appBarPillWidth(visibleIcons: 1, divider: false)
+        #expect(one == M.appBarPillWidth(icons: 1, divider: false))
+        var previous: CGFloat = 0
+        for icons in 1...12 {
+            let width = M.appBarPillWidth(visibleIcons: icons, divider: false)
+            #expect(width >= previous)
+            #expect(width <= M.appBarFixedPillWidth)
+            previous = width
+        }
+        #expect(M.appBarPillWidth(visibleIcons: 12, divider: true) == M.appBarFixedPillWidth)
+    }
+
     @Test("The shell has room for the app field's chip, text and bar at its base")
     func theBaseHoldsEveryField() {
         // An app's field: the original 372 of chip, text and controls, plus its bar.

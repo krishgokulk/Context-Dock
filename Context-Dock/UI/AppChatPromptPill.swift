@@ -104,18 +104,29 @@ enum AppChatPromptMetrics {
     /// The row spacing before the app bar's pill.
     static let appBarPillSpacing: CGFloat = 10
 
-    /// The app bar's pill in a fitted field, or 0 where there is none. One fixed width
-    /// (#189): the icons scroll inside it, so a tab opening or closing never moves the field.
+    /// The app bar's pill in a fitted field, or 0 where there is none. It fits its icons —
+    /// one pin is one icon's capsule, not an empty bar (owner 2026-10-05) — up to
+    /// `appBarFixedPillWidth`, past which the rest scroll inside it. The field itself is the
+    /// shell's one width either way (#189), so the pill growing never moves the field; it
+    /// only takes room from the text.
     @MainActor
     static func appBarPillWidth(for model: AppChatPromptModel) -> CGFloat {
         guard model.showsTabBar,
             !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
         else { return 0 }
-        return appBarFixedPillWidth
+        let icons = model.allRunningIcons
+        let pins = icons.filter { model.isAppPinIcon($0.id) }.count
+        return appBarPillWidth(
+            visibleIcons: icons.count, divider: pins > 0 && pins < icons.count)
     }
 
-    /// The app bar's capsule: room for `AppChatPromptModel.appBarVisibleIcons` icons and the
-    /// hairline between pins and tabs; the rest scroll sideways inside it (#189).
+    /// The pill for this many icons: fitted to them, never wider than the cap.
+    static func appBarPillWidth(visibleIcons icons: Int, divider: Bool) -> CGFloat {
+        min(appBarPillWidth(icons: max(1, icons), divider: divider), appBarFixedPillWidth)
+    }
+
+    /// The app bar's widest capsule: room for `AppChatPromptModel.appBarVisibleIcons` icons
+    /// and the hairline between pins and tabs; the rest scroll sideways inside it (#189).
     static var appBarFixedPillWidth: CGFloat {
         appBarPillWidth(icons: AppChatPromptModel.appBarVisibleIcons, divider: true)
     }
