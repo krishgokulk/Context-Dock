@@ -693,7 +693,7 @@ final class CornerDockController: NSObject {
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt))
+                        ? prompt.boardSize
                         : (showsWindowRow
                             ? windowRowSize
                             : (showsPinPreview
@@ -793,7 +793,8 @@ final class CornerDockController: NSObject {
     /// this is how they stay that way. Zero for every other board, since nothing else asks
     /// for an anchor offset.
     var hoverCardDrawOffset: CGFloat {
-        guard showsWindowRow || showsPinPreview || showsPluginCard else { return 0 }
+        guard showsWindowRow || showsPinPreview || showsPluginCard || showsSplitBoard
+        else { return 0 }
         let slots = currentSlots()
         guard let list = slots.list, let prompt = slots.prompt else { return 0 }
         // Where the stack puts it without being asked: centred on the field when the shell
@@ -811,6 +812,11 @@ final class CornerDockController: NSObject {
     /// two cards ask for this — the list, the snapshot and the extension panel belong to
     /// the field and stay centred on it.
     private var hoverCardAnchorOffset: CGFloat? {
+        // The split board keeps its list over the field and opens its panel to the side.
+        if showsSplitBoard {
+            return CornerBoardLayout.anchorOffset(
+                board: prompt.boardSize, preview: prompt.boardPreview)
+        }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
             target = .pin(id: card.pin.id)
@@ -856,6 +862,10 @@ final class CornerDockController: NSObject {
             && prompt.phase == .suggesting
             && prompt.listRowCount > 0
     }
+
+    /// The app list with a panel beside it (#191): the board is wider than the field and
+    /// is placed by its leading edge, not centred.
+    var showsSplitBoard: Bool { showsAppChatList && prompt.boardPreview != nil }
 
     /// An extension's own interface, in the board slot.
     var showsExtensionPanel: Bool {
@@ -1562,8 +1572,16 @@ struct CornerDockSurface: View {
                 AppSnapshotCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppChatList {
-                AppChatListCard(model: prompt)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                // The list over the field, the highlighted row's panel beside it (#191).
+                HStack(alignment: .top, spacing: CornerBoardLayout.gap) {
+                    AppChatListCard(model: prompt)
+                    if let preview = prompt.boardPreview {
+                        CornerBoardPreviewPanel(preview: preview, height: prompt.boardSize.height)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.smooth(duration: 0.18), value: prompt.boardPreview)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsHoverCard {
                 // One card, whatever it is showing. Three views in this chain meant crossing
                 // from an app to a pin tore one down and raised the other from the bottom,
