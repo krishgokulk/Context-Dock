@@ -6,7 +6,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Changed
 
-- While an app's Context Dock answers, the chat card shows what DoraX is doing beside the conversation: each step as it runs, the command's output, the connectors in use, and what it can do in the app.
+- An app's Context Dock now has a panel beside the conversation, like Claude's: each step as it runs, the command's output, the files the answer made, your uploads, the app's connectors and adapter, and what DoraX can do there. Hide it with the sidebar button. The chat field is now a rounded composer.
 - Arrowing through results in the corner splits the result card, list on the left, details on the right: a preview of the file, image or folder, the app, or where a menu command lives.
 - General Chat in the corner opens at once, as its field alone (no start card), instead of waiting on the chat history to load.
 - The corner dock rests as a compact bar as wide as its apps, and opens to exactly the Dock's input bar size (600 × 56) in every mode — Global Context, each app's Context Dock and General Chat; running apps and an app's tabs scroll inside a fixed pill, and a long prompt grows the field upward to three lines instead of wrapping into a narrow column.

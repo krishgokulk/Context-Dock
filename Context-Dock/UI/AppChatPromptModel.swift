@@ -176,6 +176,9 @@ final class AppChatPromptModel: ObservableObject {
     /// How many lines the field's text takes, one to three (`DockFieldLines`, #189). Read
     /// by the shell's size, so the field grows upward and the window hit-tests the same.
     @Published var fieldLines = 1
+    /// The Context Dock's panel beside the conversation (#191): open until the header's
+    /// toggle closes it, and kept that way across turns and apps.
+    @Published var livePanelOpen = true
     /// The text field's frame in the corner's hosting view (top-left origin). Not published:
     /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
     var inputFrame: CGRect = .zero

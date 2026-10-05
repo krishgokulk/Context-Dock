@@ -761,23 +761,23 @@ struct AppChatPromptPill: View {
             if model.phase == .chat {
                 header
                 Divider().opacity(0.18)
-                // While a turn runs, the card splits like the result board (#191): the
-                // conversation on the left, what DoraX is doing in the app on the right.
-                // One HStack either way, so the transcript keeps its scroll when it closes.
+                // The card splits like Claude's chat (#191): the conversation on the left,
+                // the app's panel on the right — progress, files, connectors. One HStack
+                // either way, so the transcript keeps its scroll when the panel is toggled.
                 HStack(spacing: 0) {
                     transcript
                         .frame(maxWidth: .infinity)
                     if model.showsLivePanel {
                         CornerLivePanel(
                             appName: model.appName, appBundleID: model.appBundleID,
-                            appIcon: appIcon, liveSteps: model.liveSteps)
-                            .frame(maxWidth: .infinity)
+                            appIcon: appIcon, messages: model.messages,
+                            isAnswering: model.isAnswering, liveSteps: model.liveSteps)
+                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
                             .padding(.vertical, 8)
                             .transition(.opacity.combined(with: .move(edge: .trailing)))
                     }
                 }
                 .animation(.smooth(duration: 0.22), value: model.showsLivePanel)
-                Divider().opacity(0.18)
             }
             // A turn asked from here can need a yes, and that question belongs directly
             // over the field — the same place the `/` picker and the command list appear —
@@ -800,6 +800,21 @@ struct AppChatPromptPill: View {
             }
             if !model.attachments.isEmpty { attachmentRow }
             inputRow
+                // In a conversation the field is a rounded composer inset in the card, the
+                // way Claude's sits under its chat (owner 2026-10-05), rather than a row
+                // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
+                // its identity, and with it focus, as the phase changes.
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                        .opacity(model.phase == .chat ? 1 : 0)
+                }
+                .padding(.horizontal, model.phase == .chat ? 10 : 0)
+                .padding(.top, model.phase == .chat ? 6 : 0)
+                .padding(.bottom, model.phase == .chat ? 10 : 0)
         }
         // Fills what the body gives it: 372 points in the legacy shell, the field's
         // widened prompt width in Global.
@@ -866,6 +881,17 @@ struct AppChatPromptPill: View {
                 .fixedSize()
 
             Spacer(minLength: 6)
+
+            // The app's panel beside the conversation, shown or hidden (#191) — Claude's
+            // sidebar toggle, in the same place.
+            if !model.isGlobalScope {
+                Button { model.livePanelOpen.toggle() } label: {
+                    headerGlyph("sidebar.right", tinted: model.livePanelOpen)
+                }
+                .buttonStyle(.plain)
+                .help(model.livePanelOpen ? "Hide the panel" : "Show progress, files and connectors")
+                .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
+            }
 
             // Stop lives in the composer, which is drawn in every phase this header is —
             // one job, one button, rather than two of them 300 points apart.

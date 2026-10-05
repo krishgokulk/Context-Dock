@@ -157,16 +157,41 @@ enum CornerBoardLayout {
 
 // MARK: - The Context Dock's live panel (#191, part 2)
 
-/// While an app's Context Dock answers, its chat card splits the same way the result board
-/// does: the conversation on the left, and on the right what DoraX is doing there — the
-/// steps as they run, a command's output, the connectors in play, and what it can do in the
-/// app. The panel is the turn's: it opens when the turn starts and closes when it ends.
+/// An app's Context Dock keeps a panel beside its conversation, the way Claude keeps its
+/// Progress and Context panel beside a chat (owner 2026-10-05): what DoraX is doing in the
+/// app — the steps as they run, a command's output — and what the turn left behind: the
+/// files it made or named, the uploads it was given, the connectors and the adapter it can
+/// reach. A toggle in the header hides it; it stays put across turns.
 enum CornerLivePanelLayout {
-    /// Whether the chat card splits. Only an app's Context Dock (Global's results have their
-    /// own preview, General is its own surface), only in its conversation, only while a
-    /// turn runs.
-    static func shows(isAppScope: Bool, phase: AppChatPromptPhase, isAnswering: Bool) -> Bool {
-        isAppScope && phase == .chat && isAnswering
+    /// The panel's share of the chat card. The conversation keeps the larger part, as in
+    /// Claude.
+    static let panelFraction: CGFloat = 0.42
+
+    /// The panel's width in a chat card this wide.
+    static func panelWidth(card: CGFloat) -> CGFloat {
+        (card * panelFraction).rounded()
+    }
+
+    /// Whether the chat card shows the panel. Only an app's Context Dock (Global's results
+    /// have their own preview, General is its own surface), only in its conversation, only
+    /// while the user has it open, and only once there is a turn to show.
+    static func shows(
+        isAppScope: Bool, phase: AppChatPromptPhase, isOpen: Bool, hasConversation: Bool
+    ) -> Bool {
+        isAppScope && phase == .chat && isOpen && hasConversation
+    }
+
+    /// The steps the panel lists: the turn running now, or the last one that finished.
+    static func steps(
+        isAnswering: Bool, live: [ActivityStep], finished: [ActivityStep]
+    ) -> [ActivityStep] {
+        isAnswering ? live : finished
+    }
+
+    /// Everything the user attached in this conversation, oldest first, each once.
+    static func uploads(_ attachments: [[URL]]) -> [URL] {
+        var seen: Set<String> = []
+        return attachments.flatMap { $0 }.filter { seen.insert($0.standardizedFileURL.path).inserted }
     }
 
     /// How many of the output's last lines the panel quotes.
@@ -230,9 +255,10 @@ extension AppChatPromptModel {
             preview: boardPreview)
     }
 
-    /// The Context Dock's live panel shows (#191, part 2). Read by the card that draws it.
+    /// The Context Dock's panel shows (#191, part 2). Read by the card that draws it.
     var showsLivePanel: Bool {
         CornerLivePanelLayout.shows(
-            isAppScope: !isGlobalScope, phase: phase, isAnswering: isAnswering)
+            isAppScope: !isGlobalScope, phase: phase, isOpen: livePanelOpen,
+            hasConversation: isAnswering || !messages.isEmpty)
     }
 }

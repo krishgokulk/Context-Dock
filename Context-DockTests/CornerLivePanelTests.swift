@@ -14,17 +14,43 @@ import Testing
 struct CornerLivePanelTests {
     typealias L = CornerLivePanelLayout
 
-    @Test("Only an app's conversation, only while it answers")
-    func showsOnlyWhileAnAppAnswers() {
-        #expect(L.shows(isAppScope: true, phase: .chat, isAnswering: true))
-        // The turn ended: the panel closes.
-        #expect(!L.shows(isAppScope: true, phase: .chat, isAnswering: false))
+    @Test("Only an app's conversation, while open, once there is a turn")
+    func showsBesideAnAppsConversation() {
+        #expect(L.shows(isAppScope: true, phase: .chat, isOpen: true, hasConversation: true))
+        // Stays after the turn ends, as Claude's panel does; the toggle hides it.
+        #expect(!L.shows(isAppScope: true, phase: .chat, isOpen: false, hasConversation: true))
+        // Nothing asked yet: nothing to show.
+        #expect(!L.shows(isAppScope: true, phase: .chat, isOpen: true, hasConversation: false))
         // Global's results have their own preview.
-        #expect(!L.shows(isAppScope: false, phase: .chat, isAnswering: true))
+        #expect(!L.shows(isAppScope: false, phase: .chat, isOpen: true, hasConversation: true))
         // Not over the field, the list or the dock.
         for phase in [AppChatPromptPhase.prompt, .suggesting, .dock, .mini, .hidden] {
-            #expect(!L.shows(isAppScope: true, phase: phase, isAnswering: true))
+            #expect(!L.shows(isAppScope: true, phase: phase, isOpen: true, hasConversation: true))
         }
+    }
+
+    @Test("The conversation keeps the larger part of the card")
+    func thePanelIsTheSmallerColumn() {
+        let card = DockShellWidth.base
+        let panel = L.panelWidth(card: card)
+        #expect(panel < card / 2)
+        #expect(panel >= 240, "room for a step, a file and its kind")
+    }
+
+    @Test("The panel lists the running turn's steps, else the last finished turn's")
+    func stepsFollowTheTurn() {
+        let live = [ActivityStep(kind: .command, title: "Running ls", detail: "ls")]
+        let done = [ActivityStep(kind: .read, title: "Read status", status: .ok)]
+        #expect(L.steps(isAnswering: true, live: live, finished: done).map(\.id) == live.map(\.id))
+        #expect(L.steps(isAnswering: false, live: [], finished: done).map(\.id) == done.map(\.id))
+    }
+
+    @Test("Uploads: every attachment in the conversation, once each, oldest first")
+    func uploadsAreListedOnce() {
+        let csv = URL(fileURLWithPath: "/tmp/passports.csv")
+        let png = URL(fileURLWithPath: "/tmp/shot.png")
+        #expect(L.uploads([]).isEmpty)
+        #expect(L.uploads([[csv], [], [png, csv]]) == [csv, png])
     }
 
     @Test("A command's output is quoted from its end")
