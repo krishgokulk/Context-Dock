@@ -133,18 +133,6 @@ enum CornerGeneralChatMetrics {
         return board > 0 ? board + CornerDockLayout.gap + composer : composer
     }
 
-    /// The one definition of "nothing has happened in this chat yet", read by the view that
-    /// draws the starter and the metrics that size it. Two copies of this condition is a
-    /// card sized for one state showing another.
-    @MainActor
-    static func showsStarter(for model: GeneralChatWindowModel) -> Bool {
-        model.activeScope == .general
-            && model.messages.isEmpty
-            && !model.isSending
-            && model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && model.attachments.isEmpty
-    }
-
     /// The options the newest answer is offering, if it is offering any and the user has
     /// not started typing over them.
     @MainActor
@@ -159,21 +147,19 @@ enum CornerGeneralChatMetrics {
     @MainActor
     /// The board's height for this model — read from the same places `size(for:)` reads,
     /// so the card drawn above the field and the room reserved for it stay one number.
+    /// No start card in the corner (owner 2026-10-05): General opens as its field alone,
+    /// the way Global and an app's Context Dock do, and the board appears with the first
+    /// question. The Chat Window keeps its start screen.
     static func boardHeight(for model: GeneralChatWindowModel) -> CGFloat {
-        let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
-        return boardHeight(
+        boardHeight(
             messageCount: model.messages.count,
             isSending: model.isSending,
-            showsStarter: showsStarter(for: model),
-            starterCount: connected.count,
-            starterHasConnections: !connected.isEmpty,
             liveStepCount: model.activeProgress.count,
             clarificationOptionCount: clarificationOptionCount(for: model))
     }
 
     static func size(for model: GeneralChatWindowModel) -> CGSize {
         let slashMatches = ChatSlashAppPicker.matches(for: model.input)
-        let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
         return CGSize(
             // The shell's one width (#189): General stands exactly as wide as Global and
             // every app's Context Dock, so switching mode changes only what is inside.
@@ -184,9 +170,6 @@ enum CornerGeneralChatMetrics {
                 hasAttachments: !model.attachments.isEmpty,
                 slashMatchCount: slashMatches.count,
                 hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
-                showsStarter: showsStarter(for: model),
-                starterCount: connected.count,
-                starterHasConnections: !connected.isEmpty,
                 liveStepCount: model.activeProgress.count,
                 clarificationOptionCount: clarificationOptionCount(for: model),
                 composerLines: model.cornerComposerLines))
@@ -208,7 +191,6 @@ struct CornerGeneralChatView: View {
 
     private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
-    private var showsStarter: Bool { CornerGeneralChatMetrics.showsStarter(for: model) }
 
     /// The conversation, the start screen, or the `/` picker: a card of its own above the
     /// field, exactly as App mode puts the app's commands above its field. The two modes
@@ -267,15 +249,6 @@ struct CornerGeneralChatView: View {
                 header
                 Divider().opacity(0.18)
                 transcript
-            } else if showsStarter {
-                GeneralChatStartView(
-                    onPick: { prompt in
-                        model.input = prompt
-                        model.send()
-                    },
-                    compact: true
-                )
-                .transition(.opacity)
             }
         }
     }
