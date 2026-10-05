@@ -1065,6 +1065,9 @@ struct AppChatPromptPill: View {
                         focusedID: model.focusedPill?.id,
                         fixedWidth: AppChatPromptMetrics.runningPillWidth,
                         onSelect: { icon in model.openGlobalMatchIcon(icon) })
+                        // Resting the pointer on the small pills asks for the big ones: the
+                        // field folds into the dock at once, as it always has.
+                        .onHover { inside in if inside { model.foldToDock() } }
                         .transition(.opacity.animation(
                             .easeOut(duration: AppChatPromptMetrics.dockMorphDuration * 0.25)
                                 .delay(AppChatPromptMetrics.dockMorphDuration * 0.55)))

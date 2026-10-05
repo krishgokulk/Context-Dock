@@ -1,9 +1,10 @@
 // Context-DockTests/DockShellWidthTests.swift
 //
 // One dock width for every Corner surface (#189). Global Context, every app's Context Dock,
-// General Chat and the boards above them are drawn at one width, `DockShellWidth`, set by
-// the pins alone. Running apps scroll inside a fixed pill; a long prompt grows the field
-// upward to three lines, never sideways.
+// General Chat and the boards above them are drawn at one width, `DockShellWidth`: the
+// launcher's — Spotlight's, the Dock's — growing only when the pins alone would not fit.
+// Running apps scroll inside a fixed pill; a long prompt grows the field upward to three
+// lines, never sideways.
 
 import AppKit
 import Foundation
@@ -67,26 +68,34 @@ struct DockShellWidthTests {
         #expect(M.shellSize(for: global, phase: .prompt).width == live)
     }
 
-    @Test("Each pin widens the shell by one pin's span, until the screen's budget")
+    @Test("The launcher's width holds for a handful of pins, then grows a pin's span per pin, then caps")
     func pinsGrowTheWidthThenCap() {
-        #expect(W.width(pins: 0, screenBudget: budget) == W.base)
-        for pins in 1...6 {
+        // Spotlight's width, and the Dock's: the two shells are one size.
+        #expect(W.base == 660)
+        #expect(W.pinSpan == M.dockIconSize + M.dockIconGap)
+        let fixed = (0...30).filter { W.width(pins: $0, screenBudget: budget) == W.base }
+        #expect(fixed.first == 0)
+        #expect(fixed.count >= 6, "a handful of pins never moves the launcher")
+        #expect(fixed == Array(0...(fixed.count - 1)))
+        // Past them, a pin is never dropped: one pin's span each.
+        let first = fixed.count
+        for pins in (first + 1)...(first + 6) {
             #expect(
                 W.width(pins: pins, screenBudget: budget)
                     == W.width(pins: pins - 1, screenBudget: budget) + W.pinSpan)
         }
-        #expect(W.pinSpan == M.dockIconSize + M.dockIconGap)
+        #expect(W.width(pins: first, screenBudget: budget) > W.base)
         // A bar widget pins wider than an icon, by exactly what it draws beyond one.
+        let crowded = first + 2
         #expect(
-            W.width(pins: 1, pinnedExtraWidth: 60, screenBudget: budget)
-                == W.width(pins: 1, screenBudget: budget) + 60)
+            W.width(pins: crowded, pinnedExtraWidth: 60, screenBudget: budget)
+                == W.width(pins: crowded, screenBudget: budget) + 60)
 
-        let cap = W.base + 2.5 * W.pinSpan
-        #expect(W.width(pins: 2, screenBudget: cap) == W.base + 2 * W.pinSpan)
-        #expect(W.width(pins: 3, screenBudget: cap) == cap)
-        #expect(W.width(pins: 40, screenBudget: cap) == cap)
+        let cap = W.width(pins: first + 2, screenBudget: budget) + W.pinSpan / 2
+        #expect(W.width(pins: first + 3, screenBudget: cap) == cap)
+        #expect(W.width(pins: 80, screenBudget: cap) == cap)
         // Never below the base, however small the screen.
-        #expect(W.width(pins: 3, screenBudget: 100) == W.base)
+        #expect(W.width(pins: 40, screenBudget: 100) == W.base)
     }
 
     @Test("Running apps never change the width")
@@ -123,7 +132,7 @@ struct DockShellWidthTests {
     @Test("The shell has room for the app field's chip, text and bar at its base")
     func theBaseHoldsEveryField() {
         // An app's field: the original 372 of chip, text and controls, plus its bar.
-        #expect(W.base == M.width + M.appBarPillSpacing + M.appBarFixedPillWidth)
+        #expect(W.base >= M.width + M.appBarPillSpacing + M.appBarFixedPillWidth)
         // Global's field: the magnifier, the text, the fixed pill and the shelf.
         let shelf = M.dockDividerSpan + M.dockIconSize
         #expect(M.fieldMinimumWidth(icons: M.matchIconBaseCount) + shelf <= W.base)

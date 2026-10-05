@@ -7,32 +7,37 @@
 // take three different widths: Global grew with the running apps and the pins, an app's
 // field fitted its own bar, and General stood at a card's width. Switching between them
 // looked like the window changing rather than the subject. Now there is one number, set by
-// the pins and nothing else: running apps live in a fixed-width pill that scrolls, a long
-// prompt grows the field upward, and switching mode only cross-fades what is inside.
+// the launcher's own width: Spotlight's, the size the Dock already is (owner 2026-10-05:
+// "the perfect size of Raycast / Spotlight"). Running apps live in a fixed-width pill that
+// scrolls, a long prompt grows the field upward, and switching mode only cross-fades what
+// is inside.
 
 import AppKit
 import CoreGraphics
 
 enum DockShellWidth {
-    /// The shell with nothing pinned: the app field's base, plus room for its bar's pill —
-    /// so every app's Context Dock keeps the chip and the text it had, and Global and
-    /// General stand at the same width beside it.
-    static var base: CGFloat {
-        AppChatPromptMetrics.width + AppChatPromptMetrics.appBarPillSpacing
-            + AppChatPromptMetrics.appBarFixedPillWidth
-    }
+    /// The launcher's width: Spotlight's, and the Dock's (`LauncherView.expandedDockWidth`
+    /// reads this), so the two shells are one size. Wide enough for an app's field — its
+    /// chip, text and bar — with room to spare.
+    static let base: CGFloat = 660
 
     /// What one more pin costs: one dock icon and the gap after it — what the strip draws
     /// for it.
     static var pinSpan: CGFloat { AppChatPromptMetrics.dockIconSize + AppChatPromptMetrics.dockIconGap }
 
-    /// `W = max(base, base + pins)`, capped at the screen budget.
+    /// The launcher's width, whatever is pinned — until the pins alone would not fit beside
+    /// the magnifier, one app and the shelf. Then it grows by one pin's span per pin, because
+    /// a pin is never dropped. Capped at the screen budget.
     ///
     /// Pure: counts in, width out. `pins` is every pin the strip draws — pinned apps and the
     /// rest alike, since each takes one slot. `pinnedExtraWidth` is what a pinned plugin's
     /// bar widget takes beyond its one icon. Running apps are deliberately not an input.
     static func width(pins: Int, pinnedExtraWidth: CGFloat = 0, screenBudget: CGFloat) -> CGFloat {
-        let grown = base + CGFloat(max(0, pins)) * pinSpan + max(0, pinnedExtraWidth)
+        typealias M = AppChatPromptMetrics
+        let pinsNeed = M.dockSearchStubSpan + 2 * M.dockInset + pinSpan  // magnifier, one app
+            + M.dockDividerSpan + CGFloat(max(0, pins)) * pinSpan + max(0, pinnedExtraWidth)
+            + M.dockDividerSpan + M.dockIconSize  // the shelf
+        let grown = max(base, pinsNeed)
         // Never below the base, even on a budget smaller than it: a tiny display still
         // draws the whole field and lets the strip's row overflow instead.
         return min(grown, max(base, screenBudget))

@@ -448,7 +448,7 @@ struct LauncherView: View {
             }
     }
 
-    var expandedDockWidth: CGFloat { 660 }  // Spotlight-matched width
+    var expandedDockWidth: CGFloat { DockShellWidth.base }  // Spotlight-matched; the Corner's too
     var visibleDockWidth: CGFloat { expandedDockWidth }
 
     var acceptsMouseDrivenDockInteraction: Bool {
