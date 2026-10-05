@@ -90,12 +90,15 @@ private struct MenuRowIcon: View {
 struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
 
-    private var size: CGSize {
-        AppChatListMetrics.size(
-            rows: model.listRowCount, width: AppChatPromptMetrics.boardWidth(for: model))
-    }
+    /// The board: the list, and the highlighted row's preview beside it in the same card
+    /// (#191) — the same number the window reserves.
+    private var size: CGSize { model.boardSize }
 
     var body: some View {
+        let preview = model.boardPreview
+        // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
+        // the list on the left, what the highlighted row is on the right.
+        HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
             Text(headerText)
                 .font(.system(size: 11))
@@ -152,6 +155,23 @@ struct AppChatListCard: View {
                 }
             }
         }
+        .frame(
+            width: CornerBoardLayout.listWidth(board: size.width, preview: preview),
+            alignment: .topLeading)
+        if let preview {
+            Rectangle()
+                .fill(Color.primary.opacity(0.12))
+                .frame(width: CornerBoardLayout.dividerWidth)
+                .padding(.vertical, 6)
+            CornerBoardPreviewPanel(preview: preview)
+                .frame(
+                    width: CornerBoardLayout.panelWidth(board: size.width),
+                    height: size.height - 2 * AppChatListMetrics.verticalPadding,
+                    alignment: .topLeading)
+                .transition(.opacity)
+        }
+        }
+        .animation(.smooth(duration: 0.18), value: preview)
         .padding(.vertical, AppChatListMetrics.verticalPadding)
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))

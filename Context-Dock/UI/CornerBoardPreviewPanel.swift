@@ -1,8 +1,9 @@
 // CornerBoardPreviewPanel.swift
 // Context-Dock
 //
-// The split board's right column (#191): what the highlighted row is, shown — a file's
-// preview, an app, a menu command. It follows the arrows; it never takes the keys.
+// The split board's right half (#191): what the highlighted row is, shown — a file's
+// preview, an app, a menu command — inside the list's own card. It follows the arrows; it
+// never takes the keys.
 
 import AppKit
 import SwiftUI
@@ -10,7 +11,6 @@ import UniformTypeIdentifiers
 
 struct CornerBoardPreviewPanel: View {
     let preview: CornerBoardPreview
-    let height: CGFloat
 
     var body: some View {
         Group {
@@ -23,21 +23,8 @@ struct CornerBoardPreviewPanel: View {
         }
         // A new row is a new panel, so its preview never shows the last row's for a frame.
         .id(preview)
-        .padding(16)
-        .frame(width: CornerBoardLayout.panelWidth, height: height, alignment: .topLeading)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .background {
-            // The list card's own glass, so the two columns read as one board.
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
         .allowsHitTesting(false)
         .accessibilityElement(children: .combine)
     }

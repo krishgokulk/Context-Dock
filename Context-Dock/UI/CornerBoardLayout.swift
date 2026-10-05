@@ -1,10 +1,10 @@
 // CornerBoardLayout.swift
 // Context-Dock
 //
-// The split result board (#191): the list stays exactly over the field, at the field's own
-// width, and a side panel opens to its right for whatever row is highlighted — a file's
-// preview, an app, a menu command — the way Claude shows its Progress panel beside the
-// conversation.
+// The split result board (#191): one card over the field, at the field's own width, with the
+// list in its left half and whatever row is highlighted in its right — a file's preview, an
+// app, a menu command — the way Raycast lays a list beside its detail (owner 2026-10-05:
+// "not a separate card, inside the same window").
 //
 // One board in the one shell, two columns: not a second window and not a second floating
 // container (Unified Dock Surface rule). Pure, like every other corner size, because the
@@ -24,10 +24,23 @@ enum CornerBoardPreview: Hashable {
 }
 
 enum CornerBoardLayout {
-    /// The panel's width: room for a preview that reads, without the board crowding the screen.
-    static let panelWidth: CGFloat = 340
-    /// Between the list and the panel: the corner's own gap between cards.
-    static var gap: CGFloat { CornerDockLayout.gap }
+    /// The list's share of the card while a preview shows.
+    static let listFraction: CGFloat = 0.5
+    /// The hairline between the two halves.
+    static let dividerWidth: CGFloat = 1
+    /// The least height the card keeps while a preview shows, so a short list still leaves
+    /// the preview room to read.
+    static let minimumPreviewHeight: CGFloat = 280
+
+    /// The list's column: the whole card, or its left half beside a preview.
+    static func listWidth(board: CGFloat, preview: CornerBoardPreview?) -> CGFloat {
+        preview == nil ? board : (board * listFraction).rounded()
+    }
+
+    /// The preview's column: what the list and the hairline leave.
+    static func panelWidth(board: CGFloat) -> CGFloat {
+        board - listWidth(board: board, preview: .file(URL(fileURLWithPath: "/"))) - dividerWidth
+    }
 
     /// What the panel shows for this row, or nil when it has nothing worth a panel — an
     /// action, a CLI subcommand, a row nothing resolves for. Nil also when no row is
@@ -83,18 +96,11 @@ enum CornerBoardLayout {
         }
     }
 
-    /// The whole board: the list at its own size, and the panel beside it when there is
-    /// one, as tall as the list.
+    /// The whole card: always the list's width — the field's — and, while a preview shows,
+    /// at least tall enough for it.
     static func boardSize(list: CGSize, preview: CornerBoardPreview?) -> CGSize {
         guard preview != nil else { return list }
-        return CGSize(width: list.width + gap + panelWidth, height: list.height)
-    }
-
-    /// Where the board asks to sit, measured from the field's leading edge: centred half
-    /// its width in, so its leading edge — the list's — lands on the field's. Nil without a
-    /// panel, where the list is the field's width and is simply centred on it.
-    static func anchorOffset(board: CGSize, preview: CornerBoardPreview?) -> CGFloat? {
-        preview == nil ? nil : board.width / 2
+        return CGSize(width: list.width, height: max(list.height, minimumPreviewHeight))
     }
 }
 

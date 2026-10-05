@@ -30,7 +30,7 @@ struct CornerBoardLayoutTests {
         #expect(L.preview(for: nil) == nil)
         let list = CGSize(width: 600, height: 230)
         #expect(L.boardSize(list: list, preview: nil) == list)
-        #expect(L.anchorOffset(board: list, preview: nil) == nil)
+        #expect(L.listWidth(board: 600, preview: nil) == 600)
     }
 
     @Test("A file, a folder and an image preview as files")
@@ -90,34 +90,20 @@ struct CornerBoardLayoutTests {
         #expect(L.preview(for: .dock(bare)) == nil)
     }
 
-    @Test("The panel widens the board beside the list; the list keeps the field's width")
-    func thePanelSitsBesideTheList() {
-        let list = CGSize(width: 600, height: 230)
+    @Test("One card at the field's width: the list on the left, the preview on the right")
+    func thePreviewSharesTheCard() {
+        let list = CGSize(width: 600, height: 120)
         let preview = CornerBoardPreview.file(URL(fileURLWithPath: "/tmp/a.pdf"))
         let board = L.boardSize(list: list, preview: preview)
-        #expect(board.height == list.height)
-        #expect(board.width == list.width + L.gap + L.panelWidth)
-
-        // Placed by the window: the board's leading edge — the list's — on the field's.
-        let prompt = CGSize(width: 600, height: 56)
-        for anchor in CornerDockAnchor.allCases {
-            let slots = CornerDockLayout.slots(
-                list: board, prompt: prompt,
-                listAnchorOffset: L.anchorOffset(board: board, preview: preview),
-                anchor: anchor, panelWidth: 3000)
-            guard let listRect = slots.list, let promptRect = slots.prompt else {
-                Issue.record("no slots for \(anchor)")
-                continue
-            }
-            if anchor == .right {
-                // Against the right edge the board steps left to stay on the screen.
-                #expect(listRect.maxX <= 3000 - CornerDockLayout.pad)
-                #expect(listRect.minX <= promptRect.minX)
-            } else {
-                #expect(listRect.minX == promptRect.minX, "anchor \(anchor)")
-            }
-            #expect(listRect.width == board.width)
-        }
+        // Never wider than the field: one card, split, not a second card beside it.
+        #expect(board.width == list.width)
+        // A short list still leaves the preview room to read.
+        #expect(board.height == L.minimumPreviewHeight)
+        #expect(L.boardSize(list: CGSize(width: 600, height: 400), preview: preview).height == 400)
+        // The halves and the hairline add up to the card.
+        let left = L.listWidth(board: board.width, preview: preview)
+        #expect(left == 300)
+        #expect(left + L.dividerWidth + L.panelWidth(board: board.width) == board.width)
     }
 
     @Test("The model's panel follows the arrows and the window reserves the same board")
