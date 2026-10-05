@@ -159,10 +159,8 @@ struct AppChatListCard: View {
             width: CornerBoardLayout.listWidth(board: size.width, preview: preview),
             alignment: .topLeading)
         if let preview {
-            Rectangle()
-                .fill(Color.primary.opacity(0.12))
-                .frame(width: CornerBoardLayout.dividerWidth)
-                .padding(.vertical, 6)
+            // The preview's own inset card draws the edge between the halves.
+            Color.clear.frame(width: CornerBoardLayout.dividerWidth)
             CornerBoardPreviewPanel(preview: preview)
                 .frame(
                     width: CornerBoardLayout.panelWidth(board: size.width),
