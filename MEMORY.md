@@ -50,3 +50,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-10-01: engine plan (#161) ordered into 00-NOW; E1 #149 labeled ready; #146/#147 queued after it.
 - 2026-10-05 (cloud): #189 one dock width — DockShellWidth + DockFieldLines + DockPillScroller, every Corner surface routed through it; draft PR on claude/modest-dirac-65cyb0, CI is the compiler; Mac session owes the by-eye screenshots.
 - 2026-10-05 (cloud): #190 owner hand-checked on the Mac — Corner open = Dock bar 600x56, compact at rest, General instant w/o start card, app-bar pill fits; ready for merge. Next: #191 split result board.
+- 2026-10-05 (cloud): #191 part 2 started — Context Dock live panel (CornerLivePanel) beside the app chat while a turn runs; stacked on #192.

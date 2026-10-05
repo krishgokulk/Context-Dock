@@ -41,25 +41,32 @@ struct CornerBoardPreviewPanel: View {
         }
         // A new row is a new card, so it never shows the last row's contents for a frame.
         .id(preview)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background {
-            // Inset in the board's glass: a shade lifted, a hairline edge — a card, not a pane.
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .padding(.trailing, 10)
-        .accessibilityElement(children: .contain)
+        .boardPanelCard()
+    }
+}
+
+extension View {
+    /// The panel's card: inset in the board's glass, a shade lifted, a hairline edge — a
+    /// card, not a pane. The result board's preview and the Context Dock's live panel share it.
+    func boardPanelCard() -> some View {
+        frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.primary.opacity(0.06))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(.trailing, 10)
+            .accessibilityElement(children: .contain)
     }
 }
 
 // MARK: - The card's parts, shared by every kind
 
 /// The card's title line: what this is, and one dimmed line under it.
-private struct PanelHeader: View {
+struct PanelHeader: View {
     let icon: NSImage?
     let title: String
     let subtitle: String
@@ -96,7 +103,7 @@ private struct PanelHeader: View {
 }
 
 /// The hairline between sections.
-private struct PanelDivider: View {
+struct PanelDivider: View {
     var body: some View {
         Rectangle()
             .fill(Color.primary.opacity(0.1))
@@ -106,7 +113,7 @@ private struct PanelDivider: View {
 }
 
 /// A section's name, as Claude titles "Context" or "Outputs".
-private struct PanelSection: View {
+struct PanelSection: View {
     let title: String
     var body: some View {
         Text(title)
@@ -116,7 +123,7 @@ private struct PanelSection: View {
 }
 
 /// One line of a section: an icon or a label, a name, and a dimmed trailing kind.
-private struct PanelRow: View {
+struct PanelRow: View {
     var icon: NSImage? = nil
     var symbol: String? = nil
     var label: String? = nil
@@ -356,7 +363,7 @@ private struct CommandPreview: View {
 // MARK: - Monospaced text (help, scripts)
 
 /// A tool's help or a command's script: monospaced, selectable, wrapped to the card.
-private struct PanelCode: View {
+struct PanelCode: View {
     let text: String
     var body: some View {
         Text(text)

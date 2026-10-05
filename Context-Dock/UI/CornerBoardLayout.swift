@@ -155,6 +155,64 @@ enum CornerBoardLayout {
     }
 }
 
+// MARK: - The Context Dock's live panel (#191, part 2)
+
+/// While an app's Context Dock answers, its chat card splits the same way the result board
+/// does: the conversation on the left, and on the right what DoraX is doing there — the
+/// steps as they run, a command's output, the connectors in play, and what it can do in the
+/// app. The panel is the turn's: it opens when the turn starts and closes when it ends.
+enum CornerLivePanelLayout {
+    /// Whether the chat card splits. Only an app's Context Dock (Global's results have their
+    /// own preview, General is its own surface), only in its conversation, only while a
+    /// turn runs.
+    static func shows(isAppScope: Bool, phase: AppChatPromptPhase, isAnswering: Bool) -> Bool {
+        isAppScope && phase == .chat && isAnswering
+    }
+
+    /// How many of the output's last lines the panel quotes.
+    static let outputLines = 14
+
+    /// A command's output as the panel quotes it: its last `lines` non-empty-trailing lines,
+    /// because the end is what a running command just said.
+    static func outputTail(_ output: String, lines: Int = outputLines) -> String {
+        var all = output.components(separatedBy: .newlines)
+        while let last = all.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            all.removeLast()
+        }
+        guard all.count > lines else { return all.joined(separator: "\n") }
+        return "…\n" + all.suffix(lines).joined(separator: "\n")
+    }
+
+    /// The step whose output the panel shows: the latest shell command — the one running
+    /// now, or the last one that said something.
+    static func terminalStep(in steps: [ActivityStep]) -> ActivityStep? {
+        let shells = steps.filter { $0.kind == .command || $0.kind == .providerShell }
+        return shells.last { $0.status == .running } ?? shells.last { !$0.output.isEmpty }
+            ?? shells.last
+    }
+
+    /// The connectors in play: the MCP servers linked to this app, then any other server
+    /// this turn called, each named once.
+    static func connectors(linked: [String], steps: [ActivityStep]) -> [String] {
+        var names: [String] = []
+        for name in linked + steps.filter({ $0.kind == .mcp }).map(server(of:))
+        where !name.isEmpty && !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
+
+    /// The server an MCP step called: "Ran search via github" → "github"; a step that does
+    /// not name its server is named by its tool.
+    static func server(of step: ActivityStep) -> String {
+        if let via = step.title.range(of: " via ", options: .backwards) {
+            return String(step.title[via.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        let title = step.title.hasPrefix("Ran ") ? String(step.title.dropFirst(4)) : step.title
+        return title.trimmingCharacters(in: .whitespaces)
+    }
+}
+
 extension AppChatPromptModel {
     /// The side panel for the row the arrows are on (#191). Read by the board that draws it
     /// and by the window that hit-tests it, so the two are one answer.
@@ -170,5 +228,11 @@ extension AppChatPromptModel {
             list: AppChatListMetrics.size(
                 rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self)),
             preview: boardPreview)
+    }
+
+    /// The Context Dock's live panel shows (#191, part 2). Read by the card that draws it.
+    var showsLivePanel: Bool {
+        CornerLivePanelLayout.shows(
+            isAppScope: !isGlobalScope, phase: phase, isAnswering: isAnswering)
     }
 }

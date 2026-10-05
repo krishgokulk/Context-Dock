@@ -761,7 +761,22 @@ struct AppChatPromptPill: View {
             if model.phase == .chat {
                 header
                 Divider().opacity(0.18)
-                transcript
+                // While a turn runs, the card splits like the result board (#191): the
+                // conversation on the left, what DoraX is doing in the app on the right.
+                // One HStack either way, so the transcript keeps its scroll when it closes.
+                HStack(spacing: 0) {
+                    transcript
+                        .frame(maxWidth: .infinity)
+                    if model.showsLivePanel {
+                        CornerLivePanel(
+                            appName: model.appName, appBundleID: model.appBundleID,
+                            appIcon: appIcon, liveSteps: model.liveSteps)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    }
+                }
+                .animation(.smooth(duration: 0.22), value: model.showsLivePanel)
                 Divider().opacity(0.18)
             }
             // A turn asked from here can need a yes, and that question belongs directly
