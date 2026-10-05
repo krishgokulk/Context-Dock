@@ -12,7 +12,8 @@ import AppKit
 import SwiftUI
 
 enum AppSnapshotMetrics {
-    static let width = CornerDockLayout.cardWidth
+    /// The board stands exactly as wide as the field below it: the shell's one width (#189).
+    static var width: CGFloat { DockShellWidth.current }
     static let headerHeight: CGFloat = 30
     /// A 16:10 window, which is close enough to most, at the shell's card width.
     static let imageHeight: CGFloat = 208

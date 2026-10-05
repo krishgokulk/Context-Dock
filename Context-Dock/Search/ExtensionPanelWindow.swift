@@ -575,6 +575,9 @@ struct AIComposerBar: View {
     /// the app chip, 14-point text, "+", a send button once something is typed, and round
     /// 26-point glyphs (owner 2026-09-26: one UI for both). The window keeps its own look.
     var cornerStyle: Bool = false
+    /// The text's own height as it wraps, for a surface that sizes itself to it (the
+    /// corner's General Chat grows upward to three lines, #189). Nil elsewhere.
+    var onTextHeightChange: ((CGFloat) -> Void)? = nil
 
     @ObservedObject private var settings = AppSettings.shared
     @State private var showAppPicker = false
@@ -656,7 +659,12 @@ struct AIComposerBar: View {
             TextField("Ask \(settings.selectedAIProvider.shortName)…", text: $text, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: cornerStyle ? 14 : 12, weight: cornerStyle ? .medium : .regular))
-                .lineLimit(1...5)
+                // The corner grows to three lines and then scrolls inside, as every corner
+                // field does (#189); the window keeps its five.
+                .lineLimit(cornerStyle ? 1...DockFieldLines.maximum : 1...5)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    onTextHeightChange?(height)
+                }
                 .onSubmit {
                     // A surface drawing its own picker knows which row is highlighted;
                     // this bar only knows the order it handed over.

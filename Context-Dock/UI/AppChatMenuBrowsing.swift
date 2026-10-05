@@ -362,23 +362,12 @@ extension AppChatPromptModel {
             fieldCapacity: showsTabBar ? Self.appBarVisibleIcons : Self.pillFieldCapacity)
     }
 
-    /// How many running apps the field shows before the rest become `+N`.
+    /// How many running apps the field's pill shows before the rest scroll inside it.
     ///
-    /// As many as the field can grow to hold on this screen. Four was the count that fits a
-    /// 372-point field, and the field is no longer fixed at 372. The pins take their room
-    /// first; they are never the ones cut. It depends on the screen and on what is pinned,
-    /// so the tests read it from here rather than assuming four.
-    static var pillFieldCapacity: Int {
-        // The strip's pins stay at the field's trailing end, each a full dock icon — about
-        // two small pills' room apiece, plus the divider.
-        let otherPins = DockPinStore.shared.pins.filter {
-            if case .app = $0.kind { return false }
-            return true
-        }
-        let pinSlots = otherPins.isEmpty ? 0 : otherPins.count * 2 + 1
-        return AppChatPromptMetrics.matchIconCapacity(
-            maximumWidth: DockStripPlan.screenBudget) - pinSlots
-    }
+    /// Fixed (#189): the pill is one width whatever is running, so a launch or a quit never
+    /// moves the dock. It used to grow with the screen and shrink with the pins, which made
+    /// the field — and every surface measured against it — a different width per Mac.
+    static var pillFieldCapacity: Int { AppChatPromptMetrics.matchIconBaseCount }
 
     /// The pills: what is running, and the clipboard when it is holding something.
     ///

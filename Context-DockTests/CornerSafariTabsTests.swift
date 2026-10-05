@@ -55,11 +55,11 @@ struct CornerSafariTabsTests {
             #expect(model.foldToDock())
             #expect(model.phase == .dock)
         }
-        // Open, the field is its own compact width, not the strip's.
-        let open = AppChatPromptMetrics.size(
-            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
-            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model)).width
+        // Open, the field is the shell's one width (#189) — the bar's own width at rest too.
+        let open = AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width
         #expect(open == AppChatPromptMetrics.boardWidth(for: model))
+        #expect(open == AppChatPromptMetrics.shellSize(for: model, phase: .dock).width)
+        #expect(open == DockShellWidth.current)
     }
 
     @Test("The open tabs are the bar's icons, all of them, in order")

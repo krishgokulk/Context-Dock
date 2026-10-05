@@ -89,6 +89,11 @@ struct ContextMatchDock: View {
     let onSelect: ((MatchDockIcon) -> Void)?
     /// The icon Tab and ←/→ have highlighted (`DockKeyRules.pillRow`), if any.
     let focusedID: String?
+    /// The Corner's fixed pill (#189): given, the capsule is this wide whatever is running,
+    /// and the icons past `visibleCount` scroll inside it behind an overflow arrow instead
+    /// of becoming `+N`. Nil keeps the Dock's own pill, sized to its icons.
+    let fixedWidth: CGFloat?
+    let visibleCount: Int
 
     init(
         phase: Phase,
@@ -96,6 +101,8 @@ struct ContextMatchDock: View {
         overflowCount: Int,
         isSearching: Bool,
         focusedID: String? = nil,
+        fixedWidth: CGFloat? = nil,
+        visibleCount: Int = AppChatPromptMetrics.matchIconBaseCount,
         onSelect: ((MatchDockIcon) -> Void)? = nil
     ) {
         self.phase = phase
@@ -103,10 +110,43 @@ struct ContextMatchDock: View {
         self.overflowCount = overflowCount
         self.isSearching = isSearching
         self.focusedID = focusedID
+        self.fixedWidth = fixedWidth
+        self.visibleCount = visibleCount
         self.onSelect = onSelect
     }
 
     var body: some View {
+        if let fixedWidth {
+            scrollingPill(width: fixedWidth)
+        } else {
+            sizedPill
+        }
+    }
+
+    /// Every icon, scrolling inside one fixed width.
+    private func scrollingPill(width: CGFloat) -> some View {
+        DockPillScroller(
+            width: width, height: 30, itemIDs: icons.map(\.id), visibleCount: visibleCount
+        ) {
+            HStack(spacing: 7) {
+                ForEach(icons) { item in
+                    matchDockIconButton(item)
+                        .id(item.id)
+                        .help(accessibilityLabel(for: item))
+                }
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+        }
+        .background(.regularMaterial, in: Capsule(style: .continuous))
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7)
+        )
+        .animation(.easeOut(duration: 0.08), value: icons.map(\.id))
+    }
+
+    private var sizedPill: some View {
         HStack(spacing: 7) {
             if isSearching {
                 ProgressView()

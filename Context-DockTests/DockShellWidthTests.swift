@@ -1,0 +1,184 @@
+// Context-DockTests/DockShellWidthTests.swift
+//
+// One dock width for every Corner surface (#189). Global Context, every app's Context Dock,
+// General Chat and the boards above them are drawn at one width, `DockShellWidth`, set by
+// the pins alone. Running apps scroll inside a fixed pill; a long prompt grows the field
+// upward to three lines, never sideways.
+
+import AppKit
+import Foundation
+import Testing
+
+@testable import Context_Dock
+
+@Suite("One dock width")
+@MainActor
+struct DockShellWidthTests {
+    typealias M = AppChatPromptMetrics
+    typealias W = DockShellWidth
+
+    /// Roomy enough that the cap never bites unless a test asks it to.
+    private let budget: CGFloat = 4000
+
+    // MARK: The width
+
+    @Test("Global, an app's Context Dock and General Chat take one width for the same pins")
+    func everySurfaceTakesTheSameWidth() {
+        for pins in 0...4 {
+            let width = W.width(pins: pins, screenBudget: budget)
+            // Global: its strip at rest and its field open.
+            let strip = M.size(
+                for: .dock, suggestions: 0, running: 7, pinned: pins, tools: 1,
+                maximumWidth: budget, shellWidth: width)
+            let globalField = M.size(
+                for: .prompt, suggestions: 0, running: 7, pinned: pins, tools: 1,
+                promptIcons: M.matchIconBaseCount, fieldHeight: M.dockHeight,
+                maximumWidth: budget, shellWidth: width)
+            // An app's Context Dock: the fitted field, with and without its bar.
+            let appField = M.size(
+                for: .prompt, suggestions: 0, fieldHeight: M.dockHeight, fitsContent: true,
+                appBarPillWidth: M.appBarFixedPillWidth, shellWidth: width)
+            let bareAppField = M.size(
+                for: .suggesting, suggestions: 3, fieldHeight: M.dockHeight,
+                fitsContent: true, shellWidth: width)
+            // An app's conversation.
+            let appChat = M.size(for: .chat, suggestions: 0, messages: 3, shellWidth: width)
+            for size in [strip, globalField, appField, bareAppField, appChat] {
+                #expect(size.width == width, "pins \(pins)")
+            }
+            // The board over the field takes the field's width.
+            #expect(
+                AppChatListMetrics.size(rows: 3, width: width).width == globalField.width)
+        }
+    }
+
+    @Test("General Chat, Global and an app read the one live width")
+    func liveSurfacesReadTheOneWidth() {
+        let live = W.current
+        #expect(live >= W.base)
+        #expect(CornerGeneralChatMetrics.size(for: GeneralChatWindowModel()).width == live)
+        // A fresh model is Global Context; its board and its shell share the width.
+        let global = AppChatPromptModel(conversation: AppChatConversation())
+        #expect(M.boardWidth(for: global) == live)
+        #expect(M.shellSize(for: global, phase: .dock).width == live)
+        #expect(M.shellSize(for: global, phase: .prompt).width == live)
+        global.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(M.boardWidth(for: global) == live)
+        #expect(M.shellSize(for: global, phase: .prompt).width == live)
+    }
+
+    @Test("Each pin widens the shell by one pin's span, until the screen's budget")
+    func pinsGrowTheWidthThenCap() {
+        #expect(W.width(pins: 0, screenBudget: budget) == W.base)
+        for pins in 1...6 {
+            #expect(
+                W.width(pins: pins, screenBudget: budget)
+                    == W.width(pins: pins - 1, screenBudget: budget) + W.pinSpan)
+        }
+        #expect(W.pinSpan == M.dockIconSize + M.dockIconGap)
+        // A bar widget pins wider than an icon, by exactly what it draws beyond one.
+        #expect(
+            W.width(pins: 1, pinnedExtraWidth: 60, screenBudget: budget)
+                == W.width(pins: 1, screenBudget: budget) + 60)
+
+        let cap = W.base + 2.5 * W.pinSpan
+        #expect(W.width(pins: 2, screenBudget: cap) == W.base + 2 * W.pinSpan)
+        #expect(W.width(pins: 3, screenBudget: cap) == cap)
+        #expect(W.width(pins: 40, screenBudget: cap) == cap)
+        // Never below the base, however small the screen.
+        #expect(W.width(pins: 3, screenBudget: 100) == W.base)
+    }
+
+    @Test("Running apps never change the width")
+    func runningAppsDoNotMoveTheShell() {
+        let width = W.width(pins: 2, screenBudget: budget)
+        var seen: Set<CGFloat> = []
+        for running in 0...30 {
+            for tools in 1...3 {
+                let layout = M.dockLayout(
+                    running: running, pinned: 2, tools: tools, maximumWidth: budget,
+                    fieldIcons: M.matchIconBaseCount, shellWidth: width)
+                seen.insert(layout.width)
+                // What does not fit is `+N`, never a wider row.
+                let drawn = M.dockSearchStubSpan + 2 * M.dockInset
+                    + CGFloat(max(1, layout.shownRunning + (layout.overflow > 0 ? 1 : 0)))
+                    * (M.dockIconSize + M.dockIconGap) - M.dockIconGap
+                    + layout.trailingRegion + layout.appTrailingGap
+                #expect(abs(drawn - layout.width) < 0.001, "running \(running), tools \(tools)")
+                #expect(layout.shownRunning + layout.overflow == running)
+            }
+            seen.insert(
+                M.size(
+                    for: .prompt, suggestions: 0, running: running, pinned: 2, tools: 1,
+                    promptIcons: M.matchIconBaseCount, maximumWidth: budget,
+                    shellWidth: width
+                ).width)
+        }
+        #expect(seen == [width])
+        // The field's pills are fixed too.
+        #expect(AppChatPromptModel.pillFieldCapacity == M.matchIconBaseCount)
+        #expect(M.runningPillWidth == M.pillWidth(icons: M.matchIconBaseCount, overflow: true))
+    }
+
+    @Test("The shell has room for the app field's chip, text and bar at its base")
+    func theBaseHoldsEveryField() {
+        // An app's field: the original 372 of chip, text and controls, plus its bar.
+        #expect(W.base == M.width + M.appBarPillSpacing + M.appBarFixedPillWidth)
+        // Global's field: the magnifier, the text, the fixed pill and the shelf.
+        let shelf = M.dockDividerSpan + M.dockIconSize
+        #expect(M.fieldMinimumWidth(icons: M.matchIconBaseCount) + shelf <= W.base)
+    }
+
+    @Test("The strip keeps the apps together and the pins on the trailing edge")
+    func theLeftoverRoomSitsBeforeThePins() {
+        let width = W.width(pins: 1, screenBudget: budget)
+        let layout = M.dockLayout(
+            running: 2, pinned: 1, tools: 1, maximumWidth: budget, shellWidth: width)
+        #expect(layout.appSpread == 0)
+        #expect(layout.appTrailingGap > 0)
+        #expect(layout.width == width)
+    }
+
+    // MARK: The field grows upward
+
+    @Test("The field is one line, then two, then three, and stays at three")
+    func theFieldGrowsToThreeLines() {
+        let line = DockFieldLines.lineHeight
+        #expect(line > 10 && line < 30)
+        let heights = (1...8).map { lines in
+            DockFieldLines.fieldHeight(
+                base: M.dockHeight,
+                lines: DockFieldLines.lines(measuredTextHeight: CGFloat(lines) * line))
+        }
+        #expect(heights[0] == M.dockHeight)
+        #expect(heights[1] == M.dockHeight + line)
+        #expect(heights[2] == M.dockHeight + 2 * line)
+        #expect(heights[3...].allSatisfy { $0 == heights[2] })
+        // A few points of inset either way are not another line.
+        #expect(DockFieldLines.lines(measuredTextHeight: line + 3) == 1)
+        #expect(DockFieldLines.lines(measuredTextHeight: 2 * line - 3) == 2)
+        #expect(DockFieldLines.lines(measuredTextHeight: 0) == 1)
+    }
+
+    @Test("Growing taller never changes the width, in any surface")
+    func growingIsUpwardOnly() {
+        let width = W.width(pins: 1, screenBudget: budget)
+        for lines in 1...5 {
+            let global = M.size(
+                for: .prompt, suggestions: 0, running: 5, pinned: 1, tools: 1,
+                fieldHeight: M.dockHeight, maximumWidth: budget, shellWidth: width,
+                fieldLines: lines)
+            let app = M.size(
+                for: .prompt, suggestions: 0, fieldHeight: M.dockHeight, fitsContent: true,
+                shellWidth: width, fieldLines: lines)
+            #expect(global.width == width && app.width == width)
+            #expect(global.height == DockFieldLines.fieldHeight(base: M.dockHeight, lines: lines))
+            #expect(app.height == global.height)
+        }
+        // General's composer row follows the same rule from the same height.
+        #expect(
+            CornerGeneralChatMetrics.composerHeight(hasAttachments: false, lines: 3)
+                == CornerGeneralChatMetrics.composerHeight(hasAttachments: false)
+                    + 2 * DockFieldLines.lineHeight)
+    }
+}

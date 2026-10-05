@@ -21,6 +21,9 @@ final class GeneralChatWindowModel: ObservableObject {
 
     @Published var messages: [AIChatMessage] = []
     @Published var input: String = ""
+    /// How many lines the corner's composer is showing, one to three (`DockFieldLines`,
+    /// #189): the composer grows upward for them, and the corner hit-tests the same.
+    @Published var cornerComposerLines = 1
     /// Threads with an answer in flight, by storage key. Per thread rather than one flag
     /// for the window: a global flag made a pending answer freeze the whole hub — the
     /// sidebar stopped switching, so clicking tailscale left the previous thread on

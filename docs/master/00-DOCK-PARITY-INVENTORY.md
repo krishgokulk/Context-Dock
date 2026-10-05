@@ -107,7 +107,9 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | F2 | ↑/↓ keys switch Global ↔ Context ↔ Media when not in a list | ✅ | ↓ Global → app and ↑ back, checked on the app 2026-09-25 (`CornerRightArrowTests`, `theLayerKeysMoveBetweenGlobalAndTheApp`) |
 | F3 | Media Dock layer | — | Labs; appears only if Settings' Media layer is on (same gate in the Corner — §4b W6) |
 | F4 | Pinned results | ✅ | Corner dock strip pins (`DockPinStoreTests`, `pinsAreNeverOverflowed`) |
-| F5 | Running apps shown and switchable | ✅ | `removedRunningAppsLeaveTheStrip`, `runningOverflowsIntoAPlusPill` |
+| F5 | Running apps shown and switchable | ✅ | `removedRunningAppsLeaveTheStrip`, `runningOverflowsIntoAPlusPill`. #189: running apps never change the Corner's width — the strip cuts to the one width (`+N` past it), the field's running-apps pill and an app bar's pill are fixed-width scrollers with an overflow arrow (`DockPillScroller`): `runningAppsDoNotMoveTheShell` |
+| F6 | One shell width in every mode: switching Global ↔ app ↔ General changes only what is inside | ✅ | Dock: one fixed width, `LauncherView.expandedDockWidth` (660), in every mode — no drift. Corner (#189): one function, `DockShellWidth.width(pins:screenBudget:)`, set by pins only and capped at the screen budget; Global's strip and field, every app's Context Dock, General Chat and the boards above them (list, window snapshot, extension panel) all read `DockShellWidth.current`, and the window hit-tests the same `AppChatPromptMetrics.shellSize`: `everySurfaceTakesTheSameWidth`, `liveSurfacesReadTheOneWidth`, `pinsGrowTheWidthThenCap`. Hover cards over a strip icon keep their own size (they stand over the icon, not the field). By-eye check on the Mac owed |
+| F7 | A long prompt grows the field upward, not sideways | ✅ | Dock: its input grows in height within its fixed width. Corner (#189): every field — Global, app, General — wraps and grows from its bottom edge to three lines, then scrolls (`DockFieldLines`): `theFieldGrowsToThreeLines`, `growingIsUpwardOnly`. By-eye check on the Mac owed |
 
 ## Corner-only (beyond the Dock)
 
@@ -137,6 +139,7 @@ What the Corner's Selection card does that the Dock's Selection never did (#84, 
 *2026-09-28: D6 → ✅ (owner: search opens plugins in the Corner); D7's desktop-only mode confirmed not needed.*
 *2026-10-04: D15 added ✅ (Drop Shelf icon at the end of every row, both shells, #147).*
 *2026-09-29: E8 added ✅ — result cards for every chat turn, one shared view (task 16b).*
+*2026-10-05: F6, F7 added ✅ — one Corner width for every mode, fields grow upward (#189).*
 
 **Checked on the app 2026-09-24** (build `6b9f7bb`, keys sent with System Events over TextEdit):
 C2, F1 ✅; A4, B3, C1 🟡; C4–C7, C9 ❌; D4, F2, C11 fixed or advanced in #81. Still ❓, not tried: B2, B4, C12, D7, D13,

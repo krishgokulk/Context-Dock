@@ -31,6 +31,11 @@ enum CornerGeneralChatMetrics {
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
     static var compactHeight: CGFloat { composerRowHeight }
+    /// The composer row with its text wrapped over `lines` lines — Global's and an app's
+    /// field follow the same rule from the same height (`DockFieldLines`).
+    static func rowHeight(lines: Int) -> CGFloat {
+        DockFieldLines.fieldHeight(base: composerRowHeight, lines: lines)
+    }
     static let maximumHeight: CGFloat = 620
     /// What one exchange is worth. Named because App mode reads it too: the two modes are
     /// one surface and have to grow at the same rate, or the same conversation gets more
@@ -53,9 +58,11 @@ enum CornerGeneralChatMetrics {
     /// moment a chat started — and pushing the transcript aside to make room would
     /// disturb what the user is reading. A sheet over the field disturbs nothing.
     static func composerHeight(
-        hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false
+        hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false,
+        lines: Int = 1
     ) -> CGFloat {
-        var result = compactHeight
+        // A long prompt grows the row upward, to three lines (#189).
+        var result = rowHeight(lines: lines)
         if hasApproval {
             result += ApprovalCard.reservedHeight(for: .corner) + dividerHeight
         }
@@ -107,7 +114,8 @@ enum CornerGeneralChatMetrics {
         starterCount: Int = 0,
         starterHasConnections: Bool = false,
         liveStepCount: Int = 0,
-        clarificationOptionCount: Int = 0
+        clarificationOptionCount: Int = 0,
+        composerLines: Int = 1
     ) -> CGFloat {
         // Two cards with the corner's gap between them, so what is drawn and what the
         // shell hit-tests are the same number.
@@ -121,7 +129,7 @@ enum CornerGeneralChatMetrics {
             clarificationOptionCount: clarificationOptionCount)
         let composer = composerHeight(
             hasAttachments: hasAttachments, slashMatchCount: slashMatchCount,
-            hasApproval: hasApproval)
+            hasApproval: hasApproval, lines: composerLines)
         return board > 0 ? board + CornerDockLayout.gap + composer : composer
     }
 
@@ -167,7 +175,9 @@ enum CornerGeneralChatMetrics {
         let slashMatches = ChatSlashAppPicker.matches(for: model.input)
         let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
         return CGSize(
-            width: CornerDockLayout.cardWidth,
+            // The shell's one width (#189): General stands exactly as wide as Global and
+            // every app's Context Dock, so switching mode changes only what is inside.
+            width: DockShellWidth.current,
             height: height(
                 messageCount: model.messages.count,
                 isSending: model.isSending,
@@ -178,7 +188,8 @@ enum CornerGeneralChatMetrics {
                 starterCount: connected.count,
                 starterHasConnections: !connected.isEmpty,
                 liveStepCount: model.activeProgress.count,
-                clarificationOptionCount: clarificationOptionCount(for: model)))
+                clarificationOptionCount: clarificationOptionCount(for: model),
+                composerLines: model.cornerComposerLines))
     }
 }
 
@@ -220,7 +231,8 @@ struct CornerGeneralChatView: View {
             let composerHeight = CornerGeneralChatMetrics.composerHeight(
                 hasAttachments: !model.attachments.isEmpty,
                 slashMatchCount: slashMatches.count,
-                hasApproval: approvals.pending(for: .corner) != nil)
+                hasApproval: approvals.pending(for: .corner) != nil,
+                lines: model.cornerComposerLines)
             // The Context Dock's capsule when the row stands alone, its 22-point card once
             // something sits over it — the same rule that field follows.
             let radius = composerHeight <= CornerGeneralChatMetrics.composerRowHeight
@@ -657,8 +669,13 @@ struct CornerGeneralChatView: View {
                     : { CornerDockController.shared.chatPresentation.toggleGeneralPin() },
                 rendersSlashMatches: false,
                 drawsChrome: false,
-                cornerStyle: true)
-                .frame(height: CornerGeneralChatMetrics.composerRowHeight)
+                cornerStyle: true,
+                onTextHeightChange: { height in
+                    let lines = DockFieldLines.lines(measuredTextHeight: height)
+                    if model.cornerComposerLines != lines { model.cornerComposerLines = lines }
+                })
+                .frame(height: CornerGeneralChatMetrics.rowHeight(
+                    lines: model.cornerComposerLines))
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()

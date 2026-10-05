@@ -173,6 +173,9 @@ final class AppChatPromptModel: ObservableObject {
     var tabsByIconID: [String: SafariTab] = [:]
     /// The app's pins behind its bar's leading icons, by icon id.
     var appPinsByIconID: [String: DockPin] = [:]
+    /// How many lines the field's text takes, one to three (`DockFieldLines`, #189). Read
+    /// by the shell's size, so the field grows upward and the window hit-tests the same.
+    @Published var fieldLines = 1
     /// The text field's frame in the corner's hosting view (top-left origin). Not published:
     /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
     var inputFrame: CGRect = .zero
