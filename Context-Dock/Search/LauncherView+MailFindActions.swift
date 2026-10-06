@@ -75,55 +75,6 @@ extension LauncherView {
         }
     }
 
-    func mailSearchTokenKind(from value: String) -> MailSearchTokenKind {
-        switch normalizedDockPillText(value) {
-        case "sender":
-            return .sender
-        case "subject":
-            return .subject
-        case "attachment":
-            return .attachment
-        case "date":
-            return .date
-        default:
-            return .generic
-        }
-    }
-
-    func resolvedMailMailboxSearchIntent(for rawScopedQuery: String) async
-        -> MailSearchIntent?
-    {
-        #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
-                if let generated = try? await generateMailIntent(
-                    from: rawScopedQuery,
-                    dateTimeContext: currentDateTimeContextBlock()
-                ) {
-                    let mode = normalizedDockPillText(generated.mode)
-                    if mode == "question" || mode == "none" {
-                        return nil
-                    }
-
-                    let resolvedQuery = generated.searchQuery
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !resolvedQuery.isEmpty {
-                        let tokenKind = mailSearchTokenKind(from: generated.tokenKind)
-                        return MailSearchIntent(
-                            query: resolvedQuery,
-                            tokenKind: tokenKind,
-                            displayLabel: mailSearchDisplayLabel(
-                                query: resolvedQuery,
-                                tokenKind: tokenKind
-                            )
-                        )
-                    }
-                }
-            }
-        #endif
-
-        return shouldExecuteMailMailboxSearch(for: rawScopedQuery)
-    }
-
     func weekdayNameCandidate(for normalizedQuery: String) -> String? {
         let weekdays = [
             "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
@@ -278,10 +229,23 @@ extension LauncherView {
         MailQuestionRouter.isQuestionShaped(rawScopedQuery)
     }
 
+    /// Whether Mail's Mailbox Search shortcut takes this turn before the model (issue #195).
+    /// Only when the sentence IS the search command and its value — "search mail from SBI".
+    /// "check my recent mail from … and do what it says" or "find mail from SBI today" is a
+    /// request: the model takes it, with `mail.search` and `mail.read`.
     func shouldExecuteMailMailboxSearch(for rawScopedQuery: String) -> MailSearchIntent? {
-        guard let intent = mailSemanticSearchIntent(from: rawScopedQuery) else { return nil }
-        guard !isQuestionStyleMailQuery(rawScopedQuery) else { return nil }
-        return intent
+        guard let command = MailboxSearchCommand.claims(rawScopedQuery) else { return nil }
+        let tokenKind: MailSearchTokenKind
+        switch command.field {
+        case .any: tokenKind = .generic
+        case .sender: tokenKind = .sender
+        case .subject: tokenKind = .subject
+        case .attachment: tokenKind = .attachment
+        }
+        return MailSearchIntent(
+            query: command.term,
+            tokenKind: tokenKind,
+            displayLabel: mailSearchDisplayLabel(query: command.term, tokenKind: tokenKind))
     }
 
     struct MailQuestionFilters {
@@ -1076,24 +1040,31 @@ extension LauncherView {
 
         l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
         l2.isLoading = true
+        // A shortcut that runs before the model is still a turn that ran something: it
+        // records its step like any tool, so the answer and the Corner panel show it
+        // instead of "Answered without running anything" (issue #195).
+        let requestID = beginL2AIRequest()
+        let recorder = ActivityRecorder.active
+        let stepID = recorder?.begin(
+            kind: .tool, title: "Mail › Mailbox Search", detail: intent.displayLabel)
 
         l2.currentTask = Task {
+            @MainActor func finish(_ answer: String, ok: Bool, isError: Bool = false) {
+                if let stepID {
+                    recorder?.finish(stepID, status: ok ? .ok : .failed, output: answer)
+                }
+                l2.chatMessages.append(
+                    AIChatMessage(role: .assistant, content: answer, isError: isError))
+                finishL2AIRequest(requestID)
+            }
+
             guard
                 let mailApp = await activateOrLaunchSemanticApp(
                     bundleIdentifier: "com.apple.mail",
                     appName: "Mail"
                 )
             else {
-                await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open Mail.",
-                            isError: true
-                        ))
-                    l2.isLoading = false
-                    l2.currentTask = nil
-                }
+                finish("❌ Couldn't open Mail.", ok: false, isError: true)
                 return
             }
 
@@ -1119,44 +1090,25 @@ extension LauncherView {
             }
 
             guard triggeredSearch else {
-                await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open Mail search.",
-                            isError: true
-                        ))
-                    l2.isLoading = false
-                    l2.currentTask = nil
-                }
+                finish("❌ Couldn't open Mail search.", ok: false, isError: true)
                 return
             }
 
             let injected = await injectMailSearchQuery(searchQuery, into: pid)
             let appliedToken = injected ? await applyMailSearchTokenIntent(intent, in: pid) : false
 
-            await MainActor.run {
-                if injected {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: appliedToken && intent.tokenKind != .generic
-                                ? "Opened Mailbox Search for \(intent.displayLabel)."
-                                : "Opened Mailbox Search for “\(searchQuery)”."
-                        ))
-                    searchState.query = ""
-                    l2.focusedPillIndex = nil
-                } else {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content:
-                                "⚠️ Opened Mail search, but couldn't inject the query automatically.",
-                            isError: true
-                        ))
-                }
-                l2.isLoading = false
-                l2.currentTask = nil
+            if injected {
+                searchState.query = ""
+                l2.focusedPillIndex = nil
+                finish(
+                    appliedToken && intent.tokenKind != .generic
+                        ? "Opened Mailbox Search for \(intent.displayLabel)."
+                        : "Opened Mailbox Search for “\(searchQuery)”.",
+                    ok: true)
+            } else {
+                finish(
+                    "⚠️ Opened Mail search, but couldn't inject the query automatically.",
+                    ok: false, isError: true)
             }
         }
     }
