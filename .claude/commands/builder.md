@@ -46,6 +46,15 @@ Each time you run:
    - `Hand check: optional — <why>` — only when the change is invisible to the owner and fully
      covered by tests: test-only fixes, docs, pure logic with new tests, refactors with no
      behaviour change. Say what proves it (tests, local runs, CI).
+   **Run the hand check yourself first.** With the PR's build running (`./scripts/dev-run.sh`),
+   carry out every hand-check step the way the owner would: type the sentences into the real
+   surface (Dock, Corner, App Chat) with Computer Use or Accessibility, and screenshot each result.
+   Put an **Agent-run hand check** table in the PR: step, expected, what happened, screenshot,
+   pass/fail. A failed step is a bug to fix before marking ready. Never send mail or messages,
+   buy, delete user data or approve a gate card for the owner; stop at the card and screenshot it.
+   Say so in one line before taking the screen, and pause while the owner is typing. The owner
+   reviews the screenshots and replies "N passed"; list under **Owner only** the steps you could
+   not run and why.
    Then the owner's hand-check list, then
    `gh issue edit <n> --remove-label in-progress --add-label needs-hand-check` (plus
    `--add-label hand-check-optional` when the PR says optional — create it once with
