@@ -136,6 +136,14 @@ enum AppChatPromptMetrics {
     /// the dock's width.
     static var runningPillWidth: CGFloat { pillWidth(icons: matchIconBaseCount, overflow: true) }
 
+    /// The capsule for this many running apps: just as wide as they are while they fit
+    /// (owner 2026-10-06: three apps left an empty slot beside them), the fixed width with
+    /// its arrow once they scroll. The field's width never changes either way.
+    static func runningPillWidth(apps count: Int) -> CGFloat {
+        count > matchIconBaseCount
+            ? runningPillWidth : pillWidth(icons: max(1, count), overflow: false)
+    }
+
     /// The app bar's icons: the size of the field's send button (owner 2026-09-26: the
     /// 18-point pill icons read too small beside it).
     static let appBarIconSize: CGFloat = 24
@@ -761,8 +769,23 @@ struct AppChatPromptPill: View {
             if model.phase == .chat {
                 header
                 Divider().opacity(0.18)
-                transcript
-                Divider().opacity(0.18)
+                // The card splits like Claude's chat (#191): the conversation on the left,
+                // the app's panel on the right — progress, files, connectors. One HStack
+                // either way, so the transcript keeps its scroll when the panel is toggled.
+                HStack(spacing: 0) {
+                    transcript
+                        .frame(maxWidth: .infinity)
+                    if model.showsLivePanel {
+                        CornerLivePanel(
+                            appName: model.appName, appBundleID: model.appBundleID,
+                            appIcon: appIcon, messages: model.messages,
+                            isAnswering: model.isAnswering, liveSteps: model.liveSteps)
+                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
+                            .padding(.vertical, 8)
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    }
+                }
+                .animation(.smooth(duration: 0.22), value: model.showsLivePanel)
             }
             // A turn asked from here can need a yes, and that question belongs directly
             // over the field — the same place the `/` picker and the command list appear —
@@ -785,6 +808,21 @@ struct AppChatPromptPill: View {
             }
             if !model.attachments.isEmpty { attachmentRow }
             inputRow
+                // In a conversation the field is a rounded composer inset in the card, the
+                // way Claude's sits under its chat (owner 2026-10-05), rather than a row
+                // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
+                // its identity, and with it focus, as the phase changes.
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                        .opacity(model.phase == .chat ? 1 : 0)
+                }
+                .padding(.horizontal, model.phase == .chat ? 10 : 0)
+                .padding(.top, model.phase == .chat ? 6 : 0)
+                .padding(.bottom, model.phase == .chat ? 10 : 0)
         }
         // Fills what the body gives it: 372 points in the legacy shell, the field's
         // widened prompt width in Global.
@@ -851,6 +889,17 @@ struct AppChatPromptPill: View {
                 .fixedSize()
 
             Spacer(minLength: 6)
+
+            // The app's panel beside the conversation, shown or hidden (#191) — Claude's
+            // sidebar toggle, in the same place.
+            if !model.isGlobalScope {
+                Button { model.livePanelOpen.toggle() } label: {
+                    headerGlyph("sidebar.right", tinted: model.livePanelOpen)
+                }
+                .buttonStyle(.plain)
+                .help(model.livePanelOpen ? "Hide the panel" : "Show progress, files and connectors")
+                .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
+            }
 
             // Stop lives in the composer, which is drawn in every phase this header is —
             // one job, one button, rather than two of them 300 points apart.
@@ -1079,7 +1128,8 @@ struct AppChatPromptPill: View {
                         overflowCount: 0,
                         isSearching: false,
                         focusedID: model.focusedPill?.id,
-                        fixedWidth: AppChatPromptMetrics.runningPillWidth,
+                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
+                            apps: model.allRunningIcons.count),
                         onSelect: { icon in model.openGlobalMatchIcon(icon) })
                         // Resting the pointer on the small pills asks for the big ones: the
                         // field folds into the dock at once, as it always has.
@@ -1095,7 +1145,8 @@ struct AppChatPromptPill: View {
                         overflowCount: 0,
                         isSearching: false,
                         focusedID: model.focusedPill?.id,
-                        fixedWidth: AppChatPromptMetrics.runningPillWidth,
+                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
+                            apps: model.allRunningIcons.count),
                         onSelect: { icon in model.openGlobalMatchIcon(icon) })
                         // Opacity only, for the same reason as the field above: this pill is
                         // a sibling of the TextField inside the focused subtree, and a
@@ -1196,9 +1247,10 @@ struct AppChatPromptPill: View {
                 }
             }
 
-            // The Drop Shelf, last of the field's icons in every scope: Global's is the strip's,
-            // drawn over this end of the field, so the field adds none there.
-            if !model.isGlobalScope {
+            // The Drop Shelf, last of the field's icons in every scope while it holds something
+            // or a drag is in flight: Global's is the strip's, drawn over this end of the
+            // field, so the field adds none there.
+            if !model.isGlobalScope, model.showsShelf {
                 shelfControl
             }
 

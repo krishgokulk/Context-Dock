@@ -204,6 +204,8 @@ struct CornerDockKeyRulesTests {
     @Test("←/→ walk the pills and wrap back to the field (C9)")
     func arrowsWalkThePills() {
         let model = emptyWithPills()
+        // A shelf holding something: the row ends with it.
+        model.shelfVisible = { true }
         #expect(model.applyPillRowKey(.tab))
         #expect(model.applyPillRowKey(.right))
         #expect(model.focusedPill?.id == "b")
@@ -216,6 +218,19 @@ struct CornerDockKeyRulesTests {
         #expect(model.focusedPillIndex == nil)
         #expect(model.applyPillRowKey(.tab))
         #expect(model.applyPillRowKey(.left))
+        #expect(model.focusedPillIndex == nil)
+    }
+
+    @Test("An empty shelf is not a pill: past the last app is the field")
+    func anEmptyShelfIsSkipped() {
+        let model = emptyWithPills()
+        model.shelfVisible = { false }
+        #expect(model.applyPillRowKey(.tab))
+        #expect(model.applyPillRowKey(.right))
+        #expect(model.applyPillRowKey(.right))
+        #expect(model.focusedPill?.id == "c")
+        #expect(model.applyPillRowKey(.right))
+        #expect(!model.isShelfFocused)
         #expect(model.focusedPillIndex == nil)
     }
 

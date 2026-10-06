@@ -155,6 +155,89 @@ enum CornerBoardLayout {
     }
 }
 
+// MARK: - The Context Dock's live panel (#191, part 2)
+
+/// An app's Context Dock keeps a panel beside its conversation, the way Claude keeps its
+/// Progress and Context panel beside a chat (owner 2026-10-05): what DoraX is doing in the
+/// app — the steps as they run, a command's output — and what the turn left behind: the
+/// files it made or named, the uploads it was given, the connectors and the adapter it can
+/// reach. A toggle in the header hides it; it stays put across turns.
+enum CornerLivePanelLayout {
+    /// The panel's share of the chat card. The conversation keeps the larger part, as in
+    /// Claude.
+    static let panelFraction: CGFloat = 0.42
+
+    /// The panel's width in a chat card this wide.
+    static func panelWidth(card: CGFloat) -> CGFloat {
+        (card * panelFraction).rounded()
+    }
+
+    /// Whether the chat card shows the panel. Only an app's Context Dock (Global's results
+    /// have their own preview, General is its own surface), only in its conversation, only
+    /// while the user has it open, and only once there is a turn to show.
+    static func shows(
+        isAppScope: Bool, phase: AppChatPromptPhase, isOpen: Bool, hasConversation: Bool
+    ) -> Bool {
+        isAppScope && phase == .chat && isOpen && hasConversation
+    }
+
+    /// The steps the panel lists: the turn running now, or the last one that finished.
+    static func steps(
+        isAnswering: Bool, live: [ActivityStep], finished: [ActivityStep]
+    ) -> [ActivityStep] {
+        isAnswering ? live : finished
+    }
+
+    /// Everything the user attached in this conversation, oldest first, each once.
+    static func uploads(_ attachments: [[URL]]) -> [URL] {
+        var seen: Set<String> = []
+        return attachments.flatMap { $0 }.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    /// How many of the output's last lines the panel quotes.
+    static let outputLines = 14
+
+    /// A command's output as the panel quotes it: its last `lines` non-empty-trailing lines,
+    /// because the end is what a running command just said.
+    static func outputTail(_ output: String, lines: Int = outputLines) -> String {
+        var all = output.components(separatedBy: .newlines)
+        while let last = all.last, last.trimmingCharacters(in: .whitespaces).isEmpty {
+            all.removeLast()
+        }
+        guard all.count > lines else { return all.joined(separator: "\n") }
+        return "…\n" + all.suffix(lines).joined(separator: "\n")
+    }
+
+    /// The step whose output the panel shows: the latest shell command — the one running
+    /// now, or the last one that said something.
+    static func terminalStep(in steps: [ActivityStep]) -> ActivityStep? {
+        let shells = steps.filter { $0.kind == .command || $0.kind == .providerShell }
+        return shells.last { $0.status == .running } ?? shells.last { !$0.output.isEmpty }
+            ?? shells.last
+    }
+
+    /// The connectors in play: the MCP servers linked to this app, then any other server
+    /// this turn called, each named once.
+    static func connectors(linked: [String], steps: [ActivityStep]) -> [String] {
+        var names: [String] = []
+        for name in linked + steps.filter({ $0.kind == .mcp }).map(server(of:))
+        where !name.isEmpty && !names.contains(name) {
+            names.append(name)
+        }
+        return names
+    }
+
+    /// The server an MCP step called: "Ran search via github" → "github"; a step that does
+    /// not name its server is named by its tool.
+    static func server(of step: ActivityStep) -> String {
+        if let via = step.title.range(of: " via ", options: .backwards) {
+            return String(step.title[via.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        let title = step.title.hasPrefix("Ran ") ? String(step.title.dropFirst(4)) : step.title
+        return title.trimmingCharacters(in: .whitespaces)
+    }
+}
+
 extension AppChatPromptModel {
     /// The side panel for the row the arrows are on (#191). Read by the board that draws it
     /// and by the window that hit-tests it, so the two are one answer.
@@ -170,5 +253,12 @@ extension AppChatPromptModel {
             list: AppChatListMetrics.size(
                 rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self)),
             preview: boardPreview)
+    }
+
+    /// The Context Dock's panel shows (#191, part 2). Read by the card that draws it.
+    var showsLivePanel: Bool {
+        CornerLivePanelLayout.shows(
+            isAppScope: !isGlobalScope, phase: phase, isOpen: livePanelOpen,
+            hasConversation: isAnswering || !messages.isEmpty)
     }
 }

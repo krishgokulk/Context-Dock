@@ -2798,12 +2798,11 @@ extension LauncherView {
                                 selectionTrailingButton
                             }
 
-                            // The Drop Shelf: the last item of the row in every scope, with or
-                            // without anything pinned or typed. Click opens the shelf below
-                            // the field; a drag over it drops onto it.
-                            DropShelfIcon(
-                                presentation: dockShelf,
-                                store: DropShelfController.shared.store, style: .dock)
+                            // The Drop Shelf: the last item of the row in every scope while it
+                            // holds something or a drag is in flight (`DropShelfVisibility`).
+                            // Click opens the shelf below the field; a drag over it drops
+                            // onto it.
+                            DockShelfSlot(presentation: dockShelf)
                         }
                     }
                     .padding(

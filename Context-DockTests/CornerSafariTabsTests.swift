@@ -80,6 +80,7 @@ struct CornerSafariTabsTests {
     @Test("The bar is the app's own: no Global pins, no Global tools")
     func theBarIsTheAppsOwn() {
         let model = scope()
+        model.shelfVisible = { true }
         #expect(model.stripPins.isEmpty)
         // Only the clipboard (for a copy's few seconds) and the selection (while there is
         // one) join it, then the Drop Shelf, which every row ends with; never an action

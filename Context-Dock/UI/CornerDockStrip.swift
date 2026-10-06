@@ -91,8 +91,8 @@ struct CornerDockStrip: View {
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let end = layout.width - layout.leadingInset - layout.trailingRegion
             - (model.showsTabBar ? M.appFieldTrailingReserve(typed: typed) : 0)
-        // One fixed width, whatever is running (#189): the field's pill scrolls.
-        return (end - M.runningPillWidth, end)
+        // As wide as the running apps, up to the fixed width past which they scroll (#189).
+        return (end - M.runningPillWidth(apps: model.allRunningIcons.count), end)
     }
 
     /// One after another. Folding in, the icon nearest the pill goes first, so the row
