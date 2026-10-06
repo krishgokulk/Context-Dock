@@ -39,7 +39,8 @@ keyword shortcuts ahead of it, and the Mail one skips the rule. The right tools 
    │          → on-device OCR of a screenshot ONLY if both are empty and allowed.
    │          Never a screenshot when a data route exists.
    ▼
- ② UNDERSTAND  question / action / search; the objects (sender, message, file…).
+ ② UNDERSTAND  question / action / search; the objects (sender, message, file…);
+   │          LANE: data (default, no window) or UI (about the window) — §2a.
    │          Keyword shortcuts may claim the turn ONLY on an exact command
    │          (Task 17 rule). Everything else goes to the model.
    ▼
@@ -57,6 +58,63 @@ keyword shortcuts ahead of it, and the Mail one skips the rule. The right tools 
    ▼
  ⑧ LEARN       trace (E2) → tool reliability, your preferences, recipe offers (§6).
 ```
+
+---
+
+## 2a. Scope is not the window: menus are crowding the reasoning
+
+**Rule: an app scope means that app's data and actions, through any channel. The window is one
+channel, and the most expensive.** If a request can be done without the window (adapter,
+scripting dictionary, MCP, CLI, Shortcut or saved skill), it's done that way, inside the same
+app chat, without activating the app, stealing focus or opening a window.
+
+### What the code does today (checked 2026-10-06)
+
+- `ScopedAppPromptBuilder.swift` (~272–315) puts **up to 50 menu commands** into every scoped
+  prompt, with the instruction *"When a request maps to a menu command, CALL it immediately"*.
+- Its tool order is **adapter → menu → MCP/API → Shortcut → CLI**, and it says *"never generate
+  shell or AppleScript for an operation exposed by … the live menu"*. That ranks menus above
+  every headless route.
+- This contradicts the rest of the code. `CapabilityIndex.Surface` says headless < opens app <
+  takes screen. The `run_menu_command` tool's own description says it's for apps *"which have no
+  adapter"*.
+- `MailAutomation.activateOrLaunchMail()` activates Mail even for reads, and the Mail search
+  shortcut clicks Edit › Find.
+- Result: the largest block in the prompt is a menu list, so the model reasons in menu terms
+  even for data questions. That's the "messy reasoning" the owner sees.
+
+### Two lanes, decided before any tool is chosen
+
+| Lane | For | Channels, cheapest first | Window? |
+|---|---|---|---|
+| **Data lane** (default) | find, filter, read, count, summarize, create, change data | saved skill → adapter → dictionary → MCP → CLI → Shortcut | never activates the app |
+| **UI lane** | the request is about the interface itself: "minimize", "new tab", "show sidebar", "zoom", "open preferences" | menu command → key shortcut → AX press → screen control | yes, a visible step |
+
+- The lane is decided at ② UNDERSTAND, from the request ("is this about the window or about the data?").
+- The data lane falls back to the UI lane **only** when no headless route exists. That fallback
+  is a visible step: "No data route for this in Mail. Using the menu: Message › Archive (opens Mail)."
+- Menus are never read to find an answer (existing rule) and never used for data when a headless
+  route exists.
+
+### Prompt changes
+
+- **No menu dump by default.** The scoped prompt lists the top headless candidates for *this
+  request* from `CapabilityIndex` (a handful, not 50).
+- **Menus on demand:** a `find_menu_command(query)` tool returns the few matching menu paths when
+  the model is in the UI lane or has no headless route. The UI-lane prompt may keep a short menu
+  list.
+- **One tool order everywhere, equal to `Surface`:** saved skill → adapter → dictionary → MCP →
+  CLI → Shortcut → menu → screen. Delete the "CALL it immediately" and "never AppleScript if
+  a menu exists" lines.
+- **Smaller prompt:** fewer tokens, and the model reasons about the data first. Measured with E2
+  (prompt characters per section, share of turns in the UI lane).
+
+### Tests (`RoutingPhrasebookTests`, Dock and Corner)
+
+- "find mail from SBI today" → data lane, `mail.search`, Mail not activated.
+- "check my recent mail from Gokula kannan J and do what it says" → data lane, read, untrusted card.
+- "minimize this window" / "new tab" → UI lane, menu.
+- "archive the newest bank email" with no archive route → menu fallback shown as a step.
 
 ---
 
@@ -130,6 +188,7 @@ single front for these. Old routers retire one per PR (E12).
 Ranked in this order. Most of it exists already (`matchOutranks`, `Surface`,
 `shouldClarifyBetweenPeers`):
 
+0. **Lane first** (§2a): data-lane requests consider headless tools only, unless none fits.
 1. **Can it do the job?** The capability matches the verb and the object.
 2. **Granted > installed > suggested** (`matchOutranks`).
 3. **Cheapest surface:** headless < opens app < takes screen.
@@ -167,14 +226,44 @@ the fallback.
   are labeled **unvetted**.
 - **DoraX never installs.** It shows the command; the user runs it (E17 rule).
 
-### 6.3 Learning from use (E19 layer 2)
+### 6.3 Solved-task library: fewer tokens every day (E19 layer 2)
 
-- **Level 1, recipes (safe, first):** the same chain of existing tools repeated 3 times →
-  "Save as a Mail recipe?" No new code. It runs through the same gate.
+When Claude Code solves a request by writing a script or chaining tools, DoraX keeps the
+solution as a **parameterized, verified skill**. The next similar request runs it **before the
+model** (ladder stage 4, `WorkbenchIntent`), so repeated reads cost almost no cloud tokens.
+Stored in the `L2ExtensionManager` format (folder with `extension.json` + script).
+
+```
+TURN 1 (tokens)   "show unread mail from SBI today"
+                  → Claude Code solves it → verified read-back, not corrected
+                  → skill "unread mail from {sender} on {day}" (read-only, Mail, test attached)
+TURN 2..N (≈0)    "unread mail from ICICI yesterday"
+                  → on-device match + Apple Intelligence fills {sender},{day} → run skill
+                  → step: "Used saved skill (no model)"
+ON FAILURE        script fails or verify = contradicted → model repairs → new version, old kept
+```
+
+Rules:
+
+1. **Only verified successes:** the read-back passed and the user didn't correct or redo it.
+2. **Parameterized + tested before saving.** Hard-coded values (a name, a mailbox) are rejected.
+3. **Nothing shaped by untrusted text** (email, web, messages) is auto-saved; it needs owner review.
+   This stops a #184-style injection from becoming permanent.
+4. **Auto-save reads only** (filter, find, read, list, count). A write, send, delete or network
+   skill needs owner approval to save, and **still shows the gate card on every run**.
+5. **Argv, no free-form shell, no network inside a read skill.**
+6. **Visible in Settings › Plugins** as "made by DoraX": run count, success rate, delete.
+7. **Re-tested after the app's version changes** (E19b) before next use.
+8. **Who does what:** Claude Code writes skills. On-device Apple Intelligence matches and fills
+   parameters, never authors code.
+
+Expect large savings on repeated reads; little on new questions, judgment or writing. Measure the
+real repeat rate from E2 traces before promising a number.
+
 - **Level 2, DoraX-made plugin:** `PluginAuthoringEngine` drafts a manifest plus script for a
   gap the traces show. Shown as a diff, owner approves, read-only first, marked "made by DoraX".
-- **Never:** code written or enabled silently from usage. A self-written script with mailbox
-  access is the highest-risk thing in this plan.
+- **Never:** code written or enabled silently. A self-written script with mailbox access is the
+  highest-risk thing in this plan.
 
 ---
 
@@ -199,22 +288,27 @@ the fallback.
 | # | Task | Size | Hand check |
 |---|---|---|---|
 | P1 | Mail keyword shortcut obeys Task 17 (exact command only); fix the false "Answered without running anything"; the owner's sentence in `RoutingPhrasebookTests`; check the Corner for the same bug | S | re-run the sentence |
-| P2 | Every pre-model shortcut reports a "Shortcut: …" step | S–M | yes |
-| P3 | Progress panel shows Understood → Tools → Chose → Gate → Result from the trace | M | yes |
-| P4 | Plugin manifest + Settings › Plugins as the front for the existing registries (read-only view first) | M | yes |
-| P5 | Ranking + fallback per §5, with visible steps | M | yes |
-| P6 | CLI learner (§6.1), `mail-app-cli` as the first case (= E17 widened) | M | yes |
-| P7 | Curated catalog + "no route → options" card (§6.2) | S–M | yes |
-| P8 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | L | per PR |
-| P9 | Recipes from repeated use (§6.3 level 1, E19 layer 2) | M | yes |
-| P10 | DoraX-made plugins (§6.3 level 2) | L | yes |
+| P2 | Menus out of the default prompt (§2a): one tool order equal to `Surface`; `find_menu_command` on demand; delete "CALL it immediately" | M | data and UI sentences |
+| P3 | Two lanes (§2a): data lane never activates the app (Mail adapter reads without `activate()`); UI lane only for interface requests; menu fallback shown as a step | M | Mail stays in background |
+| P4 | Every pre-model shortcut reports a "Shortcut: …" step | S–M | yes |
+| P5 | Progress panel shows Understood → Lane → Tools → Chose → Gate → Result from the trace | M | yes |
+| P6 | Plugin manifest + Settings › Plugins as the front for the existing registries (read-only view first) | M | yes |
+| P7 | Ranking + fallback per §5, with visible steps | M | yes |
+| P8 | CLI learner (§6.1), `mail-app-cli` as the first case (= E17 widened) | M | yes |
+| P9 | Curated catalog + "no route → options" card (§6.2) | S–M | yes |
+| P10 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | L | per PR |
+| P11 | Solved-task library (§6.3): verified turn → parameterized read skill → runs before the model → repaired on failure. Mail first | M–L | yes |
+| P12 | DoraX-made plugins (§6.3 level 2) | L | yes |
 
-Order: P1 now (it also blocks the #184 hand test). P2–P3 make every later step visible. P4–P7
-are the plugin manager. P8 runs alongside. P9–P10 come after E19a.
+Order: P1 now (it also blocks the #184 hand test). P2–P3 fix the reasoning: they remove the
+menu bias at its source. P4–P5 make every later step visible. P6–P9 are the plugin manager. P10
+runs alongside. P11 needs P5 + E2 (to tell a saved skill from a model answer); P12 comes after
+E19a.
 
 ## 9. Rules this must not break
 
 - Exact command or the model (Task 17). No new keyword router.
+- Data lane never takes the window; a menu is used for data only when no headless route exists, and says so.
 - Email, web, message and file text is data, never instructions (E1b, E1c).
 - Writes and outbound always ask; a plugin can't skip the gate.
 - DoraX never installs software.
