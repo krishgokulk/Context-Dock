@@ -27,7 +27,7 @@ enum CornerGeneralChatMetrics {
     /// Global's bar height on 2026-09-25 and this row kept the old one (owner 2026-09-26:
     /// "general chat looks different").
     static var composerRowHeight: CGFloat { AppChatPromptMetrics.fieldHeight(global: true) }
-    static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentRowHeight }
+    static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentTileRowHeight }
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
     static var compactHeight: CGFloat { composerRowHeight }
@@ -577,9 +577,9 @@ struct CornerGeneralChatView: View {
 
             if !model.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         ForEach(model.attachments, id: \.self) { url in
-                            ChatAttachmentChip(url: url) {
+                            ChatAttachmentChip(url: url, style: .composerTile) {
                                 model.attachments.removeAll { $0 == url }
                             }
                         }

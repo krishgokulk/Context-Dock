@@ -419,7 +419,7 @@ struct AppChatPromptTests {
         let withApproval = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, hasApproval: true).height
 
-        #expect(withFile == bare + AppChatPromptMetrics.attachmentRowHeight)
+        #expect(withFile == bare + AppChatPromptMetrics.attachmentTileRowHeight)
         #expect(withApproval > bare)
         // A conversation reserves it too — an approval can arrive mid-answer.
         #expect(
