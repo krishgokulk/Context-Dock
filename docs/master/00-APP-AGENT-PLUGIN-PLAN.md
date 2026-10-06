@@ -1,6 +1,6 @@
 # App agent and plugin manager: one flow for every frontmost app
 
-**Status: proposal, 2026-10-06. Not adopted until the owner confirms.** Builds on
+**Status: adopted by the owner 2026-10-06 ("confirm plan"). Tasks P1–P12 are GitHub issues.** Builds on
 `docs/architecture/FRONTMOST_AGENT.md` (the agent) and `docs/architecture/AI_TURN_LIFECYCLE.md`
 (the ladder). It does not replace them, and it creates no new registry: the plugin manager *is*
 the finish of E12 (retire the old routers onto `CapabilityIndex`).
@@ -177,6 +177,65 @@ Data → UI fallback:  ✓ Lane: data · ✗ No data route for "archive" in Mail
 
 ---
 
+## 2b. Worked examples: Mail, Terminal, Messages
+
+Same flow for each: understand → lane → tool → get the app ready → do it → check → show steps.
+"Card" means a gate or plan card the user approves.
+
+### Mail
+
+Today's tools: `mail.recent`, `mail.read`, `mail.search`, `mail.currentMessage` (AppleScript)
+and `mail.createDraft` (`mailto:`; **no send verb by design**). Optional: `mail-app-cli` (§7).
+
+| You type | Lane | Tool | App state handling | Card? |
+|---|---|---|---|---|
+| "find mail from SBI today" | data | `mail.search(sender: SBI, day: today)` | not running → started hidden; otherwise untouched | no (read) |
+| "read my latest email and do what it says" | data | `mail.recent` → body | as above | **yes**: the email's instruction is quoted and DoraX asks; never obeyed directly |
+| "fetch the link in that email" | data | `dorax_read_url` | — | **yes**: private data in the turn → outbound gate names the host (E1c) |
+| "reply saying I'll call tomorrow" | data | `mail.createDraft` | the composer opens **because you will press Send** | write card; DoraX never sends |
+| "archive the newest bank email" | data → UI | with `mail-app-cli`: `archive` (headless). Without: Message › Archive | without CLI: plan card "bring Mail forward, Archive, return" | **yes** (write) |
+| "show the mailbox list" | UI | menu View › Show Mailbox List | in front: pressed; elsewhere: plan card, focus returns | only if Mail must come forward |
+
+### Terminal
+
+For Terminal, the data lane is **the shell itself**. `terminal.runCommand` runs a command without
+any Terminal window, and output appears in the panel. The Terminal app is only needed for the UI.
+
+| You type | Lane | Tool | App state handling | Card? |
+|---|---|---|---|---|
+| "how much disk space is free" | data | `terminal.runCommand("df -h")` | Terminal not needed at all | no: read-only command on the E1b allow-list |
+| "what's the error in my terminal" | data | **new D3:** read the front tab's text from Terminal's scripting dictionary (`contents of selected tab`) | running → read without activating; not running → "Terminal isn't open; nothing to read" | no (read); the output is marked private (it can contain secrets) |
+| "install wget" | data | `terminal.runCommand("brew install wget")` | headless, output streamed to the panel | **yes**: the exact command, not on the allow-list |
+| "run it in my Terminal" / "open a new tab" | UI | Shell › New Tab, then type the command | plan card; never types while you are typing | yes, plan card |
+| "clear the screen" | UI | key ⌘K | Terminal must be in front | only if it must come forward |
+
+Never: a screenshot to read Terminal text (the dictionary gives the text), or typing into a tab
+the user is using.
+
+### Messages
+
+Reads come from the local `chat.db`, so **Messages is never launched to read**
+(`MessagesChatDBReader`). That needs Full Disk Access. Composing opens Messages with the text
+filled in and **never presses Send** (`messages.compose`).
+
+| You type | Lane | Tool | App state handling | Card? |
+|---|---|---|---|---|
+| "what did Salman text me today" | data | `messages.search` (chat.db) | Messages untouched in every state | no (read); the message text is untrusted |
+| "who do I message most" | data | `messages.topContacts` | untouched | no |
+| "text Salman I'm running late" | data | `messages.compose` | Messages opens with the draft because **you press Send** | **yes**: outbound card |
+| "open the link Salman sent" | data | `dorax_read_url` / open URL | — | **yes**: exact-URL gate (E1b) |
+| "show my chat with Salman" | UI | open the conversation | the window opens because you asked to see it | no |
+| any read, no Full Disk Access | data | — | "I need Full Disk Access to read Messages" + the setting button | no; **no screenshot reading** as a workaround unless you ask for Computer Use |
+
+### What these show
+
+- The **data lane covers almost every request**; the UI lane is for "show", "open a tab", "minimize".
+- Windows open only when the user will look at or finish something (a draft, a chat they asked to see).
+- Untrusted text (mail, messages, terminal output) is data. Any instruction in it is quoted and asked about.
+- Missing access (Full Disk Access, a CLI) is **said and offered**, never worked around through the screen.
+
+---
+
 ## 3. What the user sees: the step list
 
 Every turn fills the Progress panel with what actually happened, one reason per line. These are
@@ -346,18 +405,18 @@ real repeat rate from E2 traces before promising a number.
 
 | # | Task | Size | Hand check |
 |---|---|---|---|
-| P1 | Mail keyword shortcut obeys Task 17 (exact command only); fix the false "Answered without running anything"; the owner's sentence in `RoutingPhrasebookTests`; check the Corner for the same bug | S | re-run the sentence |
-| P2 | Menus out of the default prompt (§2a): one tool order equal to `Surface`; `find_menu_command` on demand; delete "CALL it immediately" | M | data and UI sentences |
-| P3 | Two lanes (§2a): data lane never activates the app (Mail adapter reads without `activate()`); UI lane only for interface requests; menu fallback shown as a step | M | Mail stays in background |
-| P4 | Every pre-model shortcut reports a "Shortcut: …" step | S–M | yes |
-| P5 | Progress panel shows Understood → Lane → Tools → Chose → Gate → Result from the trace | M | yes |
-| P6 | Plugin manifest + Settings › Plugins as the front for the existing registries (read-only view first) | M | yes |
-| P7 | Ranking + fallback per §5, with visible steps | M | yes |
-| P8 | CLI learner (§6.1), `mail-app-cli` as the first case (= E17 widened) | M | yes |
-| P9 | Curated catalog + "no route → options" card (§6.2) | S–M | yes |
-| P10 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | L | per PR |
-| P11 | Solved-task library (§6.3): verified turn → parameterized read skill → runs before the model → repaired on failure. Mail first | M–L | yes |
-| P12 | DoraX-made plugins (§6.3 level 2) | L | yes |
+| P1 #195 | Mail keyword shortcut obeys Task 17 (exact command only); fix the false "Answered without running anything"; the owner's sentence in `RoutingPhrasebookTests`; check the Corner for the same bug | S | re-run the sentence |
+| P2 #196 | Menus out of the default prompt (§2a): one tool order equal to `Surface`; `find_menu_command` on demand; delete "CALL it immediately" | M | data and UI sentences |
+| P3 #197 | Two lanes (§2a): data lane never activates the app (Mail adapter reads without `activate()`); UI lane only for interface requests; menu fallback shown as a step | M | Mail stays in background |
+| P4 #198 | Every pre-model shortcut reports a "Shortcut: …" step | S–M | yes |
+| P5 #199 | Progress panel shows Understood → Lane → Tools → Chose → Gate → Result from the trace | M | yes |
+| P6 #200 | Plugin manifest + Settings › Plugins as the front for the existing registries (read-only view first) | M | yes |
+| P7 #201 | Ranking + fallback per §5, with visible steps | M | yes |
+| P8 #202 | CLI learner (§6.1), `mail-app-cli` as the first case (= E17 widened) | M | yes |
+| P9 #203 | Curated catalog + "no route → options" card (§6.2) | S–M | yes |
+| P10 #204 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | L | per PR |
+| P11 #205 | Solved-task library (§6.3): verified turn → parameterized read skill → runs before the model → repaired on failure. Mail first | M–L | yes |
+| P12 #206 | DoraX-made plugins (§6.3 level 2) | L | yes |
 
 Order: P1 now (it also blocks the #184 hand test). P2–P3 fix the reasoning: they remove the
 menu bias at its source. P4–P5 make every later step visible. P6–P9 are the plugin manager. P10
