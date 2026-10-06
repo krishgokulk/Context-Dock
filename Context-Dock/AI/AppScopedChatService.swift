@@ -694,6 +694,24 @@ enum AppScopedChatService {
         let conversationScope = Self.conversationScope(
             routingBundleId: routingBundleId, appName: appName)
 
+        // One registry turn for the whole loop (E1c). The capabilities DoraX runs between
+        // passes are gated and recorded against it, and a Claude Code pass joins it rather than
+        // starting a record that has forgotten the mail it was just handed.
+        let registry = AgentToolRegistry.shared
+        let chat = ClaudeCodeChat.scope
+        let earlier = ClaudeCodeCLIService.sessionTaint(chat)
+        let turn = registry.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: query),
+            promptBlocks: [systemPrompt, query],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: routingBundleId)
+                || earlier.readPrivateData,
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(bundleID: routingBundleId)
+                || earlier.readUntrustedContent)
+        defer {
+            ClaudeCodeCLIService.noteRead(registry.taint.taint(for: turn), in: chat)
+            registry.endTurn(turn)
+        }
+
         let toolsBlock = await withTimeout(
             seconds: 8, fallback: "", label: "scoped tool-less capability block"
         ) {
@@ -715,24 +733,26 @@ enum AppScopedChatService {
 
         for _ in 0..<4 {
             onStatus?(toolChips.isEmpty ? "Thinking…" : "Reading tool result…")
-            let raw = try await AIProviderService.shared.sendMessage(
-                loopQuery,
-                context: context,
-                provider: provider,
-                apiKey: apiKey,
-                conversationHistory: loopHistory,
-                additionalContextPrompt: promptWithTools,
-                attachments: attachments.map(AIAttachment.inferred(from:)),
-                // This surface supplies its own capability catalogue; letting the provider
-                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
-                // nothing here executes, and the directive ends up printed at the user.
-                surfaceScoped: true,
-                // A CLI provider's own steps belong in the same live list DoraX fills for
-                // its own work, rather than in a transcript nobody has open.
-                onStatus: onStatus.map { report in { step in
-                    Task { @MainActor in report(step) }
-                } }
-            )
+            let raw = try await ClaudeCodeChat.$turn.withValue(turn) {
+                try await AIProviderService.shared.sendMessage(
+                    loopQuery,
+                    context: context,
+                    provider: provider,
+                    apiKey: apiKey,
+                    conversationHistory: loopHistory,
+                    additionalContextPrompt: promptWithTools,
+                    attachments: attachments.map(AIAttachment.inferred(from:)),
+                    // This surface supplies its own capability catalogue; letting the provider
+                    // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
+                    // nothing here executes, and the directive ends up printed at the user.
+                    surfaceScoped: true,
+                    // A CLI provider's own steps belong in the same live list DoraX fills for
+                    // its own work, rather than in a transcript nobody has open.
+                    onStatus: onStatus.map { report in { step in
+                        Task { @MainActor in report(step) }
+                    } }
+                )
+            }
 
             // Say what is about to happen before it happens. The directive is already in the
             // answer text; reading it here costs nothing and is the difference between a live
@@ -740,7 +760,8 @@ enum AppScopedChatService {
             if let announced = AITypedInvocationResolver.invocation(from: raw) {
                 onStatus?(Self.runningLabel(for: announced))
             }
-            let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
+            let call = await GeneralChatCapabilityHub.shared.execute(
+                raw, scope: conversationScope, turn: turn, chatScope: chat)
             guard call.handled else {
                 var text = ChatAnswerSanitizer.clean(raw)
                 // The last rung, offered by DoraX rather than asked for by the model. Three
@@ -784,16 +805,18 @@ enum AppScopedChatService {
         // Loop budget exhausted — one final forced plain answer, same as General Chat's own
         // exhaustion path.
         onStatus?("Writing answer…")
-        let finalRaw = try await AIProviderService.shared.sendMessage(
-            loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
-            context: context,
-            provider: provider,
-            apiKey: apiKey,
-            conversationHistory: loopHistory,
-            additionalContextPrompt: promptWithTools,
-            attachments: attachments.map(AIAttachment.inferred(from:)),
-            surfaceScoped: true
-        )
+        let finalRaw = try await ClaudeCodeChat.$turn.withValue(turn) {
+            try await AIProviderService.shared.sendMessage(
+                loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
+                context: context,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: loopHistory,
+                additionalContextPrompt: promptWithTools,
+                attachments: attachments.map(AIAttachment.inferred(from:)),
+                surfaceScoped: true
+            )
+        }
         return Answer(text: ChatAnswerSanitizer.clean(finalRaw), toolChips: toolChips)
     }
 
@@ -1165,12 +1188,20 @@ enum AppScopedChatService {
     ) async throws -> Answer {
         // One record per turn in the turn log, when it is on: the prompt's sections, every
         // provider pass, and the checks that fired, whichever route the turn takes below.
+        //
+        // The chat and what its user typed are bound for the turn, so the Claude Code CLI knows
+        // whether it may hold its own network and shell (E1c), and the outbound gate knows which
+        // addresses the user typed rather than the follow-up prompts DoraX composes.
         try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
-            try await sendUntraced(
-                scope: scope, appName: appName, query: query, history: history,
-                attachments: attachments, extraAppNames: extraAppNames,
-                finderSelection: finderSelection, skillOverride: skillOverride,
-                onStream: onStream, onStatus: onStatus)
+            try await ClaudeCodeChat.$scope.withValue(scope) {
+                try await TurnUserText.bind(history: history, query: query) {
+                    try await sendUntraced(
+                        scope: scope, appName: appName, query: query, history: history,
+                        attachments: attachments, extraAppNames: extraAppNames,
+                        finderSelection: finderSelection, skillOverride: skillOverride,
+                        onStream: onStream, onStatus: onStatus)
+                }
+            }
         }
     }
 

@@ -70,12 +70,16 @@ enum ScopedTurnRunner {
     ) async throws -> Outcome {
         // The whole stage is one turn in the turn log: the first pass, and every retry and
         // verifier pass below, land in one record with the checks that fired.
+        // The chat is bound so a Claude Code CLI pass knows whether it may hold its own
+        // network and shell (E1c); see ClaudeCodeCLIService+Privacy.swift.
         try await TurnRecorder.run(provider: provider.rawValue) {
             TurnRecorder.current?.notePromptSections(promptSections)
-            return try await runUntraced(
-                query: query, systemPrompt: systemPrompt, scope: scope, provider: provider,
-                apiKey: apiKey, history: history, grantedApps: grantedApps,
-                imageAttachments: imageAttachments, onStream: onStream, onStatus: onStatus)
+            return try await ClaudeCodeChat.$scope.withValue(scope.chatScope) {
+                try await runUntraced(
+                    query: query, systemPrompt: systemPrompt, scope: scope, provider: provider,
+                    apiKey: apiKey, history: history, grantedApps: grantedApps,
+                    imageAttachments: imageAttachments, onStream: onStream, onStatus: onStatus)
+            }
         }
     }
 
