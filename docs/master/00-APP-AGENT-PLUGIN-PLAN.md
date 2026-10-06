@@ -236,6 +236,32 @@ filled in and **never presses Send** (`messages.compose`).
 
 ---
 
+## 2c. Day one: a fresh install with no tools, plugins or CLIs
+
+Nothing in this plan needs the user to install anything. What DoraX can use on day one:
+
+| Kind of app | Data lane on day one | UI lane |
+|---|---|---|
+| Apple apps with a built-in adapter: Mail, Messages, Notes, Calendar, Reminders, Contacts, Music, Photos, Finder, Safari | the adapter (`Apple*MCPCapabilities`, `FinderSearchCapabilities`, `BrowserCapabilities`) | menus → keys → Computer Use |
+| Shell work (Terminal scope, "how much disk space") | `terminal.runCommand`, allow-list for reads, card for the rest | — |
+| Third-party apps that are scriptable (Things, OmniFocus, Spotify, Office, BBEdit…) | **the app's scripting dictionary (P13 #208)** | menus → keys → Computer Use |
+| Apps with Shortcuts / App Intents actions | Shortcuts (D6) | menus |
+| Apps with nothing scriptable (many Electron apps) | **none**: DoraX says so, offers the catalog (P9), and can still read the window's text through the accessibility tree | menus → keys → Computer Use |
+
+Plus, on every app: the user's own Shortcuts, the accessibility tree for "what's on screen", and the
+curated catalog's suggestions. Each tool used makes the solved-task library (P11) a little bigger,
+so the second time costs fewer tokens.
+
+**What day one does need:** an AI to understand requests, either the Claude Code CLI or on-device
+Apple Intelligence (on a Mac that supports it). With neither, DoraX can only run exact commands
+and saved skills, and the first-run screen says that plainly.
+
+**Plugins are an upgrade, not a requirement.** A CLI or MCP server adds breadth (archive, flag,
+move…) or speed. Without one, the plan still answers, through the adapter or the dictionary, and
+only falls to the window for interface requests or when no data route exists.
+
+---
+
 ## 3. What the user sees: the step list
 
 Every turn fills the Progress panel with what actually happened, one reason per line. These are
@@ -416,10 +442,11 @@ real repeat rate from E2 traces before promising a number.
 | P9 #203 | Curated catalog + "no route → options" card (§6.2) | S–M | yes |
 | P10 #204 | Retire the Dock's ~15 shortcuts into the ladder, one per PR (E12) | L | per PR |
 | P11 #205 | Solved-task library (§6.3): verified turn → parameterized read skill → runs before the model → repaired on failure. Mail first | M–L | yes |
+| P13 #208 | Scripting-dictionary rung: read any scriptable app without an adapter (no generic `sdef` reader exists today); typed Apple Events, no free-form AppleScript; never activates the app | M | a third-party app answers with "no window opens" |
 | P12 #206 | DoraX-made plugins (§6.3 level 2) | L | yes |
 
 Order: P1 now (it also blocks the #184 hand test). P2–P3 fix the reasoning: they remove the
-menu bias at its source. P4–P5 make every later step visible. P6–P9 are the plugin manager. P10
+menu bias at its source. P4–P5 make every later step visible. P6–P9 are the plugin manager, and P13 (#208) follows P6: it gives third-party apps a data route on day one. P10
 runs alongside. P11 needs P5 + E2 (to tell a saved skill from a model answer); P12 comes after
 E19a.
 

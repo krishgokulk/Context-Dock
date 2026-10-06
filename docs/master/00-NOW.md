@@ -21,7 +21,7 @@ Owner rules (2026-09-30): one task at a time; merge only on the owner's words "m
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: **#195 P1** Mail shortcut exact-command · **#196 P2** menus out of the prompt · **#197 P3** two lanes · then #180, #185 · **#198 P4** · **#199 P5** · **#200–#203 P6–P9** plugin manager · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: **#195 P1** Mail shortcut exact-command · **#196 P2** menus out of the prompt · **#197 P3** two lanes · then #180, #185 · **#198 P4** · **#199 P5** · **#200–#203 P6–P9** plugin manager · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
