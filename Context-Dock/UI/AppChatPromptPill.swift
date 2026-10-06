@@ -136,6 +136,14 @@ enum AppChatPromptMetrics {
     /// the dock's width.
     static var runningPillWidth: CGFloat { pillWidth(icons: matchIconBaseCount, overflow: true) }
 
+    /// The capsule for this many running apps: just as wide as they are while they fit
+    /// (owner 2026-10-06: three apps left an empty slot beside them), the fixed width with
+    /// its arrow once they scroll. The field's width never changes either way.
+    static func runningPillWidth(apps count: Int) -> CGFloat {
+        count > matchIconBaseCount
+            ? runningPillWidth : pillWidth(icons: max(1, count), overflow: false)
+    }
+
     /// The app bar's icons: the size of the field's send button (owner 2026-09-26: the
     /// 18-point pill icons read too small beside it).
     static let appBarIconSize: CGFloat = 24
@@ -1120,7 +1128,8 @@ struct AppChatPromptPill: View {
                         overflowCount: 0,
                         isSearching: false,
                         focusedID: model.focusedPill?.id,
-                        fixedWidth: AppChatPromptMetrics.runningPillWidth,
+                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
+                            apps: model.allRunningIcons.count),
                         onSelect: { icon in model.openGlobalMatchIcon(icon) })
                         // Resting the pointer on the small pills asks for the big ones: the
                         // field folds into the dock at once, as it always has.
@@ -1136,7 +1145,8 @@ struct AppChatPromptPill: View {
                         overflowCount: 0,
                         isSearching: false,
                         focusedID: model.focusedPill?.id,
-                        fixedWidth: AppChatPromptMetrics.runningPillWidth,
+                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
+                            apps: model.allRunningIcons.count),
                         onSelect: { icon in model.openGlobalMatchIcon(icon) })
                         // Opacity only, for the same reason as the field above: this pill is
                         // a sibling of the TextField inside the focused subtree, and a
