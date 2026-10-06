@@ -363,6 +363,14 @@ enum OutboundGate {
         id: String, input: [String: String], lookups: Lookups = Lookups()
     ) -> Target? {
         let lower = id.lowercased()
+        // Opening an address in the browser contacts its host as surely as fetching it does,
+        // with the query string the model chose.
+        if lower == "browser.openurl" {
+            let raw = input["url"] ?? ""
+            return Target(
+                kind: .fetch, host: normalizedHost(fromURL: raw), url: canonicalURL(fromURL: raw),
+                label: "open a web address")
+        }
         if lower == "terminal.runcommand" || lower == "cli.run" {
             let command = input["command"] ?? input["cmd"] ?? ""
             return command.isEmpty || shellReachesNetwork(command) ? shellTarget : nil

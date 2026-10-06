@@ -15,6 +15,7 @@ import AppKit
 
 @available(macOS 26.0, *)
 struct GetCalendarEventsTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "get_calendar_events"
     let description = """
         Read calendar events. Supported filters:
@@ -34,6 +35,7 @@ struct GetCalendarEventsTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: true)
         let filter = arguments.filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
 
         if filter.hasPrefix("search:") {
@@ -165,6 +167,7 @@ struct AddCalendarEventTool: Tool {
 
 @available(macOS 26.0, *)
 struct GetRemindersTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "get_reminders"
     let description = "List reminders. Use filter 'all' for all incomplete reminders, 'overdue' for past-due items, or 'today' for reminders due today."
 
@@ -180,6 +183,7 @@ struct GetRemindersTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: false)
         let filter = arguments.filter.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let limit = max(1, min(arguments.limit, 100))
 
@@ -253,6 +257,7 @@ struct AddReminderTool: Tool {
 
 @available(macOS 26.0, *)
 struct SearchContactsTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "search_contacts"
     let description = "Search the user's Contacts by name, email, or phone. Returns name, email, and phone number for each match."
 
@@ -265,6 +270,7 @@ struct SearchContactsTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: false)
         let query = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return "❌ Provide a search query." }
 
@@ -285,6 +291,7 @@ struct SearchContactsTool: Tool {
 
 @available(macOS 26.0, *)
 struct SearchPhotosTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "search_photos"
     let description = "Search the user's Photos library by filename keyword. Returns filename and date. Useful when the user asks about a specific photo or says 'find photos of X'."
 
@@ -300,6 +307,7 @@ struct SearchPhotosTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: false)
         let query = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let photos = AppleAppsAPI.shared.searchPhotos(query: query, limit: max(1, min(arguments.limit, 30)))
         if photos.isEmpty { return "No photos found\(query.isEmpty ? "" : " for '\(query)'"  )." }
@@ -322,6 +330,7 @@ struct SearchPhotosTool: Tool {
 
 @available(macOS 26.0, *)
 struct SearchNotesTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "search_notes"
     let description = "Search Apple Notes by keyword. Returns note title and a short content preview. Use when the user asks about notes they wrote."
 
@@ -334,6 +343,7 @@ struct SearchNotesTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: true)
         let query = arguments.query.trimmingCharacters(in: .whitespacesAndNewlines)
         let notes: [[String: Any]] = query.isEmpty
             ? AppleAppsAPI.shared.getNotes(limit: 10)
