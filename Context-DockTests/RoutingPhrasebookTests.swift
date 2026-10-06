@@ -647,6 +647,8 @@ struct MailboxSearchCommandTests {
             ("look for emails from SBI", .init(term: "SBI", field: .sender)),
             ("search my inbox for subject payslip", .init(term: "payslip", field: .subject)),
             ("please search mail from SBI", .init(term: "SBI", field: .sender)),
+            // The Mail scope may already have stripped its own name from the sentence.
+            ("search from SBI", .init(term: "SBI", field: .sender)),
             ("search mail for \"invoice and receipt\"", .init(term: "invoice and receipt", field: .any)),
         ]
         for (sentence, expected) in cases {
