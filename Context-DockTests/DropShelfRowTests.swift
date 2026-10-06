@@ -19,7 +19,35 @@ struct DropShelfRowTests {
 
     typealias M = AppChatPromptMetrics
 
-    @Test("An empty scope's row is the shelf and nothing else")
+    @Test("The shelf shows when it holds something, while a drag is in flight, or while open")
+    func theShelfShowsOnlyWhenItHasAJob() {
+        #expect(!DropShelfVisibility.shows(itemCount: 0, phase: .collapsed))
+        #expect(DropShelfVisibility.shows(itemCount: 2, phase: .collapsed))
+        #expect(DropShelfVisibility.shows(itemCount: 0, phase: .inviting))
+        #expect(DropShelfVisibility.shows(itemCount: 0, phase: .expanded))
+    }
+
+    @Test("An empty shelf takes no room in the row, the shell or the keys")
+    func anEmptyShelfIsNotInTheRow() {
+        let row = DockTools.row(
+            showsTabBar: false, clipboard: true, selection: false, feedback: false, shelf: false)
+        #expect(row == [.clipboard])
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.shelfVisible = { false }
+        model.summonGlobalContext()
+        model.setGlobalTyping(top: nil, running: [])
+        #expect(model.dockTools(clipboardVisible: false).isEmpty)
+        #expect(model.dockToolCount(clipboardVisible: false) == 0)
+        #expect(model.pillRowCount == 0)
+        #expect(!model.isShelfFocused)
+
+        model.shelfVisible = { true }
+        #expect(model.dockTools(clipboardVisible: false) == [.shelf])
+        #expect(model.pillRowCount == 1)
+    }
+
+    @Test("An empty scope's row is the shelf and nothing else, while it shows")
     func anEmptyScopeStillHasTheShelf() {
         let row = DockTools.row(
             showsTabBar: false, clipboard: false, selection: false, feedback: false)
@@ -61,6 +89,7 @@ struct DropShelfRowTests {
     @Test("Global with nothing pinned and nothing running still measures a row for the shelf")
     func theEmptyStripIsMeasuredForTheShelf() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.shelfVisible = { true }
         model.summonGlobalContext()
 
         let tools = model.dockToolCount(clipboardVisible: false)
@@ -77,6 +106,7 @@ struct DropShelfRowTests {
     @Test("A pinned scope's row ends with the shelf, after the pins")
     func aPinnedScopeEndsWithTheShelf() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.shelfVisible = { true }
         model.summonGlobalContext()
 
         let tools = model.dockToolCount(clipboardVisible: true)
@@ -100,6 +130,7 @@ struct DropShelfRowTests {
     @Test("With no app running the pill row is just the shelf, and Tab reaches it")
     func tabReachesTheShelfWhenNothingElseIsThere() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.shelfVisible = { true }
         model.summonGlobalContext()
         model.setGlobalTyping(top: nil, running: [])
         let shelf = DropShelfPresentation()
@@ -116,6 +147,7 @@ struct DropShelfRowTests {
     @Test("Return on the focused shelf opens it, as a click does; again closes it")
     func returnTogglesTheShelf() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.shelfVisible = { true }
         model.summonGlobalContext()
         model.setGlobalTyping(top: nil, running: ["a", "b"].map(Self.icon))
         let shelf = DropShelfPresentation()
@@ -142,6 +174,7 @@ struct DropShelfRowTests {
     @Test("Return on an app pill still opens the app and leaves the shelf alone")
     func returnOnAnAppIsNotTheShelf() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.shelfVisible = { true }
         model.summonGlobalContext()
         model.setGlobalTyping(top: nil, running: ["a"].map(Self.icon))
         let shelf = DropShelfPresentation()

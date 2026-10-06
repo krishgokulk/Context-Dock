@@ -6,6 +6,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Changed
 
+- The Drop Shelf's tray icon only appears once the shelf holds something, or while you drag a file.
 - An app's Context Dock now has a panel beside the conversation, like Claude's: each step as it runs, the command's output, the files the answer made, your uploads, the app's connectors and adapter, and what DoraX can do there. Hide it with the sidebar button. The chat field is now a rounded composer.
 - Arrowing through results in the corner splits the result card, list on the left, details on the right: a preview of the file, image or folder, the app, or where a menu command lives.
 - General Chat in the corner opens at once, as its field alone (no start card), instead of waiting on the chat history to load.

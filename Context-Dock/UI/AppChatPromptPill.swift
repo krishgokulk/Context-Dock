@@ -1237,9 +1237,10 @@ struct AppChatPromptPill: View {
                 }
             }
 
-            // The Drop Shelf, last of the field's icons in every scope: Global's is the strip's,
-            // drawn over this end of the field, so the field adds none there.
-            if !model.isGlobalScope {
+            // The Drop Shelf, last of the field's icons in every scope while it holds something
+            // or a drag is in flight: Global's is the strip's, drawn over this end of the
+            // field, so the field adds none there.
+            if !model.isGlobalScope, model.showsShelf {
                 shelfControl
             }
 

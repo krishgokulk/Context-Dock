@@ -23,23 +23,32 @@ enum DropShelfPhase: Equatable {
 }
 
 /// Which of a dock row's trailing tools are showing, in the order they are drawn. The shelf is
-/// always the last one, in every scope and with or without pins — it is how a file is dropped
-/// onto the Dock or the Corner, so it cannot depend on there being anything else to show.
+/// the last one, in every scope and with or without pins, whenever it shows.
 enum DockToolKind: Equatable {
     case clipboard, selection, feedback, shelf
+}
+
+/// When the Drop Shelf's icon is in a row (owner 2026-10-06: "only appear when the user
+/// added files"). It holds something, or a drag is in flight — the row is where a drop
+/// lands, and a drag brings the shell up for it — or its card is open. An empty shelf with
+/// nothing being dragged is an icon for nothing, so it takes no room.
+enum DropShelfVisibility {
+    static func shows(itemCount: Int, phase: DropShelfPhase) -> Bool {
+        itemCount > 0 || phase != .collapsed
+    }
 }
 
 enum DockTools {
     /// The row's tools, shelf last. An app's bar carries no action results, only the clipboard
     /// for a copy's few seconds and the selection while there is one.
     static func row(
-        showsTabBar: Bool, clipboard: Bool, selection: Bool, feedback: Bool
+        showsTabBar: Bool, clipboard: Bool, selection: Bool, feedback: Bool, shelf: Bool = true
     ) -> [DockToolKind] {
         var tools: [DockToolKind] = []
         if clipboard { tools.append(.clipboard) }
         if selection { tools.append(.selection) }
         if feedback, !showsTabBar { tools.append(.feedback) }
-        tools.append(.shelf)
+        if shelf { tools.append(.shelf) }
         return tools
     }
 }
