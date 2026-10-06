@@ -314,12 +314,15 @@ struct CornerAppPinsTests {
 
     // MARK: One width
 
-    @Test("An app's field grows by its pill, and its result card is exactly as wide")
+    @Test("An app's field is the shell's one width, bar or no bar, and its card is as wide")
     func fieldAndCardShareOneWidth() {
+        // #189: the app's own pins never widen its field — they scroll in its bar's fixed
+        // pill. Only the dock's pins move the one width every surface shares.
         let (store, _) = temporaryStore()
         let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
-        let base = AppChatPromptMetrics.width
-        #expect(AppChatPromptMetrics.boardWidth(for: model) == base, "no pins: the base field")
+        let shell = DockShellWidth.current
+        #expect(AppChatPromptMetrics.boardWidth(for: model) == shell, "no pins: the shell")
+        #expect(AppChatPromptMetrics.appBarPillWidth(for: model) == 0)
 
         store.pin(.menuCommand(path: ["Window", "Centre"]), title: "Centre",
             app: "com.anthropic.claudefordesktop")
@@ -327,11 +330,11 @@ struct CornerAppPinsTests {
             app: "com.anthropic.claudefordesktop")
         model.updateTabStrip()
         let pill = AppChatPromptMetrics.appBarPillWidth(for: model)
+        // Fitted to its two pins, not the widest capsule (owner 2026-10-05).
         #expect(pill == AppChatPromptMetrics.appBarPillWidth(icons: 2, divider: false))
-        let field = AppChatPromptMetrics.size(
-            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
-            appBarPillWidth: pill).width
-        #expect(field == base + pill + AppChatPromptMetrics.appBarPillSpacing)
+        #expect(pill < AppChatPromptMetrics.appBarFixedPillWidth)
+        let field = AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width
+        #expect(field == shell)
         #expect(AppChatListMetrics.size(
             rows: 3, width: AppChatPromptMetrics.boardWidth(for: model)).width == field)
     }

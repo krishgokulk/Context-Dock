@@ -693,7 +693,7 @@ final class CornerDockController: NSObject {
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt))
+                        ? prompt.boardSize
                         : (showsWindowRow
                             ? windowRowSize
                             : (showsPinPreview
@@ -885,28 +885,12 @@ final class CornerDockController: NSObject {
                 ? AppChatPromptMetrics.miniSize
                 : CornerGeneralChatMetrics.size(for: chatPresentation.generalChat)
         }
-        // The same composition the strip draws from: a pinned app that is running is one
-        // icon there, so it must be one icon wide here.
-        let composition = DockStripPlan.make(
-            running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil)
-        ).composition
-        return AppChatPromptMetrics.size(
-            for: prompt.phase,
-            suggestions: prompt.listRowCount,
-            messages: prompt.messages.count,
-            hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
-            attachments: prompt.attachments.count,
-            running: composition.unpinnedRunningCount,
-            pinnedApps: composition.pinnedAppCount,
-            pinned: composition.otherPins.count,
-            pinnedExtraWidth: composition.widgetExtraWidth,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
-            promptIcons: prompt.promptIconCount,
-            fieldHeight: AppChatPromptMetrics.fieldHeight(global: prompt.usesDockHeight),
-            fitsContent: prompt.fitsField,
-            maximumWidth: DockStripPlan.screenBudget,
-            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: prompt))
+        // The one reading the field draws itself at (`shellSize`), so what is drawn and
+        // what is hit-tested are the same number.
+        return AppChatPromptMetrics.shellSize(
+            for: prompt, phase: prompt.phase,
+            clipboardVisible: clipboardModel.phase.announcesCopy,
+            feedbackVisible: actionFeedback.glyph != nil)
     }
 
     // MARK: - Keyboard
@@ -1578,6 +1562,7 @@ struct CornerDockSurface: View {
                 AppSnapshotCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppChatList {
+                // The list, with the highlighted row's preview in its right half (#191).
                 AppChatListCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsHoverCard {
@@ -1678,7 +1663,8 @@ struct CornerDockSurface: View {
                         value: CornerDockController.shared.hoverCardDrawOffset)
                 chatSurface
             }
-            .frame(width: AppChatPromptMetrics.width, alignment: .bottom)
+            // The shell's one width (#189): every surface in it is drawn at this.
+            .frame(width: DockShellWidth.current, alignment: .bottom)
         }
     }
 

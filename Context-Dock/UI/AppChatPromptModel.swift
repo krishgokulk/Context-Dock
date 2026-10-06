@@ -173,6 +173,12 @@ final class AppChatPromptModel: ObservableObject {
     var tabsByIconID: [String: SafariTab] = [:]
     /// The app's pins behind its bar's leading icons, by icon id.
     var appPinsByIconID: [String: DockPin] = [:]
+    /// How many lines the field's text takes, one to three (`DockFieldLines`, #189). Read
+    /// by the shell's size, so the field grows upward and the window hit-tests the same.
+    @Published var fieldLines = 1
+    /// The Context Dock's panel beside the conversation (#191): open until the header's
+    /// toggle closes it, and kept that way across turns and apps.
+    @Published var livePanelOpen = true
     /// The text field's frame in the corner's hosting view (top-left origin). Not published:
     /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
     var inputFrame: CGRect = .zero
@@ -340,6 +346,18 @@ final class AppChatPromptModel: ObservableObject {
     private var globalResultsObservation: AnyCancellable?
     private var runningAppsObservation: AnyCancellable?
     private var clipboardPillObservation: AnyCancellable?
+    private var shelfObservation: AnyCancellable?
+
+    /// Whether the Drop Shelf's icon is in the row (`DropShelfVisibility`), read from the one
+    /// shelf. A seam, so a test decides without driving the process-wide store.
+    var shelfVisible: @MainActor () -> Bool = {
+        DropShelfVisibility.shows(
+            itemCount: DropShelfStore.shared.items.count,
+            phase: DropShelfController.shared.presentation.phase)
+    }
+
+    /// The row's shelf, as the field, the strip and the keys read it.
+    var showsShelf: Bool { shelfVisible() }
     private var pinPillObservation: AnyCancellable?
     /// Guards against the reconfirming read below feeding straight back into the sink
     /// that triggered it — `refreshSelectionForCurrentScope` publishes through the same
@@ -443,6 +461,14 @@ final class AppChatPromptModel: ObservableObject {
                 guard let self else { return }
                 self.updateGlobalTyping(for: self.query)
             }
+        // The shelf comes and goes with what it holds and with a drag (owner 2026-10-06):
+        // the row, and the shell measured from it, follow.
+        shelfObservation = Publishers.Merge(
+            DropShelfStore.shared.$items.map { _ in () },
+            DropShelfController.shared.presentation.$phase.map { _ in () }
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     /// Set by `AppChatMenuBrowsing` as the user types in Global Context.
@@ -922,14 +948,14 @@ final class AppChatPromptModel: ObservableObject {
     /// The tools at the strip's end, in the order they are drawn, shelf last. The corner's
     /// own affordances — the clipboard when a copy just happened, the selection when there is
     /// one, the result of an action for a few seconds after it ran — and then the Drop Shelf,
-    /// which is always there: every dock row ends with it, pinned or not.
+    /// while it holds something or a drag is in flight (`DropShelfVisibility`).
     func dockTools(clipboardVisible: Bool, feedbackVisible: Bool = false) -> [DockToolKind] {
         // An app bar is the app's own things (owner 2026-09-25) — plus, at its end after the
         // pins and tabs, a copy's clipboard icon for its few seconds and the selection icon
         // while something is selected (owner 2026-09-26). No action results.
         DockTools.row(
             showsTabBar: showsTabBar, clipboard: clipboardVisible, selection: selection != nil,
-            feedback: feedbackVisible)
+            feedback: feedbackVisible, shelf: showsShelf)
     }
 
     /// How many of those there are, which the strip's width is measured for.

@@ -13,7 +13,8 @@ import AppKit
 import SwiftUI
 
 enum ExtensionScopeMetrics {
-    static let width = CornerDockLayout.cardWidth
+    /// The board stands exactly as wide as the field below it: the shell's one width (#189).
+    static var width: CGFloat { DockShellWidth.current }
     static let headerHeight: CGFloat = 32
     /// Enough for a converter, a note, a short list. Beyond this the extension scrolls
     /// inside its own view rather than pushing the field off the screen.
