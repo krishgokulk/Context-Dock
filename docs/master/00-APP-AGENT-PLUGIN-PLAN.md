@@ -78,23 +78,79 @@ app chat, without activating the app, stealing focus or opening a window.
 - This contradicts the rest of the code. `CapabilityIndex.Surface` says headless < opens app <
   takes screen. The `run_menu_command` tool's own description says it's for apps *"which have no
   adapter"*.
-- `MailAutomation.activateOrLaunchMail()` activates Mail even for reads, and the Mail search
-  shortcut clicks Edit › Find.
+- `MailAutomation.activateOrLaunchMail()` activates Mail even for reads, the Mail search
+  shortcut clicks Edit › Find, and `AXMenuReader.clickMenuItem` (~562) activates the app before
+  every menu click.
 - Result: the largest block in the prompt is a menu list, so the model reasons in menu terms
   even for data questions. That's the "messy reasoning" the owner sees.
 
-### Two lanes, decided before any tool is chosen
+### Words: lanes, rungs, Computer Use
 
-| Lane | For | Channels, cheapest first | Window? |
+- **Lane** = what the request is about. **Data lane:** the app's content (mail, files, notes,
+  events). **UI lane:** the app's interface (windows, tabs, panels, views). Decided once, at
+  ② UNDERSTAND, before any tool is picked.
+- **Rung** = one way to carry out a lane's job, cheapest first.
+- **Computer Use is not the UI lane. It is the UI lane's last rung.** In DoraX it is
+  `ComputerUseTool`: DoraX looks at the window and drives it (accessibility press first, a pixel
+  click last), gated per app by `ComputerUseConsentStore` (off / ask each step / auto in task)
+  and a denylist. A menu command or a key shortcut is UI-lane but is **not** Computer Use.
+
+### The two lanes and their rungs
+
+| Lane | For | Rungs, cheapest first |
+|---|---|---|
+| **Data** (default) | find, filter, read, count, summarize, create, change content | D1 saved skill · D2 adapter · D3 scripting dictionary · D4 MCP · D5 CLI · D6 Shortcut |
+| **UI** | "minimize", "new tab", "show sidebar", "zoom in", "open settings" | U1 menu command · U2 key shortcut · U3 Computer Use |
+
+The data lane falls to the UI lane **only** when no data rung can do the job (example: Mail has
+no archive in its adapter or dictionary route). That fall is a visible step and follows the UI
+lane's rules below. Menus are never read to find an answer.
+
+### How each rung behaves in each app state
+
+Three states: **not running**; **running in the background** (other app in front, hidden or
+minimized); **in front** (the user is looking at it, maybe typing in it).
+
+| Rung | Not running | Running in background | In front |
 |---|---|---|---|
-| **Data lane** (default) | find, filter, read, count, summarize, create, change data | saved skill → adapter → dictionary → MCP → CLI → Shortcut | never activates the app |
-| **UI lane** | the request is about the interface itself: "minimize", "new tab", "show sidebar", "zoom", "open preferences" | menu command → key shortcut → AX press → screen control | yes, a visible step |
+| D1–D3 skill / adapter / dictionary (Apple Events) | start the app **hidden, not activated** (`NSWorkspace.OpenConfiguration: activates = false, hides = true`), then send events | events go straight to it; **no activate, no focus change** | same; the only visible change is the data itself (e.g. a message turns read) |
+| D4–D5 MCP / CLI | if the tool needs the app (mail-app-cli drives Mail's scripting), start it hidden first, as above; a pure data tool needs no app | runs; app untouched | runs; app untouched |
+| D6 Shortcut | runs via `shortcuts run`; any of its actions that open the app are listed in the plan card first | same | same |
+| U1 menu command | the app must start; the plan card says "opens Mail" | today `AXMenuReader.clickMenuItem` **activates the app**; it comes forward, shown in the plan card | press it; no focus change needed |
+| U2 key shortcut | must start and come forward | must come forward (keys go only to the front app) | sent only if the user is **not typing** in it; otherwise wait and ask |
+| U3 Computer Use | must start, come forward, window visible | must come forward | takes the pointer and screen; consent per app, step by step, Esc stops |
 
-- The lane is decided at ② UNDERSTAND, from the request ("is this about the window or about the data?").
-- The data lane falls back to the UI lane **only** when no headless route exists. That fallback
-  is a visible step: "No data route for this in Mail. Using the menu: Message › Archive (opens Mail)."
-- Menus are never read to find an answer (existing rule) and never used for data when a headless
-  route exists.
+### Rules that keep the user undisturbed
+
+1. **The data lane never calls `activate()`, never moves focus and never opens a window.** The
+   `activate()` calls in `MailAutomation` and the Mail search shortcut are removed from data paths.
+2. **If DoraX started the app, it says so** ("Mail wasn't running; started it in the background")
+   and leaves it hidden. It does not quit it unless the user's setting says to.
+3. **Exceptions are explicit.** A data result whose point is to be seen (a draft composer from
+   `mailto:`, "open this email") opens a window **because the user asked to see it**, and the plan
+   card says so.
+4. **The UI lane changes only the scoped app.** If it had to bring the app forward and the user
+   was elsewhere, focus goes back to where the user was when the step ends (unless the request was
+   "show me…").
+5. **Never type into an app the user is typing in.** U2 and U3 wait until the user stops, then ask.
+6. **App busy or slow:** every Apple Event has a timeout (`AXMessagingTimeout`), no bulk body
+   fetch from unattended runs (mail-app-cli warns this can freeze Mail's scripting), and a timeout
+   is a visible step, not a silent retry.
+7. **Computer Use is never the first choice for data.** It is reachable only through the UI lane,
+   after U1–U2 can't do it, with its existing consent, and the step list says "DoraX drives the
+   screen".
+8. **Same in Dock and Corner.** One lane decision, one executor.
+
+### What the user sees, per state
+
+```
+Not running, data:   ✓ Lane: data · ✓ Mail wasn't running — started it in the background
+                     ✓ mail.search(sender: "SBI", day: today) · 3 messages
+Background, data:    ✓ Lane: data · ✓ mail.search … (Mail stays where it is)
+In front, UI:        ✓ Lane: UI · ✓ Menu: Window › Minimize
+Data → UI fallback:  ✓ Lane: data · ✗ No data route for "archive" in Mail
+                     ⏸ Plan: bring Mail forward, Message › Archive, then return — Allow / Deny
+```
 
 ### Prompt changes
 
@@ -115,6 +171,9 @@ app chat, without activating the app, stealing focus or opening a window.
 - "check my recent mail from Gokula kannan J and do what it says" → data lane, read, untrusted card.
 - "minimize this window" / "new tab" → UI lane, menu.
 - "archive the newest bank email" with no archive route → menu fallback shown as a step.
+- Each data sentence in all three states: Mail not running → started hidden, never frontmost;
+  Mail in background → stays in background; Mail in front → focus unchanged.
+- UI sentence while Mail is in the background → plan card, then focus returns to the user's app.
 
 ---
 
