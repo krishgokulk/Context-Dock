@@ -6,6 +6,7 @@ All notable changes to Context-Dock are tracked here.
 
 ### Changed
 
+- Arrowing through results in the corner splits the result card, list on the left, details on the right: a preview of the file, image or folder, the app, or where a menu command lives.
 - General Chat in the corner opens at once, as its field alone (no start card), instead of waiting on the chat history to load.
 - The corner dock rests as a compact bar as wide as its apps, and opens to exactly the Dock's input bar size (600 × 56) in every mode — Global Context, each app's Context Dock and General Chat; running apps and an app's tabs scroll inside a fixed pill, and a long prompt grows the field upward to three lines instead of wrapping into a narrow column.
 - When the front app exposes nothing readable, the chat now names the app, says what it can see (the window title) and why the rest is unreadable, and suggests selecting or pasting the text instead of offering a pointless re-read; an attached screenshot's OCR says "found no text" or "could not run", not "recognized zero text".

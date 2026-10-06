@@ -693,7 +693,7 @@ final class CornerDockController: NSObject {
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
-                        ? AppChatListMetrics.size(rows: prompt.listRowCount, width: AppChatPromptMetrics.boardWidth(for: prompt))
+                        ? prompt.boardSize
                         : (showsWindowRow
                             ? windowRowSize
                             : (showsPinPreview
@@ -1562,6 +1562,7 @@ struct CornerDockSurface: View {
                 AppSnapshotCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsAppChatList {
+                // The list, with the highlighted row's preview in its right half (#191).
                 AppChatListCard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsHoverCard {
