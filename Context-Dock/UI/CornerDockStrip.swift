@@ -413,7 +413,12 @@ struct CornerDockStrip: View {
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
             // A tab or an app's pin has no app window to preview.
             guard !model.isTabIcon(slot.bundleID), !model.isAppPinIcon(slot.bundleID) else { return }
-            model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
+            // Its windows only when there is more than one to choose between (owner
+            // 2026-10-07): one window is what the click already brings back.
+            let shows = inside
+                && DockAppClick.showsWindowPreview(
+                    windowCount: DockAppClick.windowCount(bundleID: slot.bundleID))
+            model.hoveredStripTarget = shows ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
             // One of the app's pins, big or in the pill: it runs, as its row would.
@@ -640,7 +645,9 @@ struct CornerDockStrip: View {
                 model.scopeIntoApp(name: slot.title, bundleID: bundleID)
             })
         } else {
-            items.append(.init(title: "Open \(slot.title)") { openApp(slot) })
+            items.append(.init(title: "Open \(slot.title)") {
+                AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+            })
         }
         items.append(.separator)
         if let pin = slot.pin {
@@ -749,52 +756,16 @@ struct CornerDockStrip: View {
         condensing = false
     }
 
-    /// Clicking an app: bring it forward if it is up, launch it if it is not. A pinned app
-    /// that has been quit is still a place to go, which is what pinning it was for.
+    /// Clicking an app: launch it if it is not running. A running one is the window manager's
+    /// handle on it (`DockAppClick`): in front, its front window is minimised; otherwise it
+    /// comes forward with its minimised windows. A pinned app that has been quit is still a
+    /// place to go, which is what pinning it was for.
     private func openApp(_ slot: DockAppSlot) {
-        AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+        DockAppClick.click(bundleID: slot.bundleID, name: slot.title)
     }
 
     private func open(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
-        switch pin.kind {
-        case .app(let bundleID):
-            AppActivation.bringForward(bundleID: bundleID, name: pin.title)
-        case .file(let path), .folder(let path):
-            let url = URL(fileURLWithPath: path)
-            if FileManager.default.fileExists(atPath: path) {
-                NSWorkspace.shared.open(url)
-            } else {
-                NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
-            }
-        case .menuCommand, .appAction, .tab:
-            model.openAppPin(pin)  // an app's pin; Global's strip never holds one
-        case .globalCommand, .cliTool:
-            guard let document else { return }
-            // A pinned plugin answers where it is: a one-shot runs from the dock, a plugin
-            // with a panel opens it as the card above the pin — the field is not brought
-            // back for either, since neither has anything to type into it. Opening the
-            // field and folding it again read as the click having misfired.
-            if let pluginID = pin.kind.pluginID,
-                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
-            {
-                if manifest.views.panel != nil {
-                    // The click toggles the card whichever way it came up — hover already
-                    // shows an icon's panel, so a click on that icon puts it away.
-                    if model.pluginCardPinID == pin.id || model.previewPinID == pin.id {
-                        model.dismissPluginCard()
-                    } else {
-                        model.pluginCardPinID = pin.id
-                    }
-                } else {
-                    GlobalContextRow.run(document)
-                }
-                return
-            }
-            // Commands and tools run through the list's own path so a CLI scopes the field
-            // and a system command opens its scope, exactly as choosing the row would.
-            model.expandFromDock(seeding: nil)
-            model.run(.global(document))
-        }
+        model.openStripPin(pin, document: document)
     }
 
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -1011,5 +982,51 @@ private struct StripToolVisibility: ViewModifier {
             .opacity(shown ? 1 : 0)
             .allowsHitTesting(shown)
             .animation(.easeInOut(duration: 0.2), value: shown)
+    }
+}
+
+extension AppChatPromptModel {
+    /// What a click on a pin in Global's strip does — the resting dock's and the split
+    /// strip's alike, so the two cannot drift apart.
+    func openStripPin(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
+        switch pin.kind {
+        case .app(let bundleID):
+            AppActivation.bringForward(bundleID: bundleID, name: pin.title)
+        case .file(let path), .folder(let path):
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                NSWorkspace.shared.open(url)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+            }
+        case .menuCommand, .appAction, .tab:
+            openAppPin(pin)  // an app's pin; Global's strip never holds one
+        case .globalCommand, .cliTool:
+            guard let document else { return }
+            // A pinned plugin answers where it is: a one-shot runs from the dock, a plugin
+            // with a panel opens it as the card above the pin — the field is not brought
+            // back for either, since neither has anything to type into it. Opening the
+            // field and folding it again read as the click having misfired.
+            if let pluginID = pin.kind.pluginID,
+                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+            {
+                if manifest.views.panel != nil {
+                    // The click toggles the card whichever way it came up — hover already
+                    // shows an icon's panel, so a click on that icon puts it away.
+                    if pluginCardPinID == pin.id || previewPinID == pin.id {
+                        dismissPluginCard()
+                    } else {
+                        pluginCardPinID = pin.id
+                    }
+                } else {
+                    GlobalContextRow.run(document)
+                }
+                return
+            }
+            // Commands and tools run through the list's own path so a CLI scopes the field
+            // and a system command opens its scope, exactly as choosing the row would.
+            expandFromDock(seeding: nil)
+            run(.global(document))
+        }
     }
 }

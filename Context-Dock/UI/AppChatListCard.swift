@@ -199,28 +199,43 @@ struct AppChatListCard: View {
         .onHover { _ in model.touch() }
     }
 
-    /// What Return does to the highlighted row, then ⌘P and ⌘, — the clipboard board's foot.
+    /// The board's foot: floating key pills, no bar (owner 2026-10-07). Return is not among
+    /// them — every highlighted row already shows its ↩ — but Tab is, when the row is a
+    /// scope Tab steps into (a CLI tool, a Global Command); then pin ⌘P and Settings ⌘,.
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Spacer(minLength: 0)
-            BoardFooter.action(returnTitle, keys: ["↩"])
-            BoardFooter.divider
-            BoardFooter.pinAndSettings(prompt: model)
+            if tabStepsIn {
+                BoardFooter.pill {
+                    BoardFooter.keycaps(["⇥"])
+                    Text("Tab").font(.system(size: 11.5, weight: .semibold))
+                }
+            }
+            BoardFooter.pill {
+                BoardFooter.button(
+                    model.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
+                    help: model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)",
+                    tinted: model.isPinned
+                ) { model.togglePin() }
+            }
+            BoardFooter.pill {
+                BoardFooter.button("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
+                    AppDelegate.shared?.showSettings()
+                }
+            }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-        }
     }
 
-    /// A command runs; anything else opens. Return with nothing arrowed to takes the top row.
-    private var returnTitle: String {
-        guard let row = model.focusedRow ?? model.rows.first else { return "Open" }
+    /// Tab steps into the highlighted row — the top one when none is — when it is a scope:
+    /// a CLI tool, a Global Command, an extension.
+    private var tabStepsIn: Bool {
+        guard let row = model.focusedRow ?? model.rows.first else { return false }
         switch row {
-        case .command, .action: return "Run"
-        case .cliSuggestion: return "Complete"
-        default: return "Open"
+        case .global(let doc): return AppChatPromptModel.rightArrowStepsInto(doc.action)
+        case .cliSuggestion: return true
+        default: return false
         }
     }
 

@@ -38,16 +38,18 @@ enum CornerSplitShell {
 
     /// The bottom line's two widths. The apps fit their icons and tools; the field takes what
     /// they and the gap leave. With nothing to show, the field is the whole shell.
-    static func widths(shell: CGFloat, apps: Int, tools: Int) -> (field: CGFloat, strip: CGFloat) {
-        guard apps + tools > 0 else { return (shell, 0) }
-        let strip = stripWidth(shell: shell, apps: apps, tools: tools)
+    static func widths(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int)
+        -> (field: CGFloat, strip: CGFloat)
+    {
+        guard apps + pins + tools > 0 else { return (shell, 0) }
+        let strip = stripWidth(shell: shell, apps: apps, pins: pins, tools: tools)
         return (shell - strip - gap, strip)
     }
 
     /// Fitted to the icons and tools, never under a capsule's worth, never over half the shell
     /// — past that the icons scroll.
-    static func stripWidth(shell: CGFloat, apps: Int, tools: Int) -> CGFloat {
-        let fitted = CornerSplitStrip.contentWidth(apps: apps, tools: tools)
+    static func stripWidth(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int) -> CGFloat {
+        let fitted = CornerSplitStrip.contentWidth(apps: apps, pins: pins, tools: tools)
         return min(max(fitted, minimumStripWidth), (shell / 2).rounded())
     }
 
@@ -88,15 +90,18 @@ struct CornerSplitStrip: View {
     static let toolSize: CGFloat = 26
     static let horizontalPadding: CGFloat = 14
 
-    /// The width that holds `apps` icons and `tools` tools without scrolling: the padding,
-    /// the icons and their gaps, the hairline between the two kinds, and the tools.
-    static func contentWidth(apps: Int, tools: Int) -> CGFloat {
-        let icons = CGFloat(max(apps, 0))
-        let toolCount = CGFloat(max(tools, 0))
+    /// The width that holds the icons and tools without scrolling: the padding, each group's
+    /// icons and their gaps, and a hairline between groups — apps | pinned extensions | tools.
+    static func contentWidth(apps: Int, pins: Int = 0, tools: Int) -> CGFloat {
+        let groups = [
+            (max(apps, 0), iconSize), (max(pins, 0), iconSize), (max(tools, 0), toolSize),
+        ].filter { $0.0 > 0 }
         var width = horizontalPadding * 2
-        if apps > 0 { width += icons * iconSize + (icons - 1) * spacing + 4 }
-        if tools > 0 { width += toolCount * toolSize + (toolCount - 1) * spacing }
-        if apps > 0, tools > 0 { width += spacing + 1 + spacing }
+        for (count, size) in groups {
+            width += CGFloat(count) * size + CGFloat(count - 1) * spacing
+        }
+        if apps > 0 { width += 4 }  // the apps' scroll inset
+        width += CGFloat(max(groups.count - 1, 0)) * (spacing + 1 + spacing)
         return width
     }
 
@@ -113,34 +118,48 @@ struct CornerSplitStrip: View {
     }
 
     /// The resting strip's own composition, so an app is in the same place in both.
-    private var apps: [DockAppSlot] { Self.apps(for: model) }
-
-    static func apps(for model: AppChatPromptModel) -> [DockAppSlot] {
+    static func composition(for model: AppChatPromptModel) -> DockStripComposition {
+        // Every scope's field stands apart from what is beside it (owner 2026-10-07): an app
+        // bar's own pins and tabs, otherwise the remaining running apps (`stripIcons` leaves
+        // the scoped app out), and Global's pinned extensions.
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: 0,
             fieldIcons: 0
-        ).composition.apps
+        ).composition
+    }
+
+    static func apps(for model: AppChatPromptModel) -> [DockAppSlot] {
+        composition(for: model).apps
+    }
+
+    /// The pins that are not apps — extensions, commands, files — after the apps and a
+    /// hairline, as the resting dock keeps them (owner 2026-10-07).
+    static func pins(for model: AppChatPromptModel) -> [DockPin] {
+        composition(for: model).otherPins
     }
 
     var body: some View {
         // Its own height as a capsule in the shell; the composer's, beside it in the chat card.
         let height: CGFloat? = inset ? nil : AppChatPromptMetrics.fieldHeight(global: true)
         let tools = Self.tools(for: model)
+        let composition = Self.composition(for: model)
+        let apps = composition.apps
+        let pins = composition.otherPins
         HStack(spacing: Self.spacing) {
-            if !apps.isEmpty {
+            if !apps.isEmpty || !pins.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Self.spacing) {
                         ForEach(apps) { slot in
                             appButton(slot)
                         }
+                        if !apps.isEmpty, !pins.isEmpty { hairline }
+                        ForEach(pins) { pin in
+                            pinButton(pin)
+                        }
                     }
                     .padding(.horizontal, 2)
                 }
-                if tools.clipboard || tools.shelf {
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.18))
-                        .frame(width: 1, height: Self.iconSize * 0.8)
-                }
+                if tools.clipboard || tools.shelf { hairline }
             }
             if tools.clipboard {
                 toolButton("doc.on.clipboard", title: "Clipboard", tinted: clipboard.isBoardOpen) {
@@ -160,6 +179,38 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
+    }
+
+    private var hairline: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.18))
+            .frame(width: 1, height: Self.iconSize * 0.8)
+    }
+
+    /// A pinned extension, command or file: its icon, and the resting dock's click.
+    private func pinButton(_ pin: DockPin) -> some View {
+        let document = pin.documentID.flatMap { GlobalSearchService.shared.document(withID: $0) }
+        return Button {
+            model.openStripPin(pin, document: document)
+        } label: {
+            VStack(spacing: 2) {
+                Group {
+                    if let image = pin.kind.icon ?? document?.icon {
+                        Image(nsImage: image).resizable().scaledToFit()
+                    } else {
+                        Image(systemName: pin.kind.fallbackSymbol)
+                            .font(.system(size: 18))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: Self.iconSize, height: Self.iconSize)
+                Circle().fill(Color.clear).frame(width: 3, height: 3)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(pin.title)
+        .accessibilityLabel(pin.title)
     }
 
     private func appButton(_ slot: DockAppSlot) -> some View {
@@ -190,14 +241,18 @@ struct CornerSplitStrip: View {
     }
 
     /// What a click on the resting strip's icon does, minus the hover previews: an app bar's
-    /// pin or tab runs, a pinned app's pin runs, a running app scopes the field into it,
-    /// anything else launches.
+    /// pin or tab runs, a pinned app's pin runs, a running app in Global is minimised or
+    /// brought forward (`DockAppClick`), anything else launches.
     private func open(_ slot: DockAppSlot) {
         // An app's bar (its pins and tabs) opens them the way the bar inside the field did.
         if model.showsTabBar, let icon = slot.running {
             model.openBarIcon(icon)
         } else if let pin = model.appPin(forIconID: slot.bundleID) {
             model.openAppPin(pin)
+        } else if model.isGlobalScope, slot.isRunning {
+            // Global's running apps are the window manager's (owner 2026-10-07): the app in
+            // front has its front window minimised, any other comes forward.
+            DockAppClick.click(bundleID: slot.bundleID, name: slot.title)
         } else if let icon = slot.running {
             model.openGlobalMatchIcon(icon)
         } else if let url = NSWorkspace.shared.urlForApplication(

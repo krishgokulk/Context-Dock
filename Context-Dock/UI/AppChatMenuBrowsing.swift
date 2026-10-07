@@ -958,12 +958,10 @@ extension AppChatPromptModel {
         return true
     }
 
-    /// This scope shows the app's window rather than its commands.
-    var showsWindowSnapshot: Bool {
-        returnsToGlobalScope && !appBundleID.isEmpty
-            && appBundleID != "com.apple.finder"
-            && !isCLIScope && !showsExtensionPanel
-    }
+    /// This scope shows the app's window rather than its commands. Off (owner 2026-10-07:
+    /// "for other apps don't show a preview window, just the running apps"): an app's scope
+    /// shows its commands, with the running apps standing beside the field.
+    var showsWindowSnapshot: Bool { false }
 
     /// Leave a scope entered from Global and go back to it.
     @discardableResult
