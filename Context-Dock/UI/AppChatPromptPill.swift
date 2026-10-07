@@ -446,8 +446,6 @@ struct AppChatPromptPill: View {
     @ObservedObject private var actionFeedback = CornerActionFeedback.shared
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
-    /// The app's settings card, open from the chip.
-    @State private var showsScopeCard = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
 
@@ -526,7 +524,16 @@ struct AppChatPromptPill: View {
         // The phase is now part of the answer to "may this field hold the caret", so it has
         // to be asked again when the phase moves — expanding from the dock changes nothing
         // about the keyboard owner.
-        .onChange(of: model.phase) { _, _ in syncFocus() }
+        .onChange(of: model.phase) { _, phase in
+            syncFocus()
+            // The app's card belongs to the open field; folding or starting a conversation
+            // puts it away.
+            if phase != .prompt, phase != .suggesting { model.isShowingScopeCard = false }
+        }
+        // Typing asks the field a question: the results take the board back.
+        .onChange(of: model.query) { _, query in
+            if !query.isEmpty { model.isShowingScopeCard = false }
+        }
         .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
         // Global → a scope swaps `globalBody` for `legacyBody`, and the field in the new
@@ -558,11 +565,11 @@ struct AppChatPromptPill: View {
     /// shell simply reveals more of it. Layout stays still; only the shell and opacity move.
     /// This is the shape `legacyBody` has always used, for the same reason.
     private var globalInputWidth: CGFloat {
-        // Global Context's field stands apart from its apps (Part B), so its text stack is
-        // laid out at the field's own width in every phase but a conversation — the dock's
-        // included, where it is invisible — and the morph still moves no inner width: the
-        // glass shrinks from the dock's width onto a stack that is already that wide.
-        if model.isGlobalScope, model.phase != .chat {
+        // The field stands apart from its apps (Part B) — Global's, and an app bar's — so its
+        // text stack is laid out at the field's own width in every phase but a conversation —
+        // the dock's included, where it is invisible — and the morph still moves no inner
+        // width: the glass shrinks from the dock's width onto a stack that is already that wide.
+        if model.phase != .chat {
             return CornerDockController.shared.splitWidths.field
         }
         // The shell's one width (#189), in every phase — the strip's, the field's and the
@@ -658,7 +665,7 @@ struct AppChatPromptPill: View {
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
         .animation(shellMorph, value: model.phase)
-        .animation(shellMorph, value: splitsShell)
+        .animation(shellMorph, value: drawnWidth)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
     }
 
@@ -725,6 +732,7 @@ struct AppChatPromptPill: View {
         ZStack(alignment: .bottomLeading) {
             inputStack
                 .frame(width: legacyInputWidth, alignment: .bottomLeading)
+                .animation(nil, value: legacyInputWidth)
                 .opacity(model.phase.showsInput ? 1 : 0)
                 .allowsHitTesting(model.phase.showsInput)
                 .animation(.easeOut(duration: 0.11), value: model.phase)
@@ -735,7 +743,7 @@ struct AppChatPromptPill: View {
                 .animation(.easeIn(duration: 0.16).delay(0.06), value: model.phase)
         }
         .frame(width: drawnWidth, height: size.height, alignment: .bottomLeading)
-        .animation(.smooth(duration: 0.22), value: splitsShell)
+        .animation(.smooth(duration: 0.22), value: drawnWidth)
         .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
@@ -752,7 +760,13 @@ struct AppChatPromptPill: View {
 
     /// The field's width: the shell's one width (#189), a conversation's included. The
     /// mini badge is the only thing narrower, and the field is faded out under it.
-    private var legacyInputWidth: CGFloat { size(for: .prompt).width }
+    ///
+    /// Split, an app's field stands apart from its apps as Global's does (owner 2026-10-07),
+    /// so its stack is laid out at the field's own width and its trailing controls stay in
+    /// the glass. The width lands at once (`.animation(nil, …)` below), never over frames.
+    private var legacyInputWidth: CGFloat {
+        model.phase == .chat ? size(for: .prompt).width : CornerDockController.shared.splitWidths.field
+    }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
     /// with a sheet over it keeps the 22-point card.
@@ -1184,6 +1198,12 @@ struct AppChatPromptPill: View {
                     .onKeyPress(keys: ["p"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
                         model.togglePin()
+                        return .handled
+                    }
+                    // Settings from the field, as every board's foot says (owner 2026-10-07).
+                    .onKeyPress(keys: [","]) { press in
+                        guard press.modifiers.contains(.command) else { return .ignored }
+                        AppDelegate.shared?.showSettings()
                         return .handled
                     }
                     .onKeyPress(keys: ["k"]) { press in
@@ -1618,16 +1638,24 @@ struct AppChatPromptPill: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(
-            Color.primary.opacity(showsScopeCard ? 0.16 : 0.09), in: Capsule())
+            Color.primary.opacity(chipIsOpen ? 0.16 : 0.09), in: Capsule())
         .contentShape(Capsule())
-        .onTapGesture { showsScopeCard.toggle() }
+        // Not a popover hanging off the chip (owner 2026-10-07): the app's card opens in the
+        // result board over the field, and in a conversation it is the chat's own side panel.
+        .onTapGesture {
+            if model.phase == .chat {
+                model.livePanelOpen.toggle()
+            } else {
+                model.isShowingScopeCard.toggle()
+            }
+        }
         .help("What DoraX can do in \(model.appName)")
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("\(model.appName) settings")
-        .popover(isPresented: $showsScopeCard, arrowEdge: .top) {
-            AppScopeCard(model: model, appIcon: appIcon) { showsScopeCard = false }
-        }
-        .onChange(of: showsScopeCard) { _, open in model.isShowingScopeCard = open }
+    }
+
+    private var chipIsOpen: Bool {
+        model.phase == .chat ? model.showsLivePanel : model.isShowingScopeCard
     }
 
     private var chipIconShown: Bool { model.phase != .dock }

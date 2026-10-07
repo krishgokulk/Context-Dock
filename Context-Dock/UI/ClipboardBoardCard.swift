@@ -478,9 +478,7 @@ struct ClipboardBoardCard: View {
         .frame(height: ClipboardBoardMetrics.footerHeight)
     }
 
-    private var divider: some View {
-        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 14)
-    }
+    private var divider: some View { BoardFooter.divider }
 
     private func sourcePill(_ source: ClipboardPanelModel.SourceChoice) -> some View {
         let selected = model.selectedSource.bundleID == source.bundleID
@@ -516,6 +514,28 @@ struct ClipboardBoardCard: View {
     }
 
     private func footerAction(_ title: String, keys: [String], dimmed: Bool = false) -> some View {
+        BoardFooter.action(title, keys: keys, dimmed: dimmed)
+    }
+
+    private func footerButton(
+        _ symbol: String, keys: [String], help: String, tinted: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        BoardFooter.button(symbol, keys: keys, help: help, tinted: tinted, action: action)
+    }
+}
+
+/// A board's foot, Raycast's way: what Return does, then the keys for pinning the shell and
+/// opening Settings. One set of pieces for the clipboard's board and the result board, so the
+/// two feet read the same.
+enum BoardFooter {
+    static let height: CGFloat = 34
+
+    static var divider: some View {
+        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 14)
+    }
+
+    static func action(_ title: String, keys: [String], dimmed: Bool = false) -> some View {
         HStack(spacing: 6) {
             Text(title)
                 .font(.system(size: 12, weight: .medium))
@@ -526,7 +546,7 @@ struct ClipboardBoardCard: View {
         }
     }
 
-    private func footerButton(
+    static func button(
         _ symbol: String, keys: [String], help: String, tinted: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -544,7 +564,22 @@ struct ClipboardBoardCard: View {
         .accessibilityLabel(help)
     }
 
-    private func keycaps(_ keys: [String]) -> some View {
+    /// The shell's pin (⌘P) and Settings (⌘,), as every board's foot ends.
+    @MainActor
+    static func pinAndSettings(prompt: AppChatPromptModel) -> some View {
+        HStack(spacing: 10) {
+            button(
+                prompt.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
+                help: prompt.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)",
+                tinted: prompt.isPinned
+            ) { prompt.togglePin() }
+            button("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
+                AppDelegate.shared?.showSettings()
+            }
+        }
+    }
+
+    static func keycaps(_ keys: [String]) -> some View {
         HStack(spacing: 3) {
             ForEach(keys, id: \.self) { key in
                 Text(key)

@@ -624,7 +624,11 @@ final class ClipboardPanelModel: ObservableObject {
         focusedEntryIndex = visibleEntries.isEmpty ? nil : 0
     }
 
-    func noteCopy(dwell: TimeInterval = ClipboardPanelModel.copyDwell + ClipboardPanelModel.miniDwell) {
+    /// How long the clipboard icon stays in the dock and beside the field after a copy (owner
+    /// 2026-10-07: "only when user copied something, for 3 sec").
+    static let iconDwell: TimeInterval = 3
+
+    func noteCopy(dwell: TimeInterval = ClipboardPanelModel.iconDwell) {
         recentlyCopied = true
         copyNoticeTask?.cancel()
         copyNoticeTask = Task { @MainActor [weak self] in

@@ -1,22 +1,22 @@
 // CornerSplitShell.swift
 // Context-Dock
 //
-// The shell in two columns while the result board shows a preview (owner 2026-10-07, "Part B"):
-// the results on the left with the search field directly under them, the preview on the right
-// with the pinned and running apps directly under it — one bottom line, field and apps side by
-// side, the way the board above is list and preview side by side.
+// The field and the apps as two pieces of glass (owner 2026-10-07, "Part B"): while the field
+// is open — Global Context or an app's Context Dock — the search field stands on the left and
+// the pinned and running apps, with the clipboard and the Drop Shelf, stand beside it on the
+// right, one bottom line under whatever board is up.
 //
-//     ┌──────────────┬──────────────┐
-//     │ results      │ preview      │
-//     ├──────────────┼──────────────┤
-//     │ 🔍 field     │ apps · tools │
-//     └──────────────┴──────────────┘
+//     ┌─────────────────────────────┐
+//     │ results  ·  preview         │
+//     ├──────────────────┬──────────┤
+//     │ 🔍 field         │ apps · 📋 │
+//     └──────────────────┴──────────┘
 //
-// The field's own layout does not move. Its text stack stays laid out at the shell's full
-// width; only the glass frame around it narrows to the left column, the same way the
-// dock → field morph reveals it. Resizing the layer that holds the TextField is what made
-// SwiftUI rebuild the key-view loop every frame and hang the app (see `globalBody`), so this
-// changes the frame and nothing inside it.
+// The apps are as wide as what they hold; the field takes the rest, so the two and the gap
+// between them are the shell's one width. The field's text stack is laid out at the field's
+// width and changes it at once, never over frames: resizing the layer that holds the
+// TextField per frame is what made SwiftUI rebuild the key-view loop and hang the app (see
+// `globalBody`). Only the glass around it animates.
 
 import AppKit
 import SwiftUI
@@ -25,54 +25,33 @@ enum CornerSplitShell {
     /// Between the field and the apps, as between every card in the shell.
     static var gap: CGFloat { CornerDockLayout.gap }
 
-    /// Whether the shell splits now. Only while the field is being typed into over a board
-    /// that has a right-hand column — the clipboard's, or the results' when a row's preview
-    /// is up. A conversation keeps its composer whole, General is its own surface, and with
-    /// no preview there is no column for the apps to sit under.
-    ///
-    /// Global Context's field always stands apart from its apps while it is open (owner
-    /// 2026-10-07: "the search bar separation effect while our dock"): the dock opens into the
-    /// field and the apps beside it, rather than the apps shrinking into a pill inside it.
+    /// Whether the shell splits now: while the field is open (typed into or about to be) in
+    /// Global or an app's scope, and only when the apps' piece has something to hold — an
+    /// empty capsule beside the field is glass for nothing. A conversation keeps its own
+    /// composer (`splitsChat`), General is its own surface.
     static func splits(
-        isVisible: Bool, isGeneral: Bool, phase: AppChatPromptPhase, isGlobalScope: Bool = false,
-        clipboardBoard: Bool, resultList: Bool, hasPreview: Bool
+        isVisible: Bool, isGeneral: Bool, phase: AppChatPromptPhase, stripHasContent: Bool
     ) -> Bool {
         guard isVisible, !isGeneral, phase == .prompt || phase == .suggesting else { return false }
-        return isGlobalScope || clipboardBoard || (resultList && hasPreview)
+        return stripHasContent
     }
 
-    /// The bottom line's two widths. Global's apps are as wide as what they hold, so its field
-    /// keeps one width whatever the board above shows — the field's text stack is laid out at
-    /// that width from the start (`globalInputWidth`), and nothing inside it resizes. An app's
-    /// field splits at the board's list column.
-    static func widths(shell: CGFloat, isGlobalScope: Bool, apps: Int)
-        -> (field: CGFloat, strip: CGFloat)
-    {
-        if isGlobalScope {
-            let strip = restStripWidth(shell: shell, apps: apps)
-            return (shell - strip - gap, strip)
-        }
-        return (fieldWidth(shell: shell), stripWidth(shell: shell))
+    /// The bottom line's two widths. The apps fit their icons and tools; the field takes what
+    /// they and the gap leave. With nothing to show, the field is the whole shell.
+    static func widths(shell: CGFloat, apps: Int, tools: Int) -> (field: CGFloat, strip: CGFloat) {
+        guard apps + tools > 0 else { return (shell, 0) }
+        let strip = stripWidth(shell: shell, apps: apps, tools: tools)
+        return (shell - strip - gap, strip)
     }
 
-    /// Global's apps: fitted to their icons and the two tools, never under a minimum that
-    /// keeps the tools readable, never over half the shell — past that the icons scroll.
-    static func restStripWidth(shell: CGFloat, apps: Int) -> CGFloat {
-        let fitted = CornerSplitStrip.contentWidth(apps: apps)
-        return min(max(fitted, 160), (shell / 2).rounded())
+    /// Fitted to the icons and tools, never under a capsule's worth, never over half the shell
+    /// — past that the icons scroll.
+    static func stripWidth(shell: CGFloat, apps: Int, tools: Int) -> CGFloat {
+        let fitted = CornerSplitStrip.contentWidth(apps: apps, tools: tools)
+        return min(max(fitted, minimumStripWidth), (shell / 2).rounded())
     }
 
-    /// The field's width: the board's list column, less half the gap so the two bottom
-    /// pieces meet the board's divider with the shell's usual spacing.
-    static func fieldWidth(shell: CGFloat) -> CGFloat {
-        let list = CornerBoardLayout.listWidth(board: shell, preview: .file(URL(fileURLWithPath: "/")))
-        return (list - gap / 2).rounded()
-    }
-
-    /// The apps' width: what the field and the gap leave.
-    static func stripWidth(shell: CGFloat) -> CGFloat {
-        shell - fieldWidth(shell: shell) - gap
-    }
+    static let minimumStripWidth: CGFloat = 64
 
     /// In a conversation the composer is inset in the chat card, under the transcript and the
     /// app's panel (`CornerLivePanel`). The apps take the panel's column, inset by the
@@ -104,18 +83,33 @@ struct CornerSplitStrip: View {
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
 
-    private static let iconSize: CGFloat = 28
-    private static let spacing: CGFloat = 8
-    private static let toolSize: CGFloat = 26
-    private static let horizontalPadding: CGFloat = 14
+    static let iconSize: CGFloat = 28
+    static let spacing: CGFloat = 8
+    static let toolSize: CGFloat = 26
+    static let horizontalPadding: CGFloat = 14
 
-    /// The width that holds `apps` icons and the tools without scrolling: the padding, the
-    /// icons and their gaps, the hairline, the clipboard and the shelf.
-    static func contentWidth(apps: Int) -> CGFloat {
+    /// The width that holds `apps` icons and `tools` tools without scrolling: the padding,
+    /// the icons and their gaps, the hairline between the two kinds, and the tools.
+    static func contentWidth(apps: Int, tools: Int) -> CGFloat {
         let icons = CGFloat(max(apps, 0))
-        let appsWidth = icons * iconSize + max(icons - 1, 0) * spacing + 4
-        let tools = spacing + 1 + spacing + toolSize + spacing + toolSize
-        return horizontalPadding * 2 + appsWidth + tools
+        let toolCount = CGFloat(max(tools, 0))
+        var width = horizontalPadding * 2
+        if apps > 0 { width += icons * iconSize + (icons - 1) * spacing + 4 }
+        if tools > 0 { width += toolCount * toolSize + (toolCount - 1) * spacing }
+        if apps > 0, tools > 0 { width += spacing + 1 + spacing }
+        return width
+    }
+
+    /// Which tools close the strip, by the resting dock's own rules: the clipboard for a few
+    /// seconds after a copy or while its board is open (`showsDockIcon`), the Drop Shelf only
+    /// while it holds something or a drag is in flight (`DropShelfVisibility`).
+    static func tools(for model: AppChatPromptModel) -> (clipboard: Bool, shelf: Bool) {
+        (ClipboardPanelController.shared.model.showsDockIcon, model.showsShelf)
+    }
+
+    static func toolCount(for model: AppChatPromptModel) -> Int {
+        let tools = tools(for: model)
+        return (tools.clipboard ? 1 : 0) + (tools.shelf ? 1 : 0)
     }
 
     /// The resting strip's own composition, so an app is in the same place in both.
@@ -131,24 +125,37 @@ struct CornerSplitStrip: View {
     var body: some View {
         // Its own height as a capsule in the shell; the composer's, beside it in the chat card.
         let height: CGFloat? = inset ? nil : AppChatPromptMetrics.fieldHeight(global: true)
+        let tools = Self.tools(for: model)
         HStack(spacing: Self.spacing) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Self.spacing) {
-                    ForEach(apps) { slot in
-                        appButton(slot)
+            if !apps.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Self.spacing) {
+                        ForEach(apps) { slot in
+                            appButton(slot)
+                        }
                     }
+                    .padding(.horizontal, 2)
                 }
-                .padding(.horizontal, 2)
+                if tools.clipboard || tools.shelf {
+                    Rectangle()
+                        .fill(Color.primary.opacity(0.18))
+                        .frame(width: 1, height: Self.iconSize * 0.8)
+                }
             }
-            Rectangle()
-                .fill(Color.primary.opacity(0.18))
-                .frame(width: 1, height: Self.iconSize * 0.8)
-            toolButton("doc.on.clipboard", title: "Clipboard", tinted: clipboard.isBoardOpen) {
-                ClipboardPanelController.shared.toggle()
+            if tools.clipboard {
+                toolButton("doc.on.clipboard", title: "Clipboard", tinted: clipboard.isBoardOpen) {
+                    ClipboardPanelController.shared.toggle()
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
-            DropShelfIcon(presentation: shelf, store: shelfStore, style: .control)
-                .frame(width: Self.toolSize, height: Self.toolSize)
+            if tools.shelf {
+                DropShelfIcon(presentation: shelf, store: shelfStore, style: .control)
+                    .frame(width: Self.toolSize, height: Self.toolSize)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
         }
+        .animation(.smooth(duration: 0.2), value: tools.clipboard)
+        .animation(.smooth(duration: 0.2), value: tools.shelf)
         .padding(.horizontal, Self.horizontalPadding)
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
@@ -182,10 +189,14 @@ struct CornerSplitStrip: View {
         .accessibilityLabel(slot.title)
     }
 
-    /// What a click on the resting strip's icon does, minus the hover previews: a pinned
-    /// app's pin runs, a running app scopes the field into it, anything else launches.
+    /// What a click on the resting strip's icon does, minus the hover previews: an app bar's
+    /// pin or tab runs, a pinned app's pin runs, a running app scopes the field into it,
+    /// anything else launches.
     private func open(_ slot: DockAppSlot) {
-        if let pin = model.appPin(forIconID: slot.bundleID) {
+        // An app's bar (its pins and tabs) opens them the way the bar inside the field did.
+        if model.showsTabBar, let icon = slot.running {
+            model.openBarIcon(icon)
+        } else if let pin = model.appPin(forIconID: slot.bundleID) {
             model.openAppPin(pin)
         } else if let icon = slot.running {
             model.openGlobalMatchIcon(icon)

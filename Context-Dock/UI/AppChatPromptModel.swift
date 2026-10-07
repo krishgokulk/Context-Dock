@@ -268,9 +268,9 @@ final class AppChatPromptModel: ObservableObject {
     /// choice down rather than only holding it in memory for as long as this object exists.
     @Published private(set) var isPinned = AppChatPromptModel.pinStore.bool(
         forKey: AppChatPromptModel.pinnedDefaultsKey)
-    /// The app's settings card is open over the chip. It hangs outside the panel, so the
-    /// pointer "leaving" onto it must not fold the field out from under it: the idle clock
-    /// stops while it is open and starts again when it closes.
+    /// The app's settings card is open in the result board (the chip opens it, owner
+    /// 2026-10-07). The user is reading it, so the idle clock stops while it is open and
+    /// starts again when it closes.
     @Published var isShowingScopeCard = false {
         didSet {
             guard isShowingScopeCard != oldValue else { return }

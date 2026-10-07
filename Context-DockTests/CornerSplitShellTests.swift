@@ -3,32 +3,27 @@ import Testing
 
 @testable import Context_Dock
 
-/// Part B (owner 2026-10-07): while the board shows a preview, the field sits under the
-/// results and the pinned and running apps under the preview.
+/// Part B (owner 2026-10-07): while the field is open — Global or an app's Context Dock — it
+/// stands on the left and the pinned and running apps stand beside it on the right.
+@MainActor
 struct CornerSplitShellTests {
     private func splits(
         visible: Bool = true, general: Bool = false, phase: AppChatPromptPhase = .suggesting,
-        clipboard: Bool = false, list: Bool = true, preview: Bool = true
+        content: Bool = true
     ) -> Bool {
         CornerSplitShell.splits(
-            isVisible: visible, isGeneral: general, phase: phase,
-            clipboardBoard: clipboard, resultList: list, hasPreview: preview)
+            isVisible: visible, isGeneral: general, phase: phase, stripHasContent: content)
     }
 
-    @Test func resultsWithAPreviewSplitTheShell() {
+    /// Open, the field and the apps are two pieces — with or without a board above.
+    @Test func anOpenFieldSplits() {
         #expect(splits())
         #expect(splits(phase: .prompt))
     }
 
-    /// No right-hand column, nothing for the apps to stand under.
-    @Test func aListWithoutAPreviewKeepsTheFieldWhole() {
-        #expect(!splits(preview: false))
-        #expect(!splits(list: false))
-    }
-
-    /// The clipboard board always has its preview column.
-    @Test func theClipboardBoardSplitsTheShell() {
-        #expect(splits(clipboard: true, list: false, preview: false))
+    /// Nothing to put beside the field (no apps, no copy, an empty shelf): it stays whole.
+    @Test func nothingBesideTheFieldKeepsItWhole() {
+        #expect(!splits(content: false))
     }
 
     /// A conversation keeps its composer whole; General is its own surface; a docked or
@@ -41,17 +36,43 @@ struct CornerSplitShellTests {
         #expect(!splits(visible: false))
     }
 
-    /// The two bottom pieces and the gap between them are exactly the shell, and the field
-    /// ends where the board's list column does, less half the gap.
+    /// The apps fit what they hold, between a capsule's worth and half the shell; the field
+    /// takes the rest, so the two and the gap are the shell's one width.
     @Test func theBottomLineFillsTheShell() {
         for shell: CGFloat in [600, 664, 731] {
-            let field = CornerSplitShell.fieldWidth(shell: shell)
-            let strip = CornerSplitShell.stripWidth(shell: shell)
-            #expect(field + CornerSplitShell.gap + strip == shell)
-            let list = CornerBoardLayout.listWidth(
-                board: shell, preview: .file(URL(fileURLWithPath: "/")))
-            #expect(abs(field - (list - CornerSplitShell.gap / 2)) <= 1)
+            for apps in [0, 1, 3, 6, 12, 30] {
+                for tools in [0, 1, 2] where apps + tools > 0 {
+                    let (field, strip) = CornerSplitShell.widths(
+                        shell: shell, apps: apps, tools: tools)
+                    #expect(field + CornerSplitShell.gap + strip == shell)
+                    #expect(strip >= CornerSplitShell.minimumStripWidth)
+                    #expect(strip <= (shell / 2).rounded())
+                }
+            }
         }
+    }
+
+    /// With nothing to show the field is the whole shell and the apps take no room.
+    @Test func anEmptyStripTakesNoRoom() {
+        let (field, strip) = CornerSplitShell.widths(shell: 664, apps: 0, tools: 0)
+        #expect(field == 664)
+        #expect(strip == 0)
+    }
+
+    /// Each icon and each tool widens the apps' piece until it reaches half the shell.
+    @Test func theStripGrowsWithWhatItHolds() {
+        #expect(CornerSplitStrip.contentWidth(apps: 4, tools: 0)
+            > CornerSplitStrip.contentWidth(apps: 3, tools: 0))
+        #expect(CornerSplitStrip.contentWidth(apps: 3, tools: 2)
+            > CornerSplitStrip.contentWidth(apps: 3, tools: 1))
+        #expect(CornerSplitStrip.contentWidth(apps: 0, tools: 1)
+            < CornerSplitStrip.contentWidth(apps: 1, tools: 1))
+    }
+
+    /// A copy shows the clipboard beside the field for three seconds, not seven (owner
+    /// 2026-10-07: "only when user copied something, for 3 sec").
+    @Test func theCopyIconDwellsThreeSeconds() {
+        #expect(ClipboardPanelModel.iconDwell == 3)
     }
 
     /// A conversation splits its composer only with the app's panel open and apps to show
@@ -73,44 +94,10 @@ struct CornerSplitShellTests {
         }
     }
 
-    /// Global Context's field stands apart from its apps whenever it is open (owner
-    /// 2026-10-07: "the search bar separation effect"), with or without a preview.
-    @Test func globalAlwaysSplitsWhileOpen() {
-        for phase: AppChatPromptPhase in [.prompt, .suggesting] {
-            #expect(
-                CornerSplitShell.splits(
-                    isVisible: true, isGeneral: false, phase: phase, isGlobalScope: true,
-                    clipboardBoard: false, resultList: false, hasPreview: false))
-        }
-        #expect(
-            !CornerSplitShell.splits(
-                isVisible: true, isGeneral: false, phase: .dock, isGlobalScope: true,
-                clipboardBoard: false, resultList: false, hasPreview: false))
-        #expect(
-            !CornerSplitShell.splits(
-                isVisible: true, isGeneral: false, phase: .chat, isGlobalScope: true,
-                clipboardBoard: false, resultList: false, hasPreview: false))
-    }
-
-    /// Global's apps fit what they hold, between a floor that keeps the tools readable and
-    /// half the shell; the field takes the rest, so the two and the gap are the dock's width.
-    @Test func globalAppsFitTheirIcons() {
-        for shell: CGFloat in [600, 664, 731] {
-            for apps in [0, 1, 3, 6, 12, 30] {
-                let (field, strip) = CornerSplitShell.widths(
-                    shell: shell, isGlobalScope: true, apps: apps)
-                #expect(field + CornerSplitShell.gap + strip == shell)
-                #expect(strip >= 160)
-                #expect(strip <= (shell / 2).rounded())
-            }
-        }
-        #expect(CornerSplitStrip.contentWidth(apps: 4) > CornerSplitStrip.contentWidth(apps: 3))
-    }
-
-    /// An app's field still splits at the board's list column.
-    @Test func anAppSplitsAtTheListColumn() {
-        let (field, strip) = CornerSplitShell.widths(shell: 664, isGlobalScope: false, apps: 3)
-        #expect(field == CornerSplitShell.fieldWidth(shell: 664))
-        #expect(strip == CornerSplitShell.stripWidth(shell: 664))
+    /// The result board ends in a foot (Return, ⌘P, ⌘,), and the window reserves it.
+    @Test func theResultBoardReservesItsFoot() {
+        let bare = AppChatListMetrics.headerHeight + 3 * AppChatListMetrics.rowHeight
+            + 2 * AppChatListMetrics.verticalPadding
+        #expect(AppChatListMetrics.size(rows: 3).height == bare + AppChatListMetrics.footerHeight)
     }
 }

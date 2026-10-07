@@ -713,6 +713,8 @@ final class CornerDockController: NSObject {
                     sendConfirm: selection.pendingSend != nil) : nil,
             list: showsClipboardBoard
                 ? ClipboardBoardMetrics.size
+                : showsScopeBoard
+                ? AppScopeBoardMetrics.size(width: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
                     ?? ExtensionScopeMetrics.size)
@@ -908,25 +910,34 @@ final class CornerDockController: NSObject {
             && prompt.phase.showsInput
     }
 
-    /// The shell in two columns (Part B, owner 2026-10-07): the field under the results, the
-    /// pinned and running apps under the preview. See `CornerSplitShell`.
+    /// The app's card — what DoraX can do here, what it sees, what it may do — in the result
+    /// board, opened from the field's app chip (owner 2026-10-07: "inside the result sheet",
+    /// not a popover). Second only to the clipboard, which is asked for by name.
+    var showsScopeBoard: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && prompt.isShowingScopeCard
+            && !prompt.isGlobalScope
+            && (prompt.phase == .prompt || prompt.phase == .suggesting)
+    }
+
+    /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global
+    /// and in an app's Context Dock alike. See `CornerSplitShell`.
     var showsSplitShell: Bool {
         CornerSplitShell.splits(
             isVisible: chatPresentation.isVisible,
             isGeneral: chatPresentation.mode == .general,
             phase: prompt.phase,
-            isGlobalScope: prompt.isGlobalScope,
-            clipboardBoard: showsClipboardBoard,
-            resultList: showsAppChatList,
-            hasPreview: prompt.boardPreview != nil)
+            stripHasContent: splitWidths.strip > 0)
     }
 
-    /// The split bottom line's two widths, for the shell as wide as the field would be.
+    /// The split bottom line's two widths: the apps fitted to what they hold, the field the
+    /// rest of the shell — the whole of it when the apps' piece has nothing to show.
     var splitWidths: (field: CGFloat, strip: CGFloat) {
         CornerSplitShell.widths(
             shell: AppChatPromptMetrics.boardWidth(for: prompt),
-            isGlobalScope: prompt.isGlobalScope,
-            apps: CornerSplitStrip.apps(for: prompt).count)
+            apps: CornerSplitStrip.apps(for: prompt).count,
+            tools: CornerSplitStrip.toolCount(for: prompt))
     }
 
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
@@ -1307,6 +1318,12 @@ final class CornerDockController: NSObject {
                 filterEmpty: clipboardModel.query.isEmpty)
         {
             applyClipboardBoardKey(key)
+            return nil
+        }
+
+        // Esc puts the app's card away and leaves the field as it was.
+        if let panel, event.window === panel, showsScopeBoard, event.keyCode == 53 {
+            prompt.isShowingScopeCard = false
             return nil
         }
 
@@ -1695,6 +1712,10 @@ struct CornerDockSurface: View {
             if CornerDockController.shared.showsClipboardBoard {
                 // The clipboard, as Raycast lays it out: clips beside the chosen one.
                 ClipboardBoardCard(model: clipboardModel, prompt: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsScopeBoard {
+                // The app's card, in the board rather than hanging off the chip.
+                AppScopeBoard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves
