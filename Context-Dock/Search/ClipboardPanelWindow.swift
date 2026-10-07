@@ -125,7 +125,8 @@ final class ClipboardPanelController: NSObject {
     /// A clip went where it was going — pasted, or copied for later: the board is done,
     /// and so is a shell it raised.
     func finishBoard() {
-        let raised = boardRaisedShell
+        // Pinned (⌘P) is "stay": the shell outlives the paste even when the board raised it.
+        let raised = boardRaisedShell && !CornerDockController.shared.prompt.isPinned
         closeBoard(refocus: false)
         if raised {
             CornerDockController.shared.chatPresentation.dismiss()
@@ -609,6 +610,12 @@ final class ClipboardPanelModel: ObservableObject {
 
     func setKind(_ kind: ClipboardKindFilter) {
         kindFilter = kind
+        focusFirstVisible()
+    }
+
+    /// The footer's app pills: only clips copied from that app ("All" is the empty id).
+    func setBoardSource(bundleID: String) {
+        selectSource(bundleID: bundleID)
         focusFirstVisible()
     }
 

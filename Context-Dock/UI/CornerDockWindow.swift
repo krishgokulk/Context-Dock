@@ -1482,6 +1482,10 @@ final class CornerDockController: NSObject {
             controller.preview()
         case .cycleKind(let step):
             clipboardModel.cycleKind(step)
+        case .togglePin:
+            prompt.togglePin()
+        case .settings:
+            AppDelegate.shared?.showSettings()
         }
     }
 
@@ -1673,7 +1677,7 @@ struct CornerDockSurface: View {
         if chatPresentation.isVisible, chatPresentation.mode != .general {
             if CornerDockController.shared.showsClipboardBoard {
                 // The clipboard, as Raycast lays it out: clips beside the chosen one.
-                ClipboardBoardCard(model: clipboardModel)
+                ClipboardBoardCard(model: clipboardModel, prompt: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves

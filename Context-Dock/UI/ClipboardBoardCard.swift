@@ -175,6 +175,10 @@ enum ClipboardBoardKey: Equatable {
     case quickLook
     /// Tab / ⇧Tab: the type filter.
     case cycleKind(Int)
+    /// ⌘P: keep the shell open after a paste — the field's own pin, with the same key.
+    case togglePin
+    /// ⌘,: the app's settings.
+    case settings
 
     static func action(
         keyCode: UInt16, command: Bool, shift: Bool, option: Bool, control: Bool,
@@ -192,6 +196,8 @@ enum ClipboardBoardKey: Equatable {
             return filterEmpty && !shift ? .back : nil
         case 123: return filterEmpty && !command && !shift ? .back : nil  // ←
         case 16: return command ? .quickLook : nil  // Y
+        case 35: return command ? .togglePin : nil  // P
+        case 43: return command ? .settings : nil  // ,
         default: return nil
         }
     }
@@ -245,6 +251,8 @@ enum ClipboardBoardMetrics {
 
 struct ClipboardBoardCard: View {
     @ObservedObject var model: ClipboardPanelModel
+    /// The field the board stands over: its pin is the footer's ⌘P.
+    @ObservedObject var prompt: AppChatPromptModel
 
     private var size: CGSize { ClipboardBoardMetrics.size }
 
@@ -289,6 +297,8 @@ struct ClipboardBoardCard: View {
 
     private var header: some View {
         HStack(spacing: 8) {
+            // The clipboard's own coloured icon leads its title (owner 2026-10-07).
+            ClipboardBoardIcon(size: 20)
             Text("Clipboard History")
                 .font(.system(size: 12, weight: .semibold))
             Text("\(model.visibleEntries.count)")
@@ -438,23 +448,71 @@ struct ClipboardBoardCard: View {
 
     // MARK: Footer
 
+    /// The apps the clips came from on the left, as the old corner card had them; what the
+    /// keys do on the right.
     private var footer: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "doc.on.clipboard.fill")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: 20, height: 20)
-                .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 5))
-            Text("Clipboard History")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
+        HStack(spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(model.sources) { source in
+                        sourcePill(source)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             footerAction("Paste to \(ClipboardPanelController.shared.returnAppName)", keys: ["↩"])
-            Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 14)
+            divider
             footerAction("Copy", keys: ["⌘", "↩"], dimmed: true)
+            divider
+            footerButton(
+                prompt.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
+                help: prompt.isPinned ? "Unpin (⌘P)" : "Keep open after pasting (⌘P)",
+                tinted: prompt.isPinned
+            ) { prompt.togglePin() }
+            footerButton("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
+                AppDelegate.shared?.showSettings()
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: ClipboardBoardMetrics.footerHeight)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Color.white.opacity(0.12)).frame(width: 1, height: 14)
+    }
+
+    private func sourcePill(_ source: ClipboardPanelModel.SourceChoice) -> some View {
+        let selected = model.selectedSource.bundleID == source.bundleID
+        return Button {
+            model.setBoardSource(bundleID: source.bundleID)
+        } label: {
+            HStack(spacing: 5) {
+                if source.isAll {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 10, weight: .semibold))
+                } else if let url = NSWorkspace.shared.urlForApplication(
+                    withBundleIdentifier: source.bundleID)
+                {
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                        .resizable()
+                        .frame(width: 14, height: 14)
+                }
+                Text(source.name).lineLimit(1)
+                Text("\(source.count)").foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                selected ? Color.accentColor.opacity(0.22) : Color.primary.opacity(0.07),
+                in: Capsule())
+            .overlay(
+                Capsule().strokeBorder(
+                    selected ? Color.accentColor.opacity(0.7) : Color.primary.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
+        .help(source.name)
     }
 
     private func footerAction(_ title: String, keys: [String], dimmed: Bool = false) -> some View {
@@ -463,14 +521,52 @@ struct ClipboardBoardCard: View {
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(dimmed ? Color.secondary : Color.primary)
                 .lineLimit(1)
+                .fixedSize()
+            keycaps(keys)
+        }
+    }
+
+    private func footerButton(
+        _ symbol: String, keys: [String], help: String, tinted: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(tinted ? Color.accentColor : Color.secondary)
+                keycaps(keys)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
+    }
+
+    private func keycaps(_ keys: [String]) -> some View {
+        HStack(spacing: 3) {
             ForEach(keys, id: \.self) { key in
                 Text(key)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: 10.5, weight: .semibold))
                     .foregroundStyle(.secondary)
-                    .frame(minWidth: 20, minHeight: 20)
+                    .frame(minWidth: 18, minHeight: 18)
                     .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
             }
         }
+    }
+}
+
+/// The clipboard's coloured icon: the header's lead, as Raycast marks its command.
+struct ClipboardBoardIcon: View {
+    var size: CGFloat = 20
+
+    var body: some View {
+        Image(systemName: "doc.on.clipboard.fill")
+            .font(.system(size: size * 0.55, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: size * 0.25))
     }
 }
 

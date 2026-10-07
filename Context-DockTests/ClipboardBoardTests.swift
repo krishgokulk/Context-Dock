@@ -139,6 +139,26 @@ struct ClipboardBoardTests {
         #expect(key(48, shift: true) == .cycleKind(-1))
         #expect(key(51, command: true) == .delete)
         #expect(key(16, command: true) == .quickLook)
+        #expect(key(35, command: true) == .togglePin)
+        #expect(key(43, command: true) == .settings)
+        // Without ⌘ they are letters for the filter.
+        #expect(key(35) == nil)
+        #expect(key(43) == nil)
+    }
+
+    /// The footer's app pills narrow the list to one app and choose its newest clip.
+    @Test func anAppPillNarrowsTheList() {
+        let board = model()
+        board.openBoard()
+        board.ingest(entry("from notes", app: "Notes"))
+        board.ingest(entry("from mail", app: "Mail"))
+
+        board.setBoardSource(bundleID: "com.example.notes")
+
+        #expect(board.visibleEntries.map(\.text) == ["from notes"])
+        #expect(board.focusedEntryIndex == 0)
+        board.setBoardSource(bundleID: "")
+        #expect(board.visibleEntries.count == 2)
     }
 
     /// With something typed, ← and Backspace belong to the filter's text.
