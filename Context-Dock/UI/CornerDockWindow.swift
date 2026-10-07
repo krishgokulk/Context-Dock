@@ -937,6 +937,7 @@ final class CornerDockController: NSObject {
         CornerSplitShell.widths(
             shell: AppChatPromptMetrics.boardWidth(for: prompt),
             apps: CornerSplitStrip.apps(for: prompt).count,
+            pins: CornerSplitStrip.pins(for: prompt).count,
             tools: CornerSplitStrip.toolCount(for: prompt))
     }
 

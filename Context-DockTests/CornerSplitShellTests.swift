@@ -69,6 +69,21 @@ struct CornerSplitShellTests {
             < CornerSplitStrip.contentWidth(apps: 1, tools: 1))
     }
 
+    /// Pinned extensions follow the apps after a hairline (owner 2026-10-07): each one widens
+    /// the piece, and the first one also brings its hairline.
+    @Test func pinnedExtensionsFollowTheApps() {
+        let apps = CornerSplitStrip.contentWidth(apps: 3, tools: 0)
+        let one = CornerSplitStrip.contentWidth(apps: 3, pins: 1, tools: 0)
+        let two = CornerSplitStrip.contentWidth(apps: 3, pins: 2, tools: 0)
+        let hairline = CornerSplitStrip.spacing + 1 + CornerSplitStrip.spacing
+        #expect(one == apps + CornerSplitStrip.iconSize + hairline)
+        #expect(two == one + CornerSplitStrip.iconSize + CornerSplitStrip.spacing)
+        // Pins alone still make a piece beside the field.
+        let (field, strip) = CornerSplitShell.widths(shell: 664, apps: 0, pins: 1, tools: 0)
+        #expect(strip > 0)
+        #expect(field + CornerSplitShell.gap + strip == 664)
+    }
+
     /// A copy shows the clipboard beside the field for three seconds, not seven (owner
     /// 2026-10-07: "only when user copied something, for 3 sec").
     @Test func theCopyIconDwellsThreeSeconds() {

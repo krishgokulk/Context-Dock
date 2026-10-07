@@ -613,7 +613,11 @@ struct AppChatPromptPill: View {
 
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
-        let stripShown = [.dock, .prompt, .suggesting].contains(model.phase)
+        // Split, the apps and pins stand beside the field in their own piece (Part B): the
+        // strip under the field would only show through it — a pinned extension sat in the
+        // middle of the text (owner 2026-10-07).
+        let stripShown = model.phase == .dock
+            || ([.prompt, .suggesting].contains(model.phase) && !splitsShell)
         return ZStack(alignment: globalStackAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
