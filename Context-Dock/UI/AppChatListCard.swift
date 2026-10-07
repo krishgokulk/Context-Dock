@@ -29,11 +29,15 @@ enum AppChatListMetrics {
     /// becoming a terminal — a real PTY flow is a different surface, and this is not it.
     static let outputHeight: CGFloat = 150
 
+    /// The board's foot: what Return does, ⌘P and ⌘, (owner 2026-10-07), as the clipboard's
+    /// board ends.
+    static var footerHeight: CGFloat { BoardFooter.height }
+
     static func size(rows: Int, output: Bool = false, width: CGFloat = width) -> CGSize {
         CGSize(
             width: width,
             height: headerHeight + CGFloat(rows) * rowHeight
-                + (output ? outputHeight : 0) + verticalPadding * 2)
+                + (output ? outputHeight : 0) + verticalPadding * 2 + footerHeight)
     }
 }
 
@@ -97,7 +101,9 @@ struct AppChatListCard: View {
     var body: some View {
         let preview = model.boardPreview
         // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
-        // the list on the left, what the highlighted row is on the right.
+        // the list on the left, what the highlighted row is on the right — and one foot
+        // under both.
+        VStack(spacing: 0) {
         HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
             Text(headerText)
@@ -164,13 +170,19 @@ struct AppChatListCard: View {
             CornerBoardPreviewPanel(preview: preview)
                 .frame(
                     width: CornerBoardLayout.panelWidth(board: size.width),
-                    height: size.height - 2 * AppChatListMetrics.verticalPadding,
+                    height: size.height - 2 * AppChatListMetrics.verticalPadding
+                        - AppChatListMetrics.footerHeight,
                     alignment: .topLeading)
                 .transition(.opacity)
         }
         }
         .animation(.smooth(duration: 0.18), value: preview)
         .padding(.vertical, AppChatListMetrics.verticalPadding)
+        .frame(
+            width: size.width, height: size.height - AppChatListMetrics.footerHeight,
+            alignment: .topLeading)
+        footer
+        }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
@@ -185,6 +197,31 @@ struct AppChatListCard: View {
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
         .onHover { _ in model.touch() }
+    }
+
+    /// What Return does to the highlighted row, then ⌘P and ⌘, — the clipboard board's foot.
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Spacer(minLength: 0)
+            BoardFooter.action(returnTitle, keys: ["↩"])
+            BoardFooter.divider
+            BoardFooter.pinAndSettings(prompt: model)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: AppChatListMetrics.footerHeight)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+        }
+    }
+
+    /// A command runs; anything else opens. Return with nothing arrowed to takes the top row.
+    private var returnTitle: String {
+        guard let row = model.focusedRow ?? model.rows.first else { return "Open" }
+        switch row {
+        case .command, .action: return "Run"
+        case .cliSuggestion: return "Complete"
+        default: return "Open"
+        }
     }
 
     /// Names what the list is: what the app can do at rest, what matched once typing starts.

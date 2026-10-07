@@ -33,6 +33,9 @@ struct CornerBoardPreviewPanel: View {
                     SystemCommandPreview(id: id, name: name)
                 case .web(let url, let title, let domain, let browserName):
                     WebPagePreview(url: url, title: title, domain: domain, browserName: browserName)
+                case .windowLayout(let command, let title, let appName, let bundleID):
+                    WindowLayoutPreview(
+                        command: command, title: title, appName: appName, bundleID: bundleID)
                 }
             }
             .padding(.horizontal, 14)
@@ -564,5 +567,99 @@ private struct WebPageThumbnail: NSViewRepresentable {
             coordinator.pending?.cancel()
             view.stopLoading()
         }
+    }
+}
+
+// MARK: - Window layout
+
+/// A native window layout: the screen at the card's width, with the app's window — and, for a
+/// two-app arrangement, the other app's — drawn where the layout will put them. The regions
+/// are the Dock's own (`WindowManagementService.Command.layoutRegions`), the same ones its
+/// row icon draws.
+private struct WindowLayoutPreview: View {
+    let command: String
+    let title: String
+    let appName: String
+    let bundleID: String
+
+    private var layout: WindowManagementService.Command? {
+        WindowManagementService.Command(rawValue: command)
+    }
+
+    private var appIcon: NSImage? {
+        guard !bundleID.isEmpty,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    /// Another app on this desktop, for the second tile of a split arrangement.
+    private var otherAppIcon: NSImage? {
+        NSWorkspace.shared.runningApplications.first {
+            $0.activationPolicy == .regular && !$0.isTerminated
+                && $0.bundleIdentifier != bundleID
+                && $0.bundleIdentifier != Bundle.main.bundleIdentifier
+        }?.icon
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PanelHeader(
+                icon: appIcon, title: title,
+                subtitle: appName.isEmpty ? "Window layout" : "\(appName) window layout")
+            screen
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+            PanelDivider()
+            PanelRow(symbol: "return", value: "Arrange it", trailing: "↩")
+        }
+    }
+
+    /// The screen, with each region a window tile.
+    private var screen: some View {
+        let regions = layout?.layoutRegions ?? []
+        let isQuarters = layout == .quarters
+        return GeometryReader { proxy in
+            let size = proxy.size
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+                // The menu bar, so it reads as a screen at a glance.
+                Rectangle()
+                    .fill(Color.primary.opacity(0.12))
+                    .frame(width: size.width, height: 6)
+                    .clipShape(
+                        UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
+                ForEach(Array(regions.enumerated()), id: \.offset) { index, region in
+                    let inset: CGFloat = 4
+                    let top: CGFloat = 8
+                    let rect = CGRect(
+                        x: inset + region.minX * (size.width - inset * 2),
+                        y: top + region.minY * (size.height - top - inset),
+                        width: region.width * (size.width - inset * 2),
+                        height: region.height * (size.height - top - inset)
+                    ).insetBy(dx: 2, dy: 2)
+                    let icon = isQuarters ? nil : (index == 0 ? appIcon : otherAppIcon)
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(Color.accentColor.opacity(index == 0 ? 0.85 : 0.45))
+                        .overlay {
+                            if let icon {
+                                Image(nsImage: icon)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .frame(
+                                        width: min(rect.width, rect.height) * 0.45,
+                                        height: min(rect.width, rect.height) * 0.45)
+                            }
+                        }
+                        .frame(width: rect.width, height: rect.height)
+                        .offset(x: rect.minX, y: rect.minY)
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }

@@ -713,6 +713,8 @@ final class CornerDockController: NSObject {
                     sendConfirm: selection.pendingSend != nil) : nil,
             list: showsClipboardBoard
                 ? ClipboardBoardMetrics.size
+                : showsScopeBoard
+                ? AppScopeBoardMetrics.size(width: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
                     ?? ExtensionScopeMetrics.size)
@@ -906,6 +908,36 @@ final class CornerDockController: NSObject {
             && chatPresentation.mode != .general
             && clipboardModel.isBoardOpen
             && prompt.phase.showsInput
+    }
+
+    /// The app's card — what DoraX can do here, what it sees, what it may do — in the result
+    /// board, opened from the field's app chip (owner 2026-10-07: "inside the result sheet",
+    /// not a popover). Second only to the clipboard, which is asked for by name.
+    var showsScopeBoard: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && prompt.isShowingScopeCard
+            && !prompt.isGlobalScope
+            && (prompt.phase == .prompt || prompt.phase == .suggesting)
+    }
+
+    /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global
+    /// and in an app's Context Dock alike. See `CornerSplitShell`.
+    var showsSplitShell: Bool {
+        CornerSplitShell.splits(
+            isVisible: chatPresentation.isVisible,
+            isGeneral: chatPresentation.mode == .general,
+            phase: prompt.phase,
+            stripHasContent: splitWidths.strip > 0)
+    }
+
+    /// The split bottom line's two widths: the apps fitted to what they hold, the field the
+    /// rest of the shell — the whole of it when the apps' piece has nothing to show.
+    var splitWidths: (field: CGFloat, strip: CGFloat) {
+        CornerSplitShell.widths(
+            shell: AppChatPromptMetrics.boardWidth(for: prompt),
+            apps: CornerSplitStrip.apps(for: prompt).count,
+            tools: CornerSplitStrip.toolCount(for: prompt))
     }
 
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
@@ -1289,6 +1321,12 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // Esc puts the app's card away and leaves the field as it was.
+        if let panel, event.window === panel, showsScopeBoard, event.keyCode == 53 {
+            prompt.isShowingScopeCard = false
+            return nil
+        }
+
         // ⌘R reads the scoped app's live menus again (C12).
         if DockKeyRules.isMenuRereadKey(
             keyCode: event.keyCode, command: event.modifierFlags.contains(.command),
@@ -1470,6 +1508,10 @@ final class CornerDockController: NSObject {
             controller.preview()
         case .cycleKind(let step):
             clipboardModel.cycleKind(step)
+        case .togglePin:
+            prompt.togglePin()
+        case .settings:
+            AppDelegate.shared?.showSettings()
         }
     }
 
@@ -1488,6 +1530,14 @@ final class CornerDockController: NSObject {
             guard prompt.inputFrame.insetBy(dx: -8, dy: -10).contains(point) else {
                 return event
             }
+        }
+        // Split, the text field's own frame runs on under the apps beside it (its layout
+        // keeps one width); the apps scroll sideways and never switch the scope (owner
+        // 2026-10-07). Only the field's visible glass counts.
+        if showsSplitShell,
+            event.locationInWindow.x > promptRect.minX + splitWidths.field
+        {
+            return event
         }
 
         if event.phase == .began {
@@ -1661,7 +1711,11 @@ struct CornerDockSurface: View {
         if chatPresentation.isVisible, chatPresentation.mode != .general {
             if CornerDockController.shared.showsClipboardBoard {
                 // The clipboard, as Raycast lays it out: clips beside the chosen one.
-                ClipboardBoardCard(model: clipboardModel)
+                ClipboardBoardCard(model: clipboardModel, prompt: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsScopeBoard {
+                // The app's card, in the board rather than hanging off the chip.
+                AppScopeBoard(model: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves
@@ -1711,7 +1765,25 @@ struct CornerDockSurface: View {
                         .transition(.opacity)
                 }
             } else {
-                AppChatPromptPill(model: prompt).transition(.opacity)
+                // One structure in both layouts, so the field keeps its identity — and its
+                // caret — when the shell splits: only the apps beside it come and go. Field
+                // under the results, apps under the preview, one bottom line (Part B).
+                let split = CornerDockController.shared.showsSplitShell
+                let shell = AppChatPromptMetrics.boardWidth(for: prompt)
+                HStack(alignment: .bottom, spacing: CornerSplitShell.gap) {
+                    AppChatPromptPill(model: prompt)
+                    if split {
+                        // Out of the dock's trailing end as the field opens, back into it as
+                        // the field folds.
+                        CornerSplitStrip(
+                            model: prompt, width: CornerDockController.shared.splitWidths.strip)
+                            .transition(
+                                .opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
+                    }
+                }
+                .frame(width: split ? shell : nil, alignment: .leading)
+                .animation(.smooth(duration: 0.22), value: split)
+                .transition(.opacity)
             }
         }
     }
