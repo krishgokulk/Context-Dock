@@ -124,4 +124,30 @@ struct CornerSplitShellTests {
             + 2 * AppChatListMetrics.verticalPadding
         #expect(AppChatListMetrics.size(rows: 3).height == bare + AppChatListMetrics.footerHeight)
     }
+
+    /// Over the apps, Global's empty field folds to its search icon and the apps take the
+    /// rest of the shell (owner 2026-10-07). Never with text typed, in a scope, or with the
+    /// sheet open.
+    @Test func hoveringTheAppsFoldsGlobalsEmptyField() {
+        #expect(CornerSplitShell.collapsesField(
+            appsHovered: true, isGlobalScope: true, query: "", phase: .prompt))
+        #expect(!CornerSplitShell.collapsesField(
+            appsHovered: false, isGlobalScope: true, query: "", phase: .prompt))
+        #expect(!CornerSplitShell.collapsesField(
+            appsHovered: true, isGlobalScope: true, query: "sa", phase: .prompt))
+        #expect(!CornerSplitShell.collapsesField(
+            appsHovered: true, isGlobalScope: false, query: "", phase: .prompt))
+        #expect(!CornerSplitShell.collapsesField(
+            appsHovered: true, isGlobalScope: true, query: "", phase: .suggesting))
+
+        let (field, strip) = CornerSplitShell.widths(shell: 664, apps: 4, tools: 1, collapsed: true)
+        #expect(field == CornerSplitShell.collapsedFieldWidth)
+        #expect(field + CornerSplitShell.gap + strip == 664)
+    }
+
+    /// The two pieces end farther apart than the glass's merge distance, so they separate
+    /// like a droplet instead of staying joined by a bridge.
+    @Test func thePiecesPinchApart() {
+        #expect(CornerSplitShell.gap > CornerSplitShell.dropletSpacing)
+    }
 }

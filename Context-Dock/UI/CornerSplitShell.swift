@@ -22,8 +22,29 @@ import AppKit
 import SwiftUI
 
 enum CornerSplitShell {
-    /// Between the field and the apps, as between every card in the shell.
-    static var gap: CGFloat { CornerDockLayout.gap }
+    /// Between the field and the apps once they have separated. Wider than
+    /// `dropletSpacing`, so the two pieces pinch apart rather than staying joined.
+    static let gap: CGFloat = 14
+
+    /// The liquid-glass container's merge distance: closer than this the field and the apps
+    /// draw as one shape. The apps piece starts against the field and moves out past it,
+    /// which is the water-droplet split (owner 2026-10-07: "perfect water droplet split").
+    static let dropletSpacing: CGFloat = 10
+
+    /// Global's field folded to its search icon while the pointer is over the apps: a circle
+    /// as tall as the field.
+    static var collapsedFieldWidth: CGFloat { AppChatPromptMetrics.fieldHeight(global: true) }
+
+    /// Pure: whether the field folds to its icon and the apps take the shell (owner
+    /// 2026-10-07: "when user hovers over running apps input collapses as a search floating
+    /// icon, running apps fit the dock size"). Only Global's empty field: a typed question
+    /// or a scope's chip is never folded out from under the user.
+    static func collapsesField(
+        appsHovered: Bool, isGlobalScope: Bool, query: String, phase: AppChatPromptPhase
+    ) -> Bool {
+        appsHovered && isGlobalScope && phase == .prompt
+            && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// Whether the shell splits now: while the field is open (typed into or about to be) in
     /// Global or an app's scope, and only when the apps' piece has something to hold — an
@@ -38,10 +59,13 @@ enum CornerSplitShell {
 
     /// The bottom line's two widths. The apps fit their icons and tools; the field takes what
     /// they and the gap leave. With nothing to show, the field is the whole shell.
-    static func widths(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int)
-        -> (field: CGFloat, strip: CGFloat)
-    {
+    static func widths(
+        shell: CGFloat, apps: Int, pins: Int = 0, tools: Int, collapsed: Bool = false
+    ) -> (field: CGFloat, strip: CGFloat) {
         guard apps + pins + tools > 0 else { return (shell, 0) }
+        // Folded: the field is its icon and the apps take the rest of the shell, scrolling
+        // past what fits.
+        if collapsed { return (collapsedFieldWidth, shell - collapsedFieldWidth - gap) }
         let strip = stripWidth(shell: shell, apps: apps, pins: pins, tools: tools)
         return (shell - strip - gap, strip)
     }
@@ -179,6 +203,12 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
+        // Over the apps, Global's field folds to its icon and they take the dock.
+        .onHover { inside in
+            guard !inset else { return }
+            model.splitAppsHovered = inside
+        }
+        .onDisappear { if !inset { model.splitAppsHovered = false } }
     }
 
     private var hairline: some View {

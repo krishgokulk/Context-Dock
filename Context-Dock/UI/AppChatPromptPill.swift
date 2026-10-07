@@ -570,7 +570,7 @@ struct AppChatPromptPill: View {
         // the dock's included, where it is invisible — and the morph still moves no inner
         // width: the glass shrinks from the dock's width onto a stack that is already that wide.
         if model.phase != .chat {
-            return CornerDockController.shared.splitWidths.field
+            return CornerDockController.shared.splitFieldLayoutWidth
         }
         // The shell's one width (#189), in every phase — the strip's, the field's and the
         // conversation's alike.
@@ -769,7 +769,8 @@ struct AppChatPromptPill: View {
     /// so its stack is laid out at the field's own width and its trailing controls stay in
     /// the glass. The width lands at once (`.animation(nil, …)` below), never over frames.
     private var legacyInputWidth: CGFloat {
-        model.phase == .chat ? size(for: .prompt).width : CornerDockController.shared.splitWidths.field
+        model.phase == .chat
+            ? size(for: .prompt).width : CornerDockController.shared.splitFieldLayoutWidth
     }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything

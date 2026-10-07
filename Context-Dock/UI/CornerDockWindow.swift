@@ -941,11 +941,23 @@ final class CornerDockController: NSObject {
     /// The split bottom line's two widths: the apps fitted to what they hold, the field the
     /// rest of the shell — the whole of it when the apps' piece has nothing to show.
     var splitWidths: (field: CGFloat, strip: CGFloat) {
+        splitWidths(
+            collapsed: CornerSplitShell.collapsesField(
+                appsHovered: prompt.splitAppsHovered, isGlobalScope: prompt.isGlobalScope,
+                query: prompt.query, phase: prompt.phase))
+    }
+
+    /// The width the field's text stack is laid out at: the open field's, folded or not, so
+    /// folding to the icon moves only the glass and never re-lays out the focused field.
+    var splitFieldLayoutWidth: CGFloat { splitWidths(collapsed: false).field }
+
+    private func splitWidths(collapsed: Bool) -> (field: CGFloat, strip: CGFloat) {
         CornerSplitShell.widths(
             shell: AppChatPromptMetrics.boardWidth(for: prompt),
             apps: CornerSplitStrip.apps(for: prompt).count,
             pins: CornerSplitStrip.pins(for: prompt).count,
-            tools: CornerSplitStrip.toolCount(for: prompt))
+            tools: CornerSplitStrip.toolCount(for: prompt),
+            collapsed: collapsed)
     }
 
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
@@ -1017,6 +1029,45 @@ final class CornerDockController: NSObject {
         // uses the forceful, unconditional form for exactly this reason.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive { finishArmingWhenActive() }
+    }
+
+    private var armWhenActiveObserver: NSObjectProtocol?
+
+    /// The activation was deferred. With Terminal in front (its Secure Keyboard Entry most
+    /// of all) macOS can hold an activation asked for from a hover rather than a click, and
+    /// the panel came up looking open with no caret and no keys (owner 2026-10-07: "while
+    /// Terminal is frontmost our input field isn't working"). Ask again a moment later, and
+    /// make the panel key the moment DoraX does become active.
+    private func finishArmingWhenActive() {
+        if armWhenActiveObserver == nil {
+            armWhenActiveObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let observer = self.armWhenActiveObserver {
+                        NotificationCenter.default.removeObserver(observer)
+                        self.armWhenActiveObserver = nil
+                    }
+                    guard self.keyboardState.isArmed || self.prompt.phase.showsInput else { return }
+                    self.panel?.makeKeyAndOrderFront(nil)
+                    self.publishKeyboardOwner()
+                    // The field already owned the keys on paper; asking again puts the caret
+                    // in it now that the window really is key.
+                    if self.keyboardState.owner == .chat { self.keyboardState.composerInteracted() }
+                }
+            }
+        }
+        for delay in [0.12, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !NSApp.isActive, let panel = self.panel,
+                    panel.isVisible, !panel.styleMask.contains(.nonactivatingPanel)
+                else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     /// Recompute who should hold the keyboard and tell every board. Called whenever one of
@@ -1778,19 +1829,25 @@ struct CornerDockSurface: View {
                 // under the results, apps under the preview, one bottom line (Part B).
                 let split = CornerDockController.shared.showsSplitShell
                 let shell = AppChatPromptMetrics.boardWidth(for: prompt)
-                HStack(alignment: .bottom, spacing: CornerSplitShell.gap) {
-                    AppChatPromptPill(model: prompt)
-                    if split {
-                        // Out of the dock's trailing end as the field opens, back into it as
-                        // the field folds.
-                        CornerSplitStrip(
-                            model: prompt, width: CornerDockController.shared.splitWidths.strip)
-                            .transition(
-                                .opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
+                // One liquid-glass container: the apps bud off the field's end and move out
+                // past the merge distance, so the glass pinches in two like a water droplet
+                // rather than a second capsule fading in beside the first.
+                GlassEffectContainer(spacing: CornerSplitShell.dropletSpacing) {
+                    HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 0) {
+                        AppChatPromptPill(model: prompt)
+                        if split {
+                            CornerSplitStrip(
+                                model: prompt, width: CornerDockController.shared.splitWidths.strip)
+                                .transition(
+                                    .opacity.combined(with: .scale(scale: 0.4, anchor: .leading)))
+                        }
                     }
+                    .frame(width: split ? shell : nil, alignment: .leading)
                 }
-                .frame(width: split ? shell : nil, alignment: .leading)
-                .animation(.smooth(duration: 0.22), value: split)
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: split)
+                .animation(
+                    .spring(response: 0.38, dampingFraction: 0.85),
+                    value: CornerDockController.shared.splitWidths.strip)
                 .transition(.opacity)
             }
         }
