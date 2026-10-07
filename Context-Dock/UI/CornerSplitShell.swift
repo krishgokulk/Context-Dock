@@ -238,14 +238,18 @@ struct CornerSplitStrip: View {
     }
 
     /// What a click on the resting strip's icon does, minus the hover previews: an app bar's
-    /// pin or tab runs, a pinned app's pin runs, a running app scopes the field into it,
-    /// anything else launches.
+    /// pin or tab runs, a pinned app's pin runs, a running app in Global is minimised or
+    /// brought forward (`DockAppClick`), anything else launches.
     private func open(_ slot: DockAppSlot) {
         // An app's bar (its pins and tabs) opens them the way the bar inside the field did.
         if model.showsTabBar, let icon = slot.running {
             model.openBarIcon(icon)
         } else if let pin = model.appPin(forIconID: slot.bundleID) {
             model.openAppPin(pin)
+        } else if model.isGlobalScope, slot.isRunning {
+            // Global's running apps are the window manager's (owner 2026-10-07): the app in
+            // front has its front window minimised, any other comes forward.
+            DockAppClick.click(bundleID: slot.bundleID, name: slot.title)
         } else if let icon = slot.running {
             model.openGlobalMatchIcon(icon)
         } else if let url = NSWorkspace.shared.urlForApplication(

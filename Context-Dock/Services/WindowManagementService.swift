@@ -680,6 +680,46 @@ final class WindowManagementService {
         return apply()
     }
 
+    // MARK: - A running app's dock icon (owner 2026-10-07)
+
+    /// The app's standard windows, as the Dock counts them: those on screen and those
+    /// minimised. Sheets, panels and palettes are not windows the user thinks of as the app's.
+    func standardWindowCounts(pid: pid_t) -> (visible: Int, minimized: Int) {
+        var visible = 0
+        var minimized = 0
+        for window in windows(pid: pid) where isStandardWindow(window) {
+            if isMinimized(window) { minimized += 1 } else { visible += 1 }
+        }
+        return (visible, minimized)
+    }
+
+    /// Minimise the app's front window — the one it has focus in — and only that one, as the
+    /// Dock's click on the frontmost app's icon does in DoraX. Its other windows stay put.
+    @discardableResult
+    func minimizeFrontWindow(pid: pid_t) -> Bool {
+        let candidates = [focusedWindow(pid: pid)].compactMap { $0 } + windows(pid: pid)
+        guard let window = candidates.first(where: { isStandardWindow($0) && !isMinimized($0) })
+        else { return false }
+        return AXUIElementSetAttributeValue(
+            window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
+    }
+
+    private func isStandardWindow(_ window: AXUIElement) -> Bool {
+        if let role = stringAttribute(kAXRoleAttribute, of: window), role != kAXWindowRole {
+            return false
+        }
+        if let subrole = stringAttribute(kAXSubroleAttribute, of: window) {
+            return subrole == kAXStandardWindowSubrole
+        }
+        return true
+    }
+
+    private func isMinimized(_ window: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &value)
+            == .success && (value as? Bool) == true
+    }
+
     private func windows(pid: pid_t) -> [AXUIElement] {
         let app = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?

@@ -413,7 +413,12 @@ struct CornerDockStrip: View {
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
             // A tab or an app's pin has no app window to preview.
             guard !model.isTabIcon(slot.bundleID), !model.isAppPinIcon(slot.bundleID) else { return }
-            model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
+            // Its windows only when there is more than one to choose between (owner
+            // 2026-10-07): one window is what the click already brings back.
+            let shows = inside
+                && DockAppClick.showsWindowPreview(
+                    windowCount: DockAppClick.windowCount(bundleID: slot.bundleID))
+            model.hoveredStripTarget = shows ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
             // One of the app's pins, big or in the pill: it runs, as its row would.
@@ -640,7 +645,9 @@ struct CornerDockStrip: View {
                 model.scopeIntoApp(name: slot.title, bundleID: bundleID)
             })
         } else {
-            items.append(.init(title: "Open \(slot.title)") { openApp(slot) })
+            items.append(.init(title: "Open \(slot.title)") {
+                AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+            })
         }
         items.append(.separator)
         if let pin = slot.pin {
@@ -749,10 +756,12 @@ struct CornerDockStrip: View {
         condensing = false
     }
 
-    /// Clicking an app: bring it forward if it is up, launch it if it is not. A pinned app
-    /// that has been quit is still a place to go, which is what pinning it was for.
+    /// Clicking an app: launch it if it is not running. A running one is the window manager's
+    /// handle on it (`DockAppClick`): in front, its front window is minimised; otherwise it
+    /// comes forward with its minimised windows. A pinned app that has been quit is still a
+    /// place to go, which is what pinning it was for.
     private func openApp(_ slot: DockAppSlot) {
-        AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+        DockAppClick.click(bundleID: slot.bundleID, name: slot.title)
     }
 
     private func open(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
