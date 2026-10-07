@@ -60,11 +60,19 @@ final class ClipboardPanelController: NSObject {
     // MARK: - Entry points
 
     /// A copy landed anywhere on the system. Ambient: orders in without activating us.
+    ///
+    /// Not while a conversation is open in the corner. The pill and the chat share that
+    /// corner, so every copy — and every ⌘⇧⌃4 screenshot is one — put a pill on the edge
+    /// of the chat the user was typing in, and the pointer already resting there opened
+    /// it straight into the full history card on top of the conversation. The clip is
+    /// still recorded, so the dock's clipboard icon and the hotkey find it; only the
+    /// announcement waits.
     func didCopy(_ entry: LauncherView.ClipboardEntry) {
         guard !isSuppressed else { return }
         ensurePanel()
         model.reload()
         model.ingest(entry)
+        guard !CornerChatPresentation.shared.isShowingConversation else { return }
         model.didCopy()
     }
 

@@ -22,6 +22,9 @@ enum AppChatPromptMetrics {
     /// Attached files, as chips with a thumbnail — taller than the old bare capsules, and
     /// shared with General so one attachment is the same object in both modes.
     static let attachmentRowHeight: CGFloat = 46
+    /// Files the user is about to send, as tiles the way the chat apps show them: the
+    /// picture itself for an image, a card for anything else. 60pt tile + 8pt above and below.
+    static let attachmentTileRowHeight: CGFloat = 76
     /// The conversation, with nothing in it yet: header, one exchange's worth of room, and
     /// the composer.
     static let chatHeight: CGFloat = 340
@@ -352,7 +355,7 @@ enum AppChatPromptMetrics {
     {
         var result: CGFloat = 0
         if hasApproval { result += ApprovalCard.reservedHeight(for: .dock) + 1 }
-        if attachments > 0 { result += attachmentRowHeight }
+        if attachments > 0 { result += attachmentTileRowHeight }
         if hasSelectionRow { result += attachmentRowHeight }
         return result
     }
@@ -1626,14 +1629,14 @@ struct AppChatPromptPill: View {
 
     private var attachmentRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(model.attachments, id: \.self) { url in
-                    ChatAttachmentChip(url: url) { model.detach(url) }
+                    ChatAttachmentChip(url: url, style: .composerTile) { model.detach(url) }
                 }
             }
             .padding(.horizontal, 14)
         }
-        .frame(height: AppChatPromptMetrics.attachmentRowHeight)
+        .frame(height: AppChatPromptMetrics.attachmentTileRowHeight)
     }
 
     /// What is selected, as a chip — a real file reuses the exact same attachment chip an

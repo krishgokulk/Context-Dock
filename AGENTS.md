@@ -112,6 +112,12 @@ updates a PR must say, in this order: the PR link; what the owner should try by 
 merging (a short checklist); and the next task from `docs/master/00-NOW.md` with its paste block.
 Never end on an open question the plan already answers — if `00-NOW.md` names the next task, say it.
 
+**Every code fix ends with "what to check", unasked** (owner 2026-10-06: "after code fix always say
+what i need to check"). Not only at the end of a task: any message reporting a code change — a fix,
+a rebase, a CI repair, a review follow-up — closes with a short checklist of what the owner should
+try in the running app to confirm it, one line per change: where to go, what to do, what they should
+see. If nothing in the change is visible by hand (a test-only or docs-only change), say so in one line.
+
 **UI work is checked by eye, not only by tests.** Any change a user can see is not done until the
 agent has launched the app (`./scripts/dev-run.sh`), taken screenshots of the changed surface **and of
 its reference** — the Dock for Corner parity, Global Context for other Corner scopes — and compared
