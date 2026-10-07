@@ -1634,8 +1634,9 @@ struct AppChatPromptPill: View {
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
-            // The app's settings card lives in its chip (owner 2026-09-28, layout C).
-            Image(systemName: "gearshape")
+            // The app's settings card lives in its chip (owner 2026-09-28, layout C). Open, the
+            // gear turns into the arrow that puts it away (owner 2026-10-07).
+            Image(systemName: chipIsOpen ? "chevron.down" : "gearshape")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
         }

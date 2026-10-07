@@ -84,6 +84,15 @@ struct CornerSplitShellTests {
         #expect(field + CornerSplitShell.gap + strip == 664)
     }
 
+    /// The app's card is compact: the shell's left half, over the chip that opened it.
+    @Test func theAppCardTakesTheLeftHalf() {
+        for shell: CGFloat in [600, 664] {
+            let card = AppScopeBoardMetrics.size(shell: shell)
+            #expect(card.width == (shell * CornerBoardLayout.listFraction).rounded())
+            #expect(card.height == AppScopeBoardMetrics.height)
+        }
+    }
+
     /// A copy shows the clipboard beside the field for three seconds, not seven (owner
     /// 2026-10-07: "only when user copied something, for 3 sec").
     @Test func theCopyIconDwellsThreeSeconds() {

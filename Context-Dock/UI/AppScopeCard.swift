@@ -15,11 +15,16 @@ import SwiftUI
 // MARK: - In the board
 
 enum AppScopeBoardMetrics {
-    static let height: CGFloat = 380
+    static let height: CGFloat = 360
 
-    /// The result board's width, at a fixed height: the corner draws this frame and
-    /// hit-tests the same number.
-    static func size(width: CGFloat) -> CGSize { CGSize(width: width, height: height) }
+    /// A compact card over the left half of the shell, above the chip that opened it (owner
+    /// 2026-10-07: "not full screen, a small card on the left half"). Pure: the corner draws
+    /// this frame and hit-tests the same number.
+    static func size(shell: CGFloat) -> CGSize {
+        CGSize(
+            width: CornerBoardLayout.listWidth(board: shell, preview: .file(URL(fileURLWithPath: "/"))),
+            height: height)
+    }
 }
 
 /// The app's card in the result board over the field, in the board's own glass — where the
@@ -28,7 +33,7 @@ struct AppScopeBoard: View {
     @ObservedObject var model: AppChatPromptModel
 
     private var size: CGSize {
-        AppScopeBoardMetrics.size(width: AppChatPromptMetrics.boardWidth(for: model))
+        AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: model))
     }
 
     private var appIcon: NSImage? {

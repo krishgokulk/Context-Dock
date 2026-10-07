@@ -714,7 +714,7 @@ final class CornerDockController: NSObject {
             list: showsClipboardBoard
                 ? ClipboardBoardMetrics.size
                 : showsScopeBoard
-                ? AppScopeBoardMetrics.size(width: AppChatPromptMetrics.boardWidth(for: prompt))
+                ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
                     ?? ExtensionScopeMetrics.size)
@@ -821,7 +821,8 @@ final class CornerDockController: NSObject {
     /// this is how they stay that way. Zero for every other board, since nothing else asks
     /// for an anchor offset.
     var hoverCardDrawOffset: CGFloat {
-        guard showsWindowRow || showsPinPreview || showsPluginCard else { return 0 }
+        guard showsWindowRow || showsPinPreview || showsPluginCard || showsScopeBoard
+        else { return 0 }
         let slots = currentSlots()
         guard let list = slots.list, let prompt = slots.prompt else { return 0 }
         // Where the stack puts it without being asked: centred on the field when the shell
@@ -839,6 +840,12 @@ final class CornerDockController: NSObject {
     /// two cards ask for this — the list, the snapshot and the extension panel belong to
     /// the field and stay centred on it.
     private var hoverCardAnchorOffset: CGFloat? {
+        // The app's card stands over the field's left half, its leading edge on the field's,
+        // above the chip that opened it.
+        if showsScopeBoard {
+            return AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
+                .width / 2
+        }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
             target = .pin(id: card.pin.id)
