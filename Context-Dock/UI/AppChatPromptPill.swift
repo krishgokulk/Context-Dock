@@ -563,6 +563,13 @@ struct AppChatPromptPill: View {
         size(for: .prompt).width
     }
 
+    /// A conversation's composer shares its row with the apps (Part B, in chat).
+    private var splitsChatComposer: Bool {
+        CornerSplitShell.splitsChat(
+            phase: model.phase, showsLivePanel: model.showsLivePanel,
+            hasApps: !CornerSplitStrip.apps(for: model).isEmpty)
+    }
+
     /// The shell is in two columns (Part B): the field draws as the left one, under the
     /// results, and the apps stand beside it under the preview (`CornerSplitStrip`).
     private var splitsShell: Bool { CornerDockController.shared.showsSplitShell }
@@ -828,22 +835,41 @@ struct AppChatPromptPill: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if !model.attachments.isEmpty { attachmentRow }
-            inputRow
-                // In a conversation the field is a rounded composer inset in the card, the
-                // way Claude's sits under its chat (owner 2026-10-05), rather than a row
-                // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
-                // its identity, and with it focus, as the phase changes.
-                .background {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.primary.opacity(0.07))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
-                        .opacity(model.phase == .chat ? 1 : 0)
+            // In a conversation with the app's panel open, the composer stands under the
+            // transcript and the pinned and running apps under the panel — the split the
+            // field gets over a result board (Part B), inside the chat card. One HStack in
+            // every phase with the composer first, so the TextField keeps its identity.
+            HStack(alignment: .bottom, spacing: 8) {
+                inputRow
+                    // In a conversation the field is a rounded composer inset in the card, the
+                    // way Claude's sits under its chat (owner 2026-10-05), rather than a row
+                    // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
+                    // its identity, and with it focus, as the phase changes.
+                    .background {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.primary.opacity(0.07))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                            .opacity(model.phase == .chat ? 1 : 0)
+                    }
+                if splitsChatComposer {
+                    CornerSplitStrip(
+                        model: model,
+                        width: CornerSplitShell.chatStripWidth(card: DockShellWidth.current),
+                        inset: true)
+                        .transition(.opacity)
                 }
-                .padding(.horizontal, model.phase == .chat ? 10 : 0)
-                .padding(.top, model.phase == .chat ? 6 : 0)
-                .padding(.bottom, model.phase == .chat ? 10 : 0)
+            }
+            // The apps take the composer's height rather than setting their own, so the
+            // card's measured height is unchanged by the split.
+            .fixedSize(horizontal: false, vertical: splitsChatComposer)
+            // The composer's width changes once, not over frames: animating the width of the
+            // row that holds the focused TextField is the per-frame re-layout that hung the app.
+            .animation(nil, value: splitsChatComposer)
+            .padding(.horizontal, model.phase == .chat ? 10 : 0)
+            .padding(.top, model.phase == .chat ? 6 : 0)
+            .padding(.bottom, model.phase == .chat ? 10 : 0)
         }
         // Fills what the body gives it: 372 points in the legacy shell, the field's
         // widened prompt width in Global.

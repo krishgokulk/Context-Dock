@@ -48,6 +48,22 @@ enum CornerSplitShell {
     static func stripWidth(shell: CGFloat) -> CGFloat {
         shell - fieldWidth(shell: shell) - gap
     }
+
+    /// In a conversation the composer is inset in the chat card, under the transcript and the
+    /// app's panel (`CornerLivePanel`). The apps take the panel's column, inset by the
+    /// composer's own 10-point margin so they line up with the panel above them.
+    static let chatInset: CGFloat = 10
+
+    static func chatStripWidth(card: CGFloat) -> CGFloat {
+        CornerLivePanelLayout.panelWidth(card: card) - chatInset
+    }
+
+    /// Whether a conversation's composer splits: only with the app's panel open above, so the
+    /// apps have a column to stand under, and only with apps to show (owner 2026-10-07:
+    /// "show same for chat as well, if user pinned something").
+    static func splitsChat(phase: AppChatPromptPhase, showsLivePanel: Bool, hasApps: Bool) -> Bool {
+        phase == .chat && showsLivePanel && hasApps
+    }
 }
 
 /// The right column's foot: pinned apps first, then whatever else is running, then the
@@ -55,6 +71,9 @@ enum CornerSplitShell {
 struct CornerSplitStrip: View {
     @ObservedObject var model: AppChatPromptModel
     let width: CGFloat
+    /// Inside the chat card, beside the composer: drawn the way the composer is — an inset
+    /// rounded field — rather than as a glass capsule of its own floating in the shell.
+    var inset: Bool = false
     @ObservedObject private var pins = DockPinStore.shared
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
@@ -63,7 +82,9 @@ struct CornerSplitStrip: View {
     private static let iconSize: CGFloat = 28
 
     /// The resting strip's own composition, so an app is in the same place in both.
-    private var apps: [DockAppSlot] {
+    private var apps: [DockAppSlot] { Self.apps(for: model) }
+
+    static func apps(for model: AppChatPromptModel) -> [DockAppSlot] {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: 0,
             fieldIcons: 0
@@ -71,7 +92,8 @@ struct CornerSplitStrip: View {
     }
 
     var body: some View {
-        let height = AppChatPromptMetrics.fieldHeight(global: true)
+        // Its own height as a capsule in the shell; the composer's, beside it in the chat card.
+        let height: CGFloat? = inset ? nil : AppChatPromptMetrics.fieldHeight(global: true)
         HStack(spacing: 8) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -91,9 +113,8 @@ struct CornerSplitStrip: View {
         }
         .padding(.horizontal, 14)
         .frame(width: width, height: height)
-        .clipShape(Capsule())
-        .glassEffect(.regular.interactive(), in: Capsule())
-        .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+        .frame(maxHeight: inset ? .infinity : nil)
+        .modifier(StripChrome(inset: inset))
     }
 
     private func appButton(_ slot: DockAppSlot) -> some View {
@@ -154,5 +175,29 @@ struct CornerSplitStrip: View {
         .buttonStyle(.plain)
         .help(title)
         .accessibilityLabel(title)
+    }
+}
+
+/// The strip's container: a glass capsule of its own in the shell, or the composer's inset
+/// rounded field inside the chat card.
+private struct StripChrome: ViewModifier {
+    let inset: Bool
+
+    func body(content: Content) -> some View {
+        if inset {
+            content
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.primary.opacity(0.07))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                }
+        } else {
+            content
+                .clipShape(Capsule())
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+        }
     }
 }

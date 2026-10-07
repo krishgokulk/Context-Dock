@@ -53,4 +53,23 @@ struct CornerSplitShellTests {
             #expect(abs(field - (list - CornerSplitShell.gap / 2)) <= 1)
         }
     }
+
+    /// A conversation splits its composer only with the app's panel open and apps to show
+    /// (owner 2026-10-07: "show same for chat as well, if user pinned something").
+    @Test func aConversationSplitsUnderItsPanel() {
+        #expect(CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: true, hasApps: true))
+        #expect(!CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: false, hasApps: true))
+        #expect(!CornerSplitShell.splitsChat(phase: .chat, showsLivePanel: true, hasApps: false))
+        #expect(!CornerSplitShell.splitsChat(phase: .prompt, showsLivePanel: true, hasApps: true))
+    }
+
+    /// The chat strip's leading edge is the panel's: the composer's 10-point margin is all
+    /// it gives up.
+    @Test func theChatStripStandsUnderThePanel() {
+        for card: CGFloat in [600, 664] {
+            #expect(
+                CornerSplitShell.chatStripWidth(card: card)
+                    == CornerLivePanelLayout.panelWidth(card: card) - CornerSplitShell.chatInset)
+        }
+    }
 }
