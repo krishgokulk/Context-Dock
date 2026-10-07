@@ -449,7 +449,7 @@ struct ClipboardBoardCard: View {
     // MARK: Footer
 
     /// The apps the clips came from on the left, as the old corner card had them; what the
-    /// keys do on the right.
+    /// keys do on the right — Paste and Copy only (owner 2026-10-07: no ⌘P or ⌘, here).
     private var footer: some View {
         HStack(spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
@@ -464,15 +464,6 @@ struct ClipboardBoardCard: View {
             footerAction("Paste to \(ClipboardPanelController.shared.returnAppName)", keys: ["↩"])
             divider
             footerAction("Copy", keys: ["⌘", "↩"], dimmed: true)
-            divider
-            footerButton(
-                prompt.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
-                help: prompt.isPinned ? "Unpin (⌘P)" : "Keep open after pasting (⌘P)",
-                tinted: prompt.isPinned
-            ) { prompt.togglePin() }
-            footerButton("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
-                AppDelegate.shared?.showSettings()
-            }
         }
         .padding(.horizontal, 14)
         .frame(height: ClipboardBoardMetrics.footerHeight)
@@ -515,13 +506,6 @@ struct ClipboardBoardCard: View {
 
     private func footerAction(_ title: String, keys: [String], dimmed: Bool = false) -> some View {
         BoardFooter.action(title, keys: keys, dimmed: dimmed)
-    }
-
-    private func footerButton(
-        _ symbol: String, keys: [String], help: String, tinted: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        BoardFooter.button(symbol, keys: keys, help: help, tinted: tinted, action: action)
     }
 }
 
