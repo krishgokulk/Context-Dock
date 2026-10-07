@@ -181,7 +181,7 @@ enum AppChatPromptMetrics {
         // running is one icon there, and a pin this build cannot resolve is none.
         let tools = model.dockToolCount(
             clipboardVisible: clipboardVisible
-                ?? ClipboardPanelController.shared.model.phase.announcesCopy,
+                ?? ClipboardPanelController.shared.model.showsDockIcon,
             feedbackVisible: feedbackVisible ?? (CornerActionFeedback.shared.glyph != nil))
         let composition = DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: tools).composition
@@ -470,7 +470,7 @@ struct AppChatPromptPill: View {
 
     private var stripToolCount: Int {
         model.dockToolCount(
-            clipboardVisible: clipboard.phase.announcesCopy,
+            clipboardVisible: clipboard.showsDockIcon,
             feedbackVisible: actionFeedback.glyph != nil)
     }
 
@@ -479,7 +479,7 @@ struct AppChatPromptPill: View {
         // watches so a change to any of them redraws it.
         AppChatPromptMetrics.shellSize(
             for: model, phase: phase,
-            clipboardVisible: clipboard.phase.announcesCopy,
+            clipboardVisible: clipboard.showsDockIcon,
             feedbackVisible: actionFeedback.glyph != nil,
             hasApproval: approvals.pending(for: .corner) != nil)
     }
@@ -939,7 +939,9 @@ struct AppChatPromptPill: View {
 
     private var inputRow: some View {
         HStack(spacing: 10) {
-            if model.appBundleID.isEmpty {
+            if model.isClipboardScope {
+                clipboardBackChip
+            } else if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
                     // The strip's own size in Global: the field opens on the icon the
                     // pointer rested on, and a smaller one there read as a swap.
@@ -955,13 +957,22 @@ struct AppChatPromptPill: View {
             }
 
             ZStack(alignment: .leading) {
-                if model.query.isEmpty {
+                if model.isClipboardScope {
+                    if clipboard.query.isEmpty {
+                        Text("Type to filter entries…")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                            .lineLimit(1)
+                    }
+                } else if model.query.isEmpty {
                     placeholder
                 }
                 // What Tab would complete to, greyed behind the caret. Drawn in the field's
                 // own metrics with the typed part transparent, so the ghost lines up with
                 // the text instead of floating near it.
-                if !model.globalGhostCompletion.isEmpty, model.fieldLines == 1 {
+                if !model.isClipboardScope, !model.globalGhostCompletion.isEmpty,
+                    model.fieldLines == 1
+                {
                     HStack(spacing: 0) {
                         Text(model.query).foregroundStyle(.clear)
                         Text(model.globalGhostCompletion)
@@ -974,7 +985,7 @@ struct AppChatPromptPill: View {
                 }
                 // Wraps and grows upward to three lines, then scrolls inside (#189): the
                 // field's width is the shell's and never changes for what is typed.
-                TextField("", text: $model.query, axis: .vertical)
+                TextField("", text: fieldText, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...DockFieldLines.maximum)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
@@ -992,6 +1003,12 @@ struct AppChatPromptPill: View {
                     .onSubmit {
                         // The panel's key monitor already acted on this Return.
                         if CornerDockController.shared.monitorConsumedCurrentKey { return }
+                        // The clipboard board's Return pastes; it never asks.
+                        if model.isClipboardScope {
+                            ClipboardPanelController.shared.pasteMany(
+                                clipboard.actionableEntries())
+                            return
+                        }
                         // A chosen row runs — a command or an adapter action. On a window
                         // snapshot with nothing typed, Return switches to that app, because
                         // that is what the switcher is for. Anything else is a question.
@@ -1017,12 +1034,16 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.space) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // Only once the user has arrowed into the list; with the caret in
                         // the field, a space is a space.
                         return model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // The row the arrows landed on first; the top match only when the
                         // user has not chosen one.
                         if model.enterFocusedRow() { return .handled }
@@ -1030,14 +1051,24 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.downArrow) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope {
+                            clipboard.moveEntry(1)
+                            return .handled
+                        }
                         return arrow(up: false)
                     }
                     .onKeyPress(.upArrow) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope {
+                            clipboard.moveEntry(-1)
+                            return .handled
+                        }
                         return arrow(up: true)
                     }
                     .onKeyPress(keys: [.delete, .deleteForward]) { _ in
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // A letter of the clipboard filter, never a way out of the scope.
+                        if model.isClipboardScope { return .ignored }
                         // Backspace on an empty field leaves the scope — the dock's way out,
                         // and the one most people reach for before they find the "−". Both
                         // delete keys, because `.delete` alone did not match the backspace
@@ -1047,6 +1078,10 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.escape) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope {
+                            ClipboardPanelController.shared.closeBoard()
+                            return .handled
+                        }
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the
                         // user was waiting on and a question they had half-written, for
                         // one press of the key that usually means "step back".
@@ -1065,6 +1100,8 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.leftArrow) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // Left out of a scope entered from Global goes back to Global,
                         // before the walk between scopes is considered at all.
                         if model.query.isEmpty, model.stepBackThroughRunningApps() { return .handled }
@@ -1073,6 +1110,8 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(.rightArrow) {
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // A chosen row is what the user is pointing at, so → steps into it
                         // before anything else — steps in, never runs (D4). Otherwise it takes
                         // the ghost completion, and on an empty field it steps into an app;
@@ -1113,7 +1152,7 @@ struct AppChatPromptPill: View {
             // apps step aside, as the Dock's do.
             // Typing hides them in every scope, tabs and pins included (owner 2026-09-26:
             // while typing the field is compact — attach, send, pin).
-            if model.showsFieldPills,
+            if model.showsFieldPills, !model.isClipboardScope,
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
@@ -1168,7 +1207,7 @@ struct AppChatPromptPill: View {
                 // region, so the field does not draw a second one beside it.
                 // A composer draws its one clipboard icon at the end, next to the pin (owner
                 // 2026-09-26: two showed); only a search field keeps it here.
-                if clipboard.phase.announcesCopy, model.isSearchField, !model.isGlobalScope {
+                if clipboard.showsDockIcon, model.isSearchField, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
@@ -1240,7 +1279,7 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.phase.announcesCopy {
+                if clipboard.showsDockIcon {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a
@@ -1418,6 +1457,42 @@ struct AppChatPromptPill: View {
         }
         .frame(width: 28, height: 28)
         .help(model.globalTopMatch.map { "Tab to open \($0.title)" } ?? "Search everything")
+    }
+
+    /// What the field edits: the question, or — while the clipboard board is open — the
+    /// clipboard's filter. The question is kept as it was, for Back.
+    private var fieldText: Binding<String> {
+        guard model.isClipboardScope else { return $model.query }
+        return Binding(
+            get: { clipboard.query },
+            set: { clipboard.setBoardQuery($0) })
+    }
+
+    /// Raycast's back button, leading the field while the clipboard board is open.
+    private var clipboardBackChip: some View {
+        Button {
+            ClipboardPanelController.shared.closeBoard()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                Text("Clipboard")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 9)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.09), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Back (Esc)")
+        .accessibilityLabel("Back from the clipboard")
+        .layoutPriority(1)
     }
 
     /// The scope chip with a way out of it — the "−" the dock's scope chip carries. Only

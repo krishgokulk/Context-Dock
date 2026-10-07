@@ -884,7 +884,14 @@ extension LauncherView {
                 handleClipboardEntriesRemovalRequest(note)
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
-                ClipboardPanelController.shared.show()
+                // In the Dock's own sheet while the Dock is on screen; in the Corner's board
+                // otherwise — a screen-capture toast's "Clipboard" button arrives here with
+                // the Dock hidden.
+                if AppDelegate.shared?.launcherWindow?.isVisible == true {
+                    activateClipboardScope()
+                } else {
+                    ClipboardPanelController.shared.show()
+                }
             }
             .onReceive(ClipboardIngestBus.shared.captures) { payload in
                 handleClipboardCapture(payload)

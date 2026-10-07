@@ -2462,6 +2462,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
+        // The clipboard opens in whichever shell's result sheet is on screen (owner
+        // 2026-10-07): the Dock's own clipboard scope while the Dock is up, the Corner's
+        // board otherwise.
+        if launcherWindow?.isVisible == true {
+            NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
+            return
+        }
         ClipboardPanelController.shared.toggle()
     }
 
