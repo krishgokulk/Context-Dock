@@ -884,14 +884,7 @@ extension LauncherView {
                 handleClipboardEntriesRemovalRequest(note)
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
-                // In the Dock's own sheet while the Dock is on screen; in the Corner's board
-                // otherwise — a screen-capture toast's "Clipboard" button arrives here with
-                // the Dock hidden.
-                if AppDelegate.shared?.launcherWindow?.isVisible == true {
-                    activateClipboardScope()
-                } else {
-                    ClipboardPanelController.shared.show()
-                }
+                openClipboardFromNotification()
             }
             .onReceive(ClipboardIngestBus.shared.captures) { payload in
                 handleClipboardCapture(payload)
@@ -2753,5 +2746,19 @@ extension LauncherView {
             // hierarchy, so calling it here would select-all the already-typed text.
         }
         requestWindowSizeUpdate(reason: .rowLayoutChanged)
+    }
+}
+
+extension LauncherView {
+    /// The clipboard hotkey's notification: in the Dock's own sheet while the Dock is on
+    /// screen, in the Corner's board otherwise — a screen-capture toast's "Clipboard" button
+    /// arrives here with the Dock hidden. A method of its own because the `.onReceive` chain
+    /// it is called from is already at the limit the type checker will solve in time.
+    func openClipboardFromNotification() {
+        if AppDelegate.shared?.launcherWindow?.isVisible == true {
+            activateClipboardScope()
+        } else {
+            ClipboardPanelController.shared.show()
+        }
     }
 }
