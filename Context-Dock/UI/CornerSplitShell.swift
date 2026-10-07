@@ -119,13 +119,10 @@ struct CornerSplitStrip: View {
 
     /// The resting strip's own composition, so an app is in the same place in both.
     static func composition(for model: AppChatPromptModel) -> DockStripComposition {
-        // An app's Context Dock shows its own pins and tabs beside the field, and nothing
-        // else: with none, the field stands alone — other running apps are Global's to show
-        // (owner 2026-10-07).
-        guard model.isGlobalScope || model.showsTabBar else {
-            return DockStripComposition(apps: [], otherPins: [], overflow: 0)
-        }
-        return DockStripPlan.make(
+        // Every scope's field stands apart from what is beside it (owner 2026-10-07): an app
+        // bar's own pins and tabs, otherwise the remaining running apps (`stripIcons` leaves
+        // the scoped app out), and Global's pinned extensions.
+        DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: 0,
             fieldIcons: 0
         ).composition

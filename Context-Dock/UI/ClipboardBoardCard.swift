@@ -548,6 +548,15 @@ enum BoardFooter {
         .accessibilityLabel(help)
     }
 
+    /// A floating capsule around one hint, as the result board's foot draws them.
+    static func pill<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        HStack(spacing: 5) { content() }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.08), in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+    }
+
     /// The shell's pin (⌘P) and Settings (⌘,), as every board's foot ends.
     @MainActor
     static func pinAndSettings(prompt: AppChatPromptModel) -> some View {
