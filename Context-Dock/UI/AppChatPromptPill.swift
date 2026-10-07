@@ -563,6 +563,20 @@ struct AppChatPromptPill: View {
         size(for: .prompt).width
     }
 
+    /// The shell is in two columns (Part B): the field draws as the left one, under the
+    /// results, and the apps stand beside it under the preview (`CornerSplitStrip`).
+    private var splitsShell: Bool { CornerDockController.shared.showsSplitShell }
+
+    /// The glass frame's width. Split, it narrows to the left column; the stack inside keeps
+    /// its full width (`globalInputWidth`, `legacyInputWidth`) and is only revealed less of,
+    /// exactly as the dock → field morph does — no inner width moves, so the field's focus
+    /// subtree is never re-laid out (the hang `globalBody` describes).
+    private var drawnWidth: CGFloat {
+        splitsShell
+            ? CornerSplitShell.fieldWidth(shell: AppChatPromptMetrics.boardWidth(for: model))
+            : size.width
+    }
+
     /// Global's field and strip share their trailing edge: they are one width. An app bar's
     /// compact field is not the bar's width, so the two share their *leading* edge instead:
     /// the chip opens right where the bar's app icon rests, and the field grows away from it
@@ -599,7 +613,9 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(model.phase == .mini)
                 .animation(.easeInOut(duration: 0.2), value: model.phase)
         }
-        .frame(width: size.width, height: size.height, alignment: shellAlignment)
+        .frame(
+            width: drawnWidth, height: size.height,
+            alignment: splitsShell ? .bottomLeading : shellAlignment)
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
@@ -620,6 +636,7 @@ struct AppChatPromptPill: View {
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
         .animation(shellMorph, value: model.phase)
+        .animation(shellMorph, value: splitsShell)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
     }
 
@@ -695,7 +712,8 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(model.phase == .mini)
                 .animation(.easeIn(duration: 0.16).delay(0.06), value: model.phase)
         }
-        .frame(width: size.width, height: size.height, alignment: .bottomLeading)
+        .frame(width: drawnWidth, height: size.height, alignment: .bottomLeading)
+        .animation(.smooth(duration: 0.22), value: splitsShell)
         .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)

@@ -908,6 +908,18 @@ final class CornerDockController: NSObject {
             && prompt.phase.showsInput
     }
 
+    /// The shell in two columns (Part B, owner 2026-10-07): the field under the results, the
+    /// pinned and running apps under the preview. See `CornerSplitShell`.
+    var showsSplitShell: Bool {
+        CornerSplitShell.splits(
+            isVisible: chatPresentation.isVisible,
+            isGeneral: chatPresentation.mode == .general,
+            phase: prompt.phase,
+            clipboardBoard: showsClipboardBoard,
+            resultList: showsAppChatList,
+            hasPreview: prompt.boardPreview != nil)
+    }
+
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
     /// on screen or General Chat was, the current scope's otherwise — with the clipboard in
     /// its board. The scope and any conversation underneath are left exactly as they were,
@@ -1711,7 +1723,22 @@ struct CornerDockSurface: View {
                         .transition(.opacity)
                 }
             } else {
-                AppChatPromptPill(model: prompt).transition(.opacity)
+                // One structure in both layouts, so the field keeps its identity — and its
+                // caret — when the shell splits: only the apps beside it come and go. Field
+                // under the results, apps under the preview, one bottom line (Part B).
+                let split = CornerDockController.shared.showsSplitShell
+                let shell = AppChatPromptMetrics.boardWidth(for: prompt)
+                HStack(alignment: .bottom, spacing: CornerSplitShell.gap) {
+                    AppChatPromptPill(model: prompt)
+                    if split {
+                        CornerSplitStrip(
+                            model: prompt, width: CornerSplitShell.stripWidth(shell: shell))
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: split ? shell : nil, alignment: .leading)
+                .animation(.smooth(duration: 0.22), value: split)
+                .transition(.opacity)
             }
         }
     }
