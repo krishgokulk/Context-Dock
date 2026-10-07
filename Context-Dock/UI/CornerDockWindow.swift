@@ -224,6 +224,30 @@ final class CornerDockController: NSObject {
         clipboardModel.$isKeyboardArmed.sink { [weak self] _ in
             Task { @MainActor in self?.publishKeyboardOwner() }
         }.store(in: &sinks)
+        // The board opening or closing changes what stands over the field, and so the
+        // shell's height; a copy's icon changes the strip's width.
+        clipboardModel.$isBoardOpen.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+        clipboardModel.$recentlyCopied.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+        // The board belongs to the App and Global field. The shell going away, or switching
+        // to General Chat — which has a field of its own — closes it rather than leaving it
+        // open and unseen, holding the field's idle clock.
+        // Read again once the change has landed: `@Published` reports before it does, and
+        // showing Global sets the mode a moment before it sets visible — the board being
+        // opened would read that moment as "the shell went away".
+        chatPresentation.$isVisible.combineLatest(chatPresentation.$mode)
+            .sink { [weak self] _, _ in
+                Task { @MainActor in
+                    guard let self, self.clipboardModel.isBoardOpen,
+                        !self.chatPresentation.isVisible || self.chatPresentation.mode == .general
+                    else { return }
+                    ClipboardPanelController.shared.closeBoard(refocus: false)
+                }
+            }
+            .store(in: &sinks)
         // A result arriving or leaving changes the strip's width by one slot.
         actionFeedback.$current.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -687,7 +711,9 @@ final class CornerDockController: NSObject {
                     outcome: selection.showsOutcome,
                     folderPreview: selection.showsFolderPreview,
                     sendConfirm: selection.pendingSend != nil) : nil,
-            list: showsExtensionPanel
+            list: showsClipboardBoard
+                ? ClipboardBoardMetrics.size
+                : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
                     ?? ExtensionScopeMetrics.size)
                 : (showsAppSnapshot
@@ -822,7 +848,7 @@ final class CornerDockController: NSObject {
         guard let target else { return nil }
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.showsDockIcon, feedbackVisible: actionFeedback.glyph != nil),
             fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
     }
@@ -873,6 +899,47 @@ final class CornerDockController: NSObject {
             && prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The clipboard, in the result board above the field (owner 2026-10-07). It wins the
+    /// slot over every other board: it is what the user just asked for by name.
+    var showsClipboardBoard: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && clipboardModel.isBoardOpen
+            && prompt.phase.showsInput
+    }
+
+    /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
+    /// on screen or General Chat was, the current scope's otherwise — with the clipboard in
+    /// its board. The scope and any conversation underneath are left exactly as they were,
+    /// so Back returns to them.
+    func showClipboardBoard() {
+        activate()
+        if !chatPresentation.isVisible || chatPresentation.mode == .general {
+            chatPresentation.showGlobalContext()
+        }
+        switch prompt.phase {
+        case .dock:
+            prompt.expandFromDock(seeding: nil)
+        case .mini, .hidden:
+            prompt.set(prompt.messages.isEmpty ? .prompt : .chat)
+        case .prompt, .suggesting, .chat:
+            break
+        }
+        cancelPendingAutoHide()
+        if isAutoHidden { setAutoHidden(false) }
+        refresh()
+        requestComposerFocus()
+    }
+
+    /// Back from the clipboard: the field is the one it was, keys and all — unless the clip
+    /// is on its way into another app, which needs the keys more.
+    func clipboardBoardClosed(refocus: Bool = true) {
+        refresh()
+        prompt.touch()
+        guard refocus, chatPresentation.isVisible else { return }
+        requestComposerFocus()
+    }
+
     /// The preview belongs to an open, expanded card with a clip actually chosen — not to a
     /// pill that happens to be on screen.
     var showsClipPreview: Bool {
@@ -889,7 +956,7 @@ final class CornerDockController: NSObject {
         // what is hit-tested are the same number.
         return AppChatPromptMetrics.shellSize(
             for: prompt, phase: prompt.phase,
-            clipboardVisible: clipboardModel.phase.announcesCopy,
+            clipboardVisible: clipboardModel.showsDockIcon,
             feedbackVisible: actionFeedback.glyph != nil)
     }
 
@@ -1206,6 +1273,22 @@ final class CornerDockController: NSObject {
         // place.
         if PluginKeyboardClaim.shared.isEditing { return event }
 
+        // The clipboard board takes its keys before the field does: the arrows walk the
+        // clips rather than the caret, Return pastes rather than asks, and Esc, ← or
+        // Backspace on an empty filter go back to the field as it was.
+        if let panel, event.window === panel, showsClipboardBoard,
+            let key = ClipboardBoardKey.action(
+                keyCode: event.keyCode,
+                command: event.modifierFlags.contains(.command),
+                shift: event.modifierFlags.contains(.shift),
+                option: event.modifierFlags.contains(.option),
+                control: event.modifierFlags.contains(.control),
+                filterEmpty: clipboardModel.query.isEmpty)
+        {
+            applyClipboardBoardKey(key)
+            return nil
+        }
+
         // ⌘R reads the scoped app's live menus again (C12).
         if DockKeyRules.isMenuRereadKey(
             keyCode: event.keyCode, command: event.modifierFlags.contains(.command),
@@ -1278,6 +1361,12 @@ final class CornerDockController: NSObject {
             FieldCaret.typeWhenFocused(event.characters ?? "", in: panel)
             return nil
         }
+
+        // Any other key with the clipboard board open is the filter's — the caret moving,
+        // a letter deleted. None of the field's scope rules below apply: they read the
+        // question's text, which is empty while the filter is typed, so a Backspace in the
+        // filter would have left the app's scope.
+        if let panel, event.window === panel, showsClipboardBoard { return event }
 
         // The Dock's keyboard rules (`DockKeyRules`), before any of the field's own meanings
         // below: a highlighted pill or row is what the key is about. Backspace here lets go
@@ -1357,6 +1446,31 @@ final class CornerDockController: NSObject {
             return nil
         }
         return chatPresentation.handleLeftArrow(draft: prompt.query) ? nil : event
+    }
+
+    private func applyClipboardBoardKey(_ key: ClipboardBoardKey) {
+        let controller = ClipboardPanelController.shared
+        switch key {
+        case .back:
+            controller.closeBoard()
+        case .clearFilter:
+            clipboardModel.setBoardQuery("")
+        case .move(let step, let selecting):
+            clipboardModel.moveEntry(step, selecting: selecting)
+        case .paste:
+            controller.pasteMany(clipboardModel.actionableEntries())
+        case .copy:
+            let entries = clipboardModel.actionableEntries()
+            guard !entries.isEmpty else { return }
+            controller.copy(entries)
+            controller.finishBoard()
+        case .delete:
+            clipboardModel.removeActionableEntries()
+        case .quickLook:
+            controller.preview()
+        case .cycleKind(let step):
+            clipboardModel.cycleKind(step)
+        }
     }
 
     private func handleChatSwipe(_ event: NSEvent) -> NSEvent? {
@@ -1545,7 +1659,11 @@ struct CornerDockSurface: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         if chatPresentation.isVisible, chatPresentation.mode != .general {
-            if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
+            if CornerDockController.shared.showsClipboardBoard {
+                // The clipboard, as Raycast lays it out: clips beside the chosen one.
+                ClipboardBoardCard(model: clipboardModel)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves
                 // the scope, as Backspace does.
                 CornerPluginCard(

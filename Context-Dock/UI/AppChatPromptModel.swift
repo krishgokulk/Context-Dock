@@ -224,6 +224,11 @@ final class AppChatPromptModel: ObservableObject {
     /// This scope was entered from Global, so leaving it goes back there rather than to the
     /// frontmost app.
     @Published var returnsToGlobalScope = false
+    /// The clipboard history the board shows. The shared one; a test hands in its own.
+    lazy var clipboardBoard: ClipboardPanelModel = ClipboardPanelController.shared.model
+    /// The field is filtering the clipboard, whose board stands over it — an overlay on
+    /// whatever scope is underneath, which is left untouched for Back to return to.
+    var isClipboardScope: Bool { clipboardBoard.isBoardOpen }
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
     /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
@@ -903,7 +908,8 @@ final class AppChatPromptModel: ObservableObject {
     /// than a generic dot, so the corner still says which app it is about, and it keeps
     /// any half-written question for whoever comes back for it.
     func standDown() {
-        guard !isPinned, !isPointerInside, !isAnswering else { return }
+        // The clipboard board is a deliberate ask, held until Back or a paste.
+        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope else { return }
         switch phase {
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
@@ -1188,6 +1194,8 @@ final class AppChatPromptModel: ObservableObject {
     func set(_ next: AppChatPromptPhase) {
         guard phase != next else { return }
         phase = next
+        // The clipboard board stands over the field; the field going takes it along.
+        if !next.showsInput, clipboardBoard.isBoardOpen { clipboardBoard.closeBoard() }
         // A highlight on the field's pills does not outlive the field.
         if !next.showsInput || next == .chat { focusedPillIndex = nil }
         // A plugin's card belongs to the strip; leaving the dock takes it down with it.

@@ -59,21 +59,19 @@ final class ClipboardPanelController: NSObject {
 
     // MARK: - Entry points
 
-    /// A copy landed anywhere on the system. Ambient: orders in without activating us.
+    /// A copy landed anywhere on the system.
     ///
-    /// Not while a conversation is open in the corner. The pill and the chat share that
-    /// corner, so every copy — and every ⌘⇧⌃4 screenshot is one — put a pill on the edge
-    /// of the chat the user was typing in, and the pointer already resting there opened
-    /// it straight into the full history card on top of the conversation. The clip is
-    /// still recorded, so the dock's clipboard icon and the hotkey find it; only the
-    /// announcement waits.
+    /// Recorded, and nothing pops up (owner 2026-10-07). The pill this used to raise shared
+    /// the corner with the field, so every copy — and every ⌘⇧⌃4 screenshot is one — put a
+    /// card on the edge of whatever the user was doing. What is left is the clipboard icon in
+    /// the dock and the field for a few seconds, and not even that during a conversation.
     func didCopy(_ entry: LauncherView.ClipboardEntry) {
         guard !isSuppressed else { return }
         ensurePanel()
         model.reload()
         model.ingest(entry)
         guard !CornerChatPresentation.shared.isShowingConversation else { return }
-        model.didCopy()
+        model.noteCopy()
     }
 
     /// Stood down while a drag is in flight. A drag is not a copy, so the ambient pill
@@ -86,26 +84,56 @@ final class ClipboardPanelController: NSObject {
         model.dismiss()
     }
 
-    /// Clipboard-scope hotkey.
+    /// The clipboard hotkey and every clipboard icon: open the board, or close it.
     func toggle() {
-        ensurePanel()
-        if model.phase == .hidden {
-            show()
+        if model.isBoardOpen {
+            closeBoard()
         } else {
-            model.dismiss()
+            show()
         }
     }
 
-    /// Hotkey path: card opens at the same bottom-right anchor as the pill, focused, and
-    /// stays until dismissed.
+    /// Set when the board brought the shell up by itself, so finishing with it — a paste —
+    /// puts the shell away again instead of leaving a field nobody asked for.
+    private var boardRaisedShell = false
+
+    /// The clipboard, in the shell's result board above the field — Global Context's, an
+    /// app's Context Dock's, or over its conversation — rather than a card of its own in the
+    /// corner (owner 2026-10-07).
     func show() {
+        // Any old card goes first: putting it away hands focus back to the app it came
+        // from, which must not happen to the board about to open.
+        model.dismiss()
         captureReturnApplication()
         ensurePanel()
-        model.reload()
-        model.summon()
-        model.armKeyboard()
         didTakeFocus = true
-        CornerDockController.shared.armKeyboard()
+        boardRaisedShell = !CornerDockController.shared.chatPresentation.isVisible
+        model.openBoard()
+        CornerDockController.shared.showClipboardBoard()
+    }
+
+    /// Back: the board closes and the field is what it was before — same scope, same
+    /// conversation. `refocus` hands the keys back to the field; a paste leaves them alone,
+    /// because they are on their way to the app the clip is going into.
+    func closeBoard(refocus: Bool = true) {
+        guard model.isBoardOpen else { return }
+        model.closeBoard()
+        boardRaisedShell = false
+        CornerDockController.shared.clipboardBoardClosed(refocus: refocus)
+    }
+
+    /// A clip went where it was going — pasted, or copied for later: the board is done,
+    /// and so is a shell it raised.
+    func finishBoard() {
+        let raised = boardRaisedShell
+        closeBoard(refocus: false)
+        if raised {
+            CornerDockController.shared.chatPresentation.dismiss()
+        } else {
+            // The field stays, but the keys go with the clip, as they did when the corner
+            // card closed on a paste.
+            CornerDockController.shared.disarmKeyboard()
+        }
     }
 
     func close() {
@@ -169,6 +197,7 @@ final class ClipboardPanelController: NSObject {
         ClipboardScopeService.writeToPasteboard(entries)
         let target = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
         model.dismiss()
+        finishBoard()
         target?.activate()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             guard let pid = target?.processIdentifier else { return }
@@ -183,6 +212,7 @@ final class ClipboardPanelController: NSObject {
         // frontmost; only the hotkey path has an app to hand focus back to.
         let target = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
         model.dismiss()
+        finishBoard()
         target?.activate()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             let source = CGEventSource(stateID: .hidSystemState)
@@ -431,9 +461,10 @@ final class ClipboardPanelModel: ObservableObject {
     var visibleEntries: [LauncherView.ClipboardEntry] {
         let source = selectedSource.bundleID
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let kind = kindFilter
         return entries.filter { entry in
             let sourceMatches = source.isEmpty || entry.sourceBundleId == source
-            guard sourceMatches else { return false }
+            guard sourceMatches, kind.matches(entry) else { return false }
             guard !needle.isEmpty else { return true }
             let fileNames = entry.filePaths.map { URL(fileURLWithPath: $0).lastPathComponent }
                 .joined(separator: " ")
@@ -526,6 +557,74 @@ final class ClipboardPanelModel: ObservableObject {
             visibleEntries.indices.contains(focusedEntryIndex)
         else { return nil }
         return visibleEntries[focusedEntryIndex]
+    }
+
+    // MARK: - Board
+
+    /// The clipboard is open in the shell's result board — the field filters it, the list
+    /// and the clip's preview sit above the field the way every other scope's results do
+    /// (owner 2026-10-07: "show inside our result sheet … like how Raycast shows, with a back
+    /// button"). The one source of truth for it: the field, the board slot and the keys all
+    /// read this.
+    @Published private(set) var isBoardOpen = false
+    /// A copy just landed. The dock's and the field's clipboard icon shows for a few
+    /// seconds — the only notice a copy gets now that the ambient pill is gone (owner
+    /// 2026-10-07: nothing pops up on a copy).
+    @Published private(set) var recentlyCopied = false
+    @Published var kindFilter: ClipboardKindFilter = .all
+    private var copyNoticeTask: Task<Void, Never>?
+
+    /// The clipboard icon is drawn: a copy just happened, or the board is open.
+    var showsDockIcon: Bool { recentlyCopied || isBoardOpen }
+
+    func openBoard() {
+        reload(resetScope: true)
+        kindFilter = .all
+        isBoardOpen = true
+        // The newest clip is chosen, so its preview is up and Return pastes it — as in
+        // Raycast, where the list never opens with nothing selected.
+        focusedEntryIndex = visibleEntries.isEmpty ? nil : 0
+    }
+
+    func closeBoard() {
+        guard isBoardOpen else { return }
+        isBoardOpen = false
+        kindFilter = .all
+        resetScope()
+    }
+
+    /// What the field types, while the board is open. The top match is chosen after every
+    /// keystroke, so the preview always shows what Return would paste.
+    func setBoardQuery(_ text: String) {
+        query = text
+        focusFirstVisible()
+    }
+
+    func cycleKind(_ direction: Int) {
+        let all = ClipboardKindFilter.allCases
+        guard let index = all.firstIndex(of: kindFilter) else { return }
+        kindFilter = all[(index + (direction >= 0 ? 1 : -1) + all.count) % all.count]
+        focusFirstVisible()
+    }
+
+    func setKind(_ kind: ClipboardKindFilter) {
+        kindFilter = kind
+        focusFirstVisible()
+    }
+
+    private func focusFirstVisible() {
+        clearSelection()
+        focusedEntryIndex = visibleEntries.isEmpty ? nil : 0
+    }
+
+    func noteCopy(dwell: TimeInterval = ClipboardPanelModel.copyDwell + ClipboardPanelModel.miniDwell) {
+        recentlyCopied = true
+        copyNoticeTask?.cancel()
+        copyNoticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(dwell * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.recentlyCopied = false
+        }
     }
 
     // MARK: - Pill phase

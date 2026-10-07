@@ -131,7 +131,7 @@ struct CornerDockStrip: View {
         // The pin sits before the pill now, beside "+" (owner 2026-09-28), so it is not
         // part of what trails the pill.
         var trailing: CGFloat = 14
-        if clipboard.phase.announcesCopy { trailing += control }
+        if clipboard.showsDockIcon { trailing += control }
         if model.selection != nil { trailing += control }
         // The Drop Shelf's control closes the field's row in every scope.
         trailing += control
@@ -180,7 +180,7 @@ struct CornerDockStrip: View {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins,
             tools: model.dockToolCount(
-                clipboardVisible: clipboard.phase.announcesCopy,
+                clipboardVisible: clipboard.showsDockIcon,
                 feedbackVisible: feedback.glyph != nil),
             fieldIcons: model.promptIconCount)
     }
@@ -329,7 +329,7 @@ struct CornerDockStrip: View {
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
-        .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
+        .animation(.smooth(duration: 0.25), value: clipboard.showsDockIcon)
         .animation(.smooth(duration: 0.25), value: model.selection != nil)
         .padding(.horizontal, plan.layout.leadingInset)
         // The dock's own height at rest; the open field's while it is up, so the pins and
@@ -529,7 +529,7 @@ struct CornerDockStrip: View {
     /// What the row's end holds, from the one rule the shell is measured by.
     private var toolKinds: [DockToolKind] {
         model.dockTools(
-            clipboardVisible: clipboard.phase.announcesCopy,
+            clipboardVisible: clipboard.showsDockIcon,
             feedbackVisible: feedback.glyph != nil)
     }
 
@@ -537,18 +537,13 @@ struct CornerDockStrip: View {
     private func toolView(_ kind: DockToolKind) -> some View {
         switch kind {
         case .clipboard:
+            // A click opens the clipboard in the shell's board (owner 2026-10-07). Hovering
+            // used to raise a card of its own in the corner; nothing opens on a hover now.
             toolIcon("doc.on.clipboard", title: "Clipboard") {
-                ClipboardPanelController.shared.show()
+                ClipboardPanelController.shared.toggle()
             }
             .modifier(StripToolVisibility(shown: toolsShown))
             .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            // Hovering opens the card without taking the keyboard; a click arms it.
-            .onHover { inside in
-                guard inside else { return }
-                let controller = ClipboardPanelController.shared
-                controller.model.reload()
-                controller.model.summon()
-            }
         case .selection:
             toolIcon("text.cursor", title: "Selection") {
                 CornerDockController.shared.showSelectionScopeFromDock()
