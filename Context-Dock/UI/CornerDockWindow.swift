@@ -915,9 +915,18 @@ final class CornerDockController: NSObject {
             isVisible: chatPresentation.isVisible,
             isGeneral: chatPresentation.mode == .general,
             phase: prompt.phase,
+            isGlobalScope: prompt.isGlobalScope,
             clipboardBoard: showsClipboardBoard,
             resultList: showsAppChatList,
             hasPreview: prompt.boardPreview != nil)
+    }
+
+    /// The split bottom line's two widths, for the shell as wide as the field would be.
+    var splitWidths: (field: CGFloat, strip: CGFloat) {
+        CornerSplitShell.widths(
+            shell: AppChatPromptMetrics.boardWidth(for: prompt),
+            isGlobalScope: prompt.isGlobalScope,
+            apps: CornerSplitStrip.apps(for: prompt).count)
     }
 
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
@@ -1505,6 +1514,14 @@ final class CornerDockController: NSObject {
                 return event
             }
         }
+        // Split, the text field's own frame runs on under the apps beside it (its layout
+        // keeps one width); the apps scroll sideways and never switch the scope (owner
+        // 2026-10-07). Only the field's visible glass counts.
+        if showsSplitShell,
+            event.locationInWindow.x > promptRect.minX + splitWidths.field
+        {
+            return event
+        }
 
         if event.phase == .began {
             accumulatedChatSwipeX = 0
@@ -1735,9 +1752,12 @@ struct CornerDockSurface: View {
                 HStack(alignment: .bottom, spacing: CornerSplitShell.gap) {
                     AppChatPromptPill(model: prompt)
                     if split {
+                        // Out of the dock's trailing end as the field opens, back into it as
+                        // the field folds.
                         CornerSplitStrip(
-                            model: prompt, width: CornerSplitShell.stripWidth(shell: shell))
-                            .transition(.opacity)
+                            model: prompt, width: CornerDockController.shared.splitWidths.strip)
+                            .transition(
+                                .opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
                     }
                 }
                 .frame(width: split ? shell : nil, alignment: .leading)

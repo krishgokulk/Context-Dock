@@ -558,9 +558,23 @@ struct AppChatPromptPill: View {
     /// shell simply reveals more of it. Layout stays still; only the shell and opacity move.
     /// This is the shape `legacyBody` has always used, for the same reason.
     private var globalInputWidth: CGFloat {
+        // Global Context's field stands apart from its apps (Part B), so its text stack is
+        // laid out at the field's own width in every phase but a conversation — the dock's
+        // included, where it is invisible — and the morph still moves no inner width: the
+        // glass shrinks from the dock's width onto a stack that is already that wide.
+        if model.isGlobalScope, model.phase != .chat {
+            return CornerDockController.shared.splitWidths.field
+        }
         // The shell's one width (#189), in every phase — the strip's, the field's and the
         // conversation's alike.
-        size(for: .prompt).width
+        return size(for: .prompt).width
+    }
+
+    /// Global's field keeps its leading edge, its apps standing beside it (Part B), so the
+    /// shell's stack is laid out from the leading edge — at rest the dock fills it exactly,
+    /// so the dock draws where it always has. Everything else keeps its own alignment.
+    private var globalStackAlignment: Alignment {
+        model.isGlobalScope ? .bottomLeading : shellAlignment
     }
 
     /// A conversation's composer shares its row with the apps (Part B, in chat).
@@ -579,9 +593,7 @@ struct AppChatPromptPill: View {
     /// exactly as the dock → field morph does — no inner width moves, so the field's focus
     /// subtree is never re-laid out (the hang `globalBody` describes).
     private var drawnWidth: CGFloat {
-        splitsShell
-            ? CornerSplitShell.fieldWidth(shell: AppChatPromptMetrics.boardWidth(for: model))
-            : size.width
+        splitsShell ? CornerDockController.shared.splitWidths.field : size.width
     }
 
     /// Global's field and strip share their trailing edge: they are one width. An app bar's
@@ -595,7 +607,7 @@ struct AppChatPromptPill: View {
     private var globalBody: some View {
         let showsInput = model.phase.showsInput
         let stripShown = [.dock, .prompt, .suggesting].contains(model.phase)
-        return ZStack(alignment: shellAlignment) {
+        return ZStack(alignment: globalStackAlignment) {
             // Laid out at the width the field is given with its running-app row, not the
             // 372-point base: the shell widens for each icon past four, and a base-width
             // stack pinned to the trailing edge left that growth as blank glass before the
@@ -603,6 +615,9 @@ struct AppChatPromptPill: View {
             // so the morph still moves no inner width.
             inputStack
                 .frame(width: globalInputWidth, alignment: .bottomLeading)
+                // A width change (a conversation starting, an app launching) lands at once:
+                // animated, it would re-lay out the focused field every frame.
+                .animation(nil, value: globalInputWidth)
                 .opacity(showsInput ? 1 : 0)
                 .allowsHitTesting(showsInput)
                 .animation(fieldFade, value: model.phase)
@@ -622,7 +637,7 @@ struct AppChatPromptPill: View {
         }
         .frame(
             width: drawnWidth, height: size.height,
-            alignment: splitsShell ? .bottomLeading : shellAlignment)
+            alignment: splitsShell ? .bottomLeading : globalStackAlignment)
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
@@ -1196,7 +1211,8 @@ struct AppChatPromptPill: View {
             // apps step aside, as the Dock's do.
             // Typing hides them in every scope, tabs and pins included (owner 2026-09-26:
             // while typing the field is compact — attach, send, pin).
-            if model.showsFieldPills, !model.isClipboardScope,
+            // Split, the apps stand beside the field instead (Part B) — drawn there, not twice.
+            if model.showsFieldPills, !model.isClipboardScope, !splitsShell,
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
@@ -1310,7 +1326,9 @@ struct AppChatPromptPill: View {
                 }
                 // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
                 // its pins, then its tabs, scrolling inside the pill. Gone while typing.
-                if model.showsTabBar, !isTyping,
+                // Not while the apps stand beside the field or the composer: the same pins
+                // would show twice (owner 2026-10-07).
+                if model.showsTabBar, !isTyping, !splitsShell, !splitsChatComposer,
                     !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
                 {
                     AppBarPill(model: model)

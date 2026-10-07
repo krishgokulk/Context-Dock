@@ -72,4 +72,45 @@ struct CornerSplitShellTests {
                     == CornerLivePanelLayout.panelWidth(card: card) - CornerSplitShell.chatInset)
         }
     }
+
+    /// Global Context's field stands apart from its apps whenever it is open (owner
+    /// 2026-10-07: "the search bar separation effect"), with or without a preview.
+    @Test func globalAlwaysSplitsWhileOpen() {
+        for phase: AppChatPromptPhase in [.prompt, .suggesting] {
+            #expect(
+                CornerSplitShell.splits(
+                    isVisible: true, isGeneral: false, phase: phase, isGlobalScope: true,
+                    clipboardBoard: false, resultList: false, hasPreview: false))
+        }
+        #expect(
+            !CornerSplitShell.splits(
+                isVisible: true, isGeneral: false, phase: .dock, isGlobalScope: true,
+                clipboardBoard: false, resultList: false, hasPreview: false))
+        #expect(
+            !CornerSplitShell.splits(
+                isVisible: true, isGeneral: false, phase: .chat, isGlobalScope: true,
+                clipboardBoard: false, resultList: false, hasPreview: false))
+    }
+
+    /// Global's apps fit what they hold, between a floor that keeps the tools readable and
+    /// half the shell; the field takes the rest, so the two and the gap are the dock's width.
+    @Test func globalAppsFitTheirIcons() {
+        for shell: CGFloat in [600, 664, 731] {
+            for apps in [0, 1, 3, 6, 12, 30] {
+                let (field, strip) = CornerSplitShell.widths(
+                    shell: shell, isGlobalScope: true, apps: apps)
+                #expect(field + CornerSplitShell.gap + strip == shell)
+                #expect(strip >= 160)
+                #expect(strip <= (shell / 2).rounded())
+            }
+        }
+        #expect(CornerSplitStrip.contentWidth(apps: 4) > CornerSplitStrip.contentWidth(apps: 3))
+    }
+
+    /// An app's field still splits at the board's list column.
+    @Test func anAppSplitsAtTheListColumn() {
+        let (field, strip) = CornerSplitShell.widths(shell: 664, isGlobalScope: false, apps: 3)
+        #expect(field == CornerSplitShell.fieldWidth(shell: 664))
+        #expect(strip == CornerSplitShell.stripWidth(shell: 664))
+    }
 }

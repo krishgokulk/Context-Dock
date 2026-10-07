@@ -29,12 +29,37 @@ enum CornerSplitShell {
     /// that has a right-hand column — the clipboard's, or the results' when a row's preview
     /// is up. A conversation keeps its composer whole, General is its own surface, and with
     /// no preview there is no column for the apps to sit under.
+    ///
+    /// Global Context's field always stands apart from its apps while it is open (owner
+    /// 2026-10-07: "the search bar separation effect while our dock"): the dock opens into the
+    /// field and the apps beside it, rather than the apps shrinking into a pill inside it.
     static func splits(
-        isVisible: Bool, isGeneral: Bool, phase: AppChatPromptPhase,
+        isVisible: Bool, isGeneral: Bool, phase: AppChatPromptPhase, isGlobalScope: Bool = false,
         clipboardBoard: Bool, resultList: Bool, hasPreview: Bool
     ) -> Bool {
         guard isVisible, !isGeneral, phase == .prompt || phase == .suggesting else { return false }
-        return clipboardBoard || (resultList && hasPreview)
+        return isGlobalScope || clipboardBoard || (resultList && hasPreview)
+    }
+
+    /// The bottom line's two widths. Global's apps are as wide as what they hold, so its field
+    /// keeps one width whatever the board above shows — the field's text stack is laid out at
+    /// that width from the start (`globalInputWidth`), and nothing inside it resizes. An app's
+    /// field splits at the board's list column.
+    static func widths(shell: CGFloat, isGlobalScope: Bool, apps: Int)
+        -> (field: CGFloat, strip: CGFloat)
+    {
+        if isGlobalScope {
+            let strip = restStripWidth(shell: shell, apps: apps)
+            return (shell - strip - gap, strip)
+        }
+        return (fieldWidth(shell: shell), stripWidth(shell: shell))
+    }
+
+    /// Global's apps: fitted to their icons and the two tools, never under a minimum that
+    /// keeps the tools readable, never over half the shell — past that the icons scroll.
+    static func restStripWidth(shell: CGFloat, apps: Int) -> CGFloat {
+        let fitted = CornerSplitStrip.contentWidth(apps: apps)
+        return min(max(fitted, 160), (shell / 2).rounded())
     }
 
     /// The field's width: the board's list column, less half the gap so the two bottom
@@ -80,6 +105,18 @@ struct CornerSplitStrip: View {
     @ObservedObject private var shelfStore = DropShelfController.shared.store
 
     private static let iconSize: CGFloat = 28
+    private static let spacing: CGFloat = 8
+    private static let toolSize: CGFloat = 26
+    private static let horizontalPadding: CGFloat = 14
+
+    /// The width that holds `apps` icons and the tools without scrolling: the padding, the
+    /// icons and their gaps, the hairline, the clipboard and the shelf.
+    static func contentWidth(apps: Int) -> CGFloat {
+        let icons = CGFloat(max(apps, 0))
+        let appsWidth = icons * iconSize + max(icons - 1, 0) * spacing + 4
+        let tools = spacing + 1 + spacing + toolSize + spacing + toolSize
+        return horizontalPadding * 2 + appsWidth + tools
+    }
 
     /// The resting strip's own composition, so an app is in the same place in both.
     private var apps: [DockAppSlot] { Self.apps(for: model) }
@@ -94,9 +131,9 @@ struct CornerSplitStrip: View {
     var body: some View {
         // Its own height as a capsule in the shell; the composer's, beside it in the chat card.
         let height: CGFloat? = inset ? nil : AppChatPromptMetrics.fieldHeight(global: true)
-        HStack(spacing: 8) {
+        HStack(spacing: Self.spacing) {
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
+                HStack(spacing: Self.spacing) {
                     ForEach(apps) { slot in
                         appButton(slot)
                     }
@@ -110,8 +147,9 @@ struct CornerSplitStrip: View {
                 ClipboardPanelController.shared.toggle()
             }
             DropShelfIcon(presentation: shelf, store: shelfStore, style: .control)
+                .frame(width: Self.toolSize, height: Self.toolSize)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Self.horizontalPadding)
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
