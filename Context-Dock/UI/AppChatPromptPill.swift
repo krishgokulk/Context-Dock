@@ -1027,7 +1027,9 @@ struct AppChatPromptPill: View {
                     .frame(width: 22)
             } else if model.isGlobalScope {
                 globalLeadingChip
-            } else if model.returnsToGlobalScope {
+            } else if model.returnsToGlobalScope, !model.isAppStepIn {
+                // A tool or a command keeps its way back; an app is its own Context Dock,
+                // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
             } else {
                 appChip
@@ -1086,9 +1088,9 @@ struct AppChatPromptPill: View {
                                 clipboard.actionableEntries())
                             return
                         }
-                        // A chosen row runs — a command or an adapter action. On a window
-                        // snapshot with nothing typed, Return switches to that app, because
-                        // that is what the switcher is for. Anything else is a question.
+                        // A chosen row runs — a command or an adapter action. On an app
+                        // stepped into from Global with nothing typed, Return brings that app
+                        // forward. Anything else is a question.
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
                         // A panel on screen is what the field is talking to.

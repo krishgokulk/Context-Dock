@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 
 @testable import Context_Dock
@@ -32,5 +33,18 @@ struct DockAppClickTests {
         #expect(DockAppClick.showsWindowPreview(windowCount: 2))
         // Unreadable (no Accessibility permission): the card stays, as before.
         #expect(DockAppClick.showsWindowPreview(windowCount: nil))
+    }
+
+    /// Windows are counted from the window server, never by asking the app: a busy Terminal
+    /// froze the corner when every hover asked it over Accessibility.
+    @Test func onlyTheAppsOwnDocumentWindowsCount() {
+        let big = CGRect(x: 0, y: 0, width: 800, height: 600)
+        #expect(WindowServerWindows.isDocumentWindow(ownerPID: 42, layer: 0, bounds: big, pid: 42))
+        // Another app's window, a menu or palette layer, a tiny helper window: not counted.
+        #expect(!WindowServerWindows.isDocumentWindow(ownerPID: 7, layer: 0, bounds: big, pid: 42))
+        #expect(!WindowServerWindows.isDocumentWindow(ownerPID: 42, layer: 25, bounds: big, pid: 42))
+        #expect(!WindowServerWindows.isDocumentWindow(
+            ownerPID: 42, layer: 0, bounds: CGRect(x: 0, y: 0, width: 40, height: 20), pid: 42))
+        #expect(!WindowServerWindows.isDocumentWindow(ownerPID: 42, layer: 0, bounds: nil, pid: 42))
     }
 }

@@ -562,17 +562,14 @@ extension AppChatPromptModel {
         }
     }
 
-    /// Return, on a snapshot with nothing typed, switches to the app — the switcher's whole
-    /// point. Returns false otherwise so Return still sends the question.
+    /// Return on an app stepped into from Global, with nothing typed: the app comes forward
+    /// — launched if it has quit, its minimised windows restored. Returns false otherwise so
+    /// Return still sends the question.
     @discardableResult
     func activateSnapshotApp() -> Bool {
-        guard showsWindowSnapshot,
-            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let app = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == appBundleID && !$0.isTerminated
-            })
+        guard isAppStepIn, query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
-        app.activate()
+        AppActivation.bringForward(bundleID: appBundleID, name: appName)
         touch()
         return true
     }
@@ -962,6 +959,15 @@ extension AppChatPromptModel {
     /// "for other apps don't show a preview window, just the running apps"): an app's scope
     /// shows its commands, with the running apps standing beside the field.
     var showsWindowSnapshot: Bool { false }
+
+    /// A running app stepped into from Global (not Finder, a CLI tool or a command): it rests
+    /// as that app's own Context Dock — the field alone with the ⚙ chip, no sheet of its
+    /// actions — and Return on the empty field brings the app forward (owner 2026-10-07).
+    var isAppStepIn: Bool {
+        returnsToGlobalScope && !appBundleID.isEmpty
+            && appBundleID != "com.apple.finder"
+            && !isCLIScope && !showsExtensionPanel
+    }
 
     /// Leave a scope entered from Global and go back to it.
     @discardableResult

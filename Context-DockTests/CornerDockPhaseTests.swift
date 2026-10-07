@@ -155,4 +155,17 @@ struct CornerDockPhaseTests {
         #expect(!AppChatPromptPhase.dock.showsInput)
         #expect(AppChatPromptPhase.dock.isVisible)
     }
+
+    /// An app stepped into from Global rests as its own Context Dock — no sheet of its
+    /// actions — and Return on the empty field brings it forward (owner 2026-10-07). Finder
+    /// keeps its file search.
+    @Test func anAppSteppedIntoRestsAsItsOwnDock() {
+        let (model, _) = globalModel()
+        model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(model.isAppStepIn)
+        #expect(model.phase != .suggesting)
+        let (finder, _) = globalModel()
+        finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+        #expect(!finder.isAppStepIn)
+    }
 }
