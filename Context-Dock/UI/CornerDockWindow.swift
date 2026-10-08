@@ -82,6 +82,9 @@ final class CornerDockController: NSObject {
     /// macOS Dock's quick hide; never having come near it — the dock was raised by a hotkey —
     /// waits out the idle delay instead.
     private var pointerVisitedDock = false
+    /// The pointer resting on the apps beside the field, waiting out the dwell before the
+    /// field folds into the dock (`foldWhenRestingOnApps`).
+    fileprivate var appsFoldIntent: DispatchWorkItem?
     /// The last span the shell drew, so the edge can be matched to it while nothing shows.
     private var lastShownContentRect: CGRect = .zero
     /// Watches the bottom edge while the shell is not on screen at all, so touching it can
@@ -1686,6 +1689,7 @@ final class CornerDockController: NSObject {
         let overShelf = contains(slots.shelf)
         let overClipboard = contains(slots.clipboard)
         let overPrompt = contains(slots.prompt)
+        foldWhenRestingOnApps(prompt: slots.prompt, origin: origin, mouse: mouse)
 
         // The shelf opens by click, not by hover: a pointer passing over its card is not a
         // request to keep it open, and not one to close it either.
@@ -1700,6 +1704,38 @@ final class CornerDockController: NSObject {
             clipboardModel.hoverEnded()
             chatPresentation.hoverEnded()
         }
+    }
+}
+
+extension CornerDockController {
+    /// Over the apps beside Global's empty field, the field folds back into the resting dock
+    /// — the same apps with their previews, menus and window management (owner 2026-10-08:
+    /// "over apps: back to the dock with running apps, pins"). Watched here, from the pointer
+    /// the window already tracks, after a short dwell so crossing the apps does not fold it.
+    /// Asked for by the pointer, so neither "fold on its own" nor the pin holds it back;
+    /// `restAsDockNow` still refuses a typed field or a turn in progress.
+    fileprivate func foldWhenRestingOnApps(prompt slot: CGRect?, origin: CGPoint, mouse: CGPoint) {
+        let strip = slot.flatMap {
+            CornerSplitShell.stripRect(
+                slot: $0, fieldWidth: splitWidths.field, stripWidth: splitWidths.strip,
+                height: AppChatPromptMetrics.fieldHeight(global: true))
+        }
+        let resting = showsSplitShell && prompt.isGlobalScope
+            && strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        guard resting else {
+            appsFoldIntent?.cancel()
+            appsFoldIntent = nil
+            return
+        }
+        guard appsFoldIntent == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.appsFoldIntent = nil
+            guard self.showsSplitShell, self.prompt.isGlobalScope else { return }
+            _ = self.prompt.restAsDockNow()
+        }
+        appsFoldIntent = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + CornerSplitShell.foldDwell, execute: work)
     }
 }
 
