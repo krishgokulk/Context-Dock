@@ -203,10 +203,11 @@ extension AppChatPromptModel {
     /// tabs first and never a pin.
     func tabStripIcons() -> [MatchDockIcon] {
         let pins = appPinIcons()
-        // An app with pins but no tabs has the bar for its pins alone.
+        // An app with pins but no tabs has the bar for its pins alone; one with neither
+        // shows the running apps there, as Global's dock does (owner 2026-10-08).
         guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
             tabsByIconID = [:]
-            return pins
+            return pins.isEmpty ? Self.pillIcons(excluding: appBundleID) : pins
         }
         // Safari's own order, window by window, tab by tab — never the current page first:
         // choosing a tab here made it the current page, and it jumped to the front under
@@ -219,10 +220,14 @@ extension AppChatPromptModel {
         return pins + tabs.map(BrowserTabList.icon(for:))
     }
 
-    /// A click on an icon in the app bar's pill: a pin runs, a tab shows.
+    /// A click on an icon in the app bar's pill: a pin runs, a tab shows, and a running app
+    /// — what the bar holds for an app with no pins — is the window manager's, as in
+    /// Global's dock (`DockAppClick`).
     func openBarIcon(_ icon: MatchDockIcon) {
         if let pin = appPin(forIconID: icon.id) {
             openAppPin(pin)
+        } else if !isTabIcon(icon.id), let bundleID = icon.bundleID {
+            DockAppClick.click(bundleID: bundleID, name: icon.title)
         } else {
             openGlobalMatchIcon(icon)
         }

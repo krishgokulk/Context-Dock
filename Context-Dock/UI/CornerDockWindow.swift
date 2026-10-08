@@ -1720,7 +1720,9 @@ extension CornerDockController {
                 slot: $0, fieldWidth: splitWidths.field, stripWidth: splitWidths.strip,
                 height: AppChatPromptMetrics.fieldHeight(global: true))
         }
-        let resting = showsSplitShell && prompt.isGlobalScope
+        // Global's field, and every app's Context Dock, which rests the same way (owner
+        // 2026-10-08: "collapse the input field like Global Context").
+        let resting = showsSplitShell && prompt.usesDockShell
             && strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
         guard resting else {
             appsFoldIntent?.cancel()
@@ -1733,7 +1735,7 @@ extension CornerDockController {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.appsFoldIntent = nil
-            guard self.showsSplitShell, self.prompt.isGlobalScope else {
+            guard self.showsSplitShell, self.prompt.usesDockShell else {
                 DoraXTurnLog.record("corner.apps dwell ended with the split gone")
                 return
             }

@@ -215,11 +215,14 @@ struct CornerAppPinsTests {
         #expect(plan.layout.overflow > 0)
     }
 
-    @Test("Any app with pins gets the bar; one without keeps its plain field")
+    @Test("Every app has the bar: its pins when it has some, the running apps otherwise")
     func pinsGiveAnyAppTheBar() {
         let (store, _) = temporaryStore()
         let textEdit = scope(store, bundleID: "com.apple.TextEdit", name: "TextEdit")
-        #expect(!textEdit.showsTabBar)
+        // No pins: the bar still stands, holding the running apps (owner 2026-10-08).
+        #expect(textEdit.showsTabBar)
+        textEdit.updateTabStrip()
+        #expect(!textEdit.stripIcons.contains { textEdit.appPin(forIconID: $0.id) != nil })
         store.pin(.menuCommand(path: ["Format", "Make Plain Text"]), title: "Make Plain Text",
             app: "com.apple.TextEdit")
         #expect(textEdit.showsTabBar)

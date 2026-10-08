@@ -190,7 +190,11 @@ final class AppChatPromptModel: ObservableObject {
     var showsTabBar: Bool {
         guard !isGlobalScope else { return false }
         if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
-        return isAppContextDock && !dockPins.pins(forApp: appBundleID).isEmpty
+        // Every app's Context Dock has the bar, and rests and folds as Global does: its
+        // pinned actions when it has some, the running apps when it has none (owner
+        // 2026-10-08, replacing 2026-09-26's "an app without pins keeps its plain field").
+        // Finder's field is a file search with folders to step through, not a dock.
+        return isAppContextDock && !isFinderScope
     }
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
