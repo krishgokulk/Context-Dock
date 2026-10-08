@@ -1216,7 +1216,8 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(keys: ["p"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
-                        model.togglePin()
+                        // A chosen row pins; with none, the shell's keep-open.
+                        if !model.pinChosenRow() { model.togglePin() }
                         return .handled
                     }
                     // Settings from the field, as every board's foot says (owner 2026-10-07).

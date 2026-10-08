@@ -235,6 +235,14 @@ extension DockPinKind {
         case .file(let url):
             self.init(fileURL: url)
         case .dock(let pill)
+        where pill.rankingKind == "nativeWindow":
+            // A window layout ("Centre", "Left Half"), pinned in the app's bar: kept as an
+            // app action whose id names the layout, so the pin store needs no new kind
+            // (owner 2026-10-08: "no pin shows when I right-click it").
+            guard let command = WindowLayoutPin.command(trackingIdentifier: pill.trackingIdentifier)
+            else { return nil }
+            self = .appAction(id: WindowLayoutPin.actionID(command))
+        case .dock(let pill)
         where ["appSwitch", "appLaunch"].contains(pill.rankingKind) && !pill.sourceBundleId.isEmpty:
             // Another app, from this app's list ("saf" → Safari): pinned, it is one click
             // back to that app from here.
@@ -305,5 +313,28 @@ extension DockPinKind {
         case .menuCommand, .appAction, .tab:
             return true  // the app's own; greyed menu items still show, as in the list
         }
+    }
+}
+
+/// A pinned window layout, stored as `DockPinKind.appAction` with this prefix on its id.
+enum WindowLayoutPin {
+    static let prefix = "window-layout:"
+
+    static func actionID(_ command: String) -> String { prefix + command }
+
+    /// The layout a pinned action stands for, or nil when it is an ordinary adapter action.
+    static func command(actionID: String) -> String? {
+        guard actionID.hasPrefix(prefix) else { return nil }
+        let command = String(actionID.dropFirst(prefix.count))
+        return command.isEmpty ? nil : command
+    }
+
+    /// The layout a native window row runs: the last field of its tracking id,
+    /// `native-window:<bundle id>:<command>` (`CornerBoardPreview.windowLayoutPreview`).
+    static func command(trackingIdentifier: String) -> String? {
+        guard trackingIdentifier.hasPrefix("native-window:"),
+            let last = trackingIdentifier.split(separator: ":").last, !last.isEmpty
+        else { return nil }
+        return String(last)
     }
 }
