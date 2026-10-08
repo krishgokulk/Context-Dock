@@ -595,9 +595,6 @@ struct AppChatPromptPill: View {
     /// results, and the apps stand beside it under the preview (`CornerSplitStrip`).
     private var splitsShell: Bool { CornerDockController.shared.showsSplitShell }
 
-    /// Global's field folded to its search icon while the pointer is over the apps.
-    private var fieldFolded: Bool { CornerDockController.shared.fieldFolded }
-
     /// The glass frame's width. Split, it narrows to the left column; the stack inside keeps
     /// its full width (`globalInputWidth`, `legacyInputWidth`) and is only revealed less of,
     /// exactly as the dock → field morph does — no inner width moves, so the field's focus
@@ -632,12 +629,9 @@ struct AppChatPromptPill: View {
                 // A width change (a conversation starting, an app launching) lands at once:
                 // animated, it would re-lay out the focused field every frame.
                 .animation(nil, value: globalInputWidth)
-                // Folded to its icon, the field's text and caret step out; the centred
-                // magnifier below stands in. Only opacity moves — the stack keeps its layout.
-                .opacity(showsInput && !fieldFolded ? 1 : 0)
+                .opacity(showsInput ? 1 : 0)
                 .allowsHitTesting(showsInput)
                 .animation(fieldFade, value: model.phase)
-                .animation(.easeOut(duration: 0.15), value: fieldFolded)
 
             // Up while the dock or its field is: the strip fades its own apps and magnifier
             // as they gather into the field, and keeps its pins and tools — still, and
@@ -655,15 +649,7 @@ struct AppChatPromptPill: View {
         .frame(
             width: drawnWidth, height: size.height,
             alignment: splitsShell ? .bottomLeading : globalStackAlignment)
-        // The folded field is a search button: its magnifier in the middle of the circle.
-        .overlay {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(.secondary)
-                .opacity(fieldFolded ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: fieldFolded)
-                .allowsHitTesting(false)
-        }
+
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.

@@ -941,32 +941,15 @@ final class CornerDockController: NSObject {
     /// The split bottom line's two widths: the apps fitted to what they hold, the field the
     /// rest of the shell — the whole of it when the apps' piece has nothing to show.
     var splitWidths: (field: CGFloat, strip: CGFloat) {
-        splitWidths(
-            collapsed: CornerSplitShell.collapsesField(
-                appsHovered: prompt.splitAppsHovered, isGlobalScope: prompt.isGlobalScope,
-                query: prompt.query, phase: prompt.phase))
-    }
-
-    /// Global's field is folded to its search icon (the pointer is over the apps).
-    var fieldFolded: Bool {
-        showsSplitShell
-            && CornerSplitShell.collapsesField(
-                appsHovered: prompt.splitAppsHovered, isGlobalScope: prompt.isGlobalScope,
-                query: prompt.query, phase: prompt.phase)
-    }
-
-    /// The width the field's text stack is laid out at: the open field's, folded or not, so
-    /// folding to the icon moves only the glass and never re-lays out the focused field.
-    var splitFieldLayoutWidth: CGFloat { splitWidths(collapsed: false).field }
-
-    private func splitWidths(collapsed: Bool) -> (field: CGFloat, strip: CGFloat) {
         CornerSplitShell.widths(
             shell: AppChatPromptMetrics.boardWidth(for: prompt),
             apps: CornerSplitStrip.apps(for: prompt).count,
             pins: CornerSplitStrip.pins(for: prompt).count,
-            tools: CornerSplitStrip.toolCount(for: prompt),
-            collapsed: collapsed)
+            tools: CornerSplitStrip.toolCount(for: prompt))
     }
+
+    /// The width the field's text stack is laid out at.
+    var splitFieldLayoutWidth: CGFloat { splitWidths.field }
 
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
     /// on screen or General Chat was, the current scope's otherwise — with the clipboard in
@@ -1723,6 +1706,8 @@ final class CornerDockController: NSObject {
 /// The one shell: the field and its boards, the clipboard in the corner, the open shelf
 /// above — each dropping out of the stack when it has nothing to show.
 struct CornerDockSurface: View {
+    /// Pairs the resting dock's icons with the split strip's (`DockIconMatch`).
+    @Namespace private var dockIconSpace
     @ObservedObject private var clipboardModel = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
@@ -1752,11 +1737,14 @@ struct CornerDockSurface: View {
         // Centred, the shell is a row: field, clipboard side by side, with what answers the
         // field — and the open shelf — stacked over the field itself. Anchored to an edge it stays a
         // column, because a row against the screen's corner would run off it.
-        if anchor == .center {
-            centredRow
-        } else {
-            column
+        Group {
+            if anchor == .center {
+                centredRow
+            } else {
+                column
+            }
         }
+        .environment(\.dockIconNamespace, dockIconSpace)
     }
 
     /// The open shelf — a card in the shell, from the shelf icon at the end of the row.
@@ -1843,22 +1831,15 @@ struct CornerDockSurface: View {
                 GlassEffectContainer(spacing: CornerSplitShell.dropletSpacing) {
                     HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 0) {
                         AppChatPromptPill(model: prompt)
-                            // Reaching the folded icon opens the field again.
-                            .onHover { inside in
-                                if inside, prompt.splitAppsHovered { prompt.splitAppsHovered = false }
-                            }
                         if split {
                             CornerSplitStrip(
                                 model: prompt, width: CornerDockController.shared.splitWidths.strip)
-                                .transition(
-                                    .opacity.combined(with: .scale(scale: 0.4, anchor: .leading)))
+                                // Its icons travel from the dock's (`DockIconMatch`); only the
+                                // glass fades in around them.
+                                .transition(.opacity)
                         }
                     }
                     .frame(width: split ? shell : nil, alignment: .leading)
-                    // Leaving the shell altogether unfolds the field.
-                    .onHover { inside in
-                        if !inside, prompt.splitAppsHovered { prompt.splitAppsHovered = false }
-                    }
                 }
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: split)
                 .animation(

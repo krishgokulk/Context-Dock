@@ -271,8 +271,6 @@ final class AppChatPromptModel: ObservableObject {
     /// The app's settings card is open in the result board (the chip opens it, owner
     /// 2026-10-07). The user is reading it, so the idle clock stops while it is open and
     /// starts again when it closes.
-    /// The pointer is over the apps piece beside the split field (`CornerSplitStrip`).
-    @Published var splitAppsHovered = false
     @Published var isShowingScopeCard = false {
         didSet {
             guard isShowingScopeCard != oldValue else { return }

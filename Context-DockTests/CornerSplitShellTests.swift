@@ -125,33 +125,18 @@ struct CornerSplitShellTests {
         #expect(AppChatListMetrics.size(rows: 3).height == bare + AppChatListMetrics.footerHeight)
     }
 
-    /// Over the apps, Global's empty field folds to its search icon and the apps take the
-    /// rest of the shell (owner 2026-10-07). Never with text typed, in a scope, or with the
-    /// sheet open.
-    @Test func hoveringTheAppsFoldsGlobalsEmptyField() {
-        #expect(CornerSplitShell.collapsesField(
-            appsHovered: true, isGlobalScope: true, query: "", phase: .prompt))
-        #expect(!CornerSplitShell.collapsesField(
-            appsHovered: false, isGlobalScope: true, query: "", phase: .prompt))
-        #expect(!CornerSplitShell.collapsesField(
-            appsHovered: true, isGlobalScope: true, query: "sa", phase: .prompt))
-        #expect(!CornerSplitShell.collapsesField(
-            appsHovered: true, isGlobalScope: false, query: "", phase: .prompt))
-        #expect(!CornerSplitShell.collapsesField(
-            appsHovered: true, isGlobalScope: true, query: "", phase: .suggesting))
-
-        // Folded, the apps are as wide as their icons — the dock shrinks rather than
-        // leaving empty glass — and never wider than the rest of the shell.
-        let (field, strip) = CornerSplitShell.widths(shell: 664, apps: 4, tools: 1, collapsed: true)
-        #expect(field == CornerSplitShell.collapsedFieldWidth)
-        #expect(strip == CornerSplitStrip.contentWidth(apps: 4, tools: 1))
-        let (_, crowded) = CornerSplitShell.widths(shell: 664, apps: 40, tools: 2, collapsed: true)
-        #expect(crowded == 664 - CornerSplitShell.collapsedFieldWidth - CornerSplitShell.gap)
-    }
-
     /// The two pieces end farther apart than the glass's merge distance, so they separate
     /// like a droplet instead of staying joined by a bridge.
     @Test func thePiecesPinchApart() {
         #expect(CornerSplitShell.gap > CornerSplitShell.dropletSpacing)
+    }
+
+    /// The resting dock's icon and the split strip's are one icon to the animation: the
+    /// same id, so it travels between the rows instead of blinking (owner 2026-10-08).
+    @Test func dockAndSplitIconsShareTheirIDs() {
+        #expect(DockIconMatch.app("com.apple.finder") == DockIconMatch.app("com.apple.finder"))
+        #expect(DockIconMatch.app("com.apple.finder") != DockIconMatch.app("com.apple.Safari"))
+        let id = UUID()
+        #expect(DockIconMatch.pin(id) == DockIconMatch.pin(id))
     }
 }
