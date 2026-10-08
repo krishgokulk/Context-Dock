@@ -96,7 +96,6 @@ struct CornerSplitStrip: View {
     /// the capsule alone never heard the pointer resting on an app (owner 2026-10-08: "why
     /// still isn't it back"). Each icon reports itself, as the resting dock's icons do.
     @State private var pointerOver: Set<String> = []
-    @Environment(\.dockIconNamespace) private var iconSpace
 
     /// The resting dock's own icon size, so an icon is the same size in the dock and beside
     /// the field (owner 2026-10-08: "stay the same size, bigger, in both").
@@ -255,7 +254,6 @@ struct CornerSplitStrip: View {
                     }
                 }
                 .frame(width: icon, height: icon)
-                .dockIconMatch(DockIconMatch.pin(pin.id), in: iconSpace, isSource: true)
                 Circle().fill(Color.clear).frame(width: 3, height: 3)
             }
             .contentShape(Rectangle())
@@ -281,9 +279,6 @@ struct CornerSplitStrip: View {
                     }
                 }
                 .frame(width: icon, height: icon)
-                // The same icon as the resting dock's: it slides and shrinks from there
-                // rather than one row blinking out and another in.
-                .dockIconMatch(DockIconMatch.app(slot.bundleID), in: iconSpace, isSource: true)
                 .opacity((slot.pin.map { $0.kind.isAvailable } ?? true) ? 1 : 0.4)
                 Circle()
                     .fill(Color.primary.opacity(slot.isRunning ? 0.55 : 0))
@@ -363,44 +358,3 @@ private struct StripChrome: ViewModifier {
     }
 }
 
-// MARK: - One icon, two rows
-
-/// The resting dock's icons and the split strip's are the same apps. Paired by id in one
-/// namespace (`CornerDockSurface`), an icon moves and resizes between the two rows as the
-/// field opens and folds, instead of one row fading out while the other fades in — the
-/// flicker the owner saw (2026-10-08).
-enum DockIconMatch {
-    static func app(_ bundleID: String) -> String { "dock-app-" + bundleID }
-    static func pin(_ id: UUID) -> String { "dock-pin-" + id.uuidString }
-
-    /// The resting dock's id for an icon. Only the dock at rest is in the pair; with the field
-    /// up its icons, gathered and hidden, take an id of their own. Paired while hidden, they
-    /// followed the split's copies out past the field's clipped glass and stayed there when
-    /// it folded, leaving the dock showing only its magnifier (owner 2026-10-08: "only a 🔍
-    /// circle"). This way each side is the only one holding the id while it is on screen,
-    /// and the icon flies from the one leaving to the one arriving.
-    static func resting(_ id: String, atRest: Bool) -> String { atRest ? id : id + "-away" }
-}
-
-private struct DockIconNamespaceKey: EnvironmentKey {
-    static let defaultValue: Namespace.ID? = nil
-}
-
-extension EnvironmentValues {
-    var dockIconNamespace: Namespace.ID? {
-        get { self[DockIconNamespaceKey.self] }
-        set { self[DockIconNamespaceKey.self] = newValue }
-    }
-}
-
-extension View {
-    /// `matchedGeometryEffect` when the surface handed down its namespace; nothing otherwise.
-    @ViewBuilder
-    func dockIconMatch(_ id: String, in namespace: Namespace.ID?, isSource: Bool) -> some View {
-        if let namespace {
-            matchedGeometryEffect(id: id, in: namespace, isSource: isSource)
-        } else {
-            self
-        }
-    }
-}

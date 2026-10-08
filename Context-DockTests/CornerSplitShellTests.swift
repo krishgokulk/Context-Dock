@@ -131,23 +131,6 @@ struct CornerSplitShellTests {
         #expect(CornerSplitShell.gap > CornerSplitShell.dropletSpacing)
     }
 
-    /// The resting dock's icon and the split strip's are one icon to the animation: the
-    /// same id, so it travels between the rows instead of blinking (owner 2026-10-08).
-    @Test func dockAndSplitIconsShareTheirIDs() {
-        #expect(DockIconMatch.app("com.apple.finder") == DockIconMatch.app("com.apple.finder"))
-        #expect(DockIconMatch.app("com.apple.finder") != DockIconMatch.app("com.apple.Safari"))
-        let id = UUID()
-        #expect(DockIconMatch.pin(id) == DockIconMatch.pin(id))
-    }
-
-    /// Only the dock at rest shares an icon's id with the split, so the hidden dock never
-    /// follows the split's icons out of its own glass (owner 2026-10-08: "only a 🔍 circle").
-    @Test func onlyTheRestingDockIsPairedWithTheSplit() {
-        let id = DockIconMatch.app("com.apple.finder")
-        #expect(DockIconMatch.resting(id, atRest: true) == id)
-        #expect(DockIconMatch.resting(id, atRest: false) != id)
-    }
-
     /// An icon is the dock's size beside the field too, so nothing changes size as the
     /// field opens (owner 2026-10-08).
     @Test func iconsKeepTheDocksSize() {

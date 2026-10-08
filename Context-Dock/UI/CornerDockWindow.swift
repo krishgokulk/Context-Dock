@@ -1706,8 +1706,6 @@ final class CornerDockController: NSObject {
 /// The one shell: the field and its boards, the clipboard in the corner, the open shelf
 /// above — each dropping out of the stack when it has nothing to show.
 struct CornerDockSurface: View {
-    /// Pairs the resting dock's icons with the split strip's (`DockIconMatch`).
-    @Namespace private var dockIconSpace
     @ObservedObject private var clipboardModel = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
@@ -1744,7 +1742,6 @@ struct CornerDockSurface: View {
                 column
             }
         }
-        .environment(\.dockIconNamespace, dockIconSpace)
     }
 
     /// The open shelf — a card in the shell, from the shelf icon at the end of the row.
@@ -1834,9 +1831,12 @@ struct CornerDockSurface: View {
                         if split {
                             CornerSplitStrip(
                                 model: prompt, width: CornerDockController.shared.splitWidths.strip)
-                                // Its icons travel from the dock's (`DockIconMatch`); only the
-                                // glass fades in around them.
-                                .transition(.opacity)
+                                // Fades in as it buds off the field; gone at once on the fold.
+                                // Left to fade out under the pointer, it stayed on screen beside
+                                // a half-folded field until the pointer left (owner 2026-10-08:
+                                // "dock only on mouse-out"); the dock's own icons arrive in its
+                                // place as the field folds.
+                                .transition(.asymmetric(insertion: .opacity, removal: .identity))
                         }
                     }
                     .frame(width: split ? shell : nil, alignment: .leading)
