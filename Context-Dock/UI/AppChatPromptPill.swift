@@ -497,7 +497,8 @@ struct AppChatPromptPill: View {
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
         if AppChatPromptModel.layerKeyComesFirst(
-            query: model.query, hasFocusedRow: model.focusedRow != nil),
+            query: model.query, hasFocusedRow: model.focusedRow != nil,
+            steppedInFromGlobal: model.returnsToGlobalScope),
             layerKey(up: up) == .handled
         {
             return .handled
