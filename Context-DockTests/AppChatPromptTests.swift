@@ -227,6 +227,8 @@ struct AppChatPromptTests {
         // A private conversation: `.shared` is also the live dock's, and a turn another test
         // submitted there can still be loading — a loading conversation holds the prompt up.
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        // The badge path: with "fold on its own" on, the app rests as its bar instead.
+        model.autoShrinkEnabled = { false }
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
