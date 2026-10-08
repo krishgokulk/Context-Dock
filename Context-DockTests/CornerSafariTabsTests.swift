@@ -147,9 +147,10 @@ struct CornerSafariTabsTests {
         // Every app's Context Dock rests as a dock now (owner 2026-10-08); Finder's file
         // search does not.
         #expect(textEdit.usesDockHeight && textEdit.usesDockShell)
-        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25).
+        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25),
+        // and in front it rests and folds like any app's (owner 2026-10-08).
         let finder = scope(bundleID: "com.apple.finder", name: "Finder")
-        #expect(finder.usesDockHeight && !finder.usesDockShell)
+        #expect(finder.usesDockHeight && finder.usesDockShell)
         let fitted = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, running: 12, pinned: 3,
             fieldHeight: AppChatPromptMetrics.dockHeight, fitsContent: true)

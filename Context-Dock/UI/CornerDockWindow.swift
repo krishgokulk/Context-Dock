@@ -1482,10 +1482,16 @@ final class CornerDockController: NSObject {
             event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
             let panel, event.window === panel,
             chatPresentation.isVisible, prompt.phase.showsInput,
-            prompt.query.isEmpty,
-            prompt.applyEmptyBackspace()
+            prompt.query.isEmpty
         {
-            return nil
+            if prompt.applyEmptyBackspace() { return nil }
+            // The frontmost app's Context Dock, with nothing to step out of inside it: one
+            // more Backspace is Global Context's search (owner 2026-10-08: "Backspace goes
+            // back to the Global Context search input").
+            if chatPresentation.mode == .frontmostApp, prompt.phase != .chat {
+                chatPresentation.showGlobalContext()
+                return nil
+            }
         }
 
         // Tab: the focus system claims it inside a text field, so `onKeyPress(.tab)` never

@@ -193,8 +193,9 @@ final class AppChatPromptModel: ObservableObject {
         // Every app's Context Dock has the bar, and rests and folds as Global does: its
         // pinned actions when it has some, the running apps when it has none (owner
         // 2026-10-08, replacing 2026-09-26's "an app without pins keeps its plain field").
-        // Finder's field is a file search with folders to step through, not a dock.
-        return isAppContextDock && !isFinderScope
+        // Finder's file search (stepped into from Global, or walking a folder) is not a dock;
+        // Finder in front is its own Context Dock and rests like any app's (owner 2026-10-08).
+        return isAppContextDock && !isFinderFileSearch
     }
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
@@ -235,6 +236,12 @@ final class AppChatPromptModel: ObservableObject {
     var isClipboardScope: Bool { clipboardBoard.isBoardOpen }
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    /// The folder Finder's front window shows — the Desktop when no window is open — read
+    /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
+    var finderFrontFolder: URL?
+    var finderFolderReadAt: Date = .distantPast
+    /// Where the front folder is read from. A test swaps it; the app asks Finder.
+    var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
     /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
     var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
         GlobalSearchService.shared.document(withID: $0)

@@ -1937,7 +1937,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The prompt is about the app the user is looking at, so the app is captured here —
     /// before opening the prompt makes Context-Dock frontmost.
-    func activateAppChatPrompt() {
+    func activateAppChatPrompt(toggles: Bool = true) {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
@@ -1955,7 +1955,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
             summary: AppChatSuggestionProvider.summary(for: target))
         CornerDockController.shared.activate()
-        CornerChatPresentation.shared.cycle(target: chatTarget)
+        if toggles {
+            CornerChatPresentation.shared.cycle(target: chatTarget)
+        } else {
+            CornerChatPresentation.shared.showFrontmostApp(target: chatTarget)
+        }
+    }
+
+    /// ⌘⌘: the app in front's Context Dock. Pressed again while that is up (and not slid away
+    /// by auto-hide), it puts the corner away, as the other scope hotkeys do.
+    func activateContextDockFromDoubleCommand() {
+        let presentation = CornerDockController.shared.chatPresentation
+        if presentation.isVisible, presentation.mode == .frontmostApp,
+            !CornerDockController.shared.isAutoHidden
+        {
+            presentation.dismiss()
+            return
+        }
+        // From Global or General, straight to the app's Context Dock — not a toggle that
+        // would put a visible corner away instead.
+        activateAppChatPrompt(toggles: false)
+        CornerDockController.shared.armKeyboard()
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.
@@ -2171,7 +2191,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.command),
                 hasOtherModifiers: !flags.intersection([.option, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleCommandGlobalContext {
-                DispatchQueue.main.async { self.activateGlobalContextScope() }
+                // ⌘⌘ opens the Context Dock of the app in front; a single ⌘ tap switches to
+                // Global, and Backspace on its empty field goes there too (owner 2026-10-08).
+                DispatchQueue.main.async { self.activateContextDockFromDoubleCommand() }
             }
             if optionTap.update(
                 isDown: flags.contains(.option),
