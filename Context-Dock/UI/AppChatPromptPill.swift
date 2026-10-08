@@ -1235,6 +1235,8 @@ struct AppChatPromptPill: View {
                         CornerDockController.shared.requestComposerFocus()
                     })
             }
+            // The field takes its room before the spacer that puts the match icon at the end.
+            .layoutPriority(1)
 
             // The dock's own match pills, mounted rather than imitated: the apps that
             // answer what is typed, with "+N" for the rest. Same view, same icons, same
