@@ -91,6 +91,11 @@ struct CornerSplitStrip: View {
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
     @State private var foldIntent: Task<Void, Never>?
+    /// What the pointer is over: the capsule, and each icon on its own. The icons live in a
+    /// scroll view, whose own hosting view keeps the pointer from the capsule's hover — so
+    /// the capsule alone never heard the pointer resting on an app (owner 2026-10-08: "why
+    /// still isn't it back"). Each icon reports itself, as the resting dock's icons do.
+    @State private var pointerOver: Set<String> = []
     @Environment(\.dockIconNamespace) private var iconSpace
 
     /// The resting dock's own icon size, so an icon is the same size in the dock and beside
@@ -193,25 +198,38 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
-        // Over the apps, Global's empty field folds back into the resting dock — the
-        // same apps with their previews, menus and window management (owner 2026-10-08:
-        // "over apps: back to the dock with running apps, pins"). A short dwell, so
-        // crossing the apps on the way somewhere else does not fold the field.
-        .onHover { inside in
+        .onHover { pointer(at: "capsule", inside: $0) }
+        .onDisappear {
             foldIntent?.cancel()
-            guard inside, !inset else { return }
-            foldIntent = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                guard !Task.isCancelled, model.isGlobalScope, model.phase == .prompt
-                else { return }
-                // Asked for by the pointer, so not subject to "fold on its own" or the pin:
-                // `foldToDock` honours both and did nothing for an owner with either set
-                // (owner 2026-10-08: "why when user hovers running apps isn't it back?").
-                // `restAsDockNow` still refuses a typed field or a turn in progress.
-                _ = model.restAsDockNow()
-            }
+            foldIntent = nil
+            pointerOver = []
         }
-        .onDisappear { foldIntent?.cancel() }
+    }
+
+    /// Over the apps, Global's empty field folds back into the resting dock — the same apps
+    /// with their previews, menus and window management (owner 2026-10-08: "over apps: back
+    /// to the dock with running apps, pins"). A short dwell, so crossing the apps on the way
+    /// somewhere else does not fold the field.
+    private func pointer(at region: String, inside: Bool) {
+        guard !inset else { return }
+        if inside { pointerOver.insert(region) } else { pointerOver.remove(region) }
+        guard !pointerOver.isEmpty else {
+            foldIntent?.cancel()
+            foldIntent = nil
+            return
+        }
+        guard foldIntent == nil else { return }
+        foldIntent = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            // A cancelled dwell leaves the handle alone: it may already be the next one's.
+            guard !Task.isCancelled else { return }
+            foldIntent = nil
+            guard !pointerOver.isEmpty, model.isGlobalScope, model.phase == .prompt
+            else { return }
+            // Asked for by the pointer, so not subject to "fold on its own" or the pin;
+            // `restAsDockNow` still refuses a typed field or a turn in progress.
+            _ = model.restAsDockNow()
+        }
     }
 
     private var hairline: some View {
@@ -243,6 +261,7 @@ struct CornerSplitStrip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { pointer(at: "pin-" + pin.id.uuidString, inside: $0) }
         .help(pin.title)
         .accessibilityLabel(pin.title)
     }
@@ -273,6 +292,7 @@ struct CornerSplitStrip: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { pointer(at: "app-" + slot.bundleID, inside: $0) }
         .help(slot.title)
         .accessibilityLabel(slot.title)
     }
