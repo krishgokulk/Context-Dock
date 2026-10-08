@@ -57,13 +57,8 @@ enum CornerNavigation {
             }
         }
         switch move {
-        case .leftKey: return .general
-        // A sideways swipe over the field switches between the two docks — Global and the
-        // app's Context Dock — and never opens General Chat (owner 2026-10-08: "don't switch
-        // to General Chat; only switch the dock when the user swipes inside the input field").
-        case .swipeSideways:
-            return mode == .globalContext ? .frontmostApp : .globalContext
-        case .rightKey: return nil
+        case .leftKey, .swipeSideways(right: true): return .general
+        case .rightKey, .swipeSideways(right: false): return nil
         case .layerUp: return mode == .frontmostApp ? .globalContext : nil
         case .layerDown: return mode == .globalContext ? .frontmostApp : nil
         }

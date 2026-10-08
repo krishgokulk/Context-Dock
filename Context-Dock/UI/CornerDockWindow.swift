@@ -603,13 +603,18 @@ final class CornerDockController: NSObject {
 
     /// The edge brings up the resting dock — the strip, not the field — holding the keys, so
     /// the first letter typed opens the field with it (owner 2026-09-26). The keys go back
-    /// to the app in front when the strip hides again.
+    /// to the app in front when the strip hides again. Always the app in front's Context
+    /// Dock; ⌘ switches to Global from there (owner 2026-10-08).
     private func summonFromEdge() {
         cancelPendingAutoHide()
         pointerVisitedDock = true
         if !(chatPresentation.isVisible && prompt.phase == .dock) {
             edgeSummonKeepsKeys = true
-            chatPresentation.showGlobalContext()
+            if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+                chatPresentation.showFrontmostApp(target: target)
+            } else {
+                chatPresentation.showGlobalContext()
+            }
             if !prompt.restAsDockNow() { edgeSummonKeepsKeys = false }
         }
         armKeyboard()

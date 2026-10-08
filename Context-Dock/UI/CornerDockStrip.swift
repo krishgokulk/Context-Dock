@@ -437,8 +437,9 @@ struct CornerDockStrip: View {
             // A tab or an app's pin has no app window to preview.
             guard !model.isTabIcon(slot.bundleID), !model.isAppPinIcon(slot.bundleID) else { return }
             // Its windows only when there is more than one to choose between (owner
-            // 2026-10-07): one window is what the click already brings back.
-            let shows = inside
+            // 2026-10-07): one window is what the click already brings back. A pinned app
+            // that is not running has none — its card said "No windows" (owner 2026-10-08).
+            let shows = inside && slot.isRunning
                 && DockAppClick.showsWindowPreview(
                     windowCount: DockAppClick.windowCount(bundleID: slot.bundleID))
             model.hoveredStripTarget = shows ? .app(bundleID: slot.bundleID) : nil
