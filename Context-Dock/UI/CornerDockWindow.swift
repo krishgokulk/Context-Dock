@@ -1728,11 +1728,18 @@ extension CornerDockController {
             return
         }
         guard appsFoldIntent == nil else { return }
+        DoraXTurnLog.record(
+            "corner.apps pointer on the apps: mouse \(mouse) strip \(String(describing: strip)) origin \(origin)")
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.appsFoldIntent = nil
-            guard self.showsSplitShell, self.prompt.isGlobalScope else { return }
-            _ = self.prompt.restAsDockNow()
+            guard self.showsSplitShell, self.prompt.isGlobalScope else {
+                DoraXTurnLog.record("corner.apps dwell ended with the split gone")
+                return
+            }
+            let folded = self.prompt.restAsDockNow()
+            DoraXTurnLog.record(
+                "corner.apps fold \(folded ? "done" : "refused") phase \(self.prompt.phase)")
         }
         appsFoldIntent = work
         DispatchQueue.main.asyncAfter(deadline: .now() + CornerSplitShell.foldDwell, execute: work)
