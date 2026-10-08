@@ -46,5 +46,8 @@ struct DockAppClickTests {
         #expect(!WindowServerWindows.isDocumentWindow(
             ownerPID: 42, layer: 0, bounds: CGRect(x: 0, y: 0, width: 40, height: 20), pid: 42))
         #expect(!WindowServerWindows.isDocumentWindow(ownerPID: 42, layer: 0, bounds: nil, pid: 42))
+        // A transparent helper window (Electron keeps them) is not a window to choose.
+        #expect(!WindowServerWindows.isDocumentWindow(
+            ownerPID: 42, layer: 0, bounds: big, alpha: 0, pid: 42))
     }
 }

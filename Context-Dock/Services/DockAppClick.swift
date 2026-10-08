@@ -55,16 +55,18 @@ enum DockAppClick {
         }
     }
 
-    /// How many windows the app has, minimised ones included; nil when it is not running.
-    /// Read from the window server, never from the app: asking a busy app over
-    /// Accessibility on every hover froze the corner while Terminal streamed output.
+    /// How many of the app's windows are on screen; nil when it is not running. Read from
+    /// the window server, never from the app: asking a busy app over Accessibility on every
+    /// hover froze the corner while Terminal streamed output. Only windows that are showing
+    /// count — Electron apps (Claude) keep hidden helper windows off screen, and counting
+    /// those showed a preview for an app with one window (owner 2026-10-08).
     @MainActor
     static func windowCount(bundleID: String) -> Int? {
         guard
             let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
                 .first(where: { !$0.isTerminated })
         else { return nil }
-        return WindowServerWindows.count(pid: running.processIdentifier, onScreenOnly: false)
+        return WindowServerWindows.count(pid: running.processIdentifier, onScreenOnly: true)
     }
 
     /// The app the user is in. The corner panel does not activate DoraX, so this is usually
@@ -95,13 +97,17 @@ enum WindowServerWindows {
                 bounds: (info[kCGWindowBounds as String] as? [String: Any]).flatMap {
                     CGRect(dictionaryRepresentation: $0 as CFDictionary)
                 },
+                alpha: info[kCGWindowAlpha as String] as? Double ?? 1,
                 pid: pid)
         }.count
     }
 
     /// Pure: whether one window-list entry counts as one of the app's windows.
-    static func isDocumentWindow(ownerPID: Int?, layer: Int?, bounds: CGRect?, pid: pid_t) -> Bool {
-        guard ownerPID == Int(pid), layer == 0, let bounds else { return false }
+    static func isDocumentWindow(
+        ownerPID: Int?, layer: Int?, bounds: CGRect?, alpha: Double = 1, pid: pid_t
+    ) -> Bool {
+        // A fully transparent window is a helper the app keeps on screen, not one to pick.
+        guard ownerPID == Int(pid), layer == 0, alpha > 0.01, let bounds else { return false }
         return bounds.width >= 120 && bounds.height >= 80
     }
 }

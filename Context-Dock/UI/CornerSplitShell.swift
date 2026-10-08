@@ -93,7 +93,13 @@ struct CornerSplitStrip: View {
     @State private var foldIntent: Task<Void, Never>?
     @Environment(\.dockIconNamespace) private var iconSpace
 
-    static let iconSize: CGFloat = 28
+    /// The resting dock's own icon size, so an icon is the same size in the dock and beside
+    /// the field (owner 2026-10-08: "stay the same size, bigger, in both").
+    static let iconSize: CGFloat = AppChatPromptMetrics.dockIconSize
+    /// Beside a conversation's composer the row is the composer's height, so smaller there.
+    static let chatIconSize: CGFloat = 28
+
+    private var icon: CGFloat { inset ? Self.chatIconSize : Self.iconSize }
     static let spacing: CGFloat = 8
     static let toolSize: CGFloat = 26
     static let horizontalPadding: CGFloat = 14
@@ -208,7 +214,7 @@ struct CornerSplitStrip: View {
     private var hairline: some View {
         Rectangle()
             .fill(Color.primary.opacity(0.18))
-            .frame(width: 1, height: Self.iconSize * 0.8)
+            .frame(width: 1, height: icon * 0.6)
     }
 
     /// A pinned extension, command or file: its icon, and the resting dock's click.
@@ -217,7 +223,7 @@ struct CornerSplitStrip: View {
         return Button {
             model.openStripPin(pin, document: document)
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 Group {
                     if let image = pin.kind.icon ?? document?.icon {
                         Image(nsImage: image).resizable().scaledToFit()
@@ -227,7 +233,7 @@ struct CornerSplitStrip: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: Self.iconSize, height: Self.iconSize)
+                .frame(width: icon, height: icon)
                 .dockIconMatch(DockIconMatch.pin(pin.id), in: iconSpace, isSource: true)
                 Circle().fill(Color.clear).frame(width: 3, height: 3)
             }
@@ -242,7 +248,7 @@ struct CornerSplitStrip: View {
         Button {
             open(slot)
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 Group {
                     if let image = slot.running?.icon ?? slot.pin?.kind.icon {
                         Image(nsImage: image).resizable().scaledToFit()
@@ -252,7 +258,7 @@ struct CornerSplitStrip: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .frame(width: Self.iconSize, height: Self.iconSize)
+                .frame(width: icon, height: icon)
                 // The same icon as the resting dock's: it slides and shrinks from there
                 // rather than one row blinking out and another in.
                 .dockIconMatch(DockIconMatch.app(slot.bundleID), in: iconSpace, isSource: true)

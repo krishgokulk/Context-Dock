@@ -139,4 +139,10 @@ struct CornerSplitShellTests {
         let id = UUID()
         #expect(DockIconMatch.pin(id) == DockIconMatch.pin(id))
     }
+
+    /// An icon is the dock's size beside the field too, so nothing changes size as the
+    /// field opens (owner 2026-10-08).
+    @Test func iconsKeepTheDocksSize() {
+        #expect(CornerSplitStrip.iconSize == AppChatPromptMetrics.dockIconSize)
+    }
 }
