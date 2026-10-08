@@ -84,6 +84,23 @@ final class ScopedListPanelManager: ObservableObject {
 
 // MARK: - Content
 
+/// The keys a host's field passes to the command list it is showing. Embedded in the
+/// Corner, the list never has the keyboard — the field keeps it, for typing — so ↑/↓ and
+/// Return reached nothing (owner 2026-10-08: "allow the user to navigate with arrow keys
+/// once they enter a command"). The embedded list registers here; the field forwards.
+@MainActor
+final class ScopedListKeyBridge {
+    static let shared = ScopedListKeyBridge()
+    /// Moves the selection one row; true when a list took it.
+    var move: (@MainActor (_ down: Bool) -> Bool)?
+    /// Runs the selected row; true when there was one to run.
+    var run: (@MainActor () -> Bool)?
+    /// Whether the arrows chose the row. The list selects its first row by itself, and a
+    /// command's Return can be destructive (Listening Ports kills the process): Return in
+    /// the field runs only a row the user picked, and asks the assistant otherwise.
+    var chosenByArrows = false
+}
+
 struct ScopedListPanelContent: View {
     let command: SystemCommand
     /// Drawn inside another surface rather than in its own window.
@@ -210,15 +227,27 @@ struct ScopedListPanelContent: View {
                     Color.primary.opacity(isEmbedded ? 0 : 0.12), lineWidth: isEmbedded ? 0 : 1)
         )
         .onAppear {
-            if isEmbedded { query = externalQuery }
+            if isEmbedded {
+                query = externalQuery
+                registerKeys()
+            }
             start()
         }
         .onChange(of: externalQuery) { _, typed in
             guard isEmbedded else { return }
+            // Typing is asking again: a row picked before it is not chosen any more.
+            ScopedListKeyBridge.shared.chosenByArrows = false
             query = typed
             refresh()
         }
-        .onDisappear { ticker?.invalidate() }
+        .onDisappear {
+            ticker?.invalidate()
+            if isEmbedded {
+                ScopedListKeyBridge.shared.move = nil
+                ScopedListKeyBridge.shared.run = nil
+                ScopedListKeyBridge.shared.chosenByArrows = false
+            }
+        }
         .onChange(of: displayedRows.map(\.id)) { _, ids in
             if selectedID == nil || !(ids.contains(selectedID ?? "")) {
                 selectedID = ids.first
@@ -508,6 +537,25 @@ struct ScopedListPanelContent: View {
 
     private var selectedPath: String? {
         displayedRows.first { $0.id == selectedID }.flatMap { filePath(for: $0) }
+    }
+
+    /// The host's field forwards ↑/↓ and Return here while this list is embedded.
+    private func registerKeys() {
+        let bridge = ScopedListKeyBridge.shared
+        bridge.chosenByArrows = false
+        bridge.move = { down in
+            guard !displayedRows.isEmpty else { return false }
+            move(down ? .down : .up)
+            bridge.chosenByArrows = true
+            return true
+        }
+        bridge.run = {
+            guard bridge.chosenByArrows,
+                let row = displayedRows.first(where: { $0.id == selectedID })
+            else { return false }
+            run(row)
+            return true
+        }
     }
 
     /// Grid moves by a row of tiles; the list moves one line. The column count is

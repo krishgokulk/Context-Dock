@@ -496,6 +496,11 @@ struct AppChatPromptPill: View {
     /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
+        // A command's list on screen takes the arrows: the field keeps the keyboard for
+        // typing, so the list cannot hear them itself (owner 2026-10-08).
+        if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
+            return .handled
+        }
         if AppChatPromptModel.layerKeyComesFirst(
             query: model.query, hasFocusedRow: model.focusedRow != nil,
             steppedInFromGlobal: model.returnsToGlobalScope),
@@ -1096,6 +1101,11 @@ struct AppChatPromptPill: View {
                         // forward. Anything else is a question.
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
+                        // A command's list runs its chosen row, as Return does in the
+                        // list's own window.
+                        if model.scopedCommand != nil, ScopedListKeyBridge.shared.run?() == true {
+                            return
+                        }
                         // A panel on screen is what the field is talking to.
                         if model.showsExtensionPanel {
                             model.askPanelAssistant()
