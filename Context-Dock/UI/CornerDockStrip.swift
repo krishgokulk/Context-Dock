@@ -733,11 +733,11 @@ struct CornerDockStrip: View {
             .accessibilityLabel("\(count) more running apps")
     }
 
-    /// Global's resting row scrolls its apps rather than ending on "+N" (owner 2026-10-08:
-    /// "fit the dock's size, four apps by default, scrollable when there are more"). An app
-    /// bar keeps its own cut: its icons gather into the field's chip by index.
+    /// The resting row scrolls its apps rather than ending on "+N" (owner 2026-10-08: "fit
+    /// the dock's size, four apps by default, scrollable when there are more") — Global's and
+    /// every app's Context Dock alike ("it didn't show all running apps with scrolling").
     private func scrollsApps(_ plan: DockStripPlan) -> Bool {
-        !gathersIntoAppBar && plan.layout.overflow > 0 && plan.uncut != nil
+        plan.layout.overflow > 0 && plan.uncut != nil
     }
 
     /// Every running app in the room the shown ones and the "+N" took, scrolling sideways.

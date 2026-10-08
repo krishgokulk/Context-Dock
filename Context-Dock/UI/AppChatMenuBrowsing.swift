@@ -210,10 +210,11 @@ extension AppChatPromptModel {
     func tabStripIcons() -> [MatchDockIcon] {
         let pins = appPinIcons()
         // An app with pins but no tabs has the bar for its pins alone; one with neither
-        // shows the running apps there, as Global's dock does (owner 2026-10-08).
+        // shows the running apps there, as Global's dock does (owner 2026-10-08) — every one
+        // of them, this app included ("it didn't show all running apps").
         guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
             tabsByIconID = [:]
-            return pins.isEmpty ? Self.pillIcons(excluding: appBundleID) : pins
+            return pins.isEmpty ? Self.pillIcons() : pins
         }
         // Safari's own order, window by window, tab by tab — never the current page first:
         // choosing a tab here made it the current page, and it jumped to the front under

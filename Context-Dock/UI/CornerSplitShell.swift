@@ -170,12 +170,15 @@ struct CornerSplitStrip: View {
     /// The resting strip's own composition, so an app is in the same place in both.
     static func composition(for model: AppChatPromptModel) -> DockStripComposition {
         // Every scope's field stands apart from what is beside it (owner 2026-10-07): an app
-        // bar's own pins and tabs, otherwise the remaining running apps (`stripIcons` leaves
-        // the scoped app out), and Global's pinned extensions.
-        DockStripPlan.make(
+        // bar's own pins and tabs, otherwise every running app, and Global's pinned
+        // extensions.
+        // Every app, uncut: the piece is fitted to the room beside the field and scrolls
+        // what does not fit, rather than leaving the rest out (owner 2026-10-08: "it didn't
+        // show all running apps with scrolling").
+        let plan = DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: 0,
-            fieldIcons: 0
-        ).composition
+            fieldIcons: 0)
+        return plan.uncut ?? plan.composition
     }
 
     static func apps(for model: AppChatPromptModel) -> [DockAppSlot] {
