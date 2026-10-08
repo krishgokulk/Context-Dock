@@ -84,6 +84,22 @@ struct CornerSplitShellTests {
         #expect(field + CornerSplitShell.gap + strip == 664)
     }
 
+    /// Only a move onto the apps folds the field: a pointer the split opened under — an edge
+    /// summon, then typing — never does (owner 2026-10-08: typing crashed the dock).
+    @Test func onlyArrivingOnTheAppsFoldsTheField() {
+        // The field splits under a pointer already on the apps: not armed, however long.
+        var armed = CornerSplitShell.arrivalArmed(wasArmed: false, split: true, onApps: true)
+        #expect(!armed)
+        armed = CornerSplitShell.arrivalArmed(wasArmed: armed, split: true, onApps: true)
+        #expect(!armed)
+        // Off the apps, then back on: armed.
+        armed = CornerSplitShell.arrivalArmed(wasArmed: armed, split: true, onApps: false)
+        armed = CornerSplitShell.arrivalArmed(wasArmed: armed, split: true, onApps: true)
+        #expect(armed)
+        // The split ends: cleared.
+        #expect(!CornerSplitShell.arrivalArmed(wasArmed: armed, split: false, onApps: true))
+    }
+
     /// A pinned widget's width is counted, so it is not scrolled out of sight at the row's end
     /// (owner 2026-10-08).
     @Test func aPinnedWidgetWidensTheApps() {

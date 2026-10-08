@@ -85,6 +85,12 @@ final class CornerDockController: NSObject {
     /// The pointer resting on the apps beside the field, waiting out the dwell before the
     /// field folds into the dock (`foldWhenRestingOnApps`).
     fileprivate var appsFoldIntent: DispatchWorkItem?
+    /// The pointer has been off the apps since the field split, so arriving on them is a
+    /// move toward them. A pointer already resting there when the field opened — an edge
+    /// summon leaves it on the apps, and typing splits the field under it — is not, and
+    /// folding it then took the field away after every keystroke (owner 2026-10-08: "once
+    /// the user starts to input it crashes").
+    fileprivate var pointerLeftAppsSinceSplit = false
     /// The last span the shell drew, so the edge can be matched to it while nothing shows.
     private var lastShownContentRect: CGRect = .zero
     /// Watches the bottom edge while the shell is not on screen at all, so touching it can
@@ -298,6 +304,12 @@ final class CornerDockController: NSObject {
                     from: self.lastPromptPhase, to: next,
                     cornerHasKeys: NSApp.isActive && self.panel?.isKeyWindow == true)
                 self.lastPromptPhase = next
+                // A new field is a new split: the pointer must leave the apps again before
+                // arriving on them folds it. The pointer watch runs only when the mouse
+                // moves, so a flag left from the last split would fold this one at once.
+                self.pointerLeftAppsSinceSplit = false
+                self.appsFoldIntent?.cancel()
+                self.appsFoldIntent = nil
                 if folded { self.foldedAt = Date() }
                 if folded, self.edgeSummonKeepsKeys {
                     self.edgeSummonKeepsKeys = false
@@ -1753,8 +1765,11 @@ extension CornerDockController {
         }
         // Global's field, and every app's Context Dock, which rests the same way (owner
         // 2026-10-08: "collapse the input field like Global Context").
-        let resting = showsSplitShell && prompt.usesDockShell
-            && strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        let onApps = strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        let split = showsSplitShell && prompt.usesDockShell
+        pointerLeftAppsSinceSplit = CornerSplitShell.arrivalArmed(
+            wasArmed: pointerLeftAppsSinceSplit, split: split, onApps: onApps)
+        let resting = split && onApps && pointerLeftAppsSinceSplit
         guard resting else {
             appsFoldIntent?.cancel()
             appsFoldIntent = nil

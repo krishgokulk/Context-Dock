@@ -1022,7 +1022,9 @@ final class AppChatPromptModel: ObservableObject {
         guard phase == .dock else { return false }
         set(.prompt)
         if let text, !text.isEmpty {
-            query = text
+            // A draft the pointer folded away is kept (`restAsDockNow(keepsDraft:)`): the
+            // key carries on from it rather than replacing it.
+            query += text
             queryChanged()
         }
         armForIdle()
