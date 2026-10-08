@@ -496,6 +496,11 @@ struct AppChatPromptPill: View {
     /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
+        // A command's list on screen takes the arrows: the field keeps the keyboard for
+        // typing, so the list cannot hear them itself (owner 2026-10-08).
+        if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
+            return .handled
+        }
         if AppChatPromptModel.layerKeyComesFirst(
             query: model.query, hasFocusedRow: model.focusedRow != nil,
             steppedInFromGlobal: model.returnsToGlobalScope),
@@ -1096,6 +1101,11 @@ struct AppChatPromptPill: View {
                         // forward. Anything else is a question.
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
+                        // A command's list runs its chosen row, as Return does in the
+                        // list's own window.
+                        if model.scopedCommand != nil, ScopedListKeyBridge.shared.run?() == true {
+                            return
+                        }
                         // A panel on screen is what the field is talking to.
                         if model.showsExtensionPanel {
                             model.askPanelAssistant()
@@ -1206,7 +1216,8 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(keys: ["p"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
-                        model.togglePin()
+                        // A chosen row pins; with none, the shell's keep-open.
+                        if !model.pinChosenRow() { model.togglePin() }
                         return .handled
                     }
                     // Settings from the field, as every board's foot says (owner 2026-10-07).
@@ -1224,6 +1235,8 @@ struct AppChatPromptPill: View {
                         CornerDockController.shared.requestComposerFocus()
                     })
             }
+            // The field takes its room before the spacer that puts the match icon at the end.
+            .layoutPriority(1)
 
             // The dock's own match pills, mounted rather than imitated: the apps that
             // answer what is typed, with "+N" for the rest. Same view, same icons, same
@@ -1249,25 +1262,11 @@ struct AppChatPromptPill: View {
                     // An app's bar is drawn after "+", below — pins sit next to it.
                     EmptyView()
                 } else if model.usesDockShell {
-                    // The strip's own icons shrink into this spot and hand over to this
-                    // pill once they land: every running app, scrolling inside one fixed
-                    // width (#189), so a launch or a quit never moves the dock. It arrives
-                    // late, as the icons do, so the row is not seen twice in flight.
-                    ContextMatchDock(
-                        phase: .idle,
-                        icons: model.allRunningIcons,
-                        overflowCount: 0,
-                        isSearching: false,
-                        focusedID: model.focusedPill?.id,
-                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
-                            apps: model.allRunningIcons.count),
-                        onSelect: { icon in model.openGlobalMatchIcon(icon) })
-                        // Resting the pointer on the small pills asks for the big ones: the
-                        // field folds into the dock at once, as it always has.
-                        .onHover { inside in if inside { model.foldToDock() } }
-                        .transition(.opacity.animation(
-                            .easeOut(duration: AppChatPromptMetrics.dockMorphDuration * 0.25)
-                                .delay(AppChatPromptMetrics.dockMorphDuration * 0.55)))
+                    // The apps stand beside the field in their own piece, or are the resting
+                    // dock itself: a small copy in here only flashed over the field as it
+                    // folded (owner 2026-10-08: "running apps disturb the search input field
+                    // while the mouse hovers").
+                    EmptyView()
                 } else {
                     // The same fixed-width scroller as Global's (#189).
                     ContextMatchDock(
@@ -1326,6 +1325,9 @@ struct AppChatPromptPill: View {
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 let icon = model.leadingResultIcon
             {
+                // At the field's end, not against the last typed letter (owner 2026-10-08:
+                // "while typing show app icons at the end of the search input pill").
+                Spacer(minLength: 8)
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
@@ -1370,7 +1372,9 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.showsDockIcon {
+                // Split, the apps' piece beside the field carries the clipboard: drawn here
+                // too it showed twice.
+                if clipboard.showsDockIcon, !splitsShell {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a
@@ -1383,6 +1387,9 @@ struct AppChatPromptPill: View {
             // The Drop Shelf, last of the field's icons in every scope while it holds something
             // or a drag is in flight: Global's is the strip's, drawn over this end of the
             // field, so the field adds none there.
+            // In an app's scope the shelf ends the field — the input pill — split or not; the
+            // apps' piece beside it leaves it out (owner 2026-10-08: "the drop shelf shows on
+            // both pills; put it at the end of the send pill").
             if !model.isGlobalScope, model.showsShelf {
                 shelfControl
             }
@@ -1441,7 +1448,10 @@ struct AppChatPromptPill: View {
             }
             // Room for the strip's pins and tools, which stay on screen over this end of
             // the field: the strip draws them, still and clickable, in both phases.
-            if let strip = globalStrip {
+            // Split, the strip stands beside the field, not over its end: kept clear there it
+            // pushed the match icon back against the text (owner 2026-10-08: "show the result
+            // icon at the end of the search input field").
+            if let strip = globalStrip, !splitsShell {
                 Color.clear
                     .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
                     .allowsHitTesting(false)
@@ -1449,7 +1459,7 @@ struct AppChatPromptPill: View {
         }
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
-        .padding(.trailing, globalStrip == nil ? 14 : 0)
+        .padding(.trailing, globalStrip == nil || splitsShell ? 14 : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
             base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),

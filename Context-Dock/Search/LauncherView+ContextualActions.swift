@@ -1530,7 +1530,7 @@ extension LauncherView {
     /// Row has no undoScript but its id/icon is a real file or app path → Enter opens it.
     /// Returns the resolved path (id preferred over icon), or nil if neither is a path.
     static func customListRowOpenablePath(_ row: CustomListRow) -> String? {
-        for candidate in [row.id, row.icon].compactMap({ $0 }) {
+        for candidate in [row.actionID, row.icon].compactMap({ $0 }) {
             guard candidate.hasPrefix("/") || candidate.hasPrefix("~") else { continue }
             let path = (candidate as NSString).expandingTildeInPath
             if FileManager.default.fileExists(atPath: path) { return path }

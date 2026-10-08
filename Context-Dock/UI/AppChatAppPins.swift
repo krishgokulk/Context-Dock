@@ -23,6 +23,43 @@ extension AppChatPromptModel {
         isAppContextDock && DockPinKind(appRow: row) != nil
     }
 
+    /// Pins a Global row to the Dock, or unpins it when it already is — the list's right-click
+    /// "Pin to Dock", shared with ⌘P.
+    func toggleDockPin(_ row: AppChatRow) {
+        guard let kind = DockPinKind(row: row) else { return }
+        if let pin = dockPins.pins.first(where: { $0.kind == kind }) {
+            dockPins.unpin(pin.id)
+            return
+        }
+        let (title, documentID): (String, String?) = {
+            switch row {
+            case .global(let doc): return (doc.title, doc.id)
+            case .file(let url): return (url.lastPathComponent, nil)
+            case .dock(let pill): return (pill.name, nil)
+            default: return (row.title, nil)
+            }
+        }()
+        dockPins.pin(kind, title: title, documentID: documentID)
+    }
+
+    /// ⌘P on a chosen row pins it: to the app's bar in an app's Context Dock, to the Dock
+    /// otherwise (owner 2026-10-08: "⌘P to pin the selected actions, results, files"). The
+    /// chosen row is the highlighted one, or the top result while something is typed. False
+    /// when there is none to pin — ⌘P then keeps the shell open, as it always did.
+    @discardableResult
+    func pinChosenRow() -> Bool {
+        let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard let row = focusedRow ?? (typed ? rows.first : nil) else { return false }
+        if canPinToApp(row) {
+            toggleAppPin(row)
+            return true
+        }
+        guard DockPinKind(row: row) != nil else { return false }
+        toggleDockPin(row)
+        updateTabStrip()
+        return true
+    }
+
     func isPinnedToApp(_ row: AppChatRow) -> Bool {
         guard let kind = DockPinKind(appRow: row) else { return false }
         return dockPins.isPinned(kind, app: appBundleID)
@@ -148,6 +185,15 @@ extension AppChatPromptModel {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
                 self?.refreshTabs()
             }
+        case .appAction(let id) where WindowLayoutPin.command(actionID: id) != nil:
+            // A pinned window layout: the app's front window takes it.
+            guard let raw = WindowLayoutPin.command(actionID: id),
+                let command = WindowManagementService.Command(rawValue: raw),
+                let app = NSWorkspace.shared.runningApplications.first(where: {
+                    $0.bundleIdentifier == (pin.appBundleID ?? appBundleID) && !$0.isTerminated
+                })
+            else { return }
+            _ = WindowManagementService.shared.execute(command, sourceApp: app)
         case .appAction(let id):
             guard let action = adapterActions.first(where: { $0.id == id })
                 ?? AppAdapterManager.shared.adapter(for: appBundleID)?.actions
@@ -225,6 +271,8 @@ extension AppChatPromptModel {
         case .menuCommand(let path):
             return SFSymbolResolver.menuSymbol(
                 title: path.last ?? pin.title, path: path, isAppleMenu: false)
+        case .appAction(let id) where WindowLayoutPin.command(actionID: id) != nil:
+            return "macwindow"
         case .appAction(let id):
             return adapterActions.first { $0.id == id }?.icon
         default:

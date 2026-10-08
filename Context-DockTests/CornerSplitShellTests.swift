@@ -36,8 +36,8 @@ struct CornerSplitShellTests {
         #expect(!splits(visible: false))
     }
 
-    /// The apps fit what they hold, between a capsule's worth and half the shell; the field
-    /// takes the rest, so the two and the gap are the shell's one width.
+    /// The apps fit what they hold, between a capsule's worth and what leaves the field its
+    /// least width; the field takes the rest, so the two and the gap are the shell's one width.
     @Test func theBottomLineFillsTheShell() {
         for shell: CGFloat in [600, 664, 731] {
             for apps in [0, 1, 3, 6, 12, 30] {
@@ -46,7 +46,7 @@ struct CornerSplitShellTests {
                         shell: shell, apps: apps, tools: tools)
                     #expect(field + CornerSplitShell.gap + strip == shell)
                     #expect(strip >= CornerSplitShell.minimumStripWidth)
-                    #expect(strip <= (shell / 2).rounded())
+                    #expect(field >= CornerSplitShell.minimumFieldWidth)
                 }
             }
         }
@@ -82,6 +82,15 @@ struct CornerSplitShellTests {
         let (field, strip) = CornerSplitShell.widths(shell: 664, apps: 0, pins: 1, tools: 0)
         #expect(strip > 0)
         #expect(field + CornerSplitShell.gap + strip == 664)
+    }
+
+    /// A pinned widget's width is counted, so it is not scrolled out of sight at the row's end
+    /// (owner 2026-10-08).
+    @Test func aPinnedWidgetWidensTheApps() {
+        let plain = CornerSplitShell.stripWidth(shell: 900, apps: 4, pins: 2, tools: 0)
+        let widget = CornerSplitShell.stripWidth(
+            shell: 900, apps: 4, pins: 2, tools: 0, widgetExtra: 120)
+        #expect(widget == plain + 120)
     }
 
     /// The app's card is compact: the shell's left half, over the chip that opened it.

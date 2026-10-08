@@ -20,6 +20,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum CornerSplitShell {
     /// Between the field and the apps once they have separated. Wider than
@@ -44,22 +45,37 @@ enum CornerSplitShell {
 
     /// The bottom line's two widths. The apps fit their icons and tools; the field takes what
     /// they and the gap leave. With nothing to show, the field is the whole shell.
-    static func widths(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int)
-        -> (field: CGFloat, strip: CGFloat)
-    {
+    static func widths(
+        shell: CGFloat, apps: Int, pins: Int = 0, tools: Int, widgetExtra: CGFloat = 0
+    ) -> (field: CGFloat, strip: CGFloat) {
         guard apps + pins + tools > 0 else { return (shell, 0) }
-        let strip = stripWidth(shell: shell, apps: apps, pins: pins, tools: tools)
+        let strip = stripWidth(
+            shell: shell, apps: apps, pins: pins, tools: tools, widgetExtra: widgetExtra)
         return (shell - strip - gap, strip)
     }
 
-    /// Fitted to the icons and tools, never under a capsule's worth, never over half the shell
-    /// — past that the icons scroll.
-    static func stripWidth(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int) -> CGFloat {
+    /// The field's least width beside the apps: room for the magnifier, a few words and the
+    /// field's own buttons.
+    static let minimumFieldWidth: CGFloat = 300
+
+    /// Fitted to the icons, widgets and tools, never under a capsule's worth, and never so
+    /// wide the field drops under its least width — past that the icons scroll. It was capped
+    /// at half the shell, which scrolled a pinned widget at the row's end out of sight
+    /// (owner 2026-10-08: "why didn't pinned actions show once split?").
+    static func stripWidth(
+        shell: CGFloat, apps: Int, pins: Int = 0, tools: Int, widgetExtra: CGFloat = 0
+    ) -> CGFloat {
         let fitted = CornerSplitStrip.contentWidth(apps: apps, pins: pins, tools: tools)
-        return min(max(fitted, minimumStripWidth), (shell / 2).rounded())
+            + max(widgetExtra, 0)
+        let ceiling = max(shell - minimumFieldWidth - gap, minimumStripWidth)
+        return min(max(fitted, minimumStripWidth), ceiling.rounded())
     }
 
     static let minimumStripWidth: CGFloat = 64
+
+    /// The resting dock's icons drift this far toward the apps' piece as the field opens, and
+    /// the piece arrives from as far the other way: one sideways move at full size, no shrink.
+    static let splitDrift: CGFloat = 36
 
     /// Where the apps piece sits inside the field's slot (the slot's own space, bottom-left
     /// origin): after the field and the gap, along the bottom line at the field's height.
@@ -140,7 +156,10 @@ struct CornerSplitStrip: View {
     /// seconds after a copy or while its board is open (`showsDockIcon`), the Drop Shelf only
     /// while it holds something or a drag is in flight (`DropShelfVisibility`).
     static func tools(for model: AppChatPromptModel) -> (clipboard: Bool, shelf: Bool) {
-        (ClipboardPanelController.shared.model.showsDockIcon, model.showsShelf)
+        // An app's field ends with the shelf itself (`shelfControl`), so the apps' piece
+        // carries it only beside Global's field, which draws none.
+        (ClipboardPanelController.shared.model.showsDockIcon,
+            model.showsShelf && model.isGlobalScope)
     }
 
     static func toolCount(for model: AppChatPromptModel) -> Int {
@@ -151,12 +170,15 @@ struct CornerSplitStrip: View {
     /// The resting strip's own composition, so an app is in the same place in both.
     static func composition(for model: AppChatPromptModel) -> DockStripComposition {
         // Every scope's field stands apart from what is beside it (owner 2026-10-07): an app
-        // bar's own pins and tabs, otherwise the remaining running apps (`stripIcons` leaves
-        // the scoped app out), and Global's pinned extensions.
-        DockStripPlan.make(
+        // bar's own pins and tabs, otherwise every running app, and Global's pinned
+        // extensions.
+        // Every app, uncut: the piece is fitted to the room beside the field and scrolls
+        // what does not fit, rather than leaving the rest out (owner 2026-10-08: "it didn't
+        // show all running apps with scrolling").
+        let plan = DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins, tools: 0,
-            fieldIcons: 0
-        ).composition
+            fieldIcons: 0)
+        return plan.uncut ?? plan.composition
     }
 
     static func apps(for model: AppChatPromptModel) -> [DockAppSlot] {
@@ -185,10 +207,34 @@ struct CornerSplitStrip: View {
                         }
                         if !apps.isEmpty, !pins.isEmpty { hairline }
                         ForEach(pins) { pin in
-                            pinButton(pin)
+                            // A pinned plugin with a bar widget is its widget here too, as on
+                            // the resting dock.
+                            if composition.widgetSlots[pin.id] != nil, !inset,
+                                let pluginID = pin.kind.pluginID,
+                                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+                            {
+                                PluginStripTile(pin: pin, manifest: manifest, model: model)
+                            } else {
+                                pinButton(pin)
+                            }
                         }
                     }
                     .padding(.horizontal, 2)
+                }
+                // More than fits scrolls; the edge fades so the last icon reads as "more this
+                // way", not as cut off (owner 2026-10-08: the Trash showed sliced at the end).
+                .mask {
+                    if overflows(composition, tools: tools) {
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black, location: 0),
+                                .init(color: .black, location: 0.86),
+                                .init(color: .clear, location: 1),
+                            ],
+                            startPoint: .leading, endPoint: .trailing)
+                    } else {
+                        Rectangle()
+                    }
                 }
                 if tools.clipboard || tools.shelf { hairline }
             }
@@ -210,6 +256,43 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
+        // A file or folder dropped on the apps beside the field is pinned, as on the resting
+        // dock (owner 2026-10-08: "allow the user to place files and folders on the dock").
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            Self.pinDroppedFiles(providers)
+        }
+    }
+
+    /// Pins each dropped file or folder to the dock, the resting strip's own way
+    /// (`DockPinKind(fileURL:)`, `DockPinStore.pin`).
+    static func pinDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers
+        where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                guard let data = item as? Data,
+                    let url = URL(dataRepresentation: data, relativeTo: nil),
+                    let kind = DockPinKind(fileURL: url)
+                else { return }
+                Task { @MainActor in
+                    DockPinStore.shared.pin(kind, title: url.lastPathComponent)
+                }
+            }
+            accepted = true
+        }
+        return accepted
+    }
+
+    /// Whether the icons and widgets need more than the piece is given, so they scroll.
+    private func overflows(
+        _ composition: DockStripComposition, tools: (clipboard: Bool, shelf: Bool)
+    ) -> Bool {
+        guard !inset else { return false }
+        let needed = Self.contentWidth(
+            apps: composition.apps.count, pins: composition.otherPins.count,
+            tools: (tools.clipboard ? 1 : 0) + (tools.shelf ? 1 : 0))
+            + max(composition.widgetExtraWidth, 0)
+        return needed > width + 0.5
     }
 
     private var hairline: some View {

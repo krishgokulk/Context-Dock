@@ -41,14 +41,14 @@ struct CornerDockPhaseTests {
         #expect(model.phase == .hidden)
     }
 
-    /// Any app but Safari: a Safari scope rests as a dock of its tabs, like Global
-    /// (owner 2026-09-25, `CornerSafariTabsTests`).
-    @Test func aScopedChatNeverDocks() {
+    /// Every app's Context Dock rests as a dock, as Global does — its pins, or the running
+    /// apps when it has none (owner 2026-10-08, replacing "a scoped chat never docks").
+    @Test func aScopedChatDocksLikeGlobal() {
         let (model, _) = globalModel()
         model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         model.set(.prompt)
         model.standDown()
-        #expect(model.phase == .mini)
+        #expect(model.phase == .dock)
     }
 
     @Test func typedTextKeepsThePromptFromDocking() {
@@ -56,6 +56,18 @@ struct CornerDockPhaseTests {
         model.query = "saf"
         model.standDown()
         #expect(model.phase == .mini)
+    }
+
+    /// Resting the pointer on the apps folds a typed field too, and the draft waits for the
+    /// field's return (owner 2026-10-08); the shell's own folds still refuse typed text.
+    @Test func thePointerFoldsATypedFieldAndKeepsTheDraft() {
+        let (model, _) = globalModel()
+        model.query = "r"
+        #expect(!model.restAsDockNow())
+        #expect(model.phase == .prompt)
+        #expect(model.restAsDockNow(keepsDraft: true))
+        #expect(model.phase == .dock)
+        #expect(model.query == "r")
     }
 
     /// The pin's own block is the shared `standDown` guard, held by `AppChatPromptTests`;
@@ -145,10 +157,12 @@ struct CornerDockPhaseTests {
         #expect(!typed.foldToDock())
         let (off, _) = globalModel(autoShrink: false)
         #expect(!off.foldToDock())
+        // An app's Context Dock can fold too now (owner 2026-10-08); the ← key folds only
+        // Global's field (`CornerDockController`), since in a scope ← is the way back.
         let (scoped, _) = globalModel()
         scoped.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         scoped.set(.prompt)
-        #expect(!scoped.foldToDock())
+        #expect(scoped.foldToDock())
     }
 
     @Test func dockIsNotAnInputPhase() {

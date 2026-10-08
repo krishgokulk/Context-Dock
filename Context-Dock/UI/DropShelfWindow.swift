@@ -147,11 +147,16 @@ final class DropShelfController: NSObject {
     /// on the first before the enter on the second. Ending the drag on the next runloop
     /// pass lets that hand-off happen without the pill flickering away.
     private var dragEndTask: Task<Void, Never>?
+    /// The system-wide watch for a file drag starting anywhere (`watchSystemDrags`).
+    private var systemDragMonitors: [Any] = []
+    private var dragPasteboardCountAtMouseDown = 0
+    private var systemDragInFlight = false
 
     /// Called once at launch. Until this runs the shelf does not exist and cannot
     /// interfere with anything.
     func activate() {
         ensurePanels()
+        watchSystemDrags()
         presentation.itemCount = store.items.count
         dockPresentation.itemCount = store.items.count
         storeSink = store.$items.sink { [weak self] items in
@@ -161,6 +166,56 @@ final class DropShelfController: NSObject {
     }
 
     // MARK: Drag lifecycle
+
+    /// A file picked up anywhere — Finder, the desktop, a mail attachment — wakes the dock and
+    /// shows the shelf's icon at once, rather than when the drag happens to reach the screen
+    /// edge (owner 2026-10-08: "when the user drags something, wake up our dock and show the
+    /// drop shelf icon"). A drag is told from a plain button-held move by the drag
+    /// pasteboard: a new drag writes to it, so its count moves past where it stood when the
+    /// button went down, and what it holds is a file.
+    private func watchSystemDrags() {
+        guard systemDragMonitors.isEmpty else { return }
+        let drag = NSPasteboard(name: .drag)
+        if let down = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown],
+            handler: { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.dragPasteboardCountAtMouseDown = drag.changeCount
+                }
+            })
+        {
+            systemDragMonitors.append(down)
+        }
+        if let moved = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDragged],
+            handler: { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.systemDragInFlight,
+                        DropShelfDragSighting.isFileDrag(
+                            countNow: drag.changeCount,
+                            countAtMouseDown: self.dragPasteboardCountAtMouseDown,
+                            types: drag.types ?? [])
+                    else { return }
+                    self.systemDragInFlight = true
+                    self.dragEntered()
+                }
+            })
+        {
+            systemDragMonitors.append(moved)
+        }
+        if let up = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseUp],
+            handler: { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.systemDragInFlight else { return }
+                    self.systemDragInFlight = false
+                    self.scheduleDragEnd()
+                }
+            })
+        {
+            systemDragMonitors.append(up)
+        }
+    }
 
     func dragEntered() {
         dragEndTask?.cancel()
@@ -389,5 +444,15 @@ enum DropShelfDropRule {
     static func shelvableText(_ texts: [String]) -> String? {
         let kept = texts.filter { !$0.hasPrefix("dockpin:") }
         return kept.isEmpty ? nil : kept.joined(separator: "\n")
+    }
+}
+
+/// Pure: whether a button-held move is a file being dragged — the drag pasteboard was
+/// written since the button went down, and it carries a file.
+enum DropShelfDragSighting {
+    static func isFileDrag(
+        countNow: Int, countAtMouseDown: Int, types: [NSPasteboard.PasteboardType]
+    ) -> Bool {
+        countNow != countAtMouseDown && types.contains(.fileURL)
     }
 }

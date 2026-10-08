@@ -178,6 +178,12 @@ extension AppChatPromptModel {
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
+        // Finder in front: the files and folders of the window it shows — the Desktop when
+        // none is open — lead its menus, filtered by what is typed. Nothing matching either
+        // leaves the list empty, and Return asks the AI (owner 2026-10-08).
+        if isFinderScope, !isFinderFileSearch {
+            rows.insert(contentsOf: finderFrontFolderRows(matching: typed), at: 0)
+        }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -203,10 +209,12 @@ extension AppChatPromptModel {
     /// tabs first and never a pin.
     func tabStripIcons() -> [MatchDockIcon] {
         let pins = appPinIcons()
-        // An app with pins but no tabs has the bar for its pins alone.
+        // An app with pins but no tabs has the bar for its pins alone; one with neither
+        // shows the running apps there, as Global's dock does (owner 2026-10-08) — every one
+        // of them, this app included ("it didn't show all running apps").
         guard BrowserTabList.listsTabs(bundleID: appBundleID) else {
             tabsByIconID = [:]
-            return pins
+            return pins.isEmpty ? Self.pillIcons() : pins
         }
         // Safari's own order, window by window, tab by tab — never the current page first:
         // choosing a tab here made it the current page, and it jumped to the front under
@@ -219,10 +227,14 @@ extension AppChatPromptModel {
         return pins + tabs.map(BrowserTabList.icon(for:))
     }
 
-    /// A click on an icon in the app bar's pill: a pin runs, a tab shows.
+    /// A click on an icon in the app bar's pill: a pin runs, a tab shows, and a running app
+    /// — what the bar holds for an app with no pins — is the window manager's, as in
+    /// Global's dock (`DockAppClick`).
     func openBarIcon(_ icon: MatchDockIcon) {
         if let pin = appPin(forIconID: icon.id) {
             openAppPin(pin)
+        } else if !isTabIcon(icon.id), let bundleID = icon.bundleID {
+            DockAppClick.click(bundleID: bundleID, name: icon.title)
         } else {
             openGlobalMatchIcon(icon)
         }
@@ -817,6 +829,35 @@ extension AppChatPromptModel {
             self.focusedMenuIndex = nil
             self.syncListPhase()
         }
+    }
+
+    // MARK: Finder in front (owner 2026-10-08)
+
+    /// How many of the front folder's entries lead Finder's list while something is typed;
+    /// empty, the whole folder is the list.
+    static let finderFrontFolderTypedLimit = 8
+
+    /// The front Finder folder's entries for Finder's Context Dock. The folder is read again
+    /// when the last read is a few seconds old; the rows land with the next refresh.
+    func finderFrontFolderRows(matching typed: String) -> [AppChatRow] {
+        if Date().timeIntervalSince(finderFolderReadAt) > 2 {
+            finderFolderReadAt = Date()
+            let read = readFinderFrontFolder
+            Task { @MainActor [weak self] in
+                let folder = await read()
+                guard let self, self.isFinderScope, !self.isFinderFileSearch,
+                    folder != self.finderFrontFolder
+                else { return }
+                self.finderFrontFolder = folder
+                self.updateMenuMatches()
+            }
+        }
+        guard let folder = finderFrontFolder else { return [] }
+        let entries = Self.folderListing(folder, matching: typed)
+        let limited = typed.isEmpty
+            ? Array(entries.prefix(Self.folderListingLimit))
+            : Array(entries.prefix(Self.finderFrontFolderTypedLimit))
+        return limited.map(AppChatRow.file)
     }
 
     // MARK: Finder folders (C11, B3)
@@ -1515,5 +1556,57 @@ extension AppChatPromptModel {
         query = ""
         updateMenuMatches()
         touch()
+    }
+}
+
+/// The folder Finder's front window shows, or the Desktop when no Finder window is open —
+/// Finder's desktop-only mode included. Asked through `osascript` in its own process, so a
+/// slow or unanswered Finder never holds the corner up.
+nonisolated enum FinderFrontFolder {
+    static let script = """
+        tell application "Finder"
+            if (count of Finder windows) > 0 then
+                return POSIX path of (target of front window as alias)
+            end if
+        end tell
+        return ""
+        """
+
+    static func read() async -> URL? {
+        // The test host has no Finder to ask, and an answer landing mid-test would change
+        // the rows a test is reading.
+        let env = ProcessInfo.processInfo.environment
+        if env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil {
+            return nil
+        }
+        return await Task.detached(priority: .userInitiated) { () -> URL? in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = FileHandle.nullDevice
+            do { try process.run() } catch { return desktop }
+            let deadline = Date().addingTimeInterval(1.5)
+            while process.isRunning, Date() < deadline { usleep(20_000) }
+            if process.isRunning {
+                process.terminate()
+                return desktop
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return folder(fromScriptOutput: String(decoding: data, as: UTF8.self))
+        }.value
+    }
+
+    /// The script's answer as a folder: a path when Finder has a window, the Desktop when
+    /// it answered nothing.
+    static func folder(fromScriptOutput output: String) -> URL? {
+        let path = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return desktop }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    static var desktop: URL? {
+        FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
     }
 }

@@ -12,15 +12,19 @@ import Testing
 @Suite("Corner scope walk")
 struct CornerScopeWalkTests {
 
-    @Test("← and a swipe right go into General Chat from either scope; → and a swipe left do not")
+    @Test("← goes into General Chat; a sideways swipe only switches between the two docks")
     func generalIsSteppedIntoSideways() {
-        for mode in [CornerChatMode.globalContext, .frontmostApp] {
+        let g = CornerChatMode.globalContext, a = CornerChatMode.frontmostApp
+        for mode in [g, a] {
             #expect(CornerNavigation.destination(for: .leftKey, from: mode, origin: mode) == .general)
-            #expect(CornerNavigation.destination(
-                for: .swipeSideways(right: true), from: mode, origin: mode) == .general)
             #expect(CornerNavigation.destination(for: .rightKey, from: mode, origin: mode) == nil)
+        }
+        // Owner 2026-10-08: a swipe never opens General Chat.
+        for right in [true, false] {
             #expect(CornerNavigation.destination(
-                for: .swipeSideways(right: false), from: mode, origin: mode) == nil)
+                for: .swipeSideways(right: right), from: g, origin: g) == a)
+            #expect(CornerNavigation.destination(
+                for: .swipeSideways(right: right), from: a, origin: a) == g)
         }
     }
 
@@ -62,7 +66,6 @@ struct CornerScopeWalkTests {
     @Test("Keys and swipes agree from every scope")
     func keysAndSwipesAgree() {
         let pairs: [(CornerNavigation.Move, CornerNavigation.Move)] = [
-            (.leftKey, .swipeSideways(right: true)),
             (.layerUp, CornerSwipe.classify(dx: 0, dy: 80)!),
             (.layerDown, CornerSwipe.classify(dx: 0, dy: -80)!),
         ]
