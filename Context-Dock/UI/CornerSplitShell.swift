@@ -65,7 +65,14 @@ enum CornerSplitShell {
         guard apps + pins + tools > 0 else { return (shell, 0) }
         // Folded: the field is its icon and the apps take the rest of the shell, scrolling
         // past what fits.
-        if collapsed { return (collapsedFieldWidth, shell - collapsedFieldWidth - gap) }
+        if collapsed {
+            // Folded: the field is its icon; the apps are as wide as they need, up to the
+            // rest of the shell, and scroll past that. The dock shrinks rather than leaving
+            // empty glass after the last icon (owner 2026-10-07).
+            let room = shell - collapsedFieldWidth - gap
+            let fitted = CornerSplitStrip.contentWidth(apps: apps, pins: pins, tools: tools)
+            return (collapsedFieldWidth, min(max(fitted, minimumStripWidth), room))
+        }
         let strip = stripWidth(shell: shell, apps: apps, pins: pins, tools: tools)
         return (shell - strip - gap, strip)
     }
@@ -203,10 +210,13 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
-        // Over the apps, Global's field folds to its icon and they take the dock.
+        // Over the apps, Global's field folds to its icon. Leaving the apps does not unfold
+        // it — the piece shrinks to its icons, so the pointer would fall off its end and the
+        // field would flap open and shut. The shell's own hover, or the pointer reaching the
+        // icon, unfolds it (`CornerDockSurface`).
         .onHover { inside in
-            guard !inset else { return }
-            model.splitAppsHovered = inside
+            guard !inset, inside else { return }
+            model.splitAppsHovered = true
         }
         .onDisappear { if !inset { model.splitAppsHovered = false } }
     }

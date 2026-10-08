@@ -140,9 +140,13 @@ struct CornerSplitShellTests {
         #expect(!CornerSplitShell.collapsesField(
             appsHovered: true, isGlobalScope: true, query: "", phase: .suggesting))
 
+        // Folded, the apps are as wide as their icons — the dock shrinks rather than
+        // leaving empty glass — and never wider than the rest of the shell.
         let (field, strip) = CornerSplitShell.widths(shell: 664, apps: 4, tools: 1, collapsed: true)
         #expect(field == CornerSplitShell.collapsedFieldWidth)
-        #expect(field + CornerSplitShell.gap + strip == 664)
+        #expect(strip == CornerSplitStrip.contentWidth(apps: 4, tools: 1))
+        let (_, crowded) = CornerSplitShell.widths(shell: 664, apps: 40, tools: 2, collapsed: true)
+        #expect(crowded == 664 - CornerSplitShell.collapsedFieldWidth - CornerSplitShell.gap)
     }
 
     /// The two pieces end farther apart than the glass's merge distance, so they separate

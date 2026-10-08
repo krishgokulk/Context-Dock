@@ -947,6 +947,14 @@ final class CornerDockController: NSObject {
                 query: prompt.query, phase: prompt.phase))
     }
 
+    /// Global's field is folded to its search icon (the pointer is over the apps).
+    var fieldFolded: Bool {
+        showsSplitShell
+            && CornerSplitShell.collapsesField(
+                appsHovered: prompt.splitAppsHovered, isGlobalScope: prompt.isGlobalScope,
+                query: prompt.query, phase: prompt.phase)
+    }
+
     /// The width the field's text stack is laid out at: the open field's, folded or not, so
     /// folding to the icon moves only the glass and never re-lays out the focused field.
     var splitFieldLayoutWidth: CGFloat { splitWidths(collapsed: false).field }
@@ -1835,6 +1843,10 @@ struct CornerDockSurface: View {
                 GlassEffectContainer(spacing: CornerSplitShell.dropletSpacing) {
                     HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 0) {
                         AppChatPromptPill(model: prompt)
+                            // Reaching the folded icon opens the field again.
+                            .onHover { inside in
+                                if inside, prompt.splitAppsHovered { prompt.splitAppsHovered = false }
+                            }
                         if split {
                             CornerSplitStrip(
                                 model: prompt, width: CornerDockController.shared.splitWidths.strip)
@@ -1843,6 +1855,10 @@ struct CornerDockSurface: View {
                         }
                     }
                     .frame(width: split ? shell : nil, alignment: .leading)
+                    // Leaving the shell altogether unfolds the field.
+                    .onHover { inside in
+                        if !inside, prompt.splitAppsHovered { prompt.splitAppsHovered = false }
+                    }
                 }
                 .animation(.spring(response: 0.45, dampingFraction: 0.8), value: split)
                 .animation(
