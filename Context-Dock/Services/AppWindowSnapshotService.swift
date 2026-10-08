@@ -220,3 +220,62 @@ extension AppWindowSnapshotService {
         }
     }
 }
+
+/// The apps with a window open on the current desktop, front to back — what a split
+/// arrangement's other tiles mean (owner 2026-10-08: "show the apps' snapshots in the layout,
+/// based on the apps opened on that desktop").
+nonisolated enum DesktopApps {
+    /// One on-screen window as the window list reports it.
+    struct Window: Equatable {
+        let bundleID: String?
+        let layer: Int
+        let size: CGSize
+        var alpha: Double = 1
+    }
+
+    /// Each app once, in the order its frontmost window sits, ordinary windows only — the
+    /// size floor drops palettes and tooltips — leaving out `excluding` and this app. The
+    /// same reading `WindowManagementService` arranges by (layer 0, at least 120 × 80,
+    /// visible), so the preview shows the windows the arrangement will move.
+    static func ordered(
+        _ windows: [Window], excluding: Set<String>, limit: Int
+    ) -> [String] {
+        guard limit > 0 else { return [] }
+        var seen = excluding
+        var apps: [String] = []
+        for window in windows where window.layer == 0 && window.alpha > 0
+            && window.size.width >= 120 && window.size.height >= 80
+        {
+            guard let id = window.bundleID, !id.isEmpty, !seen.contains(id) else { continue }
+            seen.insert(id)
+            apps.append(id)
+            if apps.count == limit { break }
+        }
+        return apps
+    }
+
+    /// Asked of the window server: on-screen windows of the current Space, front to back.
+    /// Reading the list needs no permission; only the pictures do.
+    @MainActor
+    static func frontToBack(excluding bundleID: String, limit: Int) -> [String] {
+        guard limit > 0,
+            let info = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]]
+        else { return [] }
+        let windows = info.map { entry -> Window in
+            // Read the way `WindowManagementService` reads it: NSNumbers and a bounds dictionary.
+            let pid = (entry[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value ?? 0
+            let bounds = (entry[kCGWindowBounds as String] as? [String: Any])
+                .flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) } ?? .zero
+            return Window(
+                bundleID: NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+                layer: (entry[kCGWindowLayer as String] as? NSNumber)?.intValue ?? -1,
+                size: bounds.size,
+                alpha: (entry[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1)
+        }
+        var excluded: Set<String> = [bundleID]
+        if let own = Bundle.main.bundleIdentifier { excluded.insert(own) }
+        return ordered(windows, excluding: excluded, limit: limit)
+    }
+}
