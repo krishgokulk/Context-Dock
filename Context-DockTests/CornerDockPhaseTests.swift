@@ -58,6 +58,18 @@ struct CornerDockPhaseTests {
         #expect(model.phase == .mini)
     }
 
+    /// Resting the pointer on the apps folds a typed field too, and the draft waits for the
+    /// field's return (owner 2026-10-08); the shell's own folds still refuse typed text.
+    @Test func thePointerFoldsATypedFieldAndKeepsTheDraft() {
+        let (model, _) = globalModel()
+        model.query = "r"
+        #expect(!model.restAsDockNow())
+        #expect(model.phase == .prompt)
+        #expect(model.restAsDockNow(keepsDraft: true))
+        #expect(model.phase == .dock)
+        #expect(model.query == "r")
+    }
+
     /// The pin's own block is the shared `standDown` guard, held by `AppChatPromptTests`;
     /// toggling it here would write UserDefaults under a suite running in parallel.
     @Test func answeringBlocksTheDock() {

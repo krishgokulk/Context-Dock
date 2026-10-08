@@ -218,6 +218,21 @@ struct CornerSplitStrip: View {
                     }
                     .padding(.horizontal, 2)
                 }
+                // More than fits scrolls; the edge fades so the last icon reads as "more this
+                // way", not as cut off (owner 2026-10-08: the Trash showed sliced at the end).
+                .mask {
+                    if overflows(composition, tools: tools) {
+                        LinearGradient(
+                            stops: [
+                                .init(color: .black, location: 0),
+                                .init(color: .black, location: 0.86),
+                                .init(color: .clear, location: 1),
+                            ],
+                            startPoint: .leading, endPoint: .trailing)
+                    } else {
+                        Rectangle()
+                    }
+                }
                 if tools.clipboard || tools.shelf { hairline }
             }
             if tools.clipboard {
@@ -263,6 +278,18 @@ struct CornerSplitStrip: View {
             accepted = true
         }
         return accepted
+    }
+
+    /// Whether the icons and widgets need more than the piece is given, so they scroll.
+    private func overflows(
+        _ composition: DockStripComposition, tools: (clipboard: Bool, shelf: Bool)
+    ) -> Bool {
+        guard !inset else { return false }
+        let needed = Self.contentWidth(
+            apps: composition.apps.count, pins: composition.otherPins.count,
+            tools: (tools.clipboard ? 1 : 0) + (tools.shelf ? 1 : 0))
+            + max(composition.widgetExtraWidth, 0)
+        return needed > width + 0.5
     }
 
     private var hairline: some View {

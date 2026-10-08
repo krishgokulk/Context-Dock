@@ -1741,8 +1741,8 @@ extension CornerDockController {
     /// — the same apps with their previews, menus and window management (owner 2026-10-08:
     /// "over apps: back to the dock with running apps, pins"). Watched here, from the pointer
     /// the window already tracks, after a short dwell so crossing the apps does not fold it.
-    /// Asked for by the pointer, so neither "fold on its own" nor the pin holds it back;
-    /// `restAsDockNow` still refuses a typed field or a turn in progress.
+    /// Asked for by the pointer, so neither "fold on its own" nor the pin holds it back, nor
+    /// a typed field (kept for when the field comes back); a turn in progress still refuses.
     fileprivate func foldWhenRestingOnApps(prompt slot: CGRect?, origin: CGPoint, mouse: CGPoint) {
         let strip = slot.flatMap {
             CornerSplitShell.stripRect(
@@ -1768,7 +1768,7 @@ extension CornerDockController {
                 DoraXTurnLog.record("corner.apps dwell ended with the split gone")
                 return
             }
-            let folded = self.prompt.restAsDockNow()
+            let folded = self.prompt.restAsDockNow(keepsDraft: true)
             DoraXTurnLog.record(
                 "corner.apps fold \(folded ? "done" : "refused") phase \(self.prompt.phase)")
         }

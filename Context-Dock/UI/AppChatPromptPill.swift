@@ -1262,25 +1262,11 @@ struct AppChatPromptPill: View {
                     // An app's bar is drawn after "+", below — pins sit next to it.
                     EmptyView()
                 } else if model.usesDockShell {
-                    // The strip's own icons shrink into this spot and hand over to this
-                    // pill once they land: every running app, scrolling inside one fixed
-                    // width (#189), so a launch or a quit never moves the dock. It arrives
-                    // late, as the icons do, so the row is not seen twice in flight.
-                    ContextMatchDock(
-                        phase: .idle,
-                        icons: model.allRunningIcons,
-                        overflowCount: 0,
-                        isSearching: false,
-                        focusedID: model.focusedPill?.id,
-                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
-                            apps: model.allRunningIcons.count),
-                        onSelect: { icon in model.openGlobalMatchIcon(icon) })
-                        // Resting the pointer on the small pills asks for the big ones: the
-                        // field folds into the dock at once, as it always has.
-                        .onHover { inside in if inside { model.foldToDock() } }
-                        .transition(.opacity.animation(
-                            .easeOut(duration: AppChatPromptMetrics.dockMorphDuration * 0.25)
-                                .delay(AppChatPromptMetrics.dockMorphDuration * 0.55)))
+                    // The apps stand beside the field in their own piece, or are the resting
+                    // dock itself: a small copy in here only flashed over the field as it
+                    // folded (owner 2026-10-08: "running apps disturb the search input field
+                    // while the mouse hovers").
+                    EmptyView()
                 } else {
                     // The same fixed-width scroller as Global's (#189).
                     ContextMatchDock(
@@ -1462,7 +1448,10 @@ struct AppChatPromptPill: View {
             }
             // Room for the strip's pins and tools, which stay on screen over this end of
             // the field: the strip draws them, still and clickable, in both phases.
-            if let strip = globalStrip {
+            // Split, the strip stands beside the field, not over its end: kept clear there it
+            // pushed the match icon back against the text (owner 2026-10-08: "show the result
+            // icon at the end of the search input field").
+            if let strip = globalStrip, !splitsShell {
                 Color.clear
                     .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
                     .allowsHitTesting(false)
@@ -1470,7 +1459,7 @@ struct AppChatPromptPill: View {
         }
         .padding(.leading, globalStrip.map {
             AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
-        .padding(.trailing, globalStrip == nil ? 14 : 0)
+        .padding(.trailing, globalStrip == nil || splitsShell ? 14 : 0)
         // Taller for a wrapped prompt, from the bottom edge up (#189).
         .frame(height: DockFieldLines.fieldHeight(
             base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),

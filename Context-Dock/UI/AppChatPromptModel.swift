@@ -1062,10 +1062,13 @@ final class AppChatPromptModel: ObservableObject {
 
     /// Straight to the dock, whatever "fold on its own" says: auto-hide's edge summons the
     /// resting strip, the way the macOS Dock shows its icons — typing is what opens the field.
+    /// `keepsDraft`: the pointer resting on the apps asked for the dock, typed text or not
+    /// (owner 2026-10-08: "nothing happens while split"); the draft stays for the field's
+    /// return. Everything else still refuses a typed field.
     @discardableResult
-    func restAsDockNow() -> Bool {
+    func restAsDockNow(keepsDraft: Bool = false) -> Bool {
         guard usesDockShell, !isAnswering,
-            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            keepsDraft || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
         cancel()
         set(.dock)
