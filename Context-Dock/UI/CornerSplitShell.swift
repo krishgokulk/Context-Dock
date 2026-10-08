@@ -202,10 +202,13 @@ struct CornerSplitStrip: View {
             guard inside, !inset else { return }
             foldIntent = Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 180_000_000)
-                guard !Task.isCancelled, model.isGlobalScope,
-                    model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                guard !Task.isCancelled, model.isGlobalScope, model.phase == .prompt
                 else { return }
-                _ = model.foldToDock()
+                // Asked for by the pointer, so not subject to "fold on its own" or the pin:
+                // `foldToDock` honours both and did nothing for an owner with either set
+                // (owner 2026-10-08: "why when user hovers running apps isn't it back?").
+                // `restAsDockNow` still refuses a typed field or a turn in progress.
+                _ = model.restAsDockNow()
             }
         }
         .onDisappear { foldIntent?.cancel() }
