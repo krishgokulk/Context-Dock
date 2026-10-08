@@ -397,11 +397,11 @@ struct CornerDockStrip: View {
             isAvailable: slot.pin.map { $0.kind.isAvailable } ?? true,
             scale: scale(for: id, among: ids)
         )
-        // Paired with the split strip's copy: while the field stands apart from the apps,
-        // that one leads and this one follows it there (`DockIconMatch`).
+        // Paired with the split strip's copy only while the dock rests (`DockIconMatch`):
+        // the icon flies between the one leaving and the one arriving.
         .dockIconMatch(
-            DockIconMatch.app(slot.bundleID), in: iconSpace,
-            isSource: !CornerDockController.shared.showsSplitShell)
+            DockIconMatch.resting(DockIconMatch.app(slot.bundleID), atRest: isDock),
+            in: iconSpace, isSource: true)
         // As the field's pill, the one Tab and ←/→ have highlighted (`DockKeyRules`).
         .dockKeyboardFocus(!isDock && model.focusedPill.map {
             $0.bundleID == slot.bundleID || $0.id == slot.bundleID
@@ -485,8 +485,8 @@ struct CornerDockStrip: View {
             }
         }
         .dockIconMatch(
-            DockIconMatch.pin(pin.id), in: iconSpace,
-            isSource: !CornerDockController.shared.showsSplitShell)
+            DockIconMatch.resting(DockIconMatch.pin(pin.id), atRest: isDock),
+            in: iconSpace, isSource: true)
         .onHover { inside in
             let id = pin.id.uuidString
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)

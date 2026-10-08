@@ -372,6 +372,14 @@ private struct StripChrome: ViewModifier {
 enum DockIconMatch {
     static func app(_ bundleID: String) -> String { "dock-app-" + bundleID }
     static func pin(_ id: UUID) -> String { "dock-pin-" + id.uuidString }
+
+    /// The resting dock's id for an icon. Only the dock at rest is in the pair; with the field
+    /// up its icons, gathered and hidden, take an id of their own. Paired while hidden, they
+    /// followed the split's copies out past the field's clipped glass and stayed there when
+    /// it folded, leaving the dock showing only its magnifier (owner 2026-10-08: "only a 🔍
+    /// circle"). This way each side is the only one holding the id while it is on screen,
+    /// and the icon flies from the one leaving to the one arriving.
+    static func resting(_ id: String, atRest: Bool) -> String { atRest ? id : id + "-away" }
 }
 
 private struct DockIconNamespaceKey: EnvironmentKey {
