@@ -1268,9 +1268,14 @@ extension AppChatPromptModel {
     }
 
     /// Pure: whether ↑/↓ try the layer before the list — an empty field with nothing
-    /// highlighted.
-    nonisolated static func layerKeyComesFirst(query: String, hasFocusedRow: Bool) -> Bool {
-        query.isEmpty && !hasFocusedRow
+    /// highlighted, in a layer of its own. A scope stepped into from Global (a command, a
+    /// tool, a CLI, an app) is not a layer: its arrows are its list's, and ← or Esc is the
+    /// way back. ↓ there used to swap the whole scope for the Context Dock (owner
+    /// 2026-10-08: "when user presses down arrow it switches to context dock, why?").
+    nonisolated static func layerKeyComesFirst(
+        query: String, hasFocusedRow: Bool, steppedInFromGlobal: Bool = false
+    ) -> Bool {
+        query.isEmpty && !hasFocusedRow && !steppedInFromGlobal
     }
 
     /// Pure: the Global results → steps into by running — the ones whose "run" is opening

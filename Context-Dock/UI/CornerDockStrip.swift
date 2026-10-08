@@ -31,7 +31,6 @@ struct CornerDockStrip: View {
     /// A bar-widget plugin drawn as its icon, showing its tile because the pointer is on it.
     @State private var widgetPeekID: UUID?
     @State private var widgetPeekClose: Task<Void, Never>?
-    @Environment(\.dockIconNamespace) private var iconSpace
 
     private typealias M = AppChatPromptMetrics
 
@@ -397,11 +396,6 @@ struct CornerDockStrip: View {
             isAvailable: slot.pin.map { $0.kind.isAvailable } ?? true,
             scale: scale(for: id, among: ids)
         )
-        // Paired with the split strip's copy: while the field stands apart from the apps,
-        // that one leads and this one follows it there (`DockIconMatch`).
-        .dockIconMatch(
-            DockIconMatch.app(slot.bundleID), in: iconSpace,
-            isSource: !CornerDockController.shared.showsSplitShell)
         // As the field's pill, the one Tab and ←/→ have highlighted (`DockKeyRules`).
         .dockKeyboardFocus(!isDock && model.focusedPill.map {
             $0.bundleID == slot.bundleID || $0.id == slot.bundleID
@@ -484,9 +478,6 @@ struct CornerDockStrip: View {
                 )
             }
         }
-        .dockIconMatch(
-            DockIconMatch.pin(pin.id), in: iconSpace,
-            isSource: !CornerDockController.shared.showsSplitShell)
         .onHover { inside in
             let id = pin.id.uuidString
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)

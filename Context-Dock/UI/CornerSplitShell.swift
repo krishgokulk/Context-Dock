@@ -61,6 +61,25 @@ enum CornerSplitShell {
 
     static let minimumStripWidth: CGFloat = 64
 
+    /// Where the apps piece sits inside the field's slot (the slot's own space, bottom-left
+    /// origin): after the field and the gap, along the bottom line at the field's height.
+    /// The window watches the pointer against this rather than the piece's SwiftUI hover:
+    /// the field's layer runs on under the apps (its layout keeps one width), and the hover
+    /// there never reliably reached the icons (owner 2026-10-08: "why still doesn't it go
+    /// back to the dock?"). The same pointer test the shell already uses for everything else.
+    static func stripRect(
+        slot: CGRect, fieldWidth: CGFloat, stripWidth: CGFloat, height: CGFloat
+    ) -> CGRect? {
+        guard stripWidth > 0 else { return nil }
+        return CGRect(
+            x: slot.minX + fieldWidth + gap, y: slot.minY,
+            width: stripWidth, height: min(height, slot.height))
+    }
+
+    /// How long the pointer rests on the apps before the field folds into the dock: long
+    /// enough that crossing them on the way somewhere else does not fold it.
+    static let foldDwell: TimeInterval = 0.18
+
     /// In a conversation the composer is inset in the chat card, under the transcript and the
     /// app's panel (`CornerLivePanel`). The apps take the panel's column, inset by the
     /// composer's own 10-point margin so they line up with the panel above them.
@@ -90,8 +109,6 @@ struct CornerSplitStrip: View {
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
-    @State private var foldIntent: Task<Void, Never>?
-    @Environment(\.dockIconNamespace) private var iconSpace
 
     /// The resting dock's own icon size, so an icon is the same size in the dock and beside
     /// the field (owner 2026-10-08: "stay the same size, bigger, in both").
@@ -193,22 +210,6 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
-        // Over the apps, Global's empty field folds back into the resting dock — the
-        // same apps with their previews, menus and window management (owner 2026-10-08:
-        // "over apps: back to the dock with running apps, pins"). A short dwell, so
-        // crossing the apps on the way somewhere else does not fold the field.
-        .onHover { inside in
-            foldIntent?.cancel()
-            guard inside, !inset else { return }
-            foldIntent = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 180_000_000)
-                guard !Task.isCancelled, model.isGlobalScope,
-                    model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                else { return }
-                _ = model.foldToDock()
-            }
-        }
-        .onDisappear { foldIntent?.cancel() }
     }
 
     private var hairline: some View {
@@ -234,7 +235,6 @@ struct CornerSplitStrip: View {
                     }
                 }
                 .frame(width: icon, height: icon)
-                .dockIconMatch(DockIconMatch.pin(pin.id), in: iconSpace, isSource: true)
                 Circle().fill(Color.clear).frame(width: 3, height: 3)
             }
             .contentShape(Rectangle())
@@ -259,9 +259,6 @@ struct CornerSplitStrip: View {
                     }
                 }
                 .frame(width: icon, height: icon)
-                // The same icon as the resting dock's: it slides and shrinks from there
-                // rather than one row blinking out and another in.
-                .dockIconMatch(DockIconMatch.app(slot.bundleID), in: iconSpace, isSource: true)
                 .opacity((slot.pin.map { $0.kind.isAvailable } ?? true) ? 1 : 0.4)
                 Circle()
                     .fill(Color.primary.opacity(slot.isRunning ? 0.55 : 0))
@@ -340,36 +337,3 @@ private struct StripChrome: ViewModifier {
     }
 }
 
-// MARK: - One icon, two rows
-
-/// The resting dock's icons and the split strip's are the same apps. Paired by id in one
-/// namespace (`CornerDockSurface`), an icon moves and resizes between the two rows as the
-/// field opens and folds, instead of one row fading out while the other fades in — the
-/// flicker the owner saw (2026-10-08).
-enum DockIconMatch {
-    static func app(_ bundleID: String) -> String { "dock-app-" + bundleID }
-    static func pin(_ id: UUID) -> String { "dock-pin-" + id.uuidString }
-}
-
-private struct DockIconNamespaceKey: EnvironmentKey {
-    static let defaultValue: Namespace.ID? = nil
-}
-
-extension EnvironmentValues {
-    var dockIconNamespace: Namespace.ID? {
-        get { self[DockIconNamespaceKey.self] }
-        set { self[DockIconNamespaceKey.self] = newValue }
-    }
-}
-
-extension View {
-    /// `matchedGeometryEffect` when the surface handed down its namespace; nothing otherwise.
-    @ViewBuilder
-    func dockIconMatch(_ id: String, in namespace: Namespace.ID?, isSource: Bool) -> some View {
-        if let namespace {
-            matchedGeometryEffect(id: id, in: namespace, isSource: isSource)
-        } else {
-            self
-        }
-    }
-}

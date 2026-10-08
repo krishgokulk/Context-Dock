@@ -1194,8 +1194,14 @@ final class AppChatPromptModel: ObservableObject {
         isStandDownArmed = false
     }
 
-    func set(_ next: AppChatPromptPhase) {
+    func set(
+        _ next: AppChatPromptPhase, caller: String = #function, file: String = #fileID,
+        line: Int = #line
+    ) {
         guard phase != next else { return }
+        // Which code moved the field, for the turn log (owner 2026-10-08: the field came
+        // back after resting on the apps folded it, and nothing on screen said what did).
+        DoraXTurnLog.record("corner.phase \(phase) → \(next) by \(caller) \(file):\(line)")
         phase = next
         // The clipboard board stands over the field; the field going takes it along.
         if !next.showsInput, clipboardBoard.isBoardOpen { clipboardBoard.closeBoard() }

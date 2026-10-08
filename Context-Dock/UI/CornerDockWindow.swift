@@ -82,6 +82,9 @@ final class CornerDockController: NSObject {
     /// macOS Dock's quick hide; never having come near it — the dock was raised by a hotkey —
     /// waits out the idle delay instead.
     private var pointerVisitedDock = false
+    /// The pointer resting on the apps beside the field, waiting out the dwell before the
+    /// field folds into the dock (`foldWhenRestingOnApps`).
+    fileprivate var appsFoldIntent: DispatchWorkItem?
     /// The last span the shell drew, so the edge can be matched to it while nothing shows.
     private var lastShownContentRect: CGRect = .zero
     /// Watches the bottom edge while the shell is not on screen at all, so touching it can
@@ -1686,6 +1689,7 @@ final class CornerDockController: NSObject {
         let overShelf = contains(slots.shelf)
         let overClipboard = contains(slots.clipboard)
         let overPrompt = contains(slots.prompt)
+        foldWhenRestingOnApps(prompt: slots.prompt, origin: origin, mouse: mouse)
 
         // The shelf opens by click, not by hover: a pointer passing over its card is not a
         // request to keep it open, and not one to close it either.
@@ -1703,11 +1707,48 @@ final class CornerDockController: NSObject {
     }
 }
 
+extension CornerDockController {
+    /// Over the apps beside Global's empty field, the field folds back into the resting dock
+    /// — the same apps with their previews, menus and window management (owner 2026-10-08:
+    /// "over apps: back to the dock with running apps, pins"). Watched here, from the pointer
+    /// the window already tracks, after a short dwell so crossing the apps does not fold it.
+    /// Asked for by the pointer, so neither "fold on its own" nor the pin holds it back;
+    /// `restAsDockNow` still refuses a typed field or a turn in progress.
+    fileprivate func foldWhenRestingOnApps(prompt slot: CGRect?, origin: CGPoint, mouse: CGPoint) {
+        let strip = slot.flatMap {
+            CornerSplitShell.stripRect(
+                slot: $0, fieldWidth: splitWidths.field, stripWidth: splitWidths.strip,
+                height: AppChatPromptMetrics.fieldHeight(global: true))
+        }
+        let resting = showsSplitShell && prompt.isGlobalScope
+            && strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        guard resting else {
+            appsFoldIntent?.cancel()
+            appsFoldIntent = nil
+            return
+        }
+        guard appsFoldIntent == nil else { return }
+        DoraXTurnLog.record(
+            "corner.apps pointer on the apps: mouse \(mouse) strip \(String(describing: strip)) origin \(origin)")
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.appsFoldIntent = nil
+            guard self.showsSplitShell, self.prompt.isGlobalScope else {
+                DoraXTurnLog.record("corner.apps dwell ended with the split gone")
+                return
+            }
+            let folded = self.prompt.restAsDockNow()
+            DoraXTurnLog.record(
+                "corner.apps fold \(folded ? "done" : "refused") phase \(self.prompt.phase)")
+        }
+        appsFoldIntent = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + CornerSplitShell.foldDwell, execute: work)
+    }
+}
+
 /// The one shell: the field and its boards, the clipboard in the corner, the open shelf
 /// above — each dropping out of the stack when it has nothing to show.
 struct CornerDockSurface: View {
-    /// Pairs the resting dock's icons with the split strip's (`DockIconMatch`).
-    @Namespace private var dockIconSpace
     @ObservedObject private var clipboardModel = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
@@ -1744,7 +1785,6 @@ struct CornerDockSurface: View {
                 column
             }
         }
-        .environment(\.dockIconNamespace, dockIconSpace)
     }
 
     /// The open shelf — a card in the shell, from the shelf icon at the end of the row.
@@ -1834,9 +1874,12 @@ struct CornerDockSurface: View {
                         if split {
                             CornerSplitStrip(
                                 model: prompt, width: CornerDockController.shared.splitWidths.strip)
-                                // Its icons travel from the dock's (`DockIconMatch`); only the
-                                // glass fades in around them.
-                                .transition(.opacity)
+                                // Fades in as it buds off the field; gone at once on the fold.
+                                // Left to fade out under the pointer, it stayed on screen beside
+                                // a half-folded field until the pointer left (owner 2026-10-08:
+                                // "dock only on mouse-out"); the dock's own icons arrive in its
+                                // place as the field folds.
+                                .transition(.asymmetric(insertion: .opacity, removal: .identity))
                         }
                     }
                     .frame(width: split ? shell : nil, alignment: .leading)

@@ -131,13 +131,18 @@ struct CornerSplitShellTests {
         #expect(CornerSplitShell.gap > CornerSplitShell.dropletSpacing)
     }
 
-    /// The resting dock's icon and the split strip's are one icon to the animation: the
-    /// same id, so it travels between the rows instead of blinking (owner 2026-10-08).
-    @Test func dockAndSplitIconsShareTheirIDs() {
-        #expect(DockIconMatch.app("com.apple.finder") == DockIconMatch.app("com.apple.finder"))
-        #expect(DockIconMatch.app("com.apple.finder") != DockIconMatch.app("com.apple.Safari"))
-        let id = UUID()
-        #expect(DockIconMatch.pin(id) == DockIconMatch.pin(id))
+    /// The apps piece is the slot's bottom line after the field and the gap — where the
+    /// pointer resting folds the field into the dock (owner 2026-10-08).
+    @Test func theAppsPieceIsWhereThePointerFoldsTheField() throws {
+        let slot = CGRect(x: 100, y: 20, width: 700, height: 60)
+        let rect = try #require(
+            CornerSplitShell.stripRect(slot: slot, fieldWidth: 400, stripWidth: 286, height: 52))
+        #expect(rect.minX == 100 + 400 + CornerSplitShell.gap)
+        #expect(rect.width == 286)
+        #expect(rect.minY == 20)
+        #expect(rect.height == 52)
+        // Nothing beside the field, nothing to rest on.
+        #expect(CornerSplitShell.stripRect(slot: slot, fieldWidth: 700, stripWidth: 0, height: 52) == nil)
     }
 
     /// An icon is the dock's size beside the field too, so nothing changes size as the
