@@ -1401,9 +1401,10 @@ struct AppChatPromptPill: View {
             // The Drop Shelf, last of the field's icons in every scope while it holds something
             // or a drag is in flight: Global's is the strip's, drawn over this end of the
             // field, so the field adds none there.
-            // Split, the apps' piece carries the shelf instead — drawn in both it showed twice
-            // (owner 2026-10-08: "it shows the drop icon on both the input and the running").
-            if !model.isGlobalScope, model.showsShelf, !splitsShell {
+            // In an app's scope the shelf ends the field — the input pill — split or not; the
+            // apps' piece beside it leaves it out (owner 2026-10-08: "the drop shelf shows on
+            // both pills; put it at the end of the send pill").
+            if !model.isGlobalScope, model.showsShelf {
                 shelfControl
             }
 

@@ -152,7 +152,10 @@ struct CornerSplitStrip: View {
     /// seconds after a copy or while its board is open (`showsDockIcon`), the Drop Shelf only
     /// while it holds something or a drag is in flight (`DropShelfVisibility`).
     static func tools(for model: AppChatPromptModel) -> (clipboard: Bool, shelf: Bool) {
-        (ClipboardPanelController.shared.model.showsDockIcon, model.showsShelf)
+        // An app's field ends with the shelf itself (`shelfControl`), so the apps' piece
+        // carries it only beside Global's field, which draws none.
+        (ClipboardPanelController.shared.model.showsDockIcon,
+            model.showsShelf && model.isGlobalScope)
     }
 
     static func toolCount(for model: AppChatPromptModel) -> Int {
