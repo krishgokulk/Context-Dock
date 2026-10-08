@@ -456,7 +456,7 @@ struct ScopedListPanelContent: View {
 
     /// A row stands for a file when its id (or icon) is a path that exists.
     private func filePath(for row: CustomListRow) -> String? {
-        for candidate in [row.id, row.icon].compactMap({ $0 }) {
+        for candidate in [row.actionID, row.icon].compactMap({ $0 }) {
             guard candidate.hasPrefix("/") || candidate.hasPrefix("~") else { continue }
             let path = (candidate as NSString).expandingTildeInPath
             if FileManager.default.fileExists(atPath: path) { return path }
@@ -564,7 +564,7 @@ struct ScopedListPanelContent: View {
 
     private func run(_ row: CustomListRow) {
         if isPresetPicker {
-            let value = row.id
+            let value = row.actionID
             Task.detached(priority: .userInitiated) {
                 _ = SystemCommandInteractiveRunner.runForOutput(command: command, value: value)
             }
