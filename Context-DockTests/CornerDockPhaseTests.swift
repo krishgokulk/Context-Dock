@@ -145,10 +145,12 @@ struct CornerDockPhaseTests {
         #expect(!typed.foldToDock())
         let (off, _) = globalModel(autoShrink: false)
         #expect(!off.foldToDock())
+        // An app's Context Dock can fold too now (owner 2026-10-08); the ← key folds only
+        // Global's field (`CornerDockController`), since in a scope ← is the way back.
         let (scoped, _) = globalModel()
         scoped.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         scoped.set(.prompt)
-        #expect(!scoped.foldToDock())
+        #expect(scoped.foldToDock())
     }
 
     @Test func dockIsNotAnInputPhase() {

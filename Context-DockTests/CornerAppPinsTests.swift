@@ -325,7 +325,8 @@ struct CornerAppPinsTests {
         let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
         let shell = DockShellWidth.current
         #expect(AppChatPromptMetrics.boardWidth(for: model) == shell, "no pins: the shell")
-        #expect(AppChatPromptMetrics.appBarPillWidth(for: model) == 0)
+        // No pins: the bar holds the running apps (owner 2026-10-08) — however many this
+        // machine is running, so no fixed pill width to check here.
 
         store.pin(.menuCommand(path: ["Window", "Centre"]), title: "Centre",
             app: "com.anthropic.claudefordesktop")

@@ -1527,7 +1527,10 @@ final class CornerDockController: NSObject {
         else { return event }
         // ← on an empty Global field folds it into the dock, before the presentation's
         // own walk between scopes is considered.
-        if chatPresentation.mode != .general, prompt.foldToDock() { return nil }
+        // Global only: in an app's Context Dock, which can fold too now, ← is the way back.
+        if chatPresentation.mode != .general, prompt.isGlobalScope, prompt.foldToDock() {
+            return nil
+        }
         // ← inside a scope entered from Global walks back one app, and from the first home
         // to Global — the mirror of →, as the Dock walks. Without it an empty Finder field
         // went straight to General Chat (owner, 2026-09-26).

@@ -104,6 +104,8 @@ struct CornerChatPresentationTests {
     /// point means "come back", and it comes back pointed at whatever is in front now.
     @Test func theHotkeyBringsBackAShrunkenCorner() {
         let app = AppChatPromptModel(conversation: AppChatConversation())
+        // The badge path: with "fold on its own" on, the app rests as its bar instead.
+        app.autoShrinkEnabled = { false }
         let subject = CornerChatPresentation(
             appChat: app, generalChat: GeneralChatWindowModel())
         subject.cycle(target: code)
