@@ -1337,6 +1337,9 @@ struct AppChatPromptPill: View {
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 let icon = model.leadingResultIcon
             {
+                // At the field's end, not against the last typed letter (owner 2026-10-08:
+                // "while typing show app icons at the end of the search input pill").
+                Spacer(minLength: 8)
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
@@ -1381,7 +1384,9 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.showsDockIcon {
+                // Split, the apps' piece beside the field carries the clipboard: drawn here
+                // too it showed twice.
+                if clipboard.showsDockIcon, !splitsShell {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a
@@ -1394,7 +1399,9 @@ struct AppChatPromptPill: View {
             // The Drop Shelf, last of the field's icons in every scope while it holds something
             // or a drag is in flight: Global's is the strip's, drawn over this end of the
             // field, so the field adds none there.
-            if !model.isGlobalScope, model.showsShelf {
+            // Split, the apps' piece carries the shelf instead — drawn in both it showed twice
+            // (owner 2026-10-08: "it shows the drop icon on both the input and the running").
+            if !model.isGlobalScope, model.showsShelf, !splitsShell {
                 shelfControl
             }
 

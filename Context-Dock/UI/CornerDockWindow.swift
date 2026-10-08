@@ -607,12 +607,27 @@ final class CornerDockController: NSObject {
     /// Whether the shell is on screen only because a drag asked for it, so it goes again when
     /// the drag does.
     private var shelfRevealedTheShell = false
+    /// A file drag raised or is crossing the shell: no keyboard arming until it ends. Read
+    /// through `dragHoldsKeyboard`, which lets go once no button is held, so a drag whose end
+    /// was never reported cannot keep the keys away.
+    private var dragRaisedShell = false
+    private var dragHoldsKeyboard: Bool {
+        get {
+            if dragRaisedShell, NSEvent.pressedMouseButtons == 0 { dragRaisedShell = false }
+            return dragRaisedShell
+        }
+        set { dragRaisedShell = newValue }
+    }
 
     /// A drag was sighted and the shelf's icon — in the shell's row — is where it drops. If
     /// nothing has the shell on screen, bring the resting dock up for the drag, without the
     /// keys: a drag is not a request to type.
     func revealForShelfDrag() {
         guard panel != nil else { return }
+        // A drag is not a request to type, and taking the keys mid-drag activates DoraX
+        // while another app's drag session is live — the freeze the owner hit dragging a
+        // file onto the dock (2026-10-08). The keys stay where they are until it ends.
+        dragHoldsKeyboard = true
         cancelPendingAutoHide()
         if !chatPresentation.isVisible {
             chatPresentation.showGlobalContext()
@@ -628,6 +643,7 @@ final class CornerDockController: NSObject {
     /// The drag ended — dropped or not. A shell the drag raised puts itself away, unless the
     /// shelf is open: that one is the user's now.
     func shelfDragEnded() {
+        dragHoldsKeyboard = false
         guard shelfRevealedTheShell else { return }
         shelfRevealedTheShell = false
         guard !shelf.phase.isCardShown else { return }
@@ -948,7 +964,8 @@ final class CornerDockController: NSObject {
             shell: AppChatPromptMetrics.boardWidth(for: prompt),
             apps: CornerSplitStrip.apps(for: prompt).count,
             pins: CornerSplitStrip.pins(for: prompt).count,
-            tools: CornerSplitStrip.toolCount(for: prompt))
+            tools: CornerSplitStrip.toolCount(for: prompt),
+            widgetExtra: CornerSplitStrip.composition(for: prompt).widgetExtraWidth)
     }
 
     /// The width the field's text stack is laid out at.
@@ -1012,7 +1029,7 @@ final class CornerDockController: NSObject {
     /// harmless and is also exactly what stops this window becoming key, so the style is
     /// dropped for as long as the card holds the keyboard.
     func armKeyboard() {
-        guard let panel else { return }
+        guard let panel, !dragHoldsKeyboard else { return }
         panel.styleMask = [.borderless]
         // The plain, no-argument activate() is cooperative — macOS can decline or defer it,
         // and silently did exactly that when this ran from a global hotkey/event-monitor
@@ -1095,6 +1112,9 @@ final class CornerDockController: NSObject {
     /// One place, because two surfaces answering it independently is how the selection card
     /// ended up focused inside a window that could not become key.
     func syncPanelKeyboard() {
+        // A file drag in flight: the keys stay with the app the drag came from
+        // (`armKeyboard` refuses them too).
+        if dragHoldsKeyboard { return }
         if CornerKeyboardOwner.panelHoldsKeyboard(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
             selectionWantsKeyboard: selection.phase.isVisible,

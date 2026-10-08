@@ -45,19 +45,30 @@ enum CornerSplitShell {
 
     /// The bottom line's two widths. The apps fit their icons and tools; the field takes what
     /// they and the gap leave. With nothing to show, the field is the whole shell.
-    static func widths(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int)
-        -> (field: CGFloat, strip: CGFloat)
-    {
+    static func widths(
+        shell: CGFloat, apps: Int, pins: Int = 0, tools: Int, widgetExtra: CGFloat = 0
+    ) -> (field: CGFloat, strip: CGFloat) {
         guard apps + pins + tools > 0 else { return (shell, 0) }
-        let strip = stripWidth(shell: shell, apps: apps, pins: pins, tools: tools)
+        let strip = stripWidth(
+            shell: shell, apps: apps, pins: pins, tools: tools, widgetExtra: widgetExtra)
         return (shell - strip - gap, strip)
     }
 
-    /// Fitted to the icons and tools, never under a capsule's worth, never over half the shell
-    /// — past that the icons scroll.
-    static func stripWidth(shell: CGFloat, apps: Int, pins: Int = 0, tools: Int) -> CGFloat {
+    /// The field's least width beside the apps: room for the magnifier, a few words and the
+    /// field's own buttons.
+    static let minimumFieldWidth: CGFloat = 300
+
+    /// Fitted to the icons, widgets and tools, never under a capsule's worth, and never so
+    /// wide the field drops under its least width — past that the icons scroll. It was capped
+    /// at half the shell, which scrolled a pinned widget at the row's end out of sight
+    /// (owner 2026-10-08: "why didn't pinned actions show once split?").
+    static func stripWidth(
+        shell: CGFloat, apps: Int, pins: Int = 0, tools: Int, widgetExtra: CGFloat = 0
+    ) -> CGFloat {
         let fitted = CornerSplitStrip.contentWidth(apps: apps, pins: pins, tools: tools)
-        return min(max(fitted, minimumStripWidth), (shell / 2).rounded())
+            + max(widgetExtra, 0)
+        let ceiling = max(shell - minimumFieldWidth - gap, minimumStripWidth)
+        return min(max(fitted, minimumStripWidth), ceiling.rounded())
     }
 
     static let minimumStripWidth: CGFloat = 64
@@ -186,7 +197,16 @@ struct CornerSplitStrip: View {
                         }
                         if !apps.isEmpty, !pins.isEmpty { hairline }
                         ForEach(pins) { pin in
-                            pinButton(pin)
+                            // A pinned plugin with a bar widget is its widget here too, as on
+                            // the resting dock.
+                            if composition.widgetSlots[pin.id] != nil, !inset,
+                                let pluginID = pin.kind.pluginID,
+                                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+                            {
+                                PluginStripTile(pin: pin, manifest: manifest, model: model)
+                            } else {
+                                pinButton(pin)
+                            }
                         }
                     }
                     .padding(.horizontal, 2)
