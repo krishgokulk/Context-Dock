@@ -570,7 +570,7 @@ struct AppChatPromptPill: View {
         // the dock's included, where it is invisible — and the morph still moves no inner
         // width: the glass shrinks from the dock's width onto a stack that is already that wide.
         if model.phase != .chat {
-            return CornerDockController.shared.splitWidths.field
+            return CornerDockController.shared.splitFieldLayoutWidth
         }
         // The shell's one width (#189), in every phase — the strip's, the field's and the
         // conversation's alike.
@@ -649,6 +649,7 @@ struct AppChatPromptPill: View {
         .frame(
             width: drawnWidth, height: size.height,
             alignment: splitsShell ? .bottomLeading : globalStackAlignment)
+
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
@@ -769,7 +770,8 @@ struct AppChatPromptPill: View {
     /// so its stack is laid out at the field's own width and its trailing controls stay in
     /// the glass. The width lands at once (`.animation(nil, …)` below), never over frames.
     private var legacyInputWidth: CGFloat {
-        model.phase == .chat ? size(for: .prompt).width : CornerDockController.shared.splitWidths.field
+        model.phase == .chat
+            ? size(for: .prompt).width : CornerDockController.shared.splitFieldLayoutWidth
     }
 
     /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
@@ -1027,7 +1029,9 @@ struct AppChatPromptPill: View {
                     .frame(width: 22)
             } else if model.isGlobalScope {
                 globalLeadingChip
-            } else if model.returnsToGlobalScope {
+            } else if model.returnsToGlobalScope, !model.isAppStepIn {
+                // A tool or a command keeps its way back; an app is its own Context Dock,
+                // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
             } else {
                 appChip
@@ -1086,9 +1090,9 @@ struct AppChatPromptPill: View {
                                 clipboard.actionableEntries())
                             return
                         }
-                        // A chosen row runs — a command or an adapter action. On a window
-                        // snapshot with nothing typed, Return switches to that app, because
-                        // that is what the switcher is for. Anything else is a question.
+                        // A chosen row runs — a command or an adapter action. On an app
+                        // stepped into from Global with nothing typed, Return brings that app
+                        // forward. Anything else is a question.
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
                         // A panel on screen is what the field is talking to.

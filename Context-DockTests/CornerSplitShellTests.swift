@@ -124,4 +124,25 @@ struct CornerSplitShellTests {
             + 2 * AppChatListMetrics.verticalPadding
         #expect(AppChatListMetrics.size(rows: 3).height == bare + AppChatListMetrics.footerHeight)
     }
+
+    /// The two pieces end farther apart than the glass's merge distance, so they separate
+    /// like a droplet instead of staying joined by a bridge.
+    @Test func thePiecesPinchApart() {
+        #expect(CornerSplitShell.gap > CornerSplitShell.dropletSpacing)
+    }
+
+    /// The resting dock's icon and the split strip's are one icon to the animation: the
+    /// same id, so it travels between the rows instead of blinking (owner 2026-10-08).
+    @Test func dockAndSplitIconsShareTheirIDs() {
+        #expect(DockIconMatch.app("com.apple.finder") == DockIconMatch.app("com.apple.finder"))
+        #expect(DockIconMatch.app("com.apple.finder") != DockIconMatch.app("com.apple.Safari"))
+        let id = UUID()
+        #expect(DockIconMatch.pin(id) == DockIconMatch.pin(id))
+    }
+
+    /// An icon is the dock's size beside the field too, so nothing changes size as the
+    /// field opens (owner 2026-10-08).
+    @Test func iconsKeepTheDocksSize() {
+        #expect(CornerSplitStrip.iconSize == AppChatPromptMetrics.dockIconSize)
+    }
 }

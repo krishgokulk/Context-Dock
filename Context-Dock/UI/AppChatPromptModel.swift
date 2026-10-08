@@ -649,6 +649,9 @@ final class AppChatPromptModel: ObservableObject {
         // Global never reaches this line — it answers with its window snapshot above — so
         // what this governs is Finder and a CLI tool, where the rows are the thing the step
         // went to fetch: the search results, the tool's subcommands.
+        // An app stepped into from Global rests as its own Context Dock: the field alone, ↓
+        // opens its actions (owner 2026-10-07: "don't show the launch sheet").
+        if isAppStepIn { return .prompt }
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
         // Attaching a file is composing a question about it. A list open over that is
         // answering something the user has already stopped asking.

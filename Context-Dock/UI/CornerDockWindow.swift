@@ -948,6 +948,9 @@ final class CornerDockController: NSObject {
             tools: CornerSplitStrip.toolCount(for: prompt))
     }
 
+    /// The width the field's text stack is laid out at.
+    var splitFieldLayoutWidth: CGFloat { splitWidths.field }
+
     /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
     /// on screen or General Chat was, the current scope's otherwise — with the clipboard in
     /// its board. The scope and any conversation underneath are left exactly as they were,
@@ -1017,6 +1020,45 @@ final class CornerDockController: NSObject {
         // uses the forceful, unconditional form for exactly this reason.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive { finishArmingWhenActive() }
+    }
+
+    private var armWhenActiveObserver: NSObjectProtocol?
+
+    /// The activation was deferred. With Terminal in front (its Secure Keyboard Entry most
+    /// of all) macOS can hold an activation asked for from a hover rather than a click, and
+    /// the panel came up looking open with no caret and no keys (owner 2026-10-07: "while
+    /// Terminal is frontmost our input field isn't working"). Ask again a moment later, and
+    /// make the panel key the moment DoraX does become active.
+    private func finishArmingWhenActive() {
+        if armWhenActiveObserver == nil {
+            armWhenActiveObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let observer = self.armWhenActiveObserver {
+                        NotificationCenter.default.removeObserver(observer)
+                        self.armWhenActiveObserver = nil
+                    }
+                    guard self.keyboardState.isArmed || self.prompt.phase.showsInput else { return }
+                    self.panel?.makeKeyAndOrderFront(nil)
+                    self.publishKeyboardOwner()
+                    // The field already owned the keys on paper; asking again puts the caret
+                    // in it now that the window really is key.
+                    if self.keyboardState.owner == .chat { self.keyboardState.composerInteracted() }
+                }
+            }
+        }
+        for delay in [0.12, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !NSApp.isActive, let panel = self.panel,
+                    panel.isVisible, !panel.styleMask.contains(.nonactivatingPanel)
+                else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     /// Recompute who should hold the keyboard and tell every board. Called whenever one of
@@ -1664,6 +1706,8 @@ final class CornerDockController: NSObject {
 /// The one shell: the field and its boards, the clipboard in the corner, the open shelf
 /// above — each dropping out of the stack when it has nothing to show.
 struct CornerDockSurface: View {
+    /// Pairs the resting dock's icons with the split strip's (`DockIconMatch`).
+    @Namespace private var dockIconSpace
     @ObservedObject private var clipboardModel = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
@@ -1693,11 +1737,14 @@ struct CornerDockSurface: View {
         // Centred, the shell is a row: field, clipboard side by side, with what answers the
         // field — and the open shelf — stacked over the field itself. Anchored to an edge it stays a
         // column, because a row against the screen's corner would run off it.
-        if anchor == .center {
-            centredRow
-        } else {
-            column
+        Group {
+            if anchor == .center {
+                centredRow
+            } else {
+                column
+            }
         }
+        .environment(\.dockIconNamespace, dockIconSpace)
     }
 
     /// The open shelf — a card in the shell, from the shelf icon at the end of the row.
@@ -1778,19 +1825,26 @@ struct CornerDockSurface: View {
                 // under the results, apps under the preview, one bottom line (Part B).
                 let split = CornerDockController.shared.showsSplitShell
                 let shell = AppChatPromptMetrics.boardWidth(for: prompt)
-                HStack(alignment: .bottom, spacing: CornerSplitShell.gap) {
-                    AppChatPromptPill(model: prompt)
-                    if split {
-                        // Out of the dock's trailing end as the field opens, back into it as
-                        // the field folds.
-                        CornerSplitStrip(
-                            model: prompt, width: CornerDockController.shared.splitWidths.strip)
-                            .transition(
-                                .opacity.combined(with: .scale(scale: 0.92, anchor: .trailing)))
+                // One liquid-glass container: the apps bud off the field's end and move out
+                // past the merge distance, so the glass pinches in two like a water droplet
+                // rather than a second capsule fading in beside the first.
+                GlassEffectContainer(spacing: CornerSplitShell.dropletSpacing) {
+                    HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 0) {
+                        AppChatPromptPill(model: prompt)
+                        if split {
+                            CornerSplitStrip(
+                                model: prompt, width: CornerDockController.shared.splitWidths.strip)
+                                // Its icons travel from the dock's (`DockIconMatch`); only the
+                                // glass fades in around them.
+                                .transition(.opacity)
+                        }
                     }
+                    .frame(width: split ? shell : nil, alignment: .leading)
                 }
-                .frame(width: split ? shell : nil, alignment: .leading)
-                .animation(.smooth(duration: 0.22), value: split)
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: split)
+                .animation(
+                    .spring(response: 0.38, dampingFraction: 0.85),
+                    value: CornerDockController.shared.splitWidths.strip)
                 .transition(.opacity)
             }
         }

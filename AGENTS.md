@@ -117,6 +117,9 @@ what i need to check"). Not only at the end of a task: any message reporting a c
 a rebase, a CI repair, a review follow-up — closes with a short checklist of what the owner should
 try in the running app to confirm it, one line per change: where to go, what to do, what they should
 see. If nothing in the change is visible by hand (a test-only or docs-only change), say so in one line.
+The checklist comes with the terminal commands to launch that exact commit (owner 2026-10-07:
+"always give terminal cmd after code fix"): a copy-paste block that builds a test worktree beside
+the owner's checkout (`~/Developer/Context-Dock`) at the pushed SHA and runs `./scripts/dev-run.sh`.
 
 **UI work is checked by eye, not only by tests.** Any change a user can see is not done until the
 agent has launched the app (`./scripts/dev-run.sh`), taken screenshots of the changed surface **and of
