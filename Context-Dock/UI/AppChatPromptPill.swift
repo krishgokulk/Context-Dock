@@ -1560,65 +1560,22 @@ struct AppChatPromptPill: View {
 
     /// Raycast's back button, leading the field while the clipboard board is open.
     private var clipboardBackChip: some View {
-        Button {
+        ScopeBackChip(title: "Clipboard", icon: nil, help: "Back (Esc)") {
             ClipboardPanelController.shared.closeBoard()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.left")
-                    .font(.system(size: 11, weight: .bold))
-                    .frame(width: 22, height: 22)
-                    .background(Color.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
-                Text("Clipboard")
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
-            .padding(.leading, 4)
-            .padding(.trailing, 9)
-            .padding(.vertical, 3)
-            .background(Color.primary.opacity(0.09), in: Capsule())
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .help("Back (Esc)")
         .accessibilityLabel("Back from the clipboard")
-        .layoutPriority(1)
     }
 
-    /// The scope chip with a way out of it — the "−" the dock's scope chip carries. Only
-    /// for a scope entered from Global: the frontmost app's own scope is not something the
-    /// user stepped into, so there is nothing to step back from.
+    /// A tool, a command or a CLI stepped into from Global: the same back chip the clipboard
+    /// leads with, so every scope entered from Global is left the same way (owner 2026-10-08:
+    /// "global commands, CLI scope etc. with back arrows, perfect navigation"). It used to
+    /// carry the dock's small "−" after the name instead. The frontmost app's own scope is
+    /// not something the user stepped into, so it has none.
     private var scopeChipWithExit: some View {
-        HStack(spacing: 6) {
-            if let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 16, height: 16)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            Text(model.appName)
-                .font(.system(size: 12.5, weight: .semibold))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
-            Button { model.leaveScopeForGlobal() } label: {
-                Image(systemName: "minus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .background(Color.primary.opacity(0.12), in: Circle())
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Back to Global Context")
+        ScopeBackChip(title: model.appName, icon: appIcon, help: "Back to Global Context (Esc)") {
+            model.leaveScopeForGlobal()
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.09), in: Capsule())
-        // The scope's name is the subject of everything else in this row, so it keeps its
-        // width and the placeholder gives way — truncating it to "F" said nothing at all.
-        .layoutPriority(1)
+        .accessibilityLabel("Back from \(model.appName) to Global Context")
     }
 
     private var appChip: some View {
@@ -1913,5 +1870,45 @@ struct AppChatPromptPill: View {
                 withBundleIdentifier: model.appBundleID)
         else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
+    }
+}
+
+/// The field's leading "← Name" chip for a scope entered from Global: the whole chip is the
+/// way back. One look for the clipboard, a command, a tool and a CLI.
+private struct ScopeBackChip: View {
+    let title: String
+    let icon: NSImage?
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                if let icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 16, height: 16)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                // The scope's name is the subject of everything else in this row, so it keeps
+                // its width and the placeholder gives way.
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 9)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.09), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .layoutPriority(1)
     }
 }
