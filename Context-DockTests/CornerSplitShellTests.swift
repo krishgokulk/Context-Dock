@@ -93,12 +93,14 @@ struct CornerSplitShellTests {
         #expect(widget == plain + 120)
     }
 
-    /// The app's card is compact: the shell's left half, over the chip that opened it.
-    @Test func theAppCardTakesTheLeftHalf() {
+    /// The app's card is the result sheet's right half, its trailing edge on the shell's
+    /// (owner 2026-10-08: "expand only on the right side").
+    @Test func theAppCardTakesTheRightHalf() {
         for shell: CGFloat in [600, 664] {
             let card = AppScopeBoardMetrics.size(shell: shell)
-            #expect(card.width == (shell * CornerBoardLayout.listFraction).rounded())
+            #expect(card.width == CornerBoardLayout.panelWidth(board: shell))
             #expect(card.height == AppScopeBoardMetrics.height)
+            #expect(AppScopeBoardMetrics.anchorOffset(shell: shell) + card.width / 2 == shell)
         }
     }
 

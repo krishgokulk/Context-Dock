@@ -522,6 +522,8 @@ final class AppChatPromptModel: ObservableObject {
             query = drafts[incoming] ?? ""
             // The answer being waited for belonged to the scope being left.
             stopAwaitingAnswer()
+            // So did a conversation put away by its ⌄.
+            isConversationHidden = false
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
         }
@@ -743,6 +745,36 @@ final class AppChatPromptModel: ObservableObject {
         hasPresentedConversation = false
         focusedMenuIndex = nil
         set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    /// The chat sheet put away by its ⌄ (owner 2026-10-08: "show a down arrow to hide the
+    /// chat sheet"): the conversation is kept, a turn keeps running, and the field's ⌃
+    /// brings it back (`showConversation`).
+    @Published private(set) var isConversationHidden = false
+
+    @discardableResult
+    func hideConversation() -> Bool {
+        guard phase == .chat else { return false }
+        stopAwaitingAnswer()
+        hasPresentedConversation = false
+        focusedMenuIndex = nil
+        isConversationHidden = true
+        set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    @discardableResult
+    func showConversation() -> Bool {
+        guard isConversationHidden, phase.showsInput, phase != .chat,
+            isAnswering || !messages.isEmpty
+        else { return false }
+        isConversationHidden = false
+        isShowingScopeCard = false
+        hasPresentedConversation = true
+        set(.chat)
         touch()
         return true
     }
@@ -1141,6 +1173,7 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         hasPresentedConversation = true
         awaitingAnswer = true
+        isConversationHidden = false
         armAnswerWatchdog()
         set(.chat)
         touch()

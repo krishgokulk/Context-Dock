@@ -36,6 +36,10 @@ struct CornerBoardPreviewPanel: View {
                 case .windowLayout(let command, let title, let appName, let bundleID):
                     WindowLayoutPreview(
                         command: command, title: title, appName: appName, bundleID: bundleID)
+                case .appScope(let bundleID, let name):
+                    // The list draws the app's card itself (`AppChatListCard`); anywhere
+                    // else the app's own preview says the same in brief.
+                    AppPreview(bundleID: bundleID, name: name)
                 }
             }
             .padding(.horizontal, 14)

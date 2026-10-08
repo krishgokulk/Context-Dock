@@ -859,11 +859,11 @@ final class CornerDockController: NSObject {
     /// two cards ask for this — the list, the snapshot and the extension panel belong to
     /// the field and stay centred on it.
     private var hoverCardAnchorOffset: CGFloat? {
-        // The app's card stands over the field's left half, its leading edge on the field's,
-        // above the chip that opened it.
+        // The app's card stands over the shell's right half, its trailing edge on the shell's
+        // (owner 2026-10-08), where the result sheet's own right half is.
         if showsScopeBoard {
-            return AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
-                .width / 2
+            return AppScopeBoardMetrics.anchorOffset(
+                shell: AppChatPromptMetrics.boardWidth(for: prompt))
         }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
@@ -945,6 +945,8 @@ final class CornerDockController: NSObject {
             && prompt.isShowingScopeCard
             && !prompt.isGlobalScope
             && (prompt.phase == .prompt || prompt.phase == .suggesting)
+            // With results up, the card is the list's right half instead (`boardPreview`).
+            && !showsAppChatList
     }
 
     /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global

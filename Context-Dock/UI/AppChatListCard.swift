@@ -98,6 +98,26 @@ struct AppChatListCard: View {
     /// (#191) — the same number the window reserves.
     private var size: CGSize { model.boardSize }
 
+    /// The right half: the app's card when the chip opened it (owner 2026-10-08: "in the
+    /// right half of the result sheet"), the highlighted row's preview otherwise.
+    @ViewBuilder
+    private func previewPanel(_ preview: CornerBoardPreview) -> some View {
+        if case .appScope(let bundleID, _) = preview {
+            let panelHeight = size.height - 2 * AppChatListMetrics.verticalPadding
+                - AppChatListMetrics.footerHeight
+            AppScopeCard(
+                model: model,
+                appIcon: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                    .map { NSWorkspace.shared.icon(forFile: $0.path) },
+                close: { model.isShowingScopeCard = false },
+                width: CornerBoardLayout.panelWidth(board: size.width) - 10,
+                maxScrollHeight: max(panelHeight - 70, 120))
+                .boardPanelCard()
+        } else {
+            CornerBoardPreviewPanel(preview: preview)
+        }
+    }
+
     var body: some View {
         let preview = model.boardPreview
         // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
@@ -167,7 +187,7 @@ struct AppChatListCard: View {
         if let preview {
             // The preview's own inset card draws the edge between the halves.
             Color.clear.frame(width: CornerBoardLayout.dividerWidth)
-            CornerBoardPreviewPanel(preview: preview)
+            previewPanel(preview)
                 .frame(
                     width: CornerBoardLayout.panelWidth(board: size.width),
                     height: size.height - 2 * AppChatListMetrics.verticalPadding
