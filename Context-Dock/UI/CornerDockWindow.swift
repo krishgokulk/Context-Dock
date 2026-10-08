@@ -1910,7 +1910,10 @@ struct CornerDockSurface: View {
                                 // a half-folded field until the pointer left (owner 2026-10-08:
                                 // "dock only on mouse-out"); the dock's own icons arrive in its
                                 // place as the field folds.
-                                .transition(.asymmetric(insertion: .opacity, removal: .identity))
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(
+                                        with: .offset(x: -CornerSplitShell.splitDrift)),
+                                    removal: .identity))
                         }
                     }
                     .frame(width: split ? shell : nil, alignment: .leading)

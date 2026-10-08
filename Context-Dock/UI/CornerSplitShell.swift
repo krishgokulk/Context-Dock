@@ -73,6 +73,10 @@ enum CornerSplitShell {
 
     static let minimumStripWidth: CGFloat = 64
 
+    /// The resting dock's icons drift this far toward the apps' piece as the field opens, and
+    /// the piece arrives from as far the other way: one sideways move at full size, no shrink.
+    static let splitDrift: CGFloat = 36
+
     /// Where the apps piece sits inside the field's slot (the slot's own space, bottom-left
     /// origin): after the field and the gap, along the bottom line at the field's height.
     /// The window watches the pointer against this rather than the piece's SwiftUI hover:

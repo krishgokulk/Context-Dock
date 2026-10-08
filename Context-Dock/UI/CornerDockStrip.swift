@@ -41,6 +41,17 @@ struct CornerDockStrip: View {
 
     private var isDock: Bool { model.phase == .dock }
 
+    /// The field opens split, its apps in a piece of their own beside it: the icons do not
+    /// shrink into the field's small pill, they drift toward that piece at full size and
+    /// hand over to it (owner 2026-10-08: "move the icons without shrinking to the second
+    /// pill").
+    private var slidesToSplit: Bool {
+        !gathersIntoAppBar && CornerDockController.shared.splitWidths.strip > 0
+    }
+
+    /// How far an icon drifts on its way to the split's piece, and the piece in from it.
+    static let splitDrift: CGFloat = CornerSplitShell.splitDrift
+
     /// The strip's tools stay over the field's trailing end in Global, still and
     /// clickable. An app's field draws its own clipboard and selection beside the pin, so
     /// there the strip's go with the bar — drawn over the field they doubled up on the pin.
@@ -242,6 +253,11 @@ struct CornerDockStrip: View {
             // size — drawn there, not laid out there, so the row's geometry never moves
             // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
             let count = plan.composition.apps.count + (plan.layout.overflow > 0 ? 1 : 0)
+            if scrollsApps(plan) {
+                // More running than the row holds: every app, scrolling sideways in the room
+                // the shown ones and the "+N" took — the dock stays its one width.
+                scrollingApps(plan, ids: ids)
+            } else {
             ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
                 if gathersIntoAppBar {
                     // Flies and shrinks to its place in the field's pill, then hands over to
@@ -264,8 +280,12 @@ struct CornerDockStrip: View {
                     // not show goes as it leaves.
                     let landsInPill = inPill(slot.bundleID)
                     appIcon(slot, ids: ids)
-                        .scaleEffect(gathered ? M.pillIconScale : 1)
-                        .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
+                        .scaleEffect(gathered && !slidesToSplit ? M.pillIconScale : 1)
+                        .offset(x: gathered
+                            ? (slidesToSplit
+                                ? Self.splitDrift
+                                : gatherOffset(index: index, bundleID: slot.bundleID, plan: plan))
+                            : 0)
                         .animation(gatherAnimation(index: index, count: count), value: gathered)
                         .opacity(isDock ? 1 : 0)
                         .animation(landsInPill ? movingFade : .easeIn(duration: 0.12), value: isDock)
@@ -273,14 +293,17 @@ struct CornerDockStrip: View {
                         .padding(.leading, plan.layout.appSpread)
                 }
             }
-            if plan.layout.overflow > 0 {
+            }
+            if plan.layout.overflow > 0, !scrollsApps(plan) {
                 let stays = isDock
                 overflowPill(plan.layout.overflow)
-                    .scaleEffect(gathered ? M.pillIconScale : 1)
+                    .scaleEffect(gathered && !slidesToSplit ? M.pillIconScale : 1)
                     .offset(
                         x: gathered
-                            ? gatherOffset(
-                                index: plan.composition.apps.count, bundleID: nil, plan: plan)
+                            ? (slidesToSplit
+                                ? Self.splitDrift
+                                : gatherOffset(
+                                    index: plan.composition.apps.count, bundleID: nil, plan: plan))
                             : 0)
                     .animation(gatherAnimation(index: count - 1, count: count), value: gathered)
                     .opacity(stays ? 1 : 0)
@@ -708,6 +731,37 @@ struct CornerDockStrip: View {
             .background(Color.primary.opacity(0.08), in: Circle())
             .onTapGesture { model.expandFromDock(seeding: nil) }
             .accessibilityLabel("\(count) more running apps")
+    }
+
+    /// Global's resting row scrolls its apps rather than ending on "+N" (owner 2026-10-08:
+    /// "fit the dock's size, four apps by default, scrollable when there are more"). An app
+    /// bar keeps its own cut: its icons gather into the field's chip by index.
+    private func scrollsApps(_ plan: DockStripPlan) -> Bool {
+        !gathersIntoAppBar && plan.layout.overflow > 0 && plan.uncut != nil
+    }
+
+    /// Every running app in the room the shown ones and the "+N" took, scrolling sideways.
+    private func scrollingApps(_ plan: DockStripPlan, ids: [String]) -> some View {
+        let apps = plan.uncut?.apps ?? plan.composition.apps
+        let slots = CGFloat(plan.composition.apps.count + 1)
+        let width = slots * (M.dockIconSize + plan.layout.appSpread)
+            + (slots - 1) * M.dockIconGap
+        let allIDs = apps.map(\.id) + plan.composition.otherPins.map(\.id.uuidString)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: M.dockIconGap) {
+                ForEach(apps) { slot in
+                    appIcon(slot, ids: allIDs)
+                        .padding(.leading, plan.layout.appSpread)
+                }
+            }
+        }
+        .frame(width: width)
+        .offset(x: gathered && slidesToSplit ? Self.splitDrift : 0)
+        .opacity(isDock ? 1 : 0)
+        .animation(movingFade, value: isDock)
+        .animation(
+            .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
+        .allowsHitTesting(isDock)
     }
 
     /// Dock magnify: the hovered icon up, its neighbours a little, everything else at rest.
