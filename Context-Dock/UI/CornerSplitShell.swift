@@ -20,6 +20,7 @@
 
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum CornerSplitShell {
     /// Between the field and the apps once they have separated. Wider than
@@ -210,6 +211,31 @@ struct CornerSplitStrip: View {
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
         .modifier(StripChrome(inset: inset))
+        // A file or folder dropped on the apps beside the field is pinned, as on the resting
+        // dock (owner 2026-10-08: "allow the user to place files and folders on the dock").
+        .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+            Self.pinDroppedFiles(providers)
+        }
+    }
+
+    /// Pins each dropped file or folder to the dock, the resting strip's own way
+    /// (`DockPinKind(fileURL:)`, `DockPinStore.pin`).
+    static func pinDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
+        var accepted = false
+        for provider in providers
+        where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
+                guard let data = item as? Data,
+                    let url = URL(dataRepresentation: data, relativeTo: nil),
+                    let kind = DockPinKind(fileURL: url)
+                else { return }
+                Task { @MainActor in
+                    DockPinStore.shared.pin(kind, title: url.lastPathComponent)
+                }
+            }
+            accepted = true
+        }
+        return accepted
     }
 
     private var hairline: some View {
