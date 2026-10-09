@@ -740,3 +740,38 @@ struct AppChatControlsTests {
         #expect(AppChatPromptModel.pinStore.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
     }
 }
+
+/// The chat sheet's ⌄ puts the conversation away without losing it, and the field's ⌃
+/// brings it back (owner 2026-10-08).
+@MainActor
+struct HiddenConversationTests {
+    @Test func theDownArrowHidesTheChatAndTheUpArrowBringsItBack() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .user, content: "about Notes")]
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        model.set(.chat)
+
+        #expect(model.hideConversation())
+        #expect(model.phase != .chat)
+        #expect(model.phase.showsInput)
+        #expect(model.isConversationHidden)
+        #expect(conversation.messages.count == 1)
+
+        #expect(model.showConversation())
+        #expect(model.phase == .chat)
+        #expect(!model.isConversationHidden)
+    }
+
+    @Test func nothingToBringBackOnceTheScopeChanges() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .user, content: "about Notes")]
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        model.set(.chat)
+        model.hideConversation()
+
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        #expect(!model.isConversationHidden)
+    }
+}

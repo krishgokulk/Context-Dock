@@ -96,6 +96,14 @@ enum CornerSplitShell {
     /// enough that crossing them on the way somewhere else does not fold it.
     static let foldDwell: TimeInterval = 0.18
 
+    /// Whether the pointer on the apps may fold the field: only once it has been off them
+    /// since the field split, so it is a move onto the apps, not a pointer the split opened
+    /// under. Cleared whenever the shell is not split.
+    static func arrivalArmed(wasArmed: Bool, split: Bool, onApps: Bool) -> Bool {
+        guard split else { return false }
+        return wasArmed || !onApps
+    }
+
     /// In a conversation the composer is inset in the chat card, under the transcript and the
     /// app's panel (`CornerLivePanel`). The apps take the panel's column, inset by the
     /// composer's own 10-point margin so they line up with the panel above them.

@@ -1937,23 +1937,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The prompt is about the app the user is looking at, so the app is captured here —
     /// before opening the prompt makes Context-Dock frontmost.
-    func activateAppChatPrompt(toggles: Bool = true) {
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        // Capture the user-facing app before the corner panel activates Context-Dock.
-        // If the panel is already key, this helper remembers the app behind it instead
-        // of accidentally turning the next cycle into "Chat with Context-Dock".
+    /// The app the user is working in, as the corner's Context Dock target — read before the
+    /// corner takes the keys. If the panel is already key, the helper remembers the app
+    /// behind it instead of turning the next summon into "Chat with Context-Dock".
+    func frontmostChatTarget() -> CornerChatTarget {
         let target = Self.appChatTargetApplication(
             menuBarOwner: menuBarOwningUserFacingApplication(),
             remembered: previousFrontmostApp,
             rawFrontmost: NSWorkspace.shared.frontmostApplication,
             ownBundleID: Bundle.main.bundleIdentifier ?? "")
-        let chatTarget = CornerChatTarget(
+        return CornerChatTarget(
             name: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
             summary: AppChatSuggestionProvider.summary(for: target))
+    }
+
+    func activateAppChatPrompt(toggles: Bool = true) {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        let chatTarget = frontmostChatTarget()
         CornerDockController.shared.activate()
         if toggles {
             CornerChatPresentation.shared.cycle(target: chatTarget)

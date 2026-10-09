@@ -522,6 +522,8 @@ final class AppChatPromptModel: ObservableObject {
             query = drafts[incoming] ?? ""
             // The answer being waited for belonged to the scope being left.
             stopAwaitingAnswer()
+            // So did a conversation put away by its ⌄.
+            isConversationHidden = false
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
         }
@@ -547,6 +549,9 @@ final class AppChatPromptModel: ObservableObject {
         suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
+        // The app in front's own Context Dock, not one stepped into from Global: a flag left
+        // from an earlier step-in swallowed every sideways swipe here (owner 2026-10-09).
+        returnsToGlobalScope = false
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         isShowingSelectionScope = false
@@ -743,6 +748,36 @@ final class AppChatPromptModel: ObservableObject {
         hasPresentedConversation = false
         focusedMenuIndex = nil
         set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    /// The chat sheet put away by its ⌄ (owner 2026-10-08: "show a down arrow to hide the
+    /// chat sheet"): the conversation is kept, a turn keeps running, and the field's ⌃
+    /// brings it back (`showConversation`).
+    @Published private(set) var isConversationHidden = false
+
+    @discardableResult
+    func hideConversation() -> Bool {
+        guard phase == .chat else { return false }
+        stopAwaitingAnswer()
+        hasPresentedConversation = false
+        focusedMenuIndex = nil
+        isConversationHidden = true
+        set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    @discardableResult
+    func showConversation() -> Bool {
+        guard isConversationHidden, phase.showsInput, phase != .chat,
+            isAnswering || !messages.isEmpty
+        else { return false }
+        isConversationHidden = false
+        isShowingScopeCard = false
+        hasPresentedConversation = true
+        set(.chat)
         touch()
         return true
     }
@@ -990,7 +1025,9 @@ final class AppChatPromptModel: ObservableObject {
         guard phase == .dock else { return false }
         set(.prompt)
         if let text, !text.isEmpty {
-            query = text
+            // A draft the pointer folded away is kept (`restAsDockNow(keepsDraft:)`): the
+            // key carries on from it rather than replacing it.
+            query += text
             queryChanged()
         }
         armForIdle()
@@ -1042,13 +1079,44 @@ final class AppChatPromptModel: ObservableObject {
         windowRowTask?.cancel()
         let target = hoveredStripTarget
         let delay: TimeInterval = target == nil ? 0.15 : 0.25
+        // The app's windows are captured during the dwell, so the card opens on them.
+        let snapshots = AppWindowSnapshotService.shared
+        if case .app(let bundleID) = target { snapshots.refreshWindows(bundleID: bundleID) }
         windowRowTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
+            if case .app(let bundleID) = target {
+                // Never an empty card (owner 2026-10-08: "No windows" over a pinned web app):
+                // wait out the capture, briefly, and open only on windows to show — or on
+                // the Screen Recording ask, which is worth a card.
+                var waited = 0
+                while snapshots.isCapturingWindows(for: bundleID), waited < 12 {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    waited += 1
+                }
+                guard !Task.isCancelled else { return }
+                if !Self.windowCardHasContent(
+                    windows: snapshots.windowSnapshots(for: bundleID).count,
+                    capturing: snapshots.isCapturingWindows(for: bundleID),
+                    denied: snapshots.isDenied)
+                {
+                    self.dockPreviewTarget = Self.previewTarget(
+                        hovered: nil, pinnedPin: self.pinnedPreviewPinID)
+                    return
+                }
+            }
             self.dockPreviewTarget = Self.previewTarget(
                 hovered: target, pinnedPin: self.pinnedPreviewPinID)
         }
+    }
+
+    /// Pure: whether an app's windows card has anything to show — windows, the capture still
+    /// running, or the Screen Recording ask. "No windows" alone is not a card.
+    nonisolated static func windowCardHasContent(windows: Int, capturing: Bool, denied: Bool)
+        -> Bool
+    {
+        windows > 0 || capturing || denied
     }
 
     /// ← on an empty Global field folds it now rather than waiting out the dwell.
@@ -1141,6 +1209,7 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         hasPresentedConversation = true
         awaitingAnswer = true
+        isConversationHidden = false
         armAnswerWatchdog()
         set(.chat)
         touch()

@@ -88,6 +88,15 @@ struct CornerDockPhaseTests {
         #expect(model.query == "s")
     }
 
+    /// A key on a dock that kept the pointer's folded draft carries on from it.
+    @Test func aKeyAfterAPointerFoldCarriesOnTheDraft() {
+        let (model, _) = globalModel()
+        model.query = "saf"
+        #expect(model.restAsDockNow(keepsDraft: true))
+        #expect(model.expandFromDock(seeding: "a"))
+        #expect(model.query == "safa")
+    }
+
     @Test func expandFromDockIsANoOpElsewhere() {
         let (model, _) = globalModel()
         #expect(!model.expandFromDock(seeding: "s"))

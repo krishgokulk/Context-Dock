@@ -32,6 +32,9 @@ enum CornerBoardPreview: Hashable {
     /// One of the native window layouts (Centre, Quarters, Left & Right…): the screen, with
     /// the app's window drawn where the layout will put it (owner 2026-10-07).
     case windowLayout(command: String, title: String, appName: String, bundleID: String)
+    /// The app's own card — what DoraX can do here, what it sees, what it may do — opened
+    /// from the field's app chip, in the right half beside the list (owner 2026-10-08).
+    case appScope(bundleID: String, name: String)
 }
 
 enum CornerBoardLayout {
@@ -170,8 +173,13 @@ enum CornerBoardLayout {
     /// The whole card: always the list's width — the field's — and, while a preview shows,
     /// at least tall enough for it.
     static func boardSize(list: CGSize, preview: CornerBoardPreview?) -> CGSize {
-        guard preview != nil else { return list }
-        return CGSize(width: list.width, height: max(list.height, minimumPreviewHeight))
+        guard let preview else { return list }
+        // The app's card reads as a card of its own, so the board keeps its height for it.
+        let floor: CGFloat
+        if case .appScope = preview { floor = AppScopeBoardMetrics.height } else {
+            floor = minimumPreviewHeight
+        }
+        return CGSize(width: list.width, height: max(list.height, floor))
     }
 }
 
@@ -262,7 +270,12 @@ extension AppChatPromptModel {
     /// The side panel for the row the arrows are on (#191). Read by the board that draws it
     /// and by the window that hit-tests it, so the two are one answer.
     var boardPreview: CornerBoardPreview? {
-        CornerBoardLayout.preview(
+        // The chip's card takes the right half until the arrows choose a row, whose preview
+        // is then what the half is for.
+        if isShowingScopeCard, !isGlobalScope, focusedRow == nil {
+            return .appScope(bundleID: appBundleID, name: appName)
+        }
+        return CornerBoardLayout.preview(
             for: focusedRow, appName: appName, appBundleID: appBundleID,
             cliCommand: cliCommand, lookup: searchDocumentLookup)
     }

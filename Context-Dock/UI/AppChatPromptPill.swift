@@ -978,6 +978,17 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 6)
 
+            // Put the chat sheet away; the field's ⌃ brings it back (owner 2026-10-08:
+            // "show a down arrow to hide the chat sheet").
+            if !model.isGlobalScope {
+                Button { model.hideConversation() } label: {
+                    headerGlyph("chevron.down")
+                }
+                .buttonStyle(.plain)
+                .help("Hide the conversation")
+                .accessibilityLabel("Hide the conversation")
+            }
+
             // The app's panel beside the conversation, shown or hidden (#191) — Claude's
             // sidebar toggle, in the same place.
             if !model.isGlobalScope {
@@ -1354,6 +1365,18 @@ struct AppChatPromptPill: View {
                 if model.phase != .chat {
                     surfaceControls
                         .transition(.opacity)
+                }
+                // The conversation its ⌄ put away, one click back.
+                if model.isConversationHidden, model.phase != .chat,
+                    model.isAnswering || !model.messages.isEmpty
+                {
+                    Button { model.showConversation() } label: {
+                        controlGlyph("chevron.up")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show the conversation")
+                    .accessibilityLabel("Show the conversation")
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 }
                 // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
                 // its pins, then its tabs, scrolling inside the pill. Gone while typing.

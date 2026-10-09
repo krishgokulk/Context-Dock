@@ -27,6 +27,15 @@ struct DockAppClickTests {
             == .bringForward)
     }
 
+    /// The card opens only on something to show (owner 2026-10-08: "No windows" over a
+    /// pinned web app): windows, a capture still running, or the Screen Recording ask.
+    @Test func theWindowsCardIsNeverEmpty() {
+        #expect(!AppChatPromptModel.windowCardHasContent(windows: 0, capturing: false, denied: false))
+        #expect(AppChatPromptModel.windowCardHasContent(windows: 2, capturing: false, denied: false))
+        #expect(AppChatPromptModel.windowCardHasContent(windows: 0, capturing: true, denied: false))
+        #expect(AppChatPromptModel.windowCardHasContent(windows: 0, capturing: false, denied: true))
+    }
+
     @Test func theWindowsCardNeedsMoreThanOneWindow() {
         #expect(!DockAppClick.showsWindowPreview(windowCount: 0))
         #expect(!DockAppClick.showsWindowPreview(windowCount: 1))

@@ -85,6 +85,12 @@ final class CornerDockController: NSObject {
     /// The pointer resting on the apps beside the field, waiting out the dwell before the
     /// field folds into the dock (`foldWhenRestingOnApps`).
     fileprivate var appsFoldIntent: DispatchWorkItem?
+    /// The pointer has been off the apps since the field split, so arriving on them is a
+    /// move toward them. A pointer already resting there when the field opened — an edge
+    /// summon leaves it on the apps, and typing splits the field under it — is not, and
+    /// folding it then took the field away after every keystroke (owner 2026-10-08: "once
+    /// the user starts to input it crashes").
+    fileprivate var pointerLeftAppsSinceSplit = false
     /// The last span the shell drew, so the edge can be matched to it while nothing shows.
     private var lastShownContentRect: CGRect = .zero
     /// Watches the bottom edge while the shell is not on screen at all, so touching it can
@@ -298,6 +304,12 @@ final class CornerDockController: NSObject {
                     from: self.lastPromptPhase, to: next,
                     cornerHasKeys: NSApp.isActive && self.panel?.isKeyWindow == true)
                 self.lastPromptPhase = next
+                // A new field is a new split: the pointer must leave the apps again before
+                // arriving on them folds it. The pointer watch runs only when the mouse
+                // moves, so a flag left from the last split would fold this one at once.
+                self.pointerLeftAppsSinceSplit = false
+                self.appsFoldIntent?.cancel()
+                self.appsFoldIntent = nil
                 if folded { self.foldedAt = Date() }
                 if folded, self.edgeSummonKeepsKeys {
                     self.edgeSummonKeepsKeys = false
@@ -591,13 +603,18 @@ final class CornerDockController: NSObject {
 
     /// The edge brings up the resting dock — the strip, not the field — holding the keys, so
     /// the first letter typed opens the field with it (owner 2026-09-26). The keys go back
-    /// to the app in front when the strip hides again.
+    /// to the app in front when the strip hides again. Always the app in front's Context
+    /// Dock; ⌘ switches to Global from there (owner 2026-10-08).
     private func summonFromEdge() {
         cancelPendingAutoHide()
         pointerVisitedDock = true
         if !(chatPresentation.isVisible && prompt.phase == .dock) {
             edgeSummonKeepsKeys = true
-            chatPresentation.showGlobalContext()
+            if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+                chatPresentation.showFrontmostApp(target: target)
+            } else {
+                chatPresentation.showGlobalContext()
+            }
             if !prompt.restAsDockNow() { edgeSummonKeepsKeys = false }
         }
         armKeyboard()
@@ -859,11 +876,11 @@ final class CornerDockController: NSObject {
     /// two cards ask for this — the list, the snapshot and the extension panel belong to
     /// the field and stay centred on it.
     private var hoverCardAnchorOffset: CGFloat? {
-        // The app's card stands over the field's left half, its leading edge on the field's,
-        // above the chip that opened it.
+        // The app's card stands over the shell's right half, its trailing edge on the shell's
+        // (owner 2026-10-08), where the result sheet's own right half is.
         if showsScopeBoard {
-            return AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
-                .width / 2
+            return AppScopeBoardMetrics.anchorOffset(
+                shell: AppChatPromptMetrics.boardWidth(for: prompt))
         }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
@@ -945,6 +962,8 @@ final class CornerDockController: NSObject {
             && prompt.isShowingScopeCard
             && !prompt.isGlobalScope
             && (prompt.phase == .prompt || prompt.phase == .suggesting)
+            // With results up, the card is the list's right half instead (`boardPreview`).
+            && !showsAppChatList
     }
 
     /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global
@@ -1632,7 +1651,10 @@ final class CornerDockController: NSObject {
         if event.phase == .began || event.phase == .changed
             || event.momentumPhase == .began || event.momentumPhase == .changed
         {
-            accumulatedChatSwipeX += event.scrollingDeltaX
+            // The fingers' own direction: with natural scrolling off the scroll runs the other
+            // way, and the sideways swipe is a direction the user chose (owner 2026-10-09).
+            accumulatedChatSwipeX += event.isDirectionInvertedFromDevice
+                ? event.scrollingDeltaX : -event.scrollingDeltaX
             accumulatedChatSwipeY += event.scrollingDeltaY
         }
         // Decided when the fingers lift, and again when the momentum ends — a flick that
@@ -1652,9 +1674,11 @@ final class CornerDockController: NSObject {
         let sideways: Bool
         if case .swipeSideways = move { sideways = true } else { sideways = false }
 
-        // Scoped into something from Global Context: that scope owns the surface until it
-        // is left. A sideways swipe is swallowed; a vertical one is left to scroll (§4b W8).
-        if chatPresentation.mode != .general, prompt.returnsToGlobalScope {
+        // Scoped into a command, tool or extension from Global Context: that scope owns the
+        // surface until it is left. A sideways swipe is swallowed; a vertical one is left to
+        // scroll (§4b W8). An app stepped into is a Context Dock like any other, so its
+        // sideways swipe goes to General Chat (owner 2026-10-09).
+        if chatPresentation.mode != .general, prompt.returnsToGlobalScope, !prompt.isAppStepIn {
             didActInCurrentSwipe = true
             return sideways ? nil : event
         }
@@ -1751,8 +1775,11 @@ extension CornerDockController {
         }
         // Global's field, and every app's Context Dock, which rests the same way (owner
         // 2026-10-08: "collapse the input field like Global Context").
-        let resting = showsSplitShell && prompt.usesDockShell
-            && strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        let onApps = strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        let split = showsSplitShell && prompt.usesDockShell
+        pointerLeftAppsSinceSplit = CornerSplitShell.arrivalArmed(
+            wasArmed: pointerLeftAppsSinceSplit, split: split, onApps: onApps)
+        let resting = split && onApps && pointerLeftAppsSinceSplit
         guard resting else {
             appsFoldIntent?.cancel()
             appsFoldIntent = nil

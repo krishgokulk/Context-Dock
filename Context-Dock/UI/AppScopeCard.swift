@@ -17,13 +17,17 @@ import SwiftUI
 enum AppScopeBoardMetrics {
     static let height: CGFloat = 360
 
-    /// A compact card over the left half of the shell, above the chip that opened it (owner
-    /// 2026-10-07: "not full screen, a small card on the left half"). Pure: the corner draws
-    /// this frame and hit-tests the same number.
+    /// A compact card over the right half of the shell — the result sheet's own right half,
+    /// where it stands beside the list when there is one (owner 2026-10-08: "expand only on
+    /// the right side"). Pure: the corner draws this frame and hit-tests the same number.
     static func size(shell: CGFloat) -> CGSize {
-        CGSize(
-            width: CornerBoardLayout.listWidth(board: shell, preview: .file(URL(fileURLWithPath: "/"))),
-            height: height)
+        CGSize(width: CornerBoardLayout.panelWidth(board: shell), height: height)
+    }
+
+    /// Where the card's centre sits from the field's leading edge: its trailing edge on the
+    /// shell's, over the right half.
+    static func anchorOffset(shell: CGFloat) -> CGFloat {
+        shell - size(shell: shell).width / 2
     }
 }
 
