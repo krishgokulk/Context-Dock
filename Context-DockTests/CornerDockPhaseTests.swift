@@ -223,14 +223,4 @@ struct CornerDockPhaseTests {
         other.query = "save"
         #expect(!other.showsAskAIRow)
     }
-
-    /// The running apps mark the one the field is talking to; Global talks to none of them.
-    @Test func theCurrentAppIsRingedAmongTheRunningApps() {
-        let (model, _) = globalModel()
-        #expect(!model.isCurrentApp("com.apple.TextEdit"))
-        model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
-        #expect(model.isCurrentApp("com.apple.TextEdit"))
-        #expect(!model.isCurrentApp("com.apple.Safari"))
-        #expect(!model.isCurrentApp(""))
-    }
 }

@@ -238,7 +238,11 @@ struct AppChatListCard: View {
     /// scope Tab steps into (a CLI tool, a Global Command); then pin ⌘P and Settings ⌘,.
     private var footer: some View {
         HStack(spacing: 8) {
-            Spacer(minLength: 0)
+            if model.finderPathTrail.isEmpty {
+                Spacer(minLength: 0)
+            } else {
+                finderPathPills
+            }
             if tabStepsIn {
                 BoardFooter.pill {
                     BoardFooter.keycaps(["⇥"])
@@ -262,6 +266,40 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
+    }
+
+    /// The folder being walked, as Finder's path bar shows it: one clickable pill per folder
+    /// from the disk down, the current one last and in bold (owner 2026-10-09).
+    private var finderPathPills: some View {
+        let trail = model.finderPathTrail
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(Array(trail.enumerated()), id: \.element) { index, url in
+                    if index > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Button { model.openFinderPathPill(url) } label: {
+                        BoardFooter.pill {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                            Text(FileManager.default.displayName(atPath: url.path))
+                                .font(.system(
+                                    size: 11.5,
+                                    weight: index == trail.count - 1 ? .semibold : .medium))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(url.path)
+                }
+            }
+        }
+        .defaultScrollAnchor(.trailing)
     }
 
     /// Tab steps into the highlighted row — the top one when none is — when it is a scope:

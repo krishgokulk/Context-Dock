@@ -419,7 +419,6 @@ struct CornerDockStrip: View {
             isAvailable: slot.pin.map { $0.kind.isAvailable } ?? true,
             scale: scale(for: id, among: ids)
         )
-        .dockCurrentAppRing(model.isCurrentApp(slot.bundleID))
         // As the field's pill, the one Tab and ←/→ have highlighted (`DockKeyRules`).
         .dockKeyboardFocus(!isDock && model.focusedPill.map {
             $0.bundleID == slot.bundleID || $0.id == slot.bundleID

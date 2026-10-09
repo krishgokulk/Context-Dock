@@ -557,11 +557,6 @@ extension AppChatPromptModel {
         return true
     }
 
-    /// The app the field is talking to, among the running apps (its ring there).
-    func isCurrentApp(_ bundleID: String) -> Bool {
-        !isGlobalScope && !bundleID.isEmpty && bundleID == appBundleID
-    }
-
     /// The running app after `bundleID` along the pills — the first when it is not among
     /// them, none past the last.
     static func runningApp(after bundleID: String) -> (name: String, bundleID: String)? {
@@ -926,6 +921,40 @@ extension AppChatPromptModel {
         updateMenuMatches()
         touch()
         return true
+    }
+
+    /// The folder being walked, from the disk down — the board's path pills, as Finder's own
+    /// path bar shows it (owner 2026-10-09). Empty when no folder is being walked.
+    var finderPathTrail: [URL] {
+        guard isFinderScope, let folder = finderBrowseStack.last else { return [] }
+        return Self.pathTrail(folder)
+    }
+
+    /// Every folder from the disk's root to `folder`, root first.
+    nonisolated static func pathTrail(_ folder: URL) -> [URL] {
+        var current = URL(fileURLWithPath: "/", isDirectory: true)
+        var trail = [current]
+        for component in folder.standardizedFileURL.pathComponents.dropFirst() {
+            current.appendPathComponent(component, isDirectory: true)
+            trail.append(current)
+        }
+        return trail
+    }
+
+    /// A path pill: the walk goes to that folder — back up the steps already taken when it is
+    /// one of them, else straight to it (Backspace then climbs out to Finder's list).
+    func openFinderPathPill(_ url: URL) {
+        guard isFinderScope, !finderBrowseStack.isEmpty else { return }
+        let path = url.standardizedFileURL.path
+        if let index = finderBrowseStack.firstIndex(where: { $0.standardizedFileURL.path == path }) {
+            finderBrowseStack = Array(finderBrowseStack.prefix(through: index))
+        } else {
+            finderBrowseStack = [url]
+        }
+        query = ""
+        focusedMenuIndex = nil
+        updateFinderResults(for: "")
+        touch()
     }
 
     nonisolated static func isFolder(_ url: URL) -> Bool {

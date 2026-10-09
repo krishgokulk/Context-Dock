@@ -351,7 +351,6 @@ struct CornerSplitStrip: View {
                 }
                 .frame(width: icon, height: icon)
                 .opacity((slot.pin.map { $0.kind.isAvailable } ?? true) ? 1 : 0.4)
-                .dockCurrentAppRing(model.isCurrentApp(slot.bundleID))
                 Circle()
                     .fill(Color.primary.opacity(slot.isRunning ? 0.55 : 0))
                     .frame(width: 3, height: 3)
@@ -433,22 +432,6 @@ private struct StripChrome: ViewModifier {
                 .clipShape(Capsule())
                 .glassEffect(.regular.interactive(), in: Capsule())
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        }
-    }
-}
-
-
-extension View {
-    /// The app the field is talking to, among the running apps: a ring rather than a second
-    /// copy that reads as a different app (owner 2026-10-09: "two Finders").
-    func dockCurrentAppRing(_ isCurrent: Bool) -> some View {
-        overlay {
-            if isCurrent {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 2)
-                    .padding(-3)
-                    .allowsHitTesting(false)
-            }
         }
     }
 }
