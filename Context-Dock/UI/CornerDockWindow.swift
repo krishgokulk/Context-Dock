@@ -1671,9 +1671,11 @@ final class CornerDockController: NSObject {
         let sideways: Bool
         if case .swipeSideways = move { sideways = true } else { sideways = false }
 
-        // Scoped into something from Global Context: that scope owns the surface until it
-        // is left. A sideways swipe is swallowed; a vertical one is left to scroll (§4b W8).
-        if chatPresentation.mode != .general, prompt.returnsToGlobalScope {
+        // Scoped into a command, tool or extension from Global Context: that scope owns the
+        // surface until it is left. A sideways swipe is swallowed; a vertical one is left to
+        // scroll (§4b W8). An app stepped into is a Context Dock like any other, so its
+        // sideways swipe goes to General Chat (owner 2026-10-09).
+        if chatPresentation.mode != .general, prompt.returnsToGlobalScope, !prompt.isAppStepIn {
             didActInCurrentSwipe = true
             return sideways ? nil : event
         }

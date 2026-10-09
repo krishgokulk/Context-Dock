@@ -85,6 +85,16 @@ struct CornerGlobalContextParityTests {
         #expect(model.rows.isEmpty)
     }
 
+    /// The app in front's own Context Dock is not a step-in from Global: a flag left from an
+    /// earlier step-in swallowed every sideways swipe there (owner 2026-10-09).
+    @Test func theFrontmostAppsDockClearsAnEarlierStepIn() {
+        let model = AppChatPromptModel(conversation: AppChatConversation(), globalResultSource: GlobalContextResultSource())
+        model.scopeIntoApp(name: "Calculator", bundleID: "com.apple.calculator")
+        #expect(model.returnsToGlobalScope)
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        #expect(!model.returnsToGlobalScope)
+    }
+
     @Test func globalLaunchClearsAnEarlierExtensionScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation(), globalResultSource: GlobalContextResultSource())
         model.returnsToGlobalScope = true
