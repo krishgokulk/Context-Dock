@@ -12,7 +12,7 @@ import Testing
 @Suite("Corner scope walk")
 struct CornerScopeWalkTests {
 
-    @Test("← and a swipe right go into General Chat from either scope; → and a swipe left do not")
+    @Test("← and either sideways swipe go into General Chat from either scope; → does not")
     func generalIsSteppedIntoSideways() {
         for mode in [CornerChatMode.globalContext, .frontmostApp] {
             #expect(CornerNavigation.destination(for: .leftKey, from: mode, origin: mode) == .general)
@@ -20,7 +20,7 @@ struct CornerScopeWalkTests {
                 for: .swipeSideways(right: true), from: mode, origin: mode) == .general)
             #expect(CornerNavigation.destination(for: .rightKey, from: mode, origin: mode) == nil)
             #expect(CornerNavigation.destination(
-                for: .swipeSideways(right: false), from: mode, origin: mode) == nil)
+                for: .swipeSideways(right: false), from: mode, origin: mode) == .general)
         }
     }
 

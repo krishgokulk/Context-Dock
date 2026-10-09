@@ -205,8 +205,9 @@ struct CornerChatPresentationTests {
         #expect(app.query == "for code")
     }
 
-    /// Swipe right into General Chat from either scope, and any sideways swipe back to the
-    /// scope it came from — the Dock's toggle. A swipe left outside General does nothing.
+    /// Either sideways swipe goes into General Chat from either scope, and either one comes
+    /// back to the scope it came from — the Dock's toggle (owner 2026-10-09: a right-to-left
+    /// swipe did nothing).
     @Test func horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
@@ -214,7 +215,10 @@ struct CornerChatPresentationTests {
         subject.frontmostTargetProvider = { nil }
         subject.showFrontmostApp(target: code)
 
-        #expect(subject.handleHorizontalSwipe(deltaX: -90) == false)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
+        #expect(subject.mode == .general)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
+        #expect(subject.mode == .frontmostApp)
         #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
         #expect(subject.mode == .general)
         #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)

@@ -1076,13 +1076,44 @@ final class AppChatPromptModel: ObservableObject {
         windowRowTask?.cancel()
         let target = hoveredStripTarget
         let delay: TimeInterval = target == nil ? 0.15 : 0.25
+        // The app's windows are captured during the dwell, so the card opens on them.
+        let snapshots = AppWindowSnapshotService.shared
+        if case .app(let bundleID) = target { snapshots.refreshWindows(bundleID: bundleID) }
         windowRowTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
+            if case .app(let bundleID) = target {
+                // Never an empty card (owner 2026-10-08: "No windows" over a pinned web app):
+                // wait out the capture, briefly, and open only on windows to show — or on
+                // the Screen Recording ask, which is worth a card.
+                var waited = 0
+                while snapshots.isCapturingWindows(for: bundleID), waited < 12 {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    waited += 1
+                }
+                guard !Task.isCancelled else { return }
+                if !Self.windowCardHasContent(
+                    windows: snapshots.windowSnapshots(for: bundleID).count,
+                    capturing: snapshots.isCapturingWindows(for: bundleID),
+                    denied: snapshots.isDenied)
+                {
+                    self.dockPreviewTarget = Self.previewTarget(
+                        hovered: nil, pinnedPin: self.pinnedPreviewPinID)
+                    return
+                }
+            }
             self.dockPreviewTarget = Self.previewTarget(
                 hovered: target, pinnedPin: self.pinnedPreviewPinID)
         }
+    }
+
+    /// Pure: whether an app's windows card has anything to show — windows, the capture still
+    /// running, or the Screen Recording ask. "No windows" alone is not a card.
+    nonisolated static func windowCardHasContent(windows: Int, capturing: Bool, denied: Bool)
+        -> Bool
+    {
+        windows > 0 || capturing || denied
     }
 
     /// ← on an empty Global field folds it now rather than waiting out the dwell.

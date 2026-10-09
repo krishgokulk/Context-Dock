@@ -57,8 +57,11 @@ enum CornerNavigation {
             }
         }
         switch move {
-        case .leftKey, .swipeSideways(right: true): return .general
-        case .rightKey, .swipeSideways(right: false): return nil
+        // Either sideways swipe goes into General Chat, as either one comes back from it
+        // (owner 2026-10-09: a right-to-left swipe did nothing). One direction only depended
+        // on the trackpad's scrolling direction setting.
+        case .leftKey, .swipeSideways: return .general
+        case .rightKey: return nil
         case .layerUp: return mode == .frontmostApp ? .globalContext : nil
         case .layerDown: return mode == .globalContext ? .frontmostApp : nil
         }
