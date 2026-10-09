@@ -72,12 +72,12 @@ struct CornerChatPresentationTests {
 
         subject.cycle(target: code)
         app.query = "app draft"
-        // App → General, one swipe right.
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        // App → General, one swipe right to left.
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.mode == .general)
         general.input = "general draft"
         // Swiping back, not the hotkey: the hotkey puts the corner away now.
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
 
         #expect(subject.mode == .frontmostApp)
         #expect(app.query == "app draft")
@@ -174,8 +174,8 @@ struct CornerChatPresentationTests {
 
         subject.showFrontmostApp(target: code)
         app.query = "half a question"
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(subject.mode == .frontmostApp)
         #expect(app.appBundleID == code.bundleID)
         #expect(app.query == "half a question")
@@ -194,8 +194,8 @@ struct CornerChatPresentationTests {
         let other = CornerChatTarget(
             name: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
         subject.frontmostTargetProvider = { other }
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
         #expect(app.appBundleID == other.bundleID)
         #expect(app.query.isEmpty)
 
@@ -205,9 +205,9 @@ struct CornerChatPresentationTests {
         #expect(app.query == "for code")
     }
 
-    /// Either sideways swipe goes into General Chat from either scope, and either one comes
-    /// back to the scope it came from — the Dock's toggle (owner 2026-10-09: a right-to-left
-    /// swipe did nothing).
+    /// Fingers right to left go into General Chat from either scope, left to right come back
+    /// to the scope it came from, and neither does the other's job (owner 2026-10-09: "not
+    /// either direction").
     @Test func horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
@@ -215,20 +215,17 @@ struct CornerChatPresentationTests {
         subject.frontmostTargetProvider = { nil }
         subject.showFrontmostApp(target: code)
 
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == false)
         #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
         #expect(subject.mode == .general)
-        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
-        #expect(subject.mode == .frontmostApp)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == false)
         #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
-        #expect(subject.mode == .general)
-        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
         #expect(subject.mode == .frontmostApp)
         #expect(subject.appChat.appBundleID == code.bundleID)
 
         subject.showGlobalContext()
-        #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
         #expect(subject.mode == .general)
-        // Either direction leaves General, as in the Dock.
         #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
         #expect(subject.mode == .globalContext)
     }

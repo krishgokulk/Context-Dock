@@ -35,7 +35,7 @@ enum CornerNavigation {
         case leftKey
         /// → on an empty field.
         case rightKey
-        /// A sideways swipe. `right` is the fingers moving right.
+        /// A sideways swipe. `right` is the fingers moving right, whatever the scroll setting.
         case swipeSideways(right: Bool)
         /// ↑, or a swipe down — the layer above.
         case layerUp
@@ -50,18 +50,18 @@ enum CornerNavigation {
     ) -> CornerChatMode? {
         if mode == .general {
             switch move {
-            // Back to where the trip started — by the key pointing that way, by any sideways
-            // swipe (the Dock toggles), and by either vertical move.
-            case .rightKey, .swipeSideways, .layerUp, .layerDown: return origin
-            case .leftKey: return nil
+            // Back to where the trip started — by the key pointing that way, by a swipe the
+            // opposite way to the one that came in, and by either vertical move.
+            case .rightKey, .swipeSideways(right: true), .layerUp, .layerDown: return origin
+            case .leftKey, .swipeSideways(right: false): return nil
             }
         }
         switch move {
-        // Either sideways swipe goes into General Chat, as either one comes back from it
-        // (owner 2026-10-09: a right-to-left swipe did nothing). One direction only depended
-        // on the trackpad's scrolling direction setting.
-        case .leftKey, .swipeSideways: return .general
-        case .rightKey: return nil
+        // Fingers right to left go into General Chat, as ← does; left to right comes back
+        // (owner 2026-10-09: "not either direction"). The monitor reads the fingers, not the
+        // scroll, so the trackpad's scrolling-direction setting does not flip it.
+        case .leftKey, .swipeSideways(right: false): return .general
+        case .rightKey, .swipeSideways(right: true): return nil
         case .layerUp: return mode == .frontmostApp ? .globalContext : nil
         case .layerDown: return mode == .globalContext ? .frontmostApp : nil
         }

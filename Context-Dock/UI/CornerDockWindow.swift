@@ -1651,7 +1651,10 @@ final class CornerDockController: NSObject {
         if event.phase == .began || event.phase == .changed
             || event.momentumPhase == .began || event.momentumPhase == .changed
         {
-            accumulatedChatSwipeX += event.scrollingDeltaX
+            // The fingers' own direction: with natural scrolling off the scroll runs the other
+            // way, and the sideways swipe is a direction the user chose (owner 2026-10-09).
+            accumulatedChatSwipeX += event.isDirectionInvertedFromDevice
+                ? event.scrollingDeltaX : -event.scrollingDeltaX
             accumulatedChatSwipeY += event.scrollingDeltaY
         }
         // Decided when the fingers lift, and again when the momentum ends — a flick that

@@ -12,29 +12,32 @@ import Testing
 @Suite("Corner scope walk")
 struct CornerScopeWalkTests {
 
-    @Test("← and either sideways swipe go into General Chat from either scope; → does not")
+    @Test("← and a right-to-left swipe go into General Chat from either scope; → and left-to-right do not")
     func generalIsSteppedIntoSideways() {
         for mode in [CornerChatMode.globalContext, .frontmostApp] {
             #expect(CornerNavigation.destination(for: .leftKey, from: mode, origin: mode) == .general)
             #expect(CornerNavigation.destination(
-                for: .swipeSideways(right: true), from: mode, origin: mode) == .general)
+                for: .swipeSideways(right: false), from: mode, origin: mode) == .general)
             #expect(CornerNavigation.destination(for: .rightKey, from: mode, origin: mode) == nil)
             #expect(CornerNavigation.destination(
-                for: .swipeSideways(right: false), from: mode, origin: mode) == .general)
+                for: .swipeSideways(right: true), from: mode, origin: mode) == nil)
         }
     }
 
-    @Test("Every way out of General Chat but ← goes back to the scope it was entered from")
+    @Test("Every way out of General Chat but ← and a right-to-left swipe goes back to where it was entered from")
     func generalReturnsToItsOrigin() {
         for origin in [CornerChatMode.globalContext, .frontmostApp] {
             for move in [CornerNavigation.Move.rightKey, .swipeSideways(right: true),
-                .swipeSideways(right: false), .layerUp, .layerDown]
+                .layerUp, .layerDown]
             {
                 #expect(CornerNavigation.destination(for: move, from: .general, origin: origin)
                     == origin)
             }
+            // The way in does not also lead back out.
             #expect(CornerNavigation.destination(for: .leftKey, from: .general, origin: origin)
                 == nil)
+            #expect(CornerNavigation.destination(
+                for: .swipeSideways(right: false), from: .general, origin: origin) == nil)
         }
     }
 
@@ -62,7 +65,7 @@ struct CornerScopeWalkTests {
     @Test("Keys and swipes agree from every scope")
     func keysAndSwipesAgree() {
         let pairs: [(CornerNavigation.Move, CornerNavigation.Move)] = [
-            (.leftKey, .swipeSideways(right: true)),
+            (.leftKey, .swipeSideways(right: false)),
             (.layerUp, CornerSwipe.classify(dx: 0, dy: 80)!),
             (.layerDown, CornerSwipe.classify(dx: 0, dy: -80)!),
         ]
@@ -74,7 +77,7 @@ struct CornerScopeWalkTests {
         }
         #expect(CornerNavigation.destination(for: .rightKey, from: .general, origin: .globalContext)
             == CornerNavigation.destination(
-                for: .swipeSideways(right: false), from: .general, origin: .globalContext))
+                for: .swipeSideways(right: true), from: .general, origin: .globalContext))
     }
 
     @Test("Global Context asks the dock's index, and rests empty until something is typed")
