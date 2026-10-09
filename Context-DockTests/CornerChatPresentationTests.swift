@@ -257,7 +257,8 @@ struct CornerChatPresentationTests {
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
+        // Right to left goes into General Chat.
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: ""))
         #expect(subject.mode == .general)
 
         subject.standDown()
@@ -278,7 +279,8 @@ struct CornerChatPresentationTests {
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
+        // Right to left goes into General Chat.
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: ""))
 
         subject.toggleGeneralPin()
         subject.standDown()
