@@ -1310,9 +1310,21 @@ final class CornerDockController: NSObject {
             guard let self, self.pendingCommandSwitch != nil, self.chatPresentation.isVisible
             else { return }
             self.pendingCommandSwitch = nil
+            // One field (owner 2026-10-09): from Global, ⌘ steps into the app in front inside
+            // Global — the "← Name" chip, as stepping into any running app does — and from any
+            // app, ⌘ comes home to Global, as Backspace does.
             switch self.chatPresentation.mode {
             case .frontmostApp: self.chatPresentation.show(.globalContext)
-            case .globalContext: self.chatPresentation.show(.frontmostApp)
+            case .globalContext:
+                if self.prompt.returnsToGlobalScope {
+                    _ = self.prompt.leaveScopeForGlobal()
+                } else if let target = AppDelegate.shared?.frontmostChatTarget(),
+                    !target.bundleID.isEmpty
+                {
+                    self.prompt.scopeIntoApp(name: target.name, bundleID: target.bundleID)
+                } else {
+                    self.chatPresentation.show(.frontmostApp)
+                }
             case .general: break
             }
         }
@@ -1674,11 +1686,23 @@ final class CornerDockController: NSObject {
         let sideways: Bool
         if case .swipeSideways = move { sideways = true } else { sideways = false }
 
+        // Right to left walks the running apps, as → does (owner 2026-10-09): from Global
+        // into the first, inside one on to the next, from the app in front's Context Dock on
+        // to the one after it — each without bringing the app forward.
+        if case .swipeSideways(right: false) = move, chatPresentation.mode != .general,
+            walkRunningAppsOnSwipe()
+        {
+            didActInCurrentSwipe = true
+            return nil
+        }
+
         // Scoped into a command, tool or extension from Global Context: that scope owns the
         // surface until it is left. A sideways swipe is swallowed; a vertical one is left to
-        // scroll (§4b W8). An app stepped into is a Context Dock like any other, so its
-        // sideways swipe goes to General Chat (owner 2026-10-09).
-        if chatPresentation.mode != .general, prompt.returnsToGlobalScope, !prompt.isAppStepIn {
+        // scroll (§4b W8). An app stepped into — Finder included — is a Context Dock like any
+        // other, so its sideways swipe goes to General Chat (owner 2026-10-09).
+        if chatPresentation.mode != .general, prompt.returnsToGlobalScope,
+            !prompt.isAppStepIn, !prompt.isFinderScope
+        {
             didActInCurrentSwipe = true
             return sideways ? nil : event
         }
@@ -1688,6 +1712,29 @@ final class CornerDockController: NSObject {
         guard chatPresentation.handleSwipe(move) else { return event }
         didActInCurrentSwipe = true
         return nil
+    }
+
+    /// The right-to-left swipe's walk through the running apps. False when there is nowhere
+    /// to go, or something is typed (the swipe is then left to the field).
+    private func walkRunningAppsOnSwipe() -> Bool {
+        switch chatPresentation.mode {
+        case .globalContext:
+            // From Global, or from an app already stepped into: the next along the pills.
+            guard !prompt.returnsToGlobalScope || prompt.isAppStepIn || prompt.isFinderScope
+            else { return false }
+            return prompt.scopeIntoFirstRunningApp()
+        case .frontmostApp:
+            // The app in front's Context Dock: into Global, on to the app after it.
+            let current = prompt.appBundleID
+            guard prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                let next = AppChatPromptModel.runningApp(after: current)
+            else { return false }
+            chatPresentation.showGlobalContext()
+            prompt.scopeIntoApp(name: next.name, bundleID: next.bundleID)
+            return true
+        case .general:
+            return false
+        }
     }
 
     private func stopHoverWatch() {

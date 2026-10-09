@@ -1133,6 +1133,10 @@ struct AppChatPromptPill: View {
                             model.runReturnRow(runsTopRow: true)
                             return
                         }
+                        // Finder: the top match opens; with none, the question goes to the AI.
+                        if model.finderReturnOpensTopMatch, model.runReturnRow(runsTopRow: true) {
+                            return
+                        }
                         model.submit()
                     }
                     .onKeyPress(.space) {

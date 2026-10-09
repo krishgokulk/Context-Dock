@@ -351,6 +351,7 @@ struct CornerSplitStrip: View {
                 }
                 .frame(width: icon, height: icon)
                 .opacity((slot.pin.map { $0.kind.isAvailable } ?? true) ? 1 : 0.4)
+                .dockCurrentAppRing(model.isCurrentApp(slot.bundleID))
                 Circle()
                     .fill(Color.primary.opacity(slot.isRunning ? 0.55 : 0))
                     .frame(width: 3, height: 3)
@@ -366,6 +367,14 @@ struct CornerSplitStrip: View {
     /// pin or tab runs, a pinned app's pin runs, a running app in Global is minimised or
     /// brought forward (`DockAppClick`), anything else launches.
     private func open(_ slot: DockAppSlot) {
+        // Inside an app stepped into from Global, another running app is the next place to
+        // talk to: the field moves to it, the app stays where it is (owner 2026-10-09).
+        if model.returnsToGlobalScope, slot.isRunning, slot.bundleID != model.appBundleID,
+            model.appPin(forIconID: slot.bundleID) == nil, !model.isTabIcon(slot.bundleID)
+        {
+            model.scopeIntoApp(name: slot.title, bundleID: slot.bundleID)
+            return
+        }
         // An app's bar (its pins and tabs) opens them the way the bar inside the field did.
         if model.showsTabBar, let icon = slot.running {
             model.openBarIcon(icon)
@@ -428,3 +437,18 @@ private struct StripChrome: ViewModifier {
     }
 }
 
+
+extension View {
+    /// The app the field is talking to, among the running apps: a ring rather than a second
+    /// copy that reads as a different app (owner 2026-10-09: "two Finders").
+    func dockCurrentAppRing(_ isCurrent: Bool) -> some View {
+        overlay {
+            if isCurrent {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.9), lineWidth: 2)
+                    .padding(-3)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
