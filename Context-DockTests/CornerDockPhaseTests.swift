@@ -187,8 +187,30 @@ struct CornerDockPhaseTests {
         model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         #expect(model.isAppStepIn)
         #expect(model.phase != .suggesting)
+        // Its field is a composer, as in the frontmost app's Context Dock: Return asks the app
+        // rather than running its top menu row (owner 2026-10-09).
+        #expect(!model.isSearchField)
         let (finder, _) = globalModel()
         finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(!finder.isAppStepIn)
+        // Finder too is talked to, not only searched (owner 2026-10-09): a typed match opens
+        // on Return, and with none the question goes to the AI.
+        #expect(!finder.isSearchField)
+        #expect(!finder.finderReturnOpensTopMatch)
+        finder.query = "report"
+        finder.rows = [.file(URL(fileURLWithPath: "/tmp/report.pdf"))]
+        #expect(finder.finderReturnOpensTopMatch)
+        finder.rows = []
+        #expect(!finder.finderReturnOpensTopMatch)
+    }
+
+    /// The running apps mark the one the field is talking to; Global talks to none of them.
+    @Test func theCurrentAppIsRingedAmongTheRunningApps() {
+        let (model, _) = globalModel()
+        #expect(!model.isCurrentApp("com.apple.TextEdit"))
+        model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
+        #expect(model.isCurrentApp("com.apple.TextEdit"))
+        #expect(!model.isCurrentApp("com.apple.Safari"))
+        #expect(!model.isCurrentApp(""))
     }
 }

@@ -553,6 +553,23 @@ extension AppChatPromptModel {
         return true
     }
 
+    /// The app the field is talking to, among the running apps (its ring there).
+    func isCurrentApp(_ bundleID: String) -> Bool {
+        !isGlobalScope && !bundleID.isEmpty && bundleID == appBundleID
+    }
+
+    /// The running app after `bundleID` along the pills — the first when it is not among
+    /// them, none past the last.
+    static func runningApp(after bundleID: String) -> (name: String, bundleID: String)? {
+        let apps = orderedAppPills()
+        let current = apps.firstIndex { $0.bundleID == bundleID }
+        guard case .app(let index) = DockKeyRules.appWalk(
+            forward: true, current: current, count: apps.count),
+            let next = apps[index].bundleID
+        else { return nil }
+        return (apps[index].title, next)
+    }
+
     /// ← on an empty field inside a scope entered from Global: back one app along the pills,
     /// and from the first one home to Global — the mirror of → (`DockKeyRules.appWalk`).
     @discardableResult
@@ -1515,7 +1532,20 @@ extension AppChatPromptModel {
     /// This field searches rather than composes: Global itself, and any scope stepped into
     /// from it. Neither carries the composer's attach, send, expand or pin — the dock does
     /// not show them there either.
-    var isSearchField: Bool { isGlobalScope || returnsToGlobalScope }
+    /// A search field, not a composer: Global, and the tools, commands and Finder reached from
+    /// it. A running app stepped into from Global is that app's Context Dock like any other —
+    /// "+", send, and Return asks it (owner 2026-10-09: stepping into Claude from Global, Return
+    /// ran its top menu row instead of asking Claude).
+    var isSearchField: Bool {
+        isGlobalScope || (returnsToGlobalScope && !isAppStepIn && !isFinderScope)
+    }
+
+    /// Return in Finder (in front or stepped into): a file that matches opens; nothing
+    /// matching asks the AI, with Finder's tools (owner 2026-10-09).
+    var finderReturnOpensTopMatch: Bool {
+        isFinderScope && !rows.isEmpty
+            && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     /// The name the scope goes by, in one place so the chip and the check cannot disagree.
     static let globalScopeName = "Global Context"
