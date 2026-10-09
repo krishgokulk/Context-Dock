@@ -52,16 +52,16 @@ enum CornerNavigation {
             switch move {
             // Back to where the trip started — by the key pointing that way, by a swipe the
             // opposite way to the one that came in, and by either vertical move.
-            case .rightKey, .swipeSideways(right: true), .layerUp, .layerDown: return origin
-            case .leftKey, .swipeSideways(right: false): return nil
+            case .rightKey, .swipeSideways(right: false), .layerUp, .layerDown: return origin
+            case .leftKey, .swipeSideways(right: true): return nil
             }
         }
         switch move {
-        // Fingers right to left go into General Chat, as ← does; left to right comes back
-        // (owner 2026-10-09: "not either direction"). The monitor reads the fingers, not the
+        // Fingers left to right go into General Chat; right to left comes back (owner
+        // 2026-10-09: one direction each way). The monitor reads the fingers, not the
         // scroll, so the trackpad's scrolling-direction setting does not flip it.
-        case .leftKey, .swipeSideways(right: false): return .general
-        case .rightKey, .swipeSideways(right: true): return nil
+        case .leftKey, .swipeSideways(right: true): return .general
+        case .rightKey, .swipeSideways(right: false): return nil
         case .layerUp: return mode == .frontmostApp ? .globalContext : nil
         case .layerDown: return mode == .globalContext ? .frontmostApp : nil
         }
