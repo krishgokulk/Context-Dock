@@ -1515,7 +1515,11 @@ extension AppChatPromptModel {
     /// This field searches rather than composes: Global itself, and any scope stepped into
     /// from it. Neither carries the composer's attach, send, expand or pin — the dock does
     /// not show them there either.
-    var isSearchField: Bool { isGlobalScope || returnsToGlobalScope }
+    /// A search field, not a composer: Global, and the tools, commands and Finder reached from
+    /// it. A running app stepped into from Global is that app's Context Dock like any other —
+    /// "+", send, and Return asks it (owner 2026-10-09: stepping into Claude from Global, Return
+    /// ran its top menu row instead of asking Claude).
+    var isSearchField: Bool { isGlobalScope || (returnsToGlobalScope && !isAppStepIn) }
 
     /// The name the scope goes by, in one place so the chip and the check cannot disagree.
     static let globalScopeName = "Global Context"

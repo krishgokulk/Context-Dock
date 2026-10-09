@@ -187,8 +187,12 @@ struct CornerDockPhaseTests {
         model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
         #expect(model.isAppStepIn)
         #expect(model.phase != .suggesting)
+        // Its field is a composer, as in the frontmost app's Context Dock: Return asks the app
+        // rather than running its top menu row (owner 2026-10-09).
+        #expect(!model.isSearchField)
         let (finder, _) = globalModel()
         finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(!finder.isAppStepIn)
+        #expect(finder.isSearchField)
     }
 }
