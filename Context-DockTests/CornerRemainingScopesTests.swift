@@ -127,7 +127,7 @@ struct CornerRemainingScopesTests {
 @MainActor
 struct CornerFinderMenusAndLayoutsTests {
 
-    @Test("Finder in front lists its menus; from Global, or inside a folder, it searches files")
+    @Test("Finder lists its menus in front and from Global; inside a folder, that folder")
     func finderModes() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Finder", bundleID: "com.apple.finder")
@@ -140,7 +140,9 @@ struct CornerFinderMenusAndLayoutsTests {
         let scoped = AppChatPromptModel(conversation: AppChatConversation())
         scoped.summonGlobalContext()
         scoped.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
-        #expect(scoped.isFinderFileSearch)
+        #expect(!scoped.isFinderFileSearch)
+        #expect(scoped.finderSkipsLiveMenus)
+        #expect(!model.finderSkipsLiveMenus)
     }
 
     @Test("The Dock's window layouts lead the app's rows while typing")

@@ -140,6 +140,15 @@ enum DockKeyRules {
         return (current + (down ? 1 : -1) + count) % count
     }
 
+    /// The arrows in a list under an "Ask AI" row (Finder): nil is that row, and the walk
+    /// wraps through it — ↓ from it to the first row, ↑ from the first row back to it.
+    static func listArrowUnderAskRow(down: Bool, focused: Int?, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        guard let current = focused else { return down ? 0 : count - 1 }
+        let next = current + (down ? 1 : -1)
+        return (0..<count).contains(next) ? next : nil
+    }
+
     /// Which row ↩ runs: the one the arrows landed on, else — where the field is a search —
     /// the top row, the one its leading icon previews. Nil means ↩ is not the list's: the
     /// field sends what is typed.

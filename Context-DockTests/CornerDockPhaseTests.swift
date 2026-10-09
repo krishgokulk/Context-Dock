@@ -181,7 +181,7 @@ struct CornerDockPhaseTests {
 
     /// An app stepped into from Global rests as its own Context Dock — no sheet of its
     /// actions — and Return on the empty field brings it forward (owner 2026-10-07). Finder
-    /// keeps its file search.
+    /// is one of them (owner 2026-10-09).
     @Test func anAppSteppedIntoRestsAsItsOwnDock() {
         let (model, _) = globalModel()
         model.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
@@ -192,16 +192,36 @@ struct CornerDockPhaseTests {
         #expect(!model.isSearchField)
         let (finder, _) = globalModel()
         finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
-        #expect(!finder.isAppStepIn)
-        // Finder too is talked to, not only searched (owner 2026-10-09): a typed match opens
-        // on Return, and with none the question goes to the AI.
+        #expect(finder.isAppStepIn)
         #expect(!finder.isSearchField)
-        #expect(!finder.finderReturnOpensTopMatch)
+        #expect(finder.showsTabBar)
+        // Its live menus are not read from Global — the read that once froze the field.
+        #expect(finder.finderSkipsLiveMenus)
+    }
+
+    /// Finder's typed list opens under an Ask AI row: nothing chosen is that row, so Return
+    /// asks; ↓ chooses the first file or command (owner 2026-10-09).
+    @Test func finderListsUnderAnAskAIRow() {
+        let (finder, _) = globalModel()
+        finder.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+        #expect(!finder.showsAskAIRow)
         finder.query = "report"
-        finder.rows = [.file(URL(fileURLWithPath: "/tmp/report.pdf"))]
-        #expect(finder.finderReturnOpensTopMatch)
-        finder.rows = []
-        #expect(!finder.finderReturnOpensTopMatch)
+        #expect(finder.showsAskAIRow)
+        finder.rows = [
+            .file(URL(fileURLWithPath: "/tmp/report.pdf")),
+            .file(URL(fileURLWithPath: "/tmp/report-2.pdf")),
+        ]
+        #expect(finder.listRowCount == 3)
+        #expect(!finder.runFocusedRow())
+        #expect(finder.moveMenuFocus(by: 1))
+        #expect(finder.focusedMenuIndex == 0)
+        #expect(finder.moveMenuFocus(by: -1))
+        #expect(finder.focusedMenuIndex == nil)
+        // Another app keeps its own list: no Ask AI row.
+        let (other, _) = globalModel()
+        other.scopeIntoApp(name: "TextEdit", bundleID: "com.apple.TextEdit")
+        other.query = "save"
+        #expect(!other.showsAskAIRow)
     }
 
     /// The running apps mark the one the field is talking to; Global talks to none of them.

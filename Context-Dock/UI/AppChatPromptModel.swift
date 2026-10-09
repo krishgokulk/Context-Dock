@@ -193,8 +193,8 @@ final class AppChatPromptModel: ObservableObject {
         // Every app's Context Dock has the bar, and rests and folds as Global does: its
         // pinned actions when it has some, the running apps when it has none (owner
         // 2026-10-08, replacing 2026-09-26's "an app without pins keeps its plain field").
-        // Finder's file search (stepped into from Global, or walking a folder) is not a dock;
-        // Finder in front is its own Context Dock and rests like any app's (owner 2026-10-08).
+        // Finder walking a folder is not a dock; otherwise Finder — in front or stepped into
+        // from Global — is its own Context Dock and rests like any app's (owner 2026-10-09).
         return isAppContextDock && !isFinderFileSearch
     }
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
@@ -653,6 +653,9 @@ final class AppChatPromptModel: ObservableObject {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Inside a folder the listing is what the step went to fetch, typed filter or not.
         if isFinderScope, !finderBrowseStack.isEmpty { return rows.isEmpty ? .prompt : .suggesting }
+        // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
+        // arrows choose a file or command (owner 2026-10-09).
+        if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
         // Typed: the field alone, same as the dock. Typing never pops the sheet open by
         // itself, and it closes right back down if a down-arrow peek was open when the next
         // character landed — the arrow key is the only door in.
