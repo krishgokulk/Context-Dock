@@ -10,11 +10,15 @@
 
 ## In progress
 
-Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-30. The Mac Desktop session is the **builder** (`/loop /builder`); it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
+Coordinator: **none open.** The cloud planner session that ran 2026-09-30 → 2026-10-10 was closed by the owner to cut token use. Start a fresh one with `/planner` (cloud); it reads this file, the open PRs and the issue labels. The Mac session is the **builder** (`/loop /builder`).
 
-Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
+Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Workspace: `docs/runbooks/my-workspace.md` (main checkout = daily app; `scripts/try-pr.sh <n>` for test builds).
 
-**#147 Drop Shelf icon** (`ready`), then **#165 E1b** (`ready`, owner said "E1b yes" 2026-10-04), then **#151 E3**. Hand-check pause limit is 1 required check (#168).
+**State at hand-off (2026-10-10):**
+- **#210** (draft): CLI "Not logged in" when DoraX is launched from a Claude session; needs base merge, agent-run hand check, ready.
+- **#228** `ready`: Claude Code in app chats has no capability tool, so Mail questions shell out to `osascript` (slow, raw command shown). Do before #196.
+- **#196** `ready` P2, then #197 P3. #225 test-isolation fix is queued. #194 draft (owner's).
+- Owner noted #209 step 2 (Mail closed) without a result; confirm whether the headless read starts Mail (belongs to #197).
 
 ## Next, in order (GitHub issues)
 
