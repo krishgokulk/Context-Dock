@@ -13,7 +13,8 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 - **How the code is laid out today:** `docs/engineering/codebase.md`.
 - **How work is done:** `docs/master/00-ENGINEERING-OPERATING-MODEL.md`.
 - **Architecture truth files:** `docs/architecture/`.
-- **Runbooks:** `docs/runbooks/` — ship a release, diagnose an AI turn.
+- **Runbooks:** `docs/runbooks/` — ship a release, diagnose an AI turn, the owner's workspace
+  (`my-workspace.md`: the main checkout stays on `general-chat-agent`; never edit or switch it).
 - **Any account, any session:** when the owner says "continue" or "take over", follow
   `docs/runbooks/coordinate-across-accounts.md` — the repo is the handoff, never the chat.
   On the Mac: `/loop /builder`. In the cloud: `/planner`.
