@@ -61,17 +61,24 @@ struct AppChatPromptTests {
         #expect(model.isStandDownArmed)
     }
 
-    /// Idle shrinks to the app's own icon — the surface stays identifiable as being
-    /// about that app rather than becoming a generic dot.
-    /// Any app but Safari, whose scope rests as a dock of its tabs (`CornerSafariTabsTests`).
+    /// With "fold on its own" off, idle shrinks to the app's own icon — the surface stays
+    /// identifiable as being about that app rather than becoming a generic dot. With it on,
+    /// every app's Context Dock rests as its bar instead, as Global does (owner 2026-10-08).
     @Test func anIdlePromptShrinksToTheAppIcon() {
         let model = AppChatPromptModel()
+        model.autoShrinkEnabled = { false }
         model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
 
         model.standDown()
 
         #expect(model.phase == .mini)
         #expect(model.appBundleID == "com.apple.TextEdit")
+
+        let resting = AppChatPromptModel()
+        resting.autoShrinkEnabled = { true }
+        resting.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        resting.standDown()
+        #expect(resting.phase == .dock)
     }
 
     /// A half-written question survives the shrink; it is the thing worth keeping.
@@ -104,6 +111,8 @@ struct AppChatPromptTests {
     /// field itself stays one step longer.
     @Test func idlingAwayFromAnOpenListClosesToThePlainFieldFirst() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        // The badge path: with "fold on its own" on, the app rests as its bar instead.
+        model.autoShrinkEnabled = { false }
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
@@ -218,6 +227,8 @@ struct AppChatPromptTests {
         // A private conversation: `.shared` is also the live dock's, and a turn another test
         // submitted there can still be loading — a loading conversation holds the prompt up.
         let model = AppChatPromptModel(conversation: AppChatConversation())
+        // The badge path: with "fold on its own" on, the app rests as its bar instead.
+        model.autoShrinkEnabled = { false }
         model.summon(
             app: "Code", bundleID: "com.microsoft.VSCode",
             suggestions: [.init(icon: "bolt.fill", title: "New Window", kind: .action)],
@@ -419,7 +430,7 @@ struct AppChatPromptTests {
         let withApproval = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, hasApproval: true).height
 
-        #expect(withFile == bare + AppChatPromptMetrics.attachmentRowHeight)
+        #expect(withFile == bare + AppChatPromptMetrics.attachmentTileRowHeight)
         #expect(withApproval > bare)
         // A conversation reserves it too — an approval can arrive mid-answer.
         #expect(
@@ -727,5 +738,40 @@ struct AppChatControlsTests {
         // dismiss() clears the in-memory flag for this appearance — a fact about this
         // session, not the user rescinding the preference they just stated.
         #expect(AppChatPromptModel.pinStore.bool(forKey: AppChatPromptModel.pinnedDefaultsKey))
+    }
+}
+
+/// The chat sheet's ⌄ puts the conversation away without losing it, and the field's ⌃
+/// brings it back (owner 2026-10-08).
+@MainActor
+struct HiddenConversationTests {
+    @Test func theDownArrowHidesTheChatAndTheUpArrowBringsItBack() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .user, content: "about Notes")]
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        model.set(.chat)
+
+        #expect(model.hideConversation())
+        #expect(model.phase != .chat)
+        #expect(model.phase.showsInput)
+        #expect(model.isConversationHidden)
+        #expect(conversation.messages.count == 1)
+
+        #expect(model.showConversation())
+        #expect(model.phase == .chat)
+        #expect(!model.isConversationHidden)
+    }
+
+    @Test func nothingToBringBackOnceTheScopeChanges() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .user, content: "about Notes")]
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        model.set(.chat)
+        model.hideConversation()
+
+        model.summon(app: "Safari", bundleID: "com.apple.Safari")
+        #expect(!model.isConversationHidden)
     }
 }

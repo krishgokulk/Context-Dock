@@ -680,6 +680,53 @@ final class WindowManagementService {
         return apply()
     }
 
+    // MARK: - A running app's dock icon (owner 2026-10-07)
+
+    /// Minimise the app's front window — the one it has focus in — and only that one, as the
+    /// Dock's click on the frontmost app's icon does in DoraX. Its other windows stay put.
+    ///
+    /// Asked of the app over Accessibility with a short timeout: an app busy streaming output
+    /// (a terminal running a build) can take the default six seconds to answer, and this
+    /// runs on the main thread — the corner froze while Terminal was frontmost.
+    @discardableResult
+    func minimizeFrontWindow(pid: pid_t) -> Bool {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.4)
+        var candidates: [AXUIElement] = []
+        for attribute in [kAXFocusedWindowAttribute, kAXMainWindowAttribute] {
+            var ref: CFTypeRef?
+            if AXUIElementCopyAttributeValue(app, attribute as CFString, &ref) == .success, let ref {
+                candidates.append(unsafeBitCast(ref, to: AXUIElement.self))
+            }
+        }
+        var windowsRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windowsRef)
+            == .success, let windows = windowsRef as? [AXUIElement]
+        {
+            candidates += windows
+        }
+        guard let window = candidates.first(where: { isStandardWindow($0) && !isMinimized($0) })
+        else { return false }
+        return AXUIElementSetAttributeValue(
+            window, kAXMinimizedAttribute as CFString, kCFBooleanTrue) == .success
+    }
+
+    private func isStandardWindow(_ window: AXUIElement) -> Bool {
+        if let role = stringAttribute(kAXRoleAttribute, of: window), role != kAXWindowRole {
+            return false
+        }
+        if let subrole = stringAttribute(kAXSubroleAttribute, of: window) {
+            return subrole == kAXStandardWindowSubrole
+        }
+        return true
+    }
+
+    private func isMinimized(_ window: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &value)
+            == .success && (value as? Bool) == true
+    }
+
     private func windows(pid: pid_t) -> [AXUIElement] {
         let app = AXUIElementCreateApplication(pid)
         var windowsRef: CFTypeRef?

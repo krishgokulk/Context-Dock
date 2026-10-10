@@ -262,7 +262,11 @@ final class DoraXMCPServer: ObservableObject {
             ]
 
         case "tools/list":
-            result = ["tools": Self.toolDefinitions(attended: attended)]
+            result = [
+                "tools": Self.toolDefinitions(
+                    attended: attended, liveTurn: turn != nil,
+                    mayRunCommands: ClaudeCodeCLIService.mayRunCommands(turnID: turn?.id))
+            ]
 
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
@@ -368,9 +372,19 @@ final class DoraXMCPServer: ObservableObject {
 
     /// A turn DoraX launched is told its approvals reach the user; an outside agent is told
     /// they are refused. Each description has to match what the call will actually do.
-    static func toolDefinitions(attended: Bool) -> [[String: Any]] {
+    ///
+    /// `liveTurn`: the call belongs to a CLI turn DoraX is running now, so the outbound gate has
+    /// its taint and can ask in its chat. Only those get the network (`dorax_read_url`), and
+    /// the shell (`dorax_run_command`) only where `mayRunCommands` — the CLI's own were taken
+    /// away in a private chat (E1c) and the user's access level grants one.
+    static func toolDefinitions(
+        attended: Bool, liveTurn: Bool = false, mayRunCommands: Bool = false
+    ) -> [[String: Any]] {
         guard attended else { return baseToolDefinitions }
-        return baseToolDefinitions.map { tool in
+        var extra: [[String: Any]] = []
+        if liveTurn { extra.append(readURLDefinition) }
+        if liveTurn, mayRunCommands { extra.append(runCommandDefinition) }
+        return (baseToolDefinitions + extra).map { tool in
             guard tool["name"] as? String == "dorax_ask" else { return tool }
             var tool = tool
             tool["description"] =
@@ -382,6 +396,48 @@ final class DoraXMCPServer: ObservableObject {
             return tool
         }
     }
+
+    private static let readURLDefinition: [String: Any] = [
+        "name": "dorax_read_url",
+        "description":
+            "Fetch a web page by URL and read it as Markdown, through DoraX. Use this for every "
+            + "web address in this chat — you have no fetch tool of your own here. When this "
+            + "chat holds the user's private data and text they did not write, DoraX asks them "
+            + "before contacting the host; a refusal comes back as the result. Read-only.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "url": ["type": "string", "description": "The full URL, including https://."],
+                "focus": [
+                    "type": "string",
+                    "description": "Optional: what you are looking for on that page.",
+                ],
+            ] as [String: Any],
+            "required": ["url"],
+        ],
+    ]
+
+    private static let runCommandDefinition: [String: Any] = [
+        "name": "dorax_run_command",
+        "description":
+            "Run a shell command on the user's Mac through DoraX and get its output. Use this "
+            + "instead of a shell of your own — you have none in this chat. DoraX's approval "
+            + "applies: a command that changes something, or that could reach the network once "
+            + "this chat holds private data, is shown to the user first.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "command": ["type": "string", "description": "The exact shell command."],
+                "purpose": ["type": "string", "description": "One line: what it does."],
+                "requires_approval": [
+                    "type": "boolean",
+                    "description": "True when it modifies files, installs software, or "
+                        + "cannot be undone.",
+                ],
+            ] as [String: Any],
+            "required": ["command", "purpose"],
+        ],
+    ]
 
     private static let baseToolDefinitions: [[String: Any]] = [
         [
@@ -647,6 +703,12 @@ final class DoraXMCPServer: ObservableObject {
         switch name {
         case "dorax_frontmost_app", "dorax_selection", "dorax_screenshot", "dorax_browser_tabs",
             "dorax_find_files":
+            // E1c: a CLI turn still holding its own fetch or shell does not get the user's data;
+            // it is stopped and run again without them, and then this read goes ahead.
+            if let turn, ClaudeCodeCLIService.stopBeforePrivateRead(turnID: turn.id) {
+                return "Not read: DoraX is restarting this turn without web and shell tools "
+                    + "before it hands over the user's data. Stop here."
+            }
             registry.taint.notePrivateRead(turn)
             registry.taint.noteUntrusted(turn)
         default: break
@@ -742,6 +804,20 @@ final class DoraXMCPServer: ObservableObject {
                 }
                 .joined(separator: "\n")
 
+        case "dorax_read_url":
+            return await Self.readURL(arguments: arguments, turn: turn, registry: registry)
+
+        case "dorax_run_command":
+            guard ClaudeCodeCLIService.mayRunCommands(turnID: turn?.id) else {
+                return "Running commands is not available to this chat."
+            }
+            return await Self.runCommand(
+                arguments: arguments, turn: turn, registry: registry,
+                executor: { command, purpose, approval in
+                    await TerminalCommandExecutor.shared.run(
+                        command, purpose: purpose, modelRequiresApproval: approval)
+                })
+
         case "dorax_run_menu_command":
             // Deliberately the same tool the app's own chat uses, dispatched through the same
             // registry: the approval card, the cached-path check, the live verification and
@@ -790,6 +866,51 @@ final class DoraXMCPServer: ObservableObject {
         default:
             return "Unknown tool \(name)."
         }
+    }
+
+    // MARK: - Network and shell for a private CLI chat (E1c)
+
+    /// `dorax_read_url`: DoraX's own `read_url`, dispatched through the registry with the CLI
+    /// turn, so the outbound gate decides with what that turn has read and asks in its chat.
+    /// Only a live DoraX CLI turn has one; anyone else is refused before the gate is reached.
+    static func readURL(
+        arguments: [String: Any], turn: AgentTurnToken?, registry: AgentToolRegistry
+    ) async -> String {
+        guard let turn else {
+            return "dorax_read_url is only available to a chat DoraX is running."
+        }
+        let url = (arguments["url"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var forwarded: [String: Any] = ["url": url]
+        if let focus = arguments["focus"] as? String { forwarded["focus"] = focus }
+        let result = await registry.dispatch(
+            name: "read_url", arguments: forwarded,
+            context: AgentToolContext(
+                commandExecutor: { _, _, _ in
+                    (false, "Running shell commands is not part of reading a page.", 1)
+                },
+                userRequest: "Page requested by DoraX's Claude Code turn: \(url)",
+                chatScope: ClaudeCodeCLIService.chatScope(turnID: turn.id), turn: turn))
+        guard let result else { return "Reading web pages is unavailable in this build." }
+        return result.success ? result.output : "Not fetched — \(result.output)"
+    }
+
+    /// `dorax_run_command`: DoraX's own `run_command` — the outbound gate (E1b's allow-list
+    /// decides what reaches the network), then the executor's approval for anything risky.
+    static func runCommand(
+        arguments: [String: Any], turn: AgentTurnToken?, registry: AgentToolRegistry,
+        executor: @escaping (String, String, Bool) async -> (Bool, String, Int32)
+    ) async -> String {
+        guard let turn else {
+            return "dorax_run_command is only available to a chat DoraX is running."
+        }
+        let result = await registry.dispatch(
+            name: "run_command", arguments: arguments,
+            context: AgentToolContext(
+                commandExecutor: executor,
+                userRequest: "Command requested by DoraX's Claude Code turn",
+                chatScope: ClaudeCodeCLIService.chatScope(turnID: turn.id), turn: turn))
+        guard let result else { return "Running commands is unavailable in this build." }
+        return result.success ? result.output : "Did not run — \(result.output)"
     }
 
     /// The frontmost app's own accessibility state, read at the moment of the call.

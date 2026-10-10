@@ -12,6 +12,60 @@
 import AppKit
 import SwiftUI
 
+// MARK: - In the board
+
+enum AppScopeBoardMetrics {
+    static let height: CGFloat = 360
+
+    /// A compact card over the right half of the shell — the result sheet's own right half,
+    /// where it stands beside the list when there is one (owner 2026-10-08: "expand only on
+    /// the right side"). Pure: the corner draws this frame and hit-tests the same number.
+    static func size(shell: CGFloat) -> CGSize {
+        CGSize(width: CornerBoardLayout.panelWidth(board: shell), height: height)
+    }
+
+    /// Where the card's centre sits from the field's leading edge: its trailing edge on the
+    /// shell's, over the right half.
+    static func anchorOffset(shell: CGFloat) -> CGFloat {
+        shell - size(shell: shell).width / 2
+    }
+}
+
+/// The app's card in the result board over the field, in the board's own glass — where the
+/// chip opens it (owner 2026-10-07), rather than as a popover hanging off the chip.
+struct AppScopeBoard: View {
+    @ObservedObject var model: AppChatPromptModel
+
+    private var size: CGSize {
+        AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: model))
+    }
+
+    private var appIcon: NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: model.appBundleID)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    var body: some View {
+        AppScopeCard(
+            model: model, appIcon: appIcon, close: { model.isShowingScopeCard = false },
+            width: size.width, maxScrollHeight: size.height - 70)
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.clear)
+                    .background(GlassBackground(cornerRadius: 22, isDark: true))
+                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+            }
+            .onHover { _ in model.touch() }
+    }
+}
+
 // MARK: - Sees now (pure)
 
 /// One line of what the next turn will carry from the app.
@@ -73,6 +127,9 @@ struct AppScopeCard: View {
     @ObservedObject var model: AppChatPromptModel
     let appIcon: NSImage?
     let close: () -> Void
+    /// The card's width: the board's, now that it opens in the result board.
+    var width: CGFloat = 300
+    var maxScrollHeight: CGFloat = 420
 
     @State private var expanded: Set<String> = []
 
@@ -98,10 +155,10 @@ struct AppScopeCard: View {
                     AppScopeSection("Allowed") { AppScopeAllowedList(bundleID: bundleID) }
                 }
             }
-            .frame(maxHeight: 420)
+            .frame(maxHeight: maxScrollHeight)
         }
         .padding(14)
-        .frame(width: 300)
+        .frame(width: width)
     }
 
     private var header: some View {

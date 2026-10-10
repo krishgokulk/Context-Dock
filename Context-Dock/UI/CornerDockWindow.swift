@@ -82,6 +82,15 @@ final class CornerDockController: NSObject {
     /// macOS Dock's quick hide; never having come near it — the dock was raised by a hotkey —
     /// waits out the idle delay instead.
     private var pointerVisitedDock = false
+    /// The pointer resting on the apps beside the field, waiting out the dwell before the
+    /// field folds into the dock (`foldWhenRestingOnApps`).
+    fileprivate var appsFoldIntent: DispatchWorkItem?
+    /// The pointer has been off the apps since the field split, so arriving on them is a
+    /// move toward them. A pointer already resting there when the field opened — an edge
+    /// summon leaves it on the apps, and typing splits the field under it — is not, and
+    /// folding it then took the field away after every keystroke (owner 2026-10-08: "once
+    /// the user starts to input it crashes").
+    fileprivate var pointerLeftAppsSinceSplit = false
     /// The last span the shell drew, so the edge can be matched to it while nothing shows.
     private var lastShownContentRect: CGRect = .zero
     /// Watches the bottom edge while the shell is not on screen at all, so touching it can
@@ -224,6 +233,30 @@ final class CornerDockController: NSObject {
         clipboardModel.$isKeyboardArmed.sink { [weak self] _ in
             Task { @MainActor in self?.publishKeyboardOwner() }
         }.store(in: &sinks)
+        // The board opening or closing changes what stands over the field, and so the
+        // shell's height; a copy's icon changes the strip's width.
+        clipboardModel.$isBoardOpen.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+        clipboardModel.$recentlyCopied.sink { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
+        }.store(in: &sinks)
+        // The board belongs to the App and Global field. The shell going away, or switching
+        // to General Chat — which has a field of its own — closes it rather than leaving it
+        // open and unseen, holding the field's idle clock.
+        // Read again once the change has landed: `@Published` reports before it does, and
+        // showing Global sets the mode a moment before it sets visible — the board being
+        // opened would read that moment as "the shell went away".
+        chatPresentation.$isVisible.combineLatest(chatPresentation.$mode)
+            .sink { [weak self] _, _ in
+                Task { @MainActor in
+                    guard let self, self.clipboardModel.isBoardOpen,
+                        !self.chatPresentation.isVisible || self.chatPresentation.mode == .general
+                    else { return }
+                    ClipboardPanelController.shared.closeBoard(refocus: false)
+                }
+            }
+            .store(in: &sinks)
         // A result arriving or leaving changes the strip's width by one slot.
         actionFeedback.$current.sink { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -271,6 +304,12 @@ final class CornerDockController: NSObject {
                     from: self.lastPromptPhase, to: next,
                     cornerHasKeys: NSApp.isActive && self.panel?.isKeyWindow == true)
                 self.lastPromptPhase = next
+                // A new field is a new split: the pointer must leave the apps again before
+                // arriving on them folds it. The pointer watch runs only when the mouse
+                // moves, so a flag left from the last split would fold this one at once.
+                self.pointerLeftAppsSinceSplit = false
+                self.appsFoldIntent?.cancel()
+                self.appsFoldIntent = nil
                 if folded { self.foldedAt = Date() }
                 if folded, self.edgeSummonKeepsKeys {
                     self.edgeSummonKeepsKeys = false
@@ -564,13 +603,18 @@ final class CornerDockController: NSObject {
 
     /// The edge brings up the resting dock — the strip, not the field — holding the keys, so
     /// the first letter typed opens the field with it (owner 2026-09-26). The keys go back
-    /// to the app in front when the strip hides again.
+    /// to the app in front when the strip hides again. Always the app in front's Context
+    /// Dock; ⌘ switches to Global from there (owner 2026-10-08).
     private func summonFromEdge() {
         cancelPendingAutoHide()
         pointerVisitedDock = true
         if !(chatPresentation.isVisible && prompt.phase == .dock) {
             edgeSummonKeepsKeys = true
-            chatPresentation.showGlobalContext()
+            if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+                chatPresentation.showFrontmostApp(target: target)
+            } else {
+                chatPresentation.showGlobalContext()
+            }
             if !prompt.restAsDockNow() { edgeSummonKeepsKeys = false }
         }
         armKeyboard()
@@ -580,12 +624,27 @@ final class CornerDockController: NSObject {
     /// Whether the shell is on screen only because a drag asked for it, so it goes again when
     /// the drag does.
     private var shelfRevealedTheShell = false
+    /// A file drag raised or is crossing the shell: no keyboard arming until it ends. Read
+    /// through `dragHoldsKeyboard`, which lets go once no button is held, so a drag whose end
+    /// was never reported cannot keep the keys away.
+    private var dragRaisedShell = false
+    private var dragHoldsKeyboard: Bool {
+        get {
+            if dragRaisedShell, NSEvent.pressedMouseButtons == 0 { dragRaisedShell = false }
+            return dragRaisedShell
+        }
+        set { dragRaisedShell = newValue }
+    }
 
     /// A drag was sighted and the shelf's icon — in the shell's row — is where it drops. If
     /// nothing has the shell on screen, bring the resting dock up for the drag, without the
     /// keys: a drag is not a request to type.
     func revealForShelfDrag() {
         guard panel != nil else { return }
+        // A drag is not a request to type, and taking the keys mid-drag activates DoraX
+        // while another app's drag session is live — the freeze the owner hit dragging a
+        // file onto the dock (2026-10-08). The keys stay where they are until it ends.
+        dragHoldsKeyboard = true
         cancelPendingAutoHide()
         if !chatPresentation.isVisible {
             chatPresentation.showGlobalContext()
@@ -601,6 +660,7 @@ final class CornerDockController: NSObject {
     /// The drag ended — dropped or not. A shell the drag raised puts itself away, unless the
     /// shelf is open: that one is the user's now.
     func shelfDragEnded() {
+        dragHoldsKeyboard = false
         guard shelfRevealedTheShell else { return }
         shelfRevealedTheShell = false
         guard !shelf.phase.isCardShown else { return }
@@ -687,7 +747,11 @@ final class CornerDockController: NSObject {
                     outcome: selection.showsOutcome,
                     folderPreview: selection.showsFolderPreview,
                     sendConfirm: selection.pendingSend != nil) : nil,
-            list: showsExtensionPanel
+            list: showsClipboardBoard
+                ? ClipboardBoardMetrics.size
+                : showsScopeBoard
+                ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
+                : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
                     ?? ExtensionScopeMetrics.size)
                 : (showsAppSnapshot
@@ -793,7 +857,8 @@ final class CornerDockController: NSObject {
     /// this is how they stay that way. Zero for every other board, since nothing else asks
     /// for an anchor offset.
     var hoverCardDrawOffset: CGFloat {
-        guard showsWindowRow || showsPinPreview || showsPluginCard else { return 0 }
+        guard showsWindowRow || showsPinPreview || showsPluginCard || showsScopeBoard
+        else { return 0 }
         let slots = currentSlots()
         guard let list = slots.list, let prompt = slots.prompt else { return 0 }
         // Where the stack puts it without being asked: centred on the field when the shell
@@ -811,6 +876,12 @@ final class CornerDockController: NSObject {
     /// two cards ask for this — the list, the snapshot and the extension panel belong to
     /// the field and stay centred on it.
     private var hoverCardAnchorOffset: CGFloat? {
+        // The app's card stands over the shell's right half, its trailing edge on the shell's
+        // (owner 2026-10-08), where the result sheet's own right half is.
+        if showsScopeBoard {
+            return AppScopeBoardMetrics.anchorOffset(
+                shell: AppChatPromptMetrics.boardWidth(for: prompt))
+        }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
             target = .pin(id: card.pin.id)
@@ -822,7 +893,7 @@ final class CornerDockController: NSObject {
         guard let target else { return nil }
         return DockStripPlan.make(
             running: prompt.stripIcons, pins: prompt.stripPins,
-            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.phase.announcesCopy, feedbackVisible: actionFeedback.glyph != nil),
+            tools: prompt.dockToolCount(clipboardVisible: clipboardModel.showsDockIcon, feedbackVisible: actionFeedback.glyph != nil),
             fieldIcons: prompt.promptIconCount
         ).iconCenterOffset(for: target)
     }
@@ -873,6 +944,84 @@ final class CornerDockController: NSObject {
             && prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The clipboard, in the result board above the field (owner 2026-10-07). It wins the
+    /// slot over every other board: it is what the user just asked for by name.
+    var showsClipboardBoard: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && clipboardModel.isBoardOpen
+            && prompt.phase.showsInput
+    }
+
+    /// The app's card — what DoraX can do here, what it sees, what it may do — in the result
+    /// board, opened from the field's app chip (owner 2026-10-07: "inside the result sheet",
+    /// not a popover). Second only to the clipboard, which is asked for by name.
+    var showsScopeBoard: Bool {
+        chatPresentation.isVisible
+            && chatPresentation.mode != .general
+            && prompt.isShowingScopeCard
+            && !prompt.isGlobalScope
+            && (prompt.phase == .prompt || prompt.phase == .suggesting)
+            // With results up, the card is the list's right half instead (`boardPreview`).
+            && !showsAppChatList
+    }
+
+    /// The field and the apps as two pieces of glass (Part B, owner 2026-10-07), in Global
+    /// and in an app's Context Dock alike. See `CornerSplitShell`.
+    var showsSplitShell: Bool {
+        CornerSplitShell.splits(
+            isVisible: chatPresentation.isVisible,
+            isGeneral: chatPresentation.mode == .general,
+            phase: prompt.phase,
+            stripHasContent: splitWidths.strip > 0)
+    }
+
+    /// The split bottom line's two widths: the apps fitted to what they hold, the field the
+    /// rest of the shell — the whole of it when the apps' piece has nothing to show.
+    var splitWidths: (field: CGFloat, strip: CGFloat) {
+        CornerSplitShell.widths(
+            shell: AppChatPromptMetrics.boardWidth(for: prompt),
+            apps: CornerSplitStrip.apps(for: prompt).count,
+            pins: CornerSplitStrip.pins(for: prompt).count,
+            tools: CornerSplitStrip.toolCount(for: prompt),
+            widgetExtra: CornerSplitStrip.composition(for: prompt).widgetExtraWidth)
+    }
+
+    /// The width the field's text stack is laid out at.
+    var splitFieldLayoutWidth: CGFloat { splitWidths.field }
+
+    /// The clipboard hotkey or icon: the field comes up — Global Context's when nothing was
+    /// on screen or General Chat was, the current scope's otherwise — with the clipboard in
+    /// its board. The scope and any conversation underneath are left exactly as they were,
+    /// so Back returns to them.
+    func showClipboardBoard() {
+        activate()
+        if !chatPresentation.isVisible || chatPresentation.mode == .general {
+            chatPresentation.showGlobalContext()
+        }
+        switch prompt.phase {
+        case .dock:
+            prompt.expandFromDock(seeding: nil)
+        case .mini, .hidden:
+            prompt.set(prompt.messages.isEmpty ? .prompt : .chat)
+        case .prompt, .suggesting, .chat:
+            break
+        }
+        cancelPendingAutoHide()
+        if isAutoHidden { setAutoHidden(false) }
+        refresh()
+        requestComposerFocus()
+    }
+
+    /// Back from the clipboard: the field is the one it was, keys and all — unless the clip
+    /// is on its way into another app, which needs the keys more.
+    func clipboardBoardClosed(refocus: Bool = true) {
+        refresh()
+        prompt.touch()
+        guard refocus, chatPresentation.isVisible else { return }
+        requestComposerFocus()
+    }
+
     /// The preview belongs to an open, expanded card with a clip actually chosen — not to a
     /// pill that happens to be on screen.
     var showsClipPreview: Bool {
@@ -889,7 +1038,7 @@ final class CornerDockController: NSObject {
         // what is hit-tested are the same number.
         return AppChatPromptMetrics.shellSize(
             for: prompt, phase: prompt.phase,
-            clipboardVisible: clipboardModel.phase.announcesCopy,
+            clipboardVisible: clipboardModel.showsDockIcon,
             feedbackVisible: actionFeedback.glyph != nil)
     }
 
@@ -899,7 +1048,7 @@ final class CornerDockController: NSObject {
     /// harmless and is also exactly what stops this window becoming key, so the style is
     /// dropped for as long as the card holds the keyboard.
     func armKeyboard() {
-        guard let panel else { return }
+        guard let panel, !dragHoldsKeyboard else { return }
         panel.styleMask = [.borderless]
         // The plain, no-argument activate() is cooperative — macOS can decline or defer it,
         // and silently did exactly that when this ran from a global hotkey/event-monitor
@@ -910,6 +1059,45 @@ final class CornerDockController: NSObject {
         // uses the forceful, unconditional form for exactly this reason.
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        if !NSApp.isActive { finishArmingWhenActive() }
+    }
+
+    private var armWhenActiveObserver: NSObjectProtocol?
+
+    /// The activation was deferred. With Terminal in front (its Secure Keyboard Entry most
+    /// of all) macOS can hold an activation asked for from a hover rather than a click, and
+    /// the panel came up looking open with no caret and no keys (owner 2026-10-07: "while
+    /// Terminal is frontmost our input field isn't working"). Ask again a moment later, and
+    /// make the panel key the moment DoraX does become active.
+    private func finishArmingWhenActive() {
+        if armWhenActiveObserver == nil {
+            armWhenActiveObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let observer = self.armWhenActiveObserver {
+                        NotificationCenter.default.removeObserver(observer)
+                        self.armWhenActiveObserver = nil
+                    }
+                    guard self.keyboardState.isArmed || self.prompt.phase.showsInput else { return }
+                    self.panel?.makeKeyAndOrderFront(nil)
+                    self.publishKeyboardOwner()
+                    // The field already owned the keys on paper; asking again puts the caret
+                    // in it now that the window really is key.
+                    if self.keyboardState.owner == .chat { self.keyboardState.composerInteracted() }
+                }
+            }
+        }
+        for delay in [0.12, 0.35] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !NSApp.isActive, let panel = self.panel,
+                    panel.isVisible, !panel.styleMask.contains(.nonactivatingPanel)
+                else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                panel.makeKeyAndOrderFront(nil)
+            }
+        }
     }
 
     /// Recompute who should hold the keyboard and tell every board. Called whenever one of
@@ -943,6 +1131,9 @@ final class CornerDockController: NSObject {
     /// One place, because two surfaces answering it independently is how the selection card
     /// ended up focused inside a window that could not become key.
     func syncPanelKeyboard() {
+        // A file drag in flight: the keys stay with the app the drag came from
+        // (`armKeyboard` refuses them too).
+        if dragHoldsKeyboard { return }
         if CornerKeyboardOwner.panelHoldsKeyboard(
             clipboardArmed: ClipboardPanelController.shared.model.isKeyboardArmed,
             selectionWantsKeyboard: selection.phase.isVisible,
@@ -1119,9 +1310,21 @@ final class CornerDockController: NSObject {
             guard let self, self.pendingCommandSwitch != nil, self.chatPresentation.isVisible
             else { return }
             self.pendingCommandSwitch = nil
+            // One field (owner 2026-10-09): from Global, ⌘ steps into the app in front inside
+            // Global — the "← Name" chip, as stepping into any running app does — and from any
+            // app, ⌘ comes home to Global, as Backspace does.
             switch self.chatPresentation.mode {
             case .frontmostApp: self.chatPresentation.show(.globalContext)
-            case .globalContext: self.chatPresentation.show(.frontmostApp)
+            case .globalContext:
+                if self.prompt.returnsToGlobalScope {
+                    _ = self.prompt.leaveScopeForGlobal()
+                } else if let target = AppDelegate.shared?.frontmostChatTarget(),
+                    !target.bundleID.isEmpty
+                {
+                    self.prompt.scopeIntoApp(name: target.name, bundleID: target.bundleID)
+                } else {
+                    self.chatPresentation.show(.frontmostApp)
+                }
             case .general: break
             }
         }
@@ -1206,6 +1409,28 @@ final class CornerDockController: NSObject {
         // place.
         if PluginKeyboardClaim.shared.isEditing { return event }
 
+        // The clipboard board takes its keys before the field does: the arrows walk the
+        // clips rather than the caret, Return pastes rather than asks, and Esc, ← or
+        // Backspace on an empty filter go back to the field as it was.
+        if let panel, event.window === panel, showsClipboardBoard,
+            let key = ClipboardBoardKey.action(
+                keyCode: event.keyCode,
+                command: event.modifierFlags.contains(.command),
+                shift: event.modifierFlags.contains(.shift),
+                option: event.modifierFlags.contains(.option),
+                control: event.modifierFlags.contains(.control),
+                filterEmpty: clipboardModel.query.isEmpty)
+        {
+            applyClipboardBoardKey(key)
+            return nil
+        }
+
+        // Esc puts the app's card away and leaves the field as it was.
+        if let panel, event.window === panel, showsScopeBoard, event.keyCode == 53 {
+            prompt.isShowingScopeCard = false
+            return nil
+        }
+
         // ⌘R reads the scoped app's live menus again (C12).
         if DockKeyRules.isMenuRereadKey(
             keyCode: event.keyCode, command: event.modifierFlags.contains(.command),
@@ -1279,6 +1504,12 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // Any other key with the clipboard board open is the filter's — the caret moving,
+        // a letter deleted. None of the field's scope rules below apply: they read the
+        // question's text, which is empty while the filter is typed, so a Backspace in the
+        // filter would have left the app's scope.
+        if let panel, event.window === panel, showsClipboardBoard { return event }
+
         // The Dock's keyboard rules (`DockKeyRules`), before any of the field's own meanings
         // below: a highlighted pill or row is what the key is about. Backspace here lets go
         // of the highlight and nothing else — it never deletes, leaves a scope or quits the
@@ -1302,10 +1533,16 @@ final class CornerDockController: NSObject {
             event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
             let panel, event.window === panel,
             chatPresentation.isVisible, prompt.phase.showsInput,
-            prompt.query.isEmpty,
-            prompt.applyEmptyBackspace()
+            prompt.query.isEmpty
         {
-            return nil
+            if prompt.applyEmptyBackspace() { return nil }
+            // The frontmost app's Context Dock, with nothing to step out of inside it: one
+            // more Backspace is Global Context's search (owner 2026-10-08: "Backspace goes
+            // back to the Global Context search input").
+            if chatPresentation.mode == .frontmostApp, prompt.phase != .chat {
+                chatPresentation.showGlobalContext()
+                return nil
+            }
         }
 
         // Tab: the focus system claims it inside a text field, so `onKeyPress(.tab)` never
@@ -1347,7 +1584,10 @@ final class CornerDockController: NSObject {
         else { return event }
         // ← on an empty Global field folds it into the dock, before the presentation's
         // own walk between scopes is considered.
-        if chatPresentation.mode != .general, prompt.foldToDock() { return nil }
+        // Global only: in an app's Context Dock, which can fold too now, ← is the way back.
+        if chatPresentation.mode != .general, prompt.isGlobalScope, prompt.foldToDock() {
+            return nil
+        }
         // ← inside a scope entered from Global walks back one app, and from the first home
         // to Global — the mirror of →, as the Dock walks. Without it an empty Finder field
         // went straight to General Chat (owner, 2026-09-26).
@@ -1357,6 +1597,35 @@ final class CornerDockController: NSObject {
             return nil
         }
         return chatPresentation.handleLeftArrow(draft: prompt.query) ? nil : event
+    }
+
+    private func applyClipboardBoardKey(_ key: ClipboardBoardKey) {
+        let controller = ClipboardPanelController.shared
+        switch key {
+        case .back:
+            controller.closeBoard()
+        case .clearFilter:
+            clipboardModel.setBoardQuery("")
+        case .move(let step, let selecting):
+            clipboardModel.moveEntry(step, selecting: selecting)
+        case .paste:
+            controller.pasteMany(clipboardModel.actionableEntries())
+        case .copy:
+            let entries = clipboardModel.actionableEntries()
+            guard !entries.isEmpty else { return }
+            controller.copy(entries)
+            controller.finishBoard()
+        case .delete:
+            clipboardModel.removeActionableEntries()
+        case .quickLook:
+            controller.preview()
+        case .cycleKind(let step):
+            clipboardModel.cycleKind(step)
+        case .togglePin:
+            prompt.togglePin()
+        case .settings:
+            AppDelegate.shared?.showSettings()
+        }
     }
 
     private func handleChatSwipe(_ event: NSEvent) -> NSEvent? {
@@ -1375,6 +1644,14 @@ final class CornerDockController: NSObject {
                 return event
             }
         }
+        // Split, the text field's own frame runs on under the apps beside it (its layout
+        // keeps one width); the apps scroll sideways and never switch the scope (owner
+        // 2026-10-07). Only the field's visible glass counts.
+        if showsSplitShell,
+            event.locationInWindow.x > promptRect.minX + splitWidths.field
+        {
+            return event
+        }
 
         if event.phase == .began {
             accumulatedChatSwipeX = 0
@@ -1386,7 +1663,10 @@ final class CornerDockController: NSObject {
         if event.phase == .began || event.phase == .changed
             || event.momentumPhase == .began || event.momentumPhase == .changed
         {
-            accumulatedChatSwipeX += event.scrollingDeltaX
+            // The fingers' own direction: with natural scrolling off the scroll runs the other
+            // way, and the sideways swipe is a direction the user chose (owner 2026-10-09).
+            accumulatedChatSwipeX += event.isDirectionInvertedFromDevice
+                ? event.scrollingDeltaX : -event.scrollingDeltaX
             accumulatedChatSwipeY += event.scrollingDeltaY
         }
         // Decided when the fingers lift, and again when the momentum ends — a flick that
@@ -1406,9 +1686,23 @@ final class CornerDockController: NSObject {
         let sideways: Bool
         if case .swipeSideways = move { sideways = true } else { sideways = false }
 
-        // Scoped into something from Global Context: that scope owns the surface until it
-        // is left. A sideways swipe is swallowed; a vertical one is left to scroll (§4b W8).
-        if chatPresentation.mode != .general, prompt.returnsToGlobalScope {
+        // Right to left walks the running apps, as → does (owner 2026-10-09): from Global
+        // into the first, inside one on to the next, from the app in front's Context Dock on
+        // to the one after it — each without bringing the app forward.
+        if case .swipeSideways(right: false) = move, chatPresentation.mode != .general,
+            walkRunningAppsOnSwipe()
+        {
+            didActInCurrentSwipe = true
+            return nil
+        }
+
+        // Scoped into a command, tool or extension from Global Context: that scope owns the
+        // surface until it is left. A sideways swipe is swallowed; a vertical one is left to
+        // scroll (§4b W8). An app stepped into — Finder included — is a Context Dock like any
+        // other, so its sideways swipe goes to General Chat (owner 2026-10-09).
+        if chatPresentation.mode != .general, prompt.returnsToGlobalScope,
+            !prompt.isAppStepIn, !prompt.isFinderScope
+        {
             didActInCurrentSwipe = true
             return sideways ? nil : event
         }
@@ -1418,6 +1712,29 @@ final class CornerDockController: NSObject {
         guard chatPresentation.handleSwipe(move) else { return event }
         didActInCurrentSwipe = true
         return nil
+    }
+
+    /// The right-to-left swipe's walk through the running apps. False when there is nowhere
+    /// to go, or something is typed (the swipe is then left to the field).
+    private func walkRunningAppsOnSwipe() -> Bool {
+        switch chatPresentation.mode {
+        case .globalContext:
+            // From Global, or from an app already stepped into: the next along the pills.
+            guard !prompt.returnsToGlobalScope || prompt.isAppStepIn || prompt.isFinderScope
+            else { return false }
+            return prompt.scopeIntoFirstRunningApp()
+        case .frontmostApp:
+            // The app in front's Context Dock: into Global, on to the app after it.
+            let current = prompt.appBundleID
+            guard prompt.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                let next = AppChatPromptModel.runningApp(after: current)
+            else { return false }
+            chatPresentation.showGlobalContext()
+            prompt.scopeIntoApp(name: next.name, bundleID: next.bundleID)
+            return true
+        case .general:
+            return false
+        }
     }
 
     private func stopHoverWatch() {
@@ -1472,6 +1789,7 @@ final class CornerDockController: NSObject {
         let overShelf = contains(slots.shelf)
         let overClipboard = contains(slots.clipboard)
         let overPrompt = contains(slots.prompt)
+        foldWhenRestingOnApps(prompt: slots.prompt, origin: origin, mouse: mouse)
 
         // The shelf opens by click, not by hover: a pointer passing over its card is not a
         // request to keep it open, and not one to close it either.
@@ -1486,6 +1804,50 @@ final class CornerDockController: NSObject {
             clipboardModel.hoverEnded()
             chatPresentation.hoverEnded()
         }
+    }
+}
+
+extension CornerDockController {
+    /// Over the apps beside Global's empty field, the field folds back into the resting dock
+    /// — the same apps with their previews, menus and window management (owner 2026-10-08:
+    /// "over apps: back to the dock with running apps, pins"). Watched here, from the pointer
+    /// the window already tracks, after a short dwell so crossing the apps does not fold it.
+    /// Asked for by the pointer, so neither "fold on its own" nor the pin holds it back, nor
+    /// a typed field (kept for when the field comes back); a turn in progress still refuses.
+    fileprivate func foldWhenRestingOnApps(prompt slot: CGRect?, origin: CGPoint, mouse: CGPoint) {
+        let strip = slot.flatMap {
+            CornerSplitShell.stripRect(
+                slot: $0, fieldWidth: splitWidths.field, stripWidth: splitWidths.strip,
+                height: AppChatPromptMetrics.fieldHeight(global: true))
+        }
+        // Global's field, and every app's Context Dock, which rests the same way (owner
+        // 2026-10-08: "collapse the input field like Global Context").
+        let onApps = strip.map { $0.offsetBy(dx: origin.x, dy: origin.y).contains(mouse) } == true
+        let split = showsSplitShell && prompt.usesDockShell
+        pointerLeftAppsSinceSplit = CornerSplitShell.arrivalArmed(
+            wasArmed: pointerLeftAppsSinceSplit, split: split, onApps: onApps)
+        let resting = split && onApps && pointerLeftAppsSinceSplit
+        guard resting else {
+            appsFoldIntent?.cancel()
+            appsFoldIntent = nil
+            return
+        }
+        guard appsFoldIntent == nil else { return }
+        DoraXTurnLog.record(
+            "corner.apps pointer on the apps: mouse \(mouse) strip \(String(describing: strip)) origin \(origin)")
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.appsFoldIntent = nil
+            guard self.showsSplitShell, self.prompt.usesDockShell else {
+                DoraXTurnLog.record("corner.apps dwell ended with the split gone")
+                return
+            }
+            let folded = self.prompt.restAsDockNow(keepsDraft: true)
+            DoraXTurnLog.record(
+                "corner.apps fold \(folded ? "done" : "refused") phase \(self.prompt.phase)")
+        }
+        appsFoldIntent = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + CornerSplitShell.foldDwell, execute: work)
     }
 }
 
@@ -1521,10 +1883,12 @@ struct CornerDockSurface: View {
         // Centred, the shell is a row: field, clipboard side by side, with what answers the
         // field — and the open shelf — stacked over the field itself. Anchored to an edge it stays a
         // column, because a row against the screen's corner would run off it.
-        if anchor == .center {
-            centredRow
-        } else {
-            column
+        Group {
+            if anchor == .center {
+                centredRow
+            } else {
+                column
+            }
         }
     }
 
@@ -1545,7 +1909,15 @@ struct CornerDockSurface: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
         if chatPresentation.isVisible, chatPresentation.mode != .general {
-            if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
+            if CornerDockController.shared.showsClipboardBoard {
+                // The clipboard, as Raycast lays it out: clips beside the chosen one.
+                ClipboardBoardCard(model: clipboardModel, prompt: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsScopeBoard {
+                // The app's card, in the board rather than hanging off the chip.
+                AppScopeBoard(model: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsExtensionPanel, let plugin = prompt.scopedPlugin {
                 // A plugin opened from Global search: its panel, in the board (D6). × leaves
                 // the scope, as Backspace does.
                 CornerPluginCard(
@@ -1593,7 +1965,38 @@ struct CornerDockSurface: View {
                         .transition(.opacity)
                 }
             } else {
-                AppChatPromptPill(model: prompt).transition(.opacity)
+                // One structure in both layouts, so the field keeps its identity — and its
+                // caret — when the shell splits: only the apps beside it come and go. Field
+                // under the results, apps under the preview, one bottom line (Part B).
+                let split = CornerDockController.shared.showsSplitShell
+                let shell = AppChatPromptMetrics.boardWidth(for: prompt)
+                // One liquid-glass container: the apps bud off the field's end and move out
+                // past the merge distance, so the glass pinches in two like a water droplet
+                // rather than a second capsule fading in beside the first.
+                GlassEffectContainer(spacing: CornerSplitShell.dropletSpacing) {
+                    HStack(alignment: .bottom, spacing: split ? CornerSplitShell.gap : 0) {
+                        AppChatPromptPill(model: prompt)
+                        if split {
+                            CornerSplitStrip(
+                                model: prompt, width: CornerDockController.shared.splitWidths.strip)
+                                // Fades in as it buds off the field; gone at once on the fold.
+                                // Left to fade out under the pointer, it stayed on screen beside
+                                // a half-folded field until the pointer left (owner 2026-10-08:
+                                // "dock only on mouse-out"); the dock's own icons arrive in its
+                                // place as the field folds.
+                                .transition(.asymmetric(
+                                    insertion: .opacity.combined(
+                                        with: .offset(x: -CornerSplitShell.splitDrift)),
+                                    removal: .identity))
+                        }
+                    }
+                    .frame(width: split ? shell : nil, alignment: .leading)
+                }
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: split)
+                .animation(
+                    .spring(response: 0.38, dampingFraction: 0.85),
+                    value: CornerDockController.shared.splitWidths.strip)
+                .transition(.opacity)
             }
         }
     }

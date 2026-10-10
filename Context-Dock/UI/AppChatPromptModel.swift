@@ -190,7 +190,12 @@ final class AppChatPromptModel: ObservableObject {
     var showsTabBar: Bool {
         guard !isGlobalScope else { return false }
         if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
-        return isAppContextDock && !dockPins.pins(forApp: appBundleID).isEmpty
+        // Every app's Context Dock has the bar, and rests and folds as Global does: its
+        // pinned actions when it has some, the running apps when it has none (owner
+        // 2026-10-08, replacing 2026-09-26's "an app without pins keeps its plain field").
+        // Finder walking a folder is not a dock; otherwise Finder — in front or stepped into
+        // from Global — is its own Context Dock and rests like any app's (owner 2026-10-09).
+        return isAppContextDock && !isFinderFileSearch
     }
     /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
     /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
@@ -224,8 +229,19 @@ final class AppChatPromptModel: ObservableObject {
     /// This scope was entered from Global, so leaving it goes back there rather than to the
     /// frontmost app.
     @Published var returnsToGlobalScope = false
+    /// The clipboard history the board shows. The shared one; a test hands in its own.
+    lazy var clipboardBoard: ClipboardPanelModel = ClipboardPanelController.shared.model
+    /// The field is filtering the clipboard, whose board stands over it — an overlay on
+    /// whatever scope is underneath, which is left untouched for Back to return to.
+    var isClipboardScope: Bool { clipboardBoard.isBoardOpen }
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    /// The folder Finder's front window shows — the Desktop when no window is open — read
+    /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
+    var finderFrontFolder: URL?
+    var finderFolderReadAt: Date = .distantPast
+    /// Where the front folder is read from. A test swaps it; the app asks Finder.
+    var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
     /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
     var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
         GlobalSearchService.shared.document(withID: $0)
@@ -263,9 +279,9 @@ final class AppChatPromptModel: ObservableObject {
     /// choice down rather than only holding it in memory for as long as this object exists.
     @Published private(set) var isPinned = AppChatPromptModel.pinStore.bool(
         forKey: AppChatPromptModel.pinnedDefaultsKey)
-    /// The app's settings card is open over the chip. It hangs outside the panel, so the
-    /// pointer "leaving" onto it must not fold the field out from under it: the idle clock
-    /// stops while it is open and starts again when it closes.
+    /// The app's settings card is open in the result board (the chip opens it, owner
+    /// 2026-10-07). The user is reading it, so the idle clock stops while it is open and
+    /// starts again when it closes.
     @Published var isShowingScopeCard = false {
         didSet {
             guard isShowingScopeCard != oldValue else { return }
@@ -506,6 +522,8 @@ final class AppChatPromptModel: ObservableObject {
             query = drafts[incoming] ?? ""
             // The answer being waited for belonged to the scope being left.
             stopAwaitingAnswer()
+            // So did a conversation put away by its ⌄.
+            isConversationHidden = false
             // A folder walk belongs to the Finder scope it was taken in.
             finderBrowseStack = []
         }
@@ -531,6 +549,9 @@ final class AppChatPromptModel: ObservableObject {
         suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
+        // The app in front's own Context Dock, not one stepped into from Global: a flag left
+        // from an earlier step-in swallowed every sideways swipe here (owner 2026-10-09).
+        returnsToGlobalScope = false
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         isShowingSelectionScope = false
@@ -632,6 +653,11 @@ final class AppChatPromptModel: ObservableObject {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Inside a folder the listing is what the step went to fetch, typed filter or not.
         if isFinderScope, !finderBrowseStack.isEmpty { return rows.isEmpty ? .prompt : .suggesting }
+        // "/" opens its list of apps by itself; Return takes the first (owner 2026-10-10).
+        if slashAppFilter != nil { return rows.isEmpty ? .prompt : .suggesting }
+        // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
+        // arrows choose a file or command (owner 2026-10-09).
+        if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
         // Typed: the field alone, same as the dock. Typing never pops the sheet open by
         // itself, and it closes right back down if a down-arrow peek was open when the next
         // character landed — the arrow key is the only door in.
@@ -644,6 +670,9 @@ final class AppChatPromptModel: ObservableObject {
         // Global never reaches this line — it answers with its window snapshot above — so
         // what this governs is Finder and a CLI tool, where the rows are the thing the step
         // went to fetch: the search results, the tool's subcommands.
+        // An app stepped into from Global rests as its own Context Dock: the field alone, ↓
+        // opens its actions (owner 2026-10-07: "don't show the launch sheet").
+        if isAppStepIn { return .prompt }
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
         // Attaching a file is composing a question about it. A list open over that is
         // answering something the user has already stopped asking.
@@ -724,6 +753,36 @@ final class AppChatPromptModel: ObservableObject {
         hasPresentedConversation = false
         focusedMenuIndex = nil
         set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    /// The chat sheet put away by its ⌄ (owner 2026-10-08: "show a down arrow to hide the
+    /// chat sheet"): the conversation is kept, a turn keeps running, and the field's ⌃
+    /// brings it back (`showConversation`).
+    @Published private(set) var isConversationHidden = false
+
+    @discardableResult
+    func hideConversation() -> Bool {
+        guard phase == .chat else { return false }
+        stopAwaitingAnswer()
+        hasPresentedConversation = false
+        focusedMenuIndex = nil
+        isConversationHidden = true
+        set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    @discardableResult
+    func showConversation() -> Bool {
+        guard isConversationHidden, phase.showsInput, phase != .chat,
+            isAnswering || !messages.isEmpty
+        else { return false }
+        isConversationHidden = false
+        isShowingScopeCard = false
+        hasPresentedConversation = true
+        set(.chat)
         touch()
         return true
     }
@@ -903,7 +962,8 @@ final class AppChatPromptModel: ObservableObject {
     /// than a generic dot, so the corner still says which app it is about, and it keeps
     /// any half-written question for whoever comes back for it.
     func standDown() {
-        guard !isPinned, !isPointerInside, !isAnswering else { return }
+        // The clipboard board is a deliberate ask, held until Back or a paste.
+        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope else { return }
         switch phase {
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
@@ -970,7 +1030,9 @@ final class AppChatPromptModel: ObservableObject {
         guard phase == .dock else { return false }
         set(.prompt)
         if let text, !text.isEmpty {
-            query = text
+            // A draft the pointer folded away is kept (`restAsDockNow(keepsDraft:)`): the
+            // key carries on from it rather than replacing it.
+            query += text
             queryChanged()
         }
         armForIdle()
@@ -1022,13 +1084,44 @@ final class AppChatPromptModel: ObservableObject {
         windowRowTask?.cancel()
         let target = hoveredStripTarget
         let delay: TimeInterval = target == nil ? 0.15 : 0.25
+        // The app's windows are captured during the dwell, so the card opens on them.
+        let snapshots = AppWindowSnapshotService.shared
+        if case .app(let bundleID) = target { snapshots.refreshWindows(bundleID: bundleID) }
         windowRowTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
+            if case .app(let bundleID) = target {
+                // Never an empty card (owner 2026-10-08: "No windows" over a pinned web app):
+                // wait out the capture, briefly, and open only on windows to show — or on
+                // the Screen Recording ask, which is worth a card.
+                var waited = 0
+                while snapshots.isCapturingWindows(for: bundleID), waited < 12 {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    waited += 1
+                }
+                guard !Task.isCancelled else { return }
+                if !Self.windowCardHasContent(
+                    windows: snapshots.windowSnapshots(for: bundleID).count,
+                    capturing: snapshots.isCapturingWindows(for: bundleID),
+                    denied: snapshots.isDenied)
+                {
+                    self.dockPreviewTarget = Self.previewTarget(
+                        hovered: nil, pinnedPin: self.pinnedPreviewPinID)
+                    return
+                }
+            }
             self.dockPreviewTarget = Self.previewTarget(
                 hovered: target, pinnedPin: self.pinnedPreviewPinID)
         }
+    }
+
+    /// Pure: whether an app's windows card has anything to show — windows, the capture still
+    /// running, or the Screen Recording ask. "No windows" alone is not a card.
+    nonisolated static func windowCardHasContent(windows: Int, capturing: Bool, denied: Bool)
+        -> Bool
+    {
+        windows > 0 || capturing || denied
     }
 
     /// ← on an empty Global field folds it now rather than waiting out the dwell.
@@ -1042,10 +1135,13 @@ final class AppChatPromptModel: ObservableObject {
 
     /// Straight to the dock, whatever "fold on its own" says: auto-hide's edge summons the
     /// resting strip, the way the macOS Dock shows its icons — typing is what opens the field.
+    /// `keepsDraft`: the pointer resting on the apps asked for the dock, typed text or not
+    /// (owner 2026-10-08: "nothing happens while split"); the draft stays for the field's
+    /// return. Everything else still refuses a typed field.
     @discardableResult
-    func restAsDockNow() -> Bool {
+    func restAsDockNow(keepsDraft: Bool = false) -> Bool {
         guard usesDockShell, !isAnswering,
-            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            keepsDraft || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return false }
         cancel()
         set(.dock)
@@ -1118,6 +1214,7 @@ final class AppChatPromptModel: ObservableObject {
         attachments = []
         hasPresentedConversation = true
         awaitingAnswer = true
+        isConversationHidden = false
         armAnswerWatchdog()
         set(.chat)
         touch()
@@ -1185,9 +1282,17 @@ final class AppChatPromptModel: ObservableObject {
         isStandDownArmed = false
     }
 
-    func set(_ next: AppChatPromptPhase) {
+    func set(
+        _ next: AppChatPromptPhase, caller: String = #function, file: String = #fileID,
+        line: Int = #line
+    ) {
         guard phase != next else { return }
+        // Which code moved the field, for the turn log (owner 2026-10-08: the field came
+        // back after resting on the apps folded it, and nothing on screen said what did).
+        DoraXTurnLog.record("corner.phase \(phase) → \(next) by \(caller) \(file):\(line)")
         phase = next
+        // The clipboard board stands over the field; the field going takes it along.
+        if !next.showsInput, clipboardBoard.isBoardOpen { clipboardBoard.closeBoard() }
         // A highlight on the field's pills does not outlive the field.
         if !next.showsInput || next == .chat { focusedPillIndex = nil }
         // A plugin's card belongs to the strip; leaving the dock takes it down with it.

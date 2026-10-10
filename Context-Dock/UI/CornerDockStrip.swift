@@ -41,6 +41,17 @@ struct CornerDockStrip: View {
 
     private var isDock: Bool { model.phase == .dock }
 
+    /// The field opens split, its apps in a piece of their own beside it: the icons do not
+    /// shrink into the field's small pill, they drift toward that piece at full size and
+    /// hand over to it (owner 2026-10-08: "move the icons without shrinking to the second
+    /// pill").
+    private var slidesToSplit: Bool {
+        !gathersIntoAppBar && CornerDockController.shared.splitWidths.strip > 0
+    }
+
+    /// How far an icon drifts on its way to the split's piece, and the piece in from it.
+    static let splitDrift: CGFloat = CornerSplitShell.splitDrift
+
     /// The strip's tools stay over the field's trailing end in Global, still and
     /// clickable. An app's field draws its own clipboard and selection beside the pin, so
     /// there the strip's go with the bar — drawn over the field they doubled up on the pin.
@@ -131,7 +142,7 @@ struct CornerDockStrip: View {
         // The pin sits before the pill now, beside "+" (owner 2026-09-28), so it is not
         // part of what trails the pill.
         var trailing: CGFloat = 14
-        if clipboard.phase.announcesCopy { trailing += control }
+        if clipboard.showsDockIcon { trailing += control }
         if model.selection != nil { trailing += control }
         // The Drop Shelf's control closes the field's row in every scope.
         trailing += control
@@ -180,7 +191,7 @@ struct CornerDockStrip: View {
         DockStripPlan.make(
             running: model.stripIcons, pins: model.stripPins,
             tools: model.dockToolCount(
-                clipboardVisible: clipboard.phase.announcesCopy,
+                clipboardVisible: clipboard.showsDockIcon,
                 feedbackVisible: feedback.glyph != nil),
             fieldIcons: model.promptIconCount)
     }
@@ -242,6 +253,11 @@ struct CornerDockStrip: View {
             // size — drawn there, not laid out there, so the row's geometry never moves
             // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
             let count = plan.composition.apps.count + (plan.layout.overflow > 0 ? 1 : 0)
+            if scrollsApps(plan) {
+                // More running than the row holds: every app, scrolling sideways in the room
+                // the shown ones and the "+N" took — the dock stays its one width.
+                scrollingApps(plan, ids: ids)
+            } else {
             ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
                 if gathersIntoAppBar {
                     // Flies and shrinks to its place in the field's pill, then hands over to
@@ -264,8 +280,12 @@ struct CornerDockStrip: View {
                     // not show goes as it leaves.
                     let landsInPill = inPill(slot.bundleID)
                     appIcon(slot, ids: ids)
-                        .scaleEffect(gathered ? M.pillIconScale : 1)
-                        .offset(x: gathered ? gatherOffset(index: index, bundleID: slot.bundleID, plan: plan) : 0)
+                        .scaleEffect(gathered && !slidesToSplit ? M.pillIconScale : 1)
+                        .offset(x: gathered
+                            ? (slidesToSplit
+                                ? Self.splitDrift
+                                : gatherOffset(index: index, bundleID: slot.bundleID, plan: plan))
+                            : 0)
                         .animation(gatherAnimation(index: index, count: count), value: gathered)
                         .opacity(isDock ? 1 : 0)
                         .animation(landsInPill ? movingFade : .easeIn(duration: 0.12), value: isDock)
@@ -273,14 +293,17 @@ struct CornerDockStrip: View {
                         .padding(.leading, plan.layout.appSpread)
                 }
             }
-            if plan.layout.overflow > 0 {
+            }
+            if plan.layout.overflow > 0, !scrollsApps(plan) {
                 let stays = isDock
                 overflowPill(plan.layout.overflow)
-                    .scaleEffect(gathered ? M.pillIconScale : 1)
+                    .scaleEffect(gathered && !slidesToSplit ? M.pillIconScale : 1)
                     .offset(
                         x: gathered
-                            ? gatherOffset(
-                                index: plan.composition.apps.count, bundleID: nil, plan: plan)
+                            ? (slidesToSplit
+                                ? Self.splitDrift
+                                : gatherOffset(
+                                    index: plan.composition.apps.count, bundleID: nil, plan: plan))
                             : 0)
                     .animation(gatherAnimation(index: count - 1, count: count), value: gathered)
                     .opacity(stays ? 1 : 0)
@@ -329,7 +352,7 @@ struct CornerDockStrip: View {
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
-        .animation(.smooth(duration: 0.25), value: clipboard.phase.announcesCopy)
+        .animation(.smooth(duration: 0.25), value: clipboard.showsDockIcon)
         .animation(.smooth(duration: 0.25), value: model.selection != nil)
         .padding(.horizontal, plan.layout.leadingInset)
         // The dock's own height at rest; the open field's while it is up, so the pins and
@@ -413,7 +436,13 @@ struct CornerDockStrip: View {
             hoveredID = inside ? id : (hoveredID == id ? nil : hoveredID)
             // A tab or an app's pin has no app window to preview.
             guard !model.isTabIcon(slot.bundleID), !model.isAppPinIcon(slot.bundleID) else { return }
-            model.hoveredStripTarget = inside ? .app(bundleID: slot.bundleID) : nil
+            // Its windows only when there is more than one to choose between (owner
+            // 2026-10-07): one window is what the click already brings back. A pinned app
+            // that is not running has none — its card said "No windows" (owner 2026-10-08).
+            let shows = inside && slot.isRunning
+                && DockAppClick.showsWindowPreview(
+                    windowCount: DockAppClick.windowCount(bundleID: slot.bundleID))
+            model.hoveredStripTarget = shows ? .app(bundleID: slot.bundleID) : nil
         }
         .onTapGesture {
             // One of the app's pins, big or in the pill: it runs, as its row would.
@@ -529,7 +558,7 @@ struct CornerDockStrip: View {
     /// What the row's end holds, from the one rule the shell is measured by.
     private var toolKinds: [DockToolKind] {
         model.dockTools(
-            clipboardVisible: clipboard.phase.announcesCopy,
+            clipboardVisible: clipboard.showsDockIcon,
             feedbackVisible: feedback.glyph != nil)
     }
 
@@ -537,18 +566,13 @@ struct CornerDockStrip: View {
     private func toolView(_ kind: DockToolKind) -> some View {
         switch kind {
         case .clipboard:
+            // A click opens the clipboard in the shell's board (owner 2026-10-07). Hovering
+            // used to raise a card of its own in the corner; nothing opens on a hover now.
             toolIcon("doc.on.clipboard", title: "Clipboard") {
-                ClipboardPanelController.shared.show()
+                ClipboardPanelController.shared.toggle()
             }
             .modifier(StripToolVisibility(shown: toolsShown))
             .transition(.opacity.combined(with: .scale(scale: 0.8)))
-            // Hovering opens the card without taking the keyboard; a click arms it.
-            .onHover { inside in
-                guard inside else { return }
-                let controller = ClipboardPanelController.shared
-                controller.model.reload()
-                controller.model.summon()
-            }
         case .selection:
             toolIcon("text.cursor", title: "Selection") {
                 CornerDockController.shared.showSelectionScopeFromDock()
@@ -645,7 +669,9 @@ struct CornerDockStrip: View {
                 model.scopeIntoApp(name: slot.title, bundleID: bundleID)
             })
         } else {
-            items.append(.init(title: "Open \(slot.title)") { openApp(slot) })
+            items.append(.init(title: "Open \(slot.title)") {
+                AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+            })
         }
         items.append(.separator)
         if let pin = slot.pin {
@@ -708,6 +734,37 @@ struct CornerDockStrip: View {
             .accessibilityLabel("\(count) more running apps")
     }
 
+    /// The resting row scrolls its apps rather than ending on "+N" (owner 2026-10-08: "fit
+    /// the dock's size, four apps by default, scrollable when there are more") — Global's and
+    /// every app's Context Dock alike ("it didn't show all running apps with scrolling").
+    private func scrollsApps(_ plan: DockStripPlan) -> Bool {
+        plan.layout.overflow > 0 && plan.uncut != nil
+    }
+
+    /// Every running app in the room the shown ones and the "+N" took, scrolling sideways.
+    private func scrollingApps(_ plan: DockStripPlan, ids: [String]) -> some View {
+        let apps = plan.uncut?.apps ?? plan.composition.apps
+        let slots = CGFloat(plan.composition.apps.count + 1)
+        let width = slots * (M.dockIconSize + plan.layout.appSpread)
+            + (slots - 1) * M.dockIconGap
+        let allIDs = apps.map(\.id) + plan.composition.otherPins.map(\.id.uuidString)
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: M.dockIconGap) {
+                ForEach(apps) { slot in
+                    appIcon(slot, ids: allIDs)
+                        .padding(.leading, plan.layout.appSpread)
+                }
+            }
+        }
+        .frame(width: width)
+        .offset(x: gathered && slidesToSplit ? Self.splitDrift : 0)
+        .opacity(isDock ? 1 : 0)
+        .animation(movingFade, value: isDock)
+        .animation(
+            .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
+        .allowsHitTesting(isDock)
+    }
+
     /// Dock magnify: the hovered icon up, its neighbours a little, everything else at rest.
     /// `ids` is the row as drawn, passed in rather than rebuilt per icon.
     private func scale(for id: String, among ids: [String]) -> CGFloat {
@@ -754,52 +811,16 @@ struct CornerDockStrip: View {
         condensing = false
     }
 
-    /// Clicking an app: bring it forward if it is up, launch it if it is not. A pinned app
-    /// that has been quit is still a place to go, which is what pinning it was for.
+    /// Clicking an app: launch it if it is not running. A running one is the window manager's
+    /// handle on it (`DockAppClick`): in front, its front window is minimised; otherwise it
+    /// comes forward with its minimised windows. A pinned app that has been quit is still a
+    /// place to go, which is what pinning it was for.
     private func openApp(_ slot: DockAppSlot) {
-        AppActivation.bringForward(bundleID: slot.bundleID, name: slot.title)
+        DockAppClick.click(bundleID: slot.bundleID, name: slot.title)
     }
 
     private func open(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
-        switch pin.kind {
-        case .app(let bundleID):
-            AppActivation.bringForward(bundleID: bundleID, name: pin.title)
-        case .file(let path), .folder(let path):
-            let url = URL(fileURLWithPath: path)
-            if FileManager.default.fileExists(atPath: path) {
-                NSWorkspace.shared.open(url)
-            } else {
-                NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
-            }
-        case .menuCommand, .appAction, .tab:
-            model.openAppPin(pin)  // an app's pin; Global's strip never holds one
-        case .globalCommand, .cliTool:
-            guard let document else { return }
-            // A pinned plugin answers where it is: a one-shot runs from the dock, a plugin
-            // with a panel opens it as the card above the pin — the field is not brought
-            // back for either, since neither has anything to type into it. Opening the
-            // field and folding it again read as the click having misfired.
-            if let pluginID = pin.kind.pluginID,
-                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
-            {
-                if manifest.views.panel != nil {
-                    // The click toggles the card whichever way it came up — hover already
-                    // shows an icon's panel, so a click on that icon puts it away.
-                    if model.pluginCardPinID == pin.id || model.previewPinID == pin.id {
-                        model.dismissPluginCard()
-                    } else {
-                        model.pluginCardPinID = pin.id
-                    }
-                } else {
-                    GlobalContextRow.run(document)
-                }
-                return
-            }
-            // Commands and tools run through the list's own path so a CLI scopes the field
-            // and a system command opens its scope, exactly as choosing the row would.
-            model.expandFromDock(seeding: nil)
-            model.run(.global(document))
-        }
+        model.openStripPin(pin, document: document)
     }
 
     private func acceptDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -1016,5 +1037,51 @@ private struct StripToolVisibility: ViewModifier {
             .opacity(shown ? 1 : 0)
             .allowsHitTesting(shown)
             .animation(.easeInOut(duration: 0.2), value: shown)
+    }
+}
+
+extension AppChatPromptModel {
+    /// What a click on a pin in Global's strip does — the resting dock's and the split
+    /// strip's alike, so the two cannot drift apart.
+    func openStripPin(_ pin: DockPin, document: GlobalSearchService.SearchDocument?) {
+        switch pin.kind {
+        case .app(let bundleID):
+            AppActivation.bringForward(bundleID: bundleID, name: pin.title)
+        case .file(let path), .folder(let path):
+            let url = URL(fileURLWithPath: path)
+            if FileManager.default.fileExists(atPath: path) {
+                NSWorkspace.shared.open(url)
+            } else {
+                NSWorkspace.shared.activateFileViewerSelecting([url.deletingLastPathComponent()])
+            }
+        case .menuCommand, .appAction, .tab:
+            openAppPin(pin)  // an app's pin; Global's strip never holds one
+        case .globalCommand, .cliTool:
+            guard let document else { return }
+            // A pinned plugin answers where it is: a one-shot runs from the dock, a plugin
+            // with a panel opens it as the card above the pin — the field is not brought
+            // back for either, since neither has anything to type into it. Opening the
+            // field and folding it again read as the click having misfired.
+            if let pluginID = pin.kind.pluginID,
+                let manifest = PluginRegistry.shared.plugin(id: pluginID)?.manifest
+            {
+                if manifest.views.panel != nil {
+                    // The click toggles the card whichever way it came up — hover already
+                    // shows an icon's panel, so a click on that icon puts it away.
+                    if pluginCardPinID == pin.id || previewPinID == pin.id {
+                        dismissPluginCard()
+                    } else {
+                        pluginCardPinID = pin.id
+                    }
+                } else {
+                    GlobalContextRow.run(document)
+                }
+                return
+            }
+            // Commands and tools run through the list's own path so a CLI scopes the field
+            // and a system command opens its scope, exactly as choosing the row would.
+            expandFromDock(seeding: nil)
+            run(.global(document))
+        }
     }
 }

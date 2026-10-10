@@ -29,6 +29,12 @@ enum CornerBoardPreview: Hashable {
     case systemCommand(id: String, name: String)
     /// A web page from the browser's history or tabs: the page itself, previewed.
     case web(url: URL, title: String, domain: String, browserName: String)
+    /// One of the native window layouts (Centre, Quarters, Left & Right…): the screen, with
+    /// the app's window drawn where the layout will put it (owner 2026-10-07).
+    case windowLayout(command: String, title: String, appName: String, bundleID: String)
+    /// The app's own card — what DoraX can do here, what it sees, what it may do — opened
+    /// from the field's app chip, in the right half beside the list (owner 2026-10-08).
+    case appScope(bundleID: String, name: String)
 }
 
 enum CornerBoardLayout {
@@ -68,6 +74,9 @@ enum CornerBoardLayout {
         case .global(let doc):
             return preview(for: doc)
         case .dock(let pill):
+            if let layout = windowLayoutPreview(for: pill, appName: appName, appBundleID: appBundleID) {
+                return layout
+            }
             if let path = pill.previewPath, !path.isEmpty {
                 return .file(URL(fileURLWithPath: path))
             }
@@ -84,9 +93,23 @@ enum CornerBoardLayout {
             // A subcommand is only a subcommand inside its tool's scope.
             guard !cliCommand.isEmpty else { return nil }
             return .cliSubcommand(command: cliCommand, subcommand: word)
-        case .action:
+        case .action, .app:
             return nil
         }
+    }
+
+    /// A native window-layout row (`makeNativeWindowManagementPills`): its command is the last
+    /// field of the row's tracking id, `native-window:<bundle id>:<command>`.
+    static func windowLayoutPreview(
+        for pill: DockPill, appName: String, appBundleID: String
+    ) -> CornerBoardPreview? {
+        guard pill.rankingKind == "nativeWindow",
+            let command = pill.trackingIdentifier.split(separator: ":").last.map(String.init),
+            WindowManagementService.Command(rawValue: command) != nil
+        else { return nil }
+        let parts = pill.trackingIdentifier.split(separator: ":")
+        let bundleID = parts.count >= 3 ? String(parts[1]) : appBundleID
+        return .windowLayout(command: command, title: pill.name, appName: appName, bundleID: bundleID)
     }
 
     /// A Global result: the file it stands for, the app it opens, or the command it runs.
@@ -150,8 +173,13 @@ enum CornerBoardLayout {
     /// The whole card: always the list's width — the field's — and, while a preview shows,
     /// at least tall enough for it.
     static func boardSize(list: CGSize, preview: CornerBoardPreview?) -> CGSize {
-        guard preview != nil else { return list }
-        return CGSize(width: list.width, height: max(list.height, minimumPreviewHeight))
+        guard let preview else { return list }
+        // The app's card reads as a card of its own, so the board keeps its height for it.
+        let floor: CGFloat
+        if case .appScope = preview { floor = AppScopeBoardMetrics.height } else {
+            floor = minimumPreviewHeight
+        }
+        return CGSize(width: list.width, height: max(list.height, floor))
     }
 }
 
@@ -242,7 +270,12 @@ extension AppChatPromptModel {
     /// The side panel for the row the arrows are on (#191). Read by the board that draws it
     /// and by the window that hit-tests it, so the two are one answer.
     var boardPreview: CornerBoardPreview? {
-        CornerBoardLayout.preview(
+        // The chip's card takes the right half until the arrows choose a row, whose preview
+        // is then what the half is for.
+        if isShowingScopeCard, !isGlobalScope, focusedRow == nil {
+            return .appScope(bundleID: appBundleID, name: appName)
+        }
+        return CornerBoardLayout.preview(
             for: focusedRow, appName: appName, appBundleID: appBundleID,
             cliCommand: cliCommand, lookup: searchDocumentLookup)
     }

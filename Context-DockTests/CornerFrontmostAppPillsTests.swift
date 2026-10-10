@@ -30,7 +30,8 @@ struct CornerFrontmostAppPillsTests {
         // grows with the screen and shrinks with the non-app pins, so it is read too rather
         // than assumed to be four: a pinned folder changed it once and failed this test on
         // one Mac with the code unchanged.
-        let expected = AppChatPromptModel.pillIcons(excluding: "com.microsoft.VSCode")
+        // An app with no pins shows every running app, itself included (owner 2026-10-08).
+        let expected = AppChatPromptModel.pillIcons()
         let shown = min(expected.count, max(1, AppChatPromptModel.pillFieldCapacity))
         #expect(!model.globalMatchIcons.contains { $0.id == "seed" })
         #expect(model.globalMatchIcons.map(\.id) == expected.prefix(shown).map(\.id))

@@ -19,7 +19,13 @@
 import AppKit
 
 struct CustomListRow: Identifiable {
+    /// The row's identity in a list: the script's id, made unique. Two rows can share a
+    /// script id — a process listening on two ports is one PID — and a list keyed on it drew
+    /// both as copies of the first and highlighted them together (owner 2026-10-08: "the
+    /// duplicate Listening Ports rows").
     let id: String
+    /// What the script said the row is: handed back as `$CD_ROW_ID`, read as a path.
+    let actionID: String
     let title: String
     let subtitle: String?
     let badge: String?
@@ -47,8 +53,9 @@ struct CustomListRow: Identifiable {
     init(id: String, title: String, subtitle: String?, badge: String?, icon: String?,
          layout: String? = nil, left: String? = nil, right: String? = nil,
          centerIcon: String? = nil, leftQuery: String? = nil, rightQuery: String? = nil,
-         centerAction: String? = nil) {
-        self.id = id; self.title = title; self.subtitle = subtitle
+         centerAction: String? = nil, actionID: String? = nil) {
+        self.id = id; self.actionID = actionID ?? id
+        self.title = title; self.subtitle = subtitle
         self.badge = badge; self.icon = icon
         self.layout = layout; self.left = left; self.right = right
         self.centerIcon = centerIcon
@@ -301,7 +308,7 @@ final class CustomListProviderService {
             "CD_APP": ctx.appName,
         ]
         if let row {
-            env["CD_ROW_ID"] = row.id
+            env["CD_ROW_ID"] = row.actionID
             env["CD_ROW_TITLE"] = row.title
         }
         return env
@@ -380,6 +387,14 @@ final class CustomListProviderService {
         }
         var rows: [CustomListRow] = []
         var autoIndex = 0
+        var seen: [String: Int] = [:]
+        /// The first row keeps its id; a later one with the same id is told apart by its
+        /// place, so every row has its own identity while `$CD_ROW_ID` stays the script's.
+        func uniqueID(_ id: String) -> String {
+            let count = seen[id, default: 0]
+            seen[id] = count + 1
+            return count == 0 ? id : "\(id)#\(count + 1)"
+        }
         for rawLine in output.split(separator: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
@@ -391,7 +406,7 @@ final class CustomListProviderService {
                 let title = raw.title ?? raw.id ?? "Row \(autoIndex)"
                 rows.append(
                     CustomListRow(
-                        id: raw.id ?? "\(autoIndex)",
+                        id: uniqueID(raw.id ?? "\(autoIndex)"),
                         title: title,
                         subtitle: raw.subtitle,
                         badge: raw.badge,
@@ -402,12 +417,14 @@ final class CustomListProviderService {
                         centerIcon: raw.centerIcon,
                         leftQuery: raw.leftQuery,
                         rightQuery: raw.rightQuery,
-                        centerAction: raw.centerAction))
+                        centerAction: raw.centerAction,
+                        actionID: raw.id ?? "\(autoIndex)"))
             } else {
                 autoIndex += 1
                 rows.append(
                     CustomListRow(
-                        id: "\(autoIndex)", title: line, subtitle: nil, badge: nil, icon: nil))
+                        id: uniqueID("\(autoIndex)"), title: line, subtitle: nil, badge: nil,
+                        icon: nil, actionID: "\(autoIndex)"))
             }
             if rows.count >= 60 { break }
         }

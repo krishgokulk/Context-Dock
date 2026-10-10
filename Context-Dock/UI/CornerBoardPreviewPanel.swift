@@ -33,6 +33,13 @@ struct CornerBoardPreviewPanel: View {
                     SystemCommandPreview(id: id, name: name)
                 case .web(let url, let title, let domain, let browserName):
                     WebPagePreview(url: url, title: title, domain: domain, browserName: browserName)
+                case .windowLayout(let command, let title, let appName, let bundleID):
+                    WindowLayoutPreview(
+                        command: command, title: title, appName: appName, bundleID: bundleID)
+                case .appScope(let bundleID, let name):
+                    // The list draws the app's card itself (`AppChatListCard`); anywhere
+                    // else the app's own preview says the same in brief.
+                    AppPreview(bundleID: bundleID, name: name)
                 }
             }
             .padding(.horizontal, 14)
@@ -564,5 +571,153 @@ private struct WebPageThumbnail: NSViewRepresentable {
             coordinator.pending?.cancel()
             view.stopLoading()
         }
+    }
+}
+
+// MARK: - Window layout
+
+/// A native window layout: the screen at the card's width, with the app's window — and, for a
+/// two-app arrangement, the other app's — drawn where the layout will put them. The regions
+/// are the Dock's own (`WindowManagementService.Command.layoutRegions`), the same ones its
+/// row icon draws.
+private struct WindowLayoutPreview: View {
+    let command: String
+    let title: String
+    let appName: String
+    let bundleID: String
+
+    private var layout: WindowManagementService.Command? {
+        WindowManagementService.Command(rawValue: command)
+    }
+
+    private var appIcon: NSImage? {
+        guard !bundleID.isEmpty,
+            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
+    }
+
+    /// The windows themselves, where Screen Recording allows; the icons otherwise.
+    @ObservedObject private var snapshots = AppWindowSnapshotService.shared
+    /// The other apps open on this desktop, front to back, one per remaining tile (owner
+    /// 2026-10-08: "show the apps' snapshots in the layout, smartly, by the apps opened").
+    @State private var others: [String] = []
+
+    /// Which app a tile shows: this one first, then the desktop's others in order.
+    private func tileApp(_ index: Int) -> String? {
+        if index == 0 { return bundleID.isEmpty ? nil : bundleID }
+        let other = index - 1
+        return other < others.count ? others[other] : nil
+    }
+
+    private static func icon(for bundleID: String) -> NSImage? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.icon
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { NSWorkspace.shared.icon(forFile: $0.path) }
+    }
+
+    /// Reads the desktop's apps and asks for their pictures, once per row shown.
+    private func loadTiles() {
+        let tiles = layout?.layoutRegions.count ?? 0
+        others = DesktopApps.frontToBack(excluding: bundleID, limit: max(tiles - 1, 0))
+        for id in [bundleID] + others where !id.isEmpty {
+            snapshots.refresh(bundleID: id)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PanelHeader(
+                icon: appIcon, title: title,
+                subtitle: appName.isEmpty ? "Window layout" : "\(appName) window layout")
+            screen
+                .aspectRatio(16 / 10, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+            PanelDivider()
+            PanelRow(symbol: "return", value: "Arrange it", trailing: "↩")
+        }
+        .onAppear(perform: loadTiles)
+        .onChange(of: command) { _, _ in loadTiles() }
+        .onChange(of: bundleID) { _, _ in loadTiles() }
+    }
+
+    /// The screen, with each region a window tile.
+    private var screen: some View {
+        let regions = layout?.layoutRegions ?? []
+        return GeometryReader { proxy in
+            let size = proxy.size
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1))
+                // The menu bar, so it reads as a screen at a glance.
+                Rectangle()
+                    .fill(Color.primary.opacity(0.12))
+                    .frame(width: size.width, height: 6)
+                    .clipShape(
+                        UnevenRoundedRectangle(topLeadingRadius: 8, topTrailingRadius: 8))
+                ForEach(Array(regions.enumerated()), id: \.offset) { index, region in
+                    let inset: CGFloat = 4
+                    let top: CGFloat = 8
+                    let rect = CGRect(
+                        x: inset + region.minX * (size.width - inset * 2),
+                        y: top + region.minY * (size.height - top - inset),
+                        width: region.width * (size.width - inset * 2),
+                        height: region.height * (size.height - top - inset)
+                    ).insetBy(dx: 2, dy: 2)
+                    tile(index: index, rect: rect)
+                        .frame(width: rect.width, height: rect.height)
+                        .offset(x: rect.minX, y: rect.minY)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// One region: the app's window where there is a picture, its icon on the accent fill
+    /// otherwise, and an empty accent tile when the desktop has no app for it.
+    @ViewBuilder
+    private func tile(index: Int, rect: CGRect) -> some View {
+        let app = tileApp(index)
+        let picture = app.flatMap { snapshots.snapshot(for: $0) }
+        let icon = app.flatMap { Self.icon(for: $0) }
+        let side = min(rect.width, rect.height)
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(Color.accentColor.opacity(index == 0 ? 0.85 : 0.45))
+            .overlay {
+                if let picture {
+                    Image(nsImage: picture)
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: rect.width, height: rect.height)
+                        .clipped()
+                } else if let icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: side * 0.45, height: side * 0.45)
+                }
+            }
+            // Whose window it is, in the corner, once the picture stands in for the icon.
+            .overlay(alignment: .bottomLeading) {
+                if picture != nil, let icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: min(18, side * 0.3), height: min(18, side * 0.3))
+                        .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                        .padding(4)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(
+                        Color.accentColor.opacity(index == 0 ? 0.9 : 0.5),
+                        lineWidth: picture == nil ? 0 : 1.5))
+            .animation(.easeOut(duration: 0.2), value: picture != nil)
     }
 }
