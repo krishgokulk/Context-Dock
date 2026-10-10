@@ -45,6 +45,10 @@ extension AppChatPromptModel {
         // appear only when Safari happened to be open — a race the CI run caught.)
         updateTabStrip()
         refreshTabs()
+        // An app's own actions do not need it running: a scope "/" jumped to while the app
+        // is closed still offers them (owner 2026-10-10).
+        adapterActions = AppAdapterManager.shared.adapter(for: appBundleID)?
+            .actions.filter { !$0.name.isEmpty } ?? []
         guard !appBundleID.isEmpty,
             let app = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == appBundleID && !$0.isTerminated
@@ -55,8 +59,6 @@ extension AppChatPromptModel {
             return
         }
 
-        adapterActions = AppAdapterManager.shared.adapter(for: appBundleID)?
-            .actions.filter { !$0.name.isEmpty } ?? []
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
@@ -98,6 +100,15 @@ extension AppChatPromptModel {
     func updateMenuMatches() {
         updateTabStrip()
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // "/" lists apps to jump to — running first, then installed — and Return takes the
+        // first (owner 2026-10-10).
+        if let filter = slashAppFilter {
+            rows = Self.slashAppRows(filter: filter, excluding: isGlobalScope ? "" : appBundleID)
+            menuMatches = []
+            focusedMenuIndex = rows.isEmpty ? nil : 0
+            syncListPhase()
+            return
+        }
         // A CLI scope offers the tool's own subcommands, and Return runs the line.
         if isCLIScope {
             rows = cliSubcommandRows(for: typed)
@@ -819,8 +830,36 @@ extension AppChatPromptModel {
     /// Finder's list opens under an "Ask AI" row once something is typed: Return asks, ↓
     /// chooses a file or command (owner 2026-10-09).
     var showsAskAIRow: Bool {
-        isFinderScope && finderBrowseStack.isEmpty
+        isFinderScope && finderBrowseStack.isEmpty && slashAppFilter == nil
             && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    // MARK: "/" jumps to an app (owner 2026-10-10)
+
+    /// What follows a leading "/" in Global or an app's Context Dock, or nil when the field
+    /// is not an app jump. A space ends it: "/mes what's new" is a sentence, not a jump —
+    /// General Chat's own "/" reads it the same way.
+    var slashAppFilter: String? {
+        guard isGlobalScope || isAppContextDock, query.hasPrefix("/") else { return nil }
+        let rest = query.dropFirst()
+        guard !rest.contains(" ") else { return nil }
+        return rest.lowercased()
+    }
+
+    /// How many apps a "/" offers. The list scrolls; this bounds the ranking.
+    static let slashAppLimit = 12
+
+    /// The apps a "/" offers, by name: running ones first, then installed — each half in
+    /// the directory's own match order. The scope being jumped from is left out.
+    static func slashAppRows(filter: String, excluding bundleID: String) -> [AppChatRow] {
+        let entries = ChatAppDirectory.matching(filter, limit: 60)
+            .filter { bundleID.isEmpty || $0.bundleId != bundleID }
+        return Array(Self.runningFirst(entries).prefix(slashAppLimit)).map(AppChatRow.app)
+    }
+
+    /// Running apps before installed ones, keeping the order within each.
+    nonisolated static func runningFirst(_ entries: [ChatAppEntry]) -> [ChatAppEntry] {
+        entries.filter(\.isRunning) + entries.filter { !$0.isRunning }
     }
 
     /// The disk's files matching what is typed, after Finder's own rows — asked only when
@@ -1200,7 +1239,7 @@ extension AppChatPromptModel {
             case .activatePID(_, _, let path): return path
             default: return nil
             }
-        case .command, .action, .cliSuggestion: return nil
+        case .command, .action, .cliSuggestion, .app: return nil
         }
     }
 
@@ -1227,6 +1266,7 @@ extension AppChatPromptModel {
             return pill.resolvedURL.flatMap { FaviconStore.shared.icon(for: $0) } ?? pill.menuItemImage
         case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
         case .global(let doc): return doc.icon
+        case .app(let entry): return entry.icon
         default: return nil
         }
     }
@@ -1354,6 +1394,9 @@ extension AppChatPromptModel {
             return false
         case .command, .action:
             return false
+        case .app:
+            run(row)
+            return true
         }
     }
 
@@ -1451,6 +1494,12 @@ extension AppChatPromptModel {
             }
             runMenuItem(item)
         case .action(let action): runAdapterAction(action)
+        case .app(let entry):
+            // "/" jumped here: into that app's scope, running or not. Nothing is launched —
+            // a scope for an app that is not open works through its adapters, CLI tools and
+            // skills (owner 2026-10-10).
+            query = ""
+            scopeIntoApp(name: entry.name, bundleID: entry.bundleId)
         case .cliSuggestion(let word):
             // Fills the field rather than running: a subcommand usually needs an argument,
             // and running it half-written would be a guess at what the user meant.

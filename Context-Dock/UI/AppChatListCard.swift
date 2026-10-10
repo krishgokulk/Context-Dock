@@ -171,6 +171,8 @@ struct AppChatListCard: View {
                                         fileRow(url, isFocused: index == effectiveFocus)
                                     case .cliSuggestion(let word):
                                         cliSuggestionRow(word, isFocused: index == effectiveFocus)
+                                    case .app(let entry):
+                                        appRow(entry, isFocused: index == effectiveFocus)
                                     }
                                 }
                                 .contextMenu { pinMenu(for: row) }
@@ -316,6 +318,7 @@ struct AppChatListCard: View {
     /// Names what the list is: what the app can do at rest, what matched once typing starts.
     private var headerText: String {
         let app = model.appName.isEmpty ? "App" : model.appName
+        if model.slashAppFilter != nil { return "Jump to an app · ↩ steps in" }
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
         return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary
@@ -407,6 +410,48 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.run(.cliSuggestion(word)) }
+    }
+
+    /// An app "/" can jump to: its icon and name, and whether it is open. One that is not
+    /// still works — its scope runs on its adapters, CLI tools and skills, unlaunched.
+    private func appRow(_ entry: ChatAppEntry, isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if let icon = entry.icon {
+                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: "app.dashed").font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 22, height: 22)
+            .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(entry.isRunning ? "Running" : "Not open · works without launching")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.run(.app(entry)) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     /// Finder's first row: what is typed, as a question to the AI. Return takes it until the
