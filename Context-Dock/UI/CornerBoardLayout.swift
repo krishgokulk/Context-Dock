@@ -93,7 +93,7 @@ enum CornerBoardLayout {
             // A subcommand is only a subcommand inside its tool's scope.
             guard !cliCommand.isEmpty else { return nil }
             return .cliSubcommand(command: cliCommand, subcommand: word)
-        case .action:
+        case .action, .app:
             return nil
         }
     }

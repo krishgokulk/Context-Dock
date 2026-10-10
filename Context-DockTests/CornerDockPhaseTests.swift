@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Context_Dock
@@ -197,6 +198,57 @@ struct CornerDockPhaseTests {
         #expect(finder.showsTabBar)
         // Its live menus are not read from Global — the read that once froze the field.
         #expect(finder.finderSkipsLiveMenus)
+    }
+
+    /// "/" in Global or an app's Context Dock jumps to an app by name — a space makes it a
+    /// sentence — and the jump scopes in without launching anything (owner 2026-10-10).
+    @Test func slashJumpsToAnAppWithoutLaunchingIt() {
+        let (model, _) = globalModel()
+        model.query = "/"
+        #expect(model.slashAppFilter == "")
+        model.query = "/Mes"
+        #expect(model.slashAppFilter == "mes")
+        model.query = "/mes what's new"
+        #expect(model.slashAppFilter == nil)
+        model.query = ""
+        #expect(model.slashAppFilter == nil)
+
+        let notes = ChatAppEntry(
+            name: "Notes", bundleId: "com.example.not-running-notes", icon: nil, isRunning: false)
+        model.run(.app(notes))
+        #expect(model.appBundleID == "com.example.not-running-notes")
+        #expect(model.returnsToGlobalScope)
+        #expect(model.query.isEmpty)
+        #expect(!NSWorkspace.shared.runningApplications.contains {
+            $0.bundleIdentifier == "com.example.not-running-notes"
+        })
+        // From an app's Context Dock, "/" jumps sideways.
+        model.query = "/s"
+        #expect(model.slashAppFilter == "s")
+        // Finder's Ask AI row stands aside for it.
+        model.run(.app(ChatAppEntry(
+            name: "Finder", bundleId: "com.apple.finder", icon: nil, isRunning: true)))
+        model.query = "/sa"
+        #expect(!model.showsAskAIRow)
+    }
+
+    /// Running apps, then the user's CLI tools and Global Commands, then installed apps.
+    @Test func slashListsRunningAppsThenToolsThenInstalledOnes() {
+        func entry(_ id: String, _ running: Bool) -> ChatAppEntry {
+            ChatAppEntry(name: id, bundleId: id, icon: nil, isRunning: running)
+        }
+        let rows = AppChatPromptModel.composeSlashRows(
+            apps: [
+                entry("maps", false), entry("messages", true), entry("mail", false),
+                entry("music", true),
+            ],
+            scopes: [.cliSuggestion("tool")],
+            limit: 16)
+        #expect(rows.map(\.id) == [
+            "app:messages", "app:music", "cli:tool", "app:maps", "app:mail",
+        ])
+        #expect(AppChatPromptModel.composeSlashRows(
+            apps: [entry("a", true), entry("b", true)], scopes: [], limit: 1).count == 1)
     }
 
     /// Finder's typed list opens under an Ask AI row: nothing chosen is that row, so Return

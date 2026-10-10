@@ -653,6 +653,8 @@ final class AppChatPromptModel: ObservableObject {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         // Inside a folder the listing is what the step went to fetch, typed filter or not.
         if isFinderScope, !finderBrowseStack.isEmpty { return rows.isEmpty ? .prompt : .suggesting }
+        // "/" opens its list of apps by itself; Return takes the first (owner 2026-10-10).
+        if slashAppFilter != nil { return rows.isEmpty ? .prompt : .suggesting }
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }

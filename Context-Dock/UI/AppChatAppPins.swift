@@ -144,6 +144,8 @@ extension AppChatPromptModel {
             return (pill.menuItemImage, pill.icon.isEmpty ? "app" : pill.icon)
         case .cliSuggestion:
             return (nil, "pin")
+        case .app(let entry):
+            return (entry.icon, "app")
         }
     }
 

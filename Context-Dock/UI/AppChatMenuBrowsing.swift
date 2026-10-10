@@ -45,6 +45,10 @@ extension AppChatPromptModel {
         // appear only when Safari happened to be open — a race the CI run caught.)
         updateTabStrip()
         refreshTabs()
+        // An app's own actions do not need it running: a scope "/" jumped to while the app
+        // is closed still offers them (owner 2026-10-10).
+        adapterActions = AppAdapterManager.shared.adapter(for: appBundleID)?
+            .actions.filter { !$0.name.isEmpty } ?? []
         guard !appBundleID.isEmpty,
             let app = NSWorkspace.shared.runningApplications.first(where: {
                 $0.bundleIdentifier == appBundleID && !$0.isTerminated
@@ -55,8 +59,6 @@ extension AppChatPromptModel {
             return
         }
 
-        adapterActions = AppAdapterManager.shared.adapter(for: appBundleID)?
-            .actions.filter { !$0.name.isEmpty } ?? []
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
@@ -98,6 +100,15 @@ extension AppChatPromptModel {
     func updateMenuMatches() {
         updateTabStrip()
         let typed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // "/" lists apps to jump to — running first, then installed — and Return takes the
+        // first (owner 2026-10-10).
+        if let filter = slashAppFilter {
+            rows = Self.slashAppRows(filter: filter, excluding: isGlobalScope ? "" : appBundleID)
+            menuMatches = []
+            focusedMenuIndex = rows.isEmpty ? nil : 0
+            syncListPhase()
+            return
+        }
         // A CLI scope offers the tool's own subcommands, and Return runs the line.
         if isCLIScope {
             rows = cliSubcommandRows(for: typed)
@@ -819,9 +830,72 @@ extension AppChatPromptModel {
     /// Finder's list opens under an "Ask AI" row once something is typed: Return asks, ↓
     /// chooses a file or command (owner 2026-10-09).
     var showsAskAIRow: Bool {
-        isFinderScope && finderBrowseStack.isEmpty
+        isFinderScope && finderBrowseStack.isEmpty && slashAppFilter == nil
             && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    // MARK: "/" jumps to an app (owner 2026-10-10)
+
+    /// What follows a leading "/" in Global or an app's Context Dock, or nil when the field
+    /// is not an app jump. A space ends it: "/mes what's new" is a sentence, not a jump —
+    /// General Chat's own "/" reads it the same way.
+    var slashAppFilter: String? {
+        guard isGlobalScope || isAppContextDock, query.hasPrefix("/") else { return nil }
+        let rest = query.dropFirst()
+        guard !rest.contains(" ") else { return nil }
+        return rest.lowercased()
+    }
+
+    /// How many rows a "/" offers. The list scrolls; this bounds the ranking.
+    static let slashAppLimit = 16
+
+    /// What a "/" offers, by name: the running apps, then the CLI tools and Global Commands
+    /// the user added (owner 2026-10-10: "add user added CLI scopes, global commands too"),
+    /// then installed apps. The scope being jumped from is left out.
+    static func slashAppRows(filter: String, excluding bundleID: String) -> [AppChatRow] {
+        let entries = ChatAppDirectory.matching(filter, limit: 60)
+            .filter { bundleID.isEmpty || $0.bundleId != bundleID }
+        return composeSlashRows(
+            apps: entries, scopes: slashScopeRows(filter: filter), limit: slashAppLimit)
+    }
+
+    /// Running apps, then the tools and commands, then installed apps — each group in its
+    /// own match order.
+    nonisolated static func composeSlashRows(
+        apps: [ChatAppEntry], scopes: [AppChatRow], limit: Int
+    ) -> [AppChatRow] {
+        let running = apps.filter(\.isRunning).map(AppChatRow.app)
+        let installed = apps.filter { !$0.isRunning }.map(AppChatRow.app)
+        return Array((running + scopes + installed).prefix(limit))
+    }
+
+    /// The CLI tools and Global Commands a "/" can step into, as the Global rows the index
+    /// already holds for them — the same filters (user-added tools, enabled commands, none a
+    /// plugin replaced), and the same step-in when one is taken.
+    static func slashScopeRows(filter: String) -> [AppChatRow] {
+        let tools = TerminalPackageManager.shared
+        var candidates: [(name: String, alias: String, id: String)] = tools.packages
+            .filter { $0.isEnabled && tools.isUserAddedGlobalScope($0) }
+            .map { (name: $0.name.isEmpty ? $0.command : $0.name, alias: $0.command,
+                id: "cli://\($0.command)") }
+        candidates += SystemCommandsRegistry.shared.commands
+            .filter(\.isEnabled)
+            .map { (name: $0.name, alias: $0.name, id: "syscmd://\($0.id.uuidString)") }
+        let needle = filter.lowercased()
+        let ranked = candidates.enumerated().compactMap { index, item -> (Int, Int, String)? in
+            let name = item.name.lowercased()
+            let alias = item.alias.lowercased()
+            if needle.isEmpty || name.hasPrefix(needle) || alias.hasPrefix(needle) {
+                return (0, index, item.id)
+            }
+            if name.contains(needle) || alias.contains(needle) { return (1, index, item.id) }
+            return nil
+        }
+        return ranked.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
+            .compactMap { GlobalSearchService.shared.document(withID: $0.2) }
+            .map(AppChatRow.global)
+    }
+
 
     /// The disk's files matching what is typed, after Finder's own rows — asked only when
     /// the front window has none. Async (Spotlight); the generation guard drops a search
@@ -1200,7 +1274,7 @@ extension AppChatPromptModel {
             case .activatePID(_, _, let path): return path
             default: return nil
             }
-        case .command, .action, .cliSuggestion: return nil
+        case .command, .action, .cliSuggestion, .app: return nil
         }
     }
 
@@ -1227,6 +1301,7 @@ extension AppChatPromptModel {
             return pill.resolvedURL.flatMap { FaviconStore.shared.icon(for: $0) } ?? pill.menuItemImage
         case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
         case .global(let doc): return doc.icon
+        case .app(let entry): return entry.icon
         default: return nil
         }
     }
@@ -1354,6 +1429,9 @@ extension AppChatPromptModel {
             return false
         case .command, .action:
             return false
+        case .app:
+            run(row)
+            return true
         }
     }
 
@@ -1429,6 +1507,8 @@ extension AppChatPromptModel {
         // Taking a row is done with the list: most of these clear the field, and a list
         // left standing over a cleared field refills with everything the app can do.
         focusedMenuIndex = nil
+        // A "/" jump lands on an empty field, whatever it stepped into.
+        if slashAppFilter != nil { query = "" }
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }
@@ -1451,6 +1531,12 @@ extension AppChatPromptModel {
             }
             runMenuItem(item)
         case .action(let action): runAdapterAction(action)
+        case .app(let entry):
+            // "/" jumped here: into that app's scope, running or not. Nothing is launched —
+            // a scope for an app that is not open works through its adapters, CLI tools and
+            // skills (owner 2026-10-10).
+            query = ""
+            scopeIntoApp(name: entry.name, bundleID: entry.bundleId)
         case .cliSuggestion(let word):
             // Fills the field rather than running: a subcommand usually needs an argument,
             // and running it half-written would be a guess at what the user meant.
