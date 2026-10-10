@@ -564,9 +564,7 @@ enum ClaudeCodeCLIService {
             process.currentDirectoryURL =
                 workingDirectory ?? FileManager.default.temporaryDirectory
 
-            var environment = ProcessInfo.processInfo.environment
-            environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
-            process.environment = environment
+            process.environment = CLIChildEnvironment.make()
 
             let pipe = Pipe()
             process.standardOutput = pipe
