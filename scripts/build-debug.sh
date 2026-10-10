@@ -27,6 +27,15 @@ fi
 # DerivedData, a launch can race another build and find the stub but not the dylib →
 # "Namespace DYLD, Library not loaded: @rpath/Context-Dock.debug.dylib" SIGABRT, app
 # never opens. Forcing a monolithic debug binary removes the missing-dylib failure mode.
+# The full xcodebuild log (thousands of lines) goes to a file, not the terminal: an agent
+# reads every printed line as tokens, and a build used to cost more than the change it built.
+# Errors and the result line are printed; VERBOSE=1 restores the full stream.
+LOG="$ROOT_DIR/.build/build-debug.log"
+mkdir -p "$ROOT_DIR/.build"
+if [ "${VERBOSE:-0}" = "1" ]; then
+  LOG=/dev/stdout
+fi
+set +e
 xcodebuild \
   -project "$ROOT_DIR/Context-Dock.xcodeproj" \
   -scheme Context-Dock \
@@ -35,7 +44,18 @@ xcodebuild \
   -allowProvisioningUpdates \
   CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" \
   ENABLE_DEBUG_DYLIB=NO \
-  build
+  build >"$LOG" 2>&1
+STATUS=$?
+set -e
+if [ "$LOG" != /dev/stdout ]; then
+  if [ "$STATUS" -eq 0 ]; then
+    echo "build: OK (full log: .build/build-debug.log)"
+  else
+    echo "build: FAILED (exit $STATUS) — errors (full log: .build/build-debug.log):"
+    grep -E "error:" "$LOG" | head -30 || tail -40 "$LOG"
+  fi
+fi
+exit "$STATUS"
 # Default is SIGNED (Apple Development): unsigned ad-hoc builds have no stable
 # designated requirement, so macOS re-prompts Accessibility/Keychain on every
 # launch — deadly for an AX-driven app. Export CODE_SIGNING_ALLOWED=NO only for
