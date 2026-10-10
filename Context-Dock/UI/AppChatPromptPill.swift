@@ -1289,7 +1289,9 @@ struct AppChatPromptPill: View {
                         .transition(.opacity)
                         // Resting the pointer on the small pills asks for the big ones: the
                         // field folds into the dock at once rather than waiting out the dwell.
-                        .onHover { inside in if inside { model.foldToDock() } }
+                        .onHover { inside in
+                            if inside, model.hoverMayFold { model.foldToDock() }
+                        }
                 }
                 // Beside the running-app capsule, not inside it: the clipboard used to
                 // lead that list as one of its icons, which put a permanent member in a

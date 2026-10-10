@@ -52,11 +52,13 @@ struct CornerDockPhaseTests {
         #expect(model.phase == .dock)
     }
 
-    @Test func typedTextKeepsThePromptFromDocking() {
+    /// Typed text keeps the field itself: it neither docks nor shrinks to the badge
+    /// (owner 2026-09-27: "don't hide if input is in the field").
+    @Test func typedTextKeepsThePromptOpen() {
         let (model, _) = globalModel()
         model.query = "saf"
         model.standDown()
-        #expect(model.phase == .mini)
+        #expect(model.phase == .prompt)
     }
 
     /// Resting the pointer on the apps folds a typed field too, and the draft waits for the
