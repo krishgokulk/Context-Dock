@@ -846,21 +846,56 @@ extension AppChatPromptModel {
         return rest.lowercased()
     }
 
-    /// How many apps a "/" offers. The list scrolls; this bounds the ranking.
-    static let slashAppLimit = 12
+    /// How many rows a "/" offers. The list scrolls; this bounds the ranking.
+    static let slashAppLimit = 16
 
-    /// The apps a "/" offers, by name: running ones first, then installed — each half in
-    /// the directory's own match order. The scope being jumped from is left out.
+    /// What a "/" offers, by name: the running apps, then the CLI tools and Global Commands
+    /// the user added (owner 2026-10-10: "add user added CLI scopes, global commands too"),
+    /// then installed apps. The scope being jumped from is left out.
     static func slashAppRows(filter: String, excluding bundleID: String) -> [AppChatRow] {
         let entries = ChatAppDirectory.matching(filter, limit: 60)
             .filter { bundleID.isEmpty || $0.bundleId != bundleID }
-        return Array(Self.runningFirst(entries).prefix(slashAppLimit)).map(AppChatRow.app)
+        return composeSlashRows(
+            apps: entries, scopes: slashScopeRows(filter: filter), limit: slashAppLimit)
     }
 
-    /// Running apps before installed ones, keeping the order within each.
-    nonisolated static func runningFirst(_ entries: [ChatAppEntry]) -> [ChatAppEntry] {
-        entries.filter(\.isRunning) + entries.filter { !$0.isRunning }
+    /// Running apps, then the tools and commands, then installed apps — each group in its
+    /// own match order.
+    nonisolated static func composeSlashRows(
+        apps: [ChatAppEntry], scopes: [AppChatRow], limit: Int
+    ) -> [AppChatRow] {
+        let running = apps.filter(\.isRunning).map(AppChatRow.app)
+        let installed = apps.filter { !$0.isRunning }.map(AppChatRow.app)
+        return Array((running + scopes + installed).prefix(limit))
     }
+
+    /// The CLI tools and Global Commands a "/" can step into, as the Global rows the index
+    /// already holds for them — the same filters (user-added tools, enabled commands, none a
+    /// plugin replaced), and the same step-in when one is taken.
+    static func slashScopeRows(filter: String) -> [AppChatRow] {
+        let tools = TerminalPackageManager.shared
+        var candidates: [(name: String, alias: String, id: String)] = tools.packages
+            .filter { $0.isEnabled && tools.isUserAddedGlobalScope($0) }
+            .map { (name: $0.name.isEmpty ? $0.command : $0.name, alias: $0.command,
+                id: "cli://\($0.command)") }
+        candidates += SystemCommandsRegistry.shared.commands
+            .filter(\.isEnabled)
+            .map { (name: $0.name, alias: $0.name, id: "syscmd://\($0.id.uuidString)") }
+        let needle = filter.lowercased()
+        let ranked = candidates.enumerated().compactMap { index, item -> (Int, Int, String)? in
+            let name = item.name.lowercased()
+            let alias = item.alias.lowercased()
+            if needle.isEmpty || name.hasPrefix(needle) || alias.hasPrefix(needle) {
+                return (0, index, item.id)
+            }
+            if name.contains(needle) || alias.contains(needle) { return (1, index, item.id) }
+            return nil
+        }
+        return ranked.sorted { ($0.0, $0.1) < ($1.0, $1.1) }
+            .compactMap { GlobalSearchService.shared.document(withID: $0.2) }
+            .map(AppChatRow.global)
+    }
+
 
     /// The disk's files matching what is typed, after Finder's own rows — asked only when
     /// the front window has none. Async (Spotlight); the generation guard drops a search
@@ -1472,6 +1507,8 @@ extension AppChatPromptModel {
         // Taking a row is done with the list: most of these clear the field, and a list
         // left standing over a cleared field refills with everything the app can do.
         focusedMenuIndex = nil
+        // A "/" jump lands on an empty field, whatever it stepped into.
+        if slashAppFilter != nil { query = "" }
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }

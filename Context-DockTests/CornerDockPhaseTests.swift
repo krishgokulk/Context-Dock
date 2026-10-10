@@ -232,15 +232,23 @@ struct CornerDockPhaseTests {
         #expect(!model.showsAskAIRow)
     }
 
-    @Test func slashListsRunningAppsBeforeInstalledOnes() {
+    /// Running apps, then the user's CLI tools and Global Commands, then installed apps.
+    @Test func slashListsRunningAppsThenToolsThenInstalledOnes() {
         func entry(_ id: String, _ running: Bool) -> ChatAppEntry {
             ChatAppEntry(name: id, bundleId: id, icon: nil, isRunning: running)
         }
-        let ordered = AppChatPromptModel.runningFirst([
-            entry("maps", false), entry("messages", true), entry("mail", false),
-            entry("music", true),
+        let rows = AppChatPromptModel.composeSlashRows(
+            apps: [
+                entry("maps", false), entry("messages", true), entry("mail", false),
+                entry("music", true),
+            ],
+            scopes: [.cliSuggestion("tool")],
+            limit: 16)
+        #expect(rows.map(\.id) == [
+            "app:messages", "app:music", "cli:tool", "app:maps", "app:mail",
         ])
-        #expect(ordered.map(\.bundleId) == ["messages", "music", "maps", "mail"])
+        #expect(AppChatPromptModel.composeSlashRows(
+            apps: [entry("a", true), entry("b", true)], scopes: [], limit: 1).count == 1)
     }
 
     /// Finder's typed list opens under an Ask AI row: nothing chosen is that row, so Return

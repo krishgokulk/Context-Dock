@@ -318,7 +318,7 @@ struct AppChatListCard: View {
     /// Names what the list is: what the app can do at rest, what matched once typing starts.
     private var headerText: String {
         let app = model.appName.isEmpty ? "App" : model.appName
-        if model.slashAppFilter != nil { return "Jump to an app · ↩ steps in" }
+        if model.slashAppFilter != nil { return "Jump to an app, tool or command · ↩ steps in" }
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
         return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary

@@ -978,16 +978,8 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 6)
 
-            // Put the chat sheet away; the field's ⌃ brings it back (owner 2026-10-08:
-            // "show a down arrow to hide the chat sheet").
-            if !model.isGlobalScope {
-                Button { model.hideConversation() } label: {
-                    headerGlyph("chevron.down")
-                }
-                .buttonStyle(.plain)
-                .help("Hide the conversation")
-                .accessibilityLabel("Hide the conversation")
-            }
+            // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
+            // panel toggle beside it (owner 2026-10-10).
 
             // The app's panel beside the conversation, shown or hidden (#191) — Claude's
             // sidebar toggle, in the same place.
@@ -1631,8 +1623,10 @@ struct AppChatPromptPill: View {
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
             // The app's settings card lives in its chip (owner 2026-09-28, layout C). Open, the
-            // gear turns into the arrow that puts it away (owner 2026-10-07).
-            Image(systemName: chipIsOpen ? "chevron.down" : "gearshape")
+            // gear turns into the arrow that puts it away (owner 2026-10-07). In a
+            // conversation the ⌄ puts the chat sheet away — the header's toggle has the panel
+            // (owner 2026-10-10).
+            Image(systemName: model.phase == .chat || chipIsOpen ? "chevron.down" : "gearshape")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary)
         }
@@ -1645,18 +1639,22 @@ struct AppChatPromptPill: View {
         // result board over the field, and in a conversation it is the chat's own side panel.
         .onTapGesture {
             if model.phase == .chat {
-                model.livePanelOpen.toggle()
+                model.hideConversation()
             } else {
                 model.isShowingScopeCard.toggle()
             }
         }
-        .help("What DoraX can do in \(model.appName)")
+        .help(model.phase == .chat
+            ? "Hide the conversation" : "What DoraX can do in \(model.appName)")
         .accessibilityAddTraits(.isButton)
-        .accessibilityLabel("\(model.appName) settings")
+        .accessibilityLabel(model.phase == .chat
+            ? "Hide the conversation" : "\(model.appName) settings")
     }
 
+    /// The app's card is open over the field. In a conversation the chip hides the chat
+    /// instead, and the panel belongs to the header's toggle.
     private var chipIsOpen: Bool {
-        model.phase == .chat ? model.showsLivePanel : model.isShowingScopeCard
+        model.phase != .chat && model.isShowingScopeCard
     }
 
     private var chipIconShown: Bool { model.phase != .dock }
