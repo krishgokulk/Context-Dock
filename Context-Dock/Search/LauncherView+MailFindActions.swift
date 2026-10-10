@@ -75,55 +75,6 @@ extension LauncherView {
         }
     }
 
-    func mailSearchTokenKind(from value: String) -> MailSearchTokenKind {
-        switch normalizedDockPillText(value) {
-        case "sender":
-            return .sender
-        case "subject":
-            return .subject
-        case "attachment":
-            return .attachment
-        case "date":
-            return .date
-        default:
-            return .generic
-        }
-    }
-
-    func resolvedMailMailboxSearchIntent(for rawScopedQuery: String) async
-        -> MailSearchIntent?
-    {
-        #if canImport(FoundationModels)
-            if #available(macOS 26.0, *) {
-                if let generated = try? await generateMailIntent(
-                    from: rawScopedQuery,
-                    dateTimeContext: currentDateTimeContextBlock()
-                ) {
-                    let mode = normalizedDockPillText(generated.mode)
-                    if mode == "question" || mode == "none" {
-                        return nil
-                    }
-
-                    let resolvedQuery = generated.searchQuery
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !resolvedQuery.isEmpty {
-                        let tokenKind = mailSearchTokenKind(from: generated.tokenKind)
-                        return MailSearchIntent(
-                            query: resolvedQuery,
-                            tokenKind: tokenKind,
-                            displayLabel: mailSearchDisplayLabel(
-                                query: resolvedQuery,
-                                tokenKind: tokenKind
-                            )
-                        )
-                    }
-                }
-            }
-        #endif
-
-        return shouldExecuteMailMailboxSearch(for: rawScopedQuery)
-    }
-
     func weekdayNameCandidate(for normalizedQuery: String) -> String? {
         let weekdays = [
             "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
@@ -278,10 +229,23 @@ extension LauncherView {
         MailQuestionRouter.isQuestionShaped(rawScopedQuery)
     }
 
+    /// Whether Mail's Mailbox Search shortcut takes this turn before the model (issue #195).
+    /// Only when the sentence IS the search command and its value — "search mail from SBI".
+    /// "check my recent mail from … and do what it says" or "find mail from SBI today" is a
+    /// request: the model takes it, with `mail.search` and `mail.read`.
     func shouldExecuteMailMailboxSearch(for rawScopedQuery: String) -> MailSearchIntent? {
-        guard let intent = mailSemanticSearchIntent(from: rawScopedQuery) else { return nil }
-        guard !isQuestionStyleMailQuery(rawScopedQuery) else { return nil }
-        return intent
+        guard let command = MailboxSearchCommand.claims(rawScopedQuery) else { return nil }
+        let tokenKind: MailSearchTokenKind
+        switch command.field {
+        case .any: tokenKind = .generic
+        case .sender: tokenKind = .sender
+        case .subject: tokenKind = .subject
+        case .attachment: tokenKind = .attachment
+        }
+        return MailSearchIntent(
+            query: command.term,
+            tokenKind: tokenKind,
+            displayLabel: mailSearchDisplayLabel(query: command.term, tokenKind: tokenKind))
     }
 
     struct MailQuestionFilters {
@@ -800,268 +764,12 @@ extension LauncherView {
         return results
     }
 
-    func isMailSuggestionActionRole(_ role: String) -> Bool {
-        [
-            "AXRow",
-            "AXGroup",
-            "AXButton",
-            "AXMenuItem",
-            "AXListItem",
-            "AXCell",
-        ].contains(role)
-    }
 
-    struct MailSuggestionMatcher {
-        let tokenKind: MailSearchTokenKind
-        let normalizedQuery: String
-        let normalizedQueryTokens: [String]
-        let normalizedCandidates: [String]
-        let normalizedFieldTokens: [String]
 
-        private static func normalize(_ text: String) -> String {
-            let lowered = text.lowercased()
-            let mapped = lowered.unicodeScalars.map { scalar -> Character in
-                if CharacterSet.alphanumerics.contains(scalar)
-                    || CharacterSet.whitespacesAndNewlines.contains(scalar)
-                {
-                    return Character(scalar)
-                }
-                return " "
-            }
-            return String(mapped)
-                .components(separatedBy: .whitespacesAndNewlines)
-                .filter { !$0.isEmpty }
-                .joined(separator: " ")
-        }
 
-        private static func isActionRole(_ role: String) -> Bool {
-            ["AXRow", "AXGroup", "AXButton", "AXMenuItem", "AXListItem", "AXCell"].contains(role)
-        }
 
-        init(intent: MailSearchIntent, candidates: [String]) {
-            tokenKind = intent.tokenKind
-            normalizedQuery = Self.normalize(intent.query)
-            normalizedQueryTokens =
-                normalizedQuery
-                .split(whereSeparator: \.isWhitespace)
-                .map(String.init)
-                .filter { !$0.isEmpty }
-            normalizedCandidates = candidates.map { Self.normalize($0) }.filter { !$0.isEmpty }
 
-            switch intent.tokenKind {
-            case .generic:
-                normalizedFieldTokens = []
-            case .sender:
-                normalizedFieldTokens = ["sender", "contains"]
-            case .subject:
-                normalizedFieldTokens = ["subject", "contains"]
-            case .attachment:
-                normalizedFieldTokens = ["attachment", "name", "contains"]
-            case .date:
-                normalizedFieldTokens = ["date"]
-            }
-        }
 
-        func score(
-            role: String,
-            actionNames: [String],
-            directStrings: [String],
-            subtreeStrings: [String]
-        ) -> Int? {
-            let normalizedDirect = directStrings.map { Self.normalize($0) }.filter { !$0.isEmpty }
-            let normalizedSubtree = subtreeStrings.map { Self.normalize($0) }.filter { !$0.isEmpty }
-            let combinedDirect = normalizedDirect.joined(separator: " ")
-            let combinedSubtree = normalizedSubtree.joined(separator: " ")
-
-            guard !combinedSubtree.isEmpty else { return nil }
-
-            let exactDirectMatch = normalizedCandidates.contains { candidate in
-                combinedDirect == candidate || combinedDirect.contains(candidate)
-            }
-            let exactSubtreeMatch = normalizedCandidates.contains { candidate in
-                combinedSubtree == candidate || combinedSubtree.contains(candidate)
-            }
-
-            let tokenMatch: Bool = {
-                switch tokenKind {
-                case .generic:
-                    return false
-                case .date:
-                    return exactDirectMatch
-                        || exactSubtreeMatch
-                        || normalizedQueryTokens.contains(where: { combinedSubtree.contains($0) })
-                case .sender, .subject, .attachment:
-                    let hasFieldTokens = normalizedFieldTokens.allSatisfy {
-                        combinedSubtree.contains($0)
-                    }
-                    let hasQueryTokens =
-                        !normalizedQueryTokens.isEmpty
-                        && normalizedQueryTokens.allSatisfy { combinedSubtree.contains($0) }
-                    return exactDirectMatch || exactSubtreeMatch
-                        || (hasFieldTokens && hasQueryTokens)
-                }
-            }()
-
-            guard tokenMatch else { return nil }
-
-            var score = 0
-            if exactDirectMatch { score += 240 }
-            if exactSubtreeMatch { score += 180 }
-            if Self.isActionRole(role) { score += 120 }
-            if role == "AXStaticText" { score -= 240 }
-            if role == "AXRow" { score += 80 }
-            if role == "AXMenuItem" || role == "AXListItem" || role == "AXCell" { score += 60 }
-            if role == "AXGroup" || role == "AXButton" { score += 40 }
-            if actionNames.contains(kAXPressAction as String) { score += 30 }
-            if actionNames.contains(kAXConfirmAction as String) { score += 15 }
-            if combinedDirect.contains(normalizedQuery) { score += 20 }
-            if combinedSubtree.contains(normalizedQuery) { score += 10 }
-            return score
-        }
-    }
-
-    func bestMailSuggestionTarget(
-        in element: AXUIElement,
-        matcher: MailSuggestionMatcher,
-        depth: Int = 0
-    ) -> (element: AXUIElement, score: Int)? {
-        guard depth < 10 else { return nil }
-
-        let role = axStringAttribute(element, kAXRoleAttribute as CFString) ?? ""
-        let actionNames = axStringArrayAttribute(element, "AXActions" as CFString)
-        let directStrings = axSearchableStrings(for: element)
-        let subtreeStrings =
-            isMailSuggestionActionRole(role)
-            ? axSubtreeSearchableStrings(for: element)
-            : directStrings
-
-        var best: (element: AXUIElement, score: Int)?
-        if let score = matcher.score(
-            role: role,
-            actionNames: actionNames,
-            directStrings: directStrings,
-            subtreeStrings: subtreeStrings
-        ) {
-            best = (element, score)
-        }
-
-        for child in axChildElements(element) {
-            guard
-                let childBest = bestMailSuggestionTarget(
-                    in: child,
-                    matcher: matcher,
-                    depth: depth + 1
-                )
-            else { continue }
-
-            if let currentBest = best {
-                if childBest.score > currentBest.score {
-                    best = childBest
-                }
-            } else {
-                best = childBest
-            }
-        }
-
-        return best
-    }
-
-    func pressMailSuggestion(
-        in element: AXUIElement,
-        matcher: MailSuggestionMatcher,
-        depth: Int = 0
-    ) -> Bool {
-        guard depth == 0 else { return false }
-        guard let best = bestMailSuggestionTarget(in: element, matcher: matcher) else {
-            return false
-        }
-
-        if AXUIElementPerformAction(best.element, kAXPressAction as CFString) == .success {
-            return true
-        }
-        if AXUIElementPerformAction(best.element, kAXConfirmAction as CFString) == .success {
-            return true
-        }
-
-        for child in axChildElements(best.element) {
-            if AXUIElementPerformAction(child, kAXPressAction as CFString) == .success {
-                return true
-            }
-            if AXUIElementPerformAction(child, kAXConfirmAction as CFString) == .success {
-                return true
-            }
-        }
-        return false
-    }
-
-    func applyMailSearchTokenIntent(_ intent: MailSearchIntent, in pid: pid_t) async -> Bool
-    {
-        let candidates: [String] = {
-            switch intent.tokenKind {
-            case .generic:
-                return []
-            case .sender:
-                return ["Sender contains: \(intent.query)"]
-            case .subject:
-                return ["Subject contains: \(intent.query)"]
-            case .attachment:
-                return ["Attachment name contains: \(intent.query)"]
-            case .date:
-                return mailDateSuggestionCandidates(for: intent.query)
-            }
-        }()
-
-        guard !candidates.isEmpty else { return true }
-        let matcher = MailSuggestionMatcher(intent: intent, candidates: candidates)
-
-        for _ in 0..<12 {
-            let appElement = AXUIElementCreateApplication(pid)
-            if pressMailSuggestion(in: appElement, matcher: matcher) {
-                return true
-            }
-            try? await Task.sleep(nanoseconds: 90_000_000)
-        }
-
-        return false
-    }
-
-    func injectMailSearchQuery(_ query: String, into pid: pid_t) async -> Bool {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        for _ in 0..<18 {
-            if let focusedElement = currentFocusedElement(in: pid),
-                isEditableAXElement(focusedElement)
-            {
-                let didSetAXValue = setAXTextValue(trimmed, on: focusedElement)
-                let didTypeValue =
-                    didSetAXValue
-                    ? false
-                    : await typeMailSearchQuery(trimmed, into: focusedElement, pid: pid)
-                if didSetAXValue || didTypeValue {
-                    postKeyCode(36, to: pid)
-                    return true
-                }
-            }
-
-            let appElement = AXUIElementCreateApplication(pid)
-            if let searchField = findMailSearchField(in: appElement) {
-                let didSetAXValue = setAXTextValue(trimmed, on: searchField)
-                let didTypeValue =
-                    didSetAXValue
-                    ? false
-                    : await typeMailSearchQuery(trimmed, into: searchField, pid: pid)
-                if didSetAXValue || didTypeValue {
-                    postKeyCode(36, to: pid)
-                    return true
-                }
-            }
-
-            try? await Task.sleep(nanoseconds: 100_000_000)
-        }
-
-        return false
-    }
 
     func executeMailMailboxSearch(intent: MailSearchIntent, userMessage: String) {
         let searchQuery = intent.query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1076,88 +784,42 @@ extension LauncherView {
 
         l2.chatMessages.append(AIChatMessage(role: .user, content: userMessage))
         l2.isLoading = true
+        // A shortcut that runs before the model is still a turn that ran something: it
+        // records its step like any tool, so the answer and the Corner panel show it
+        // instead of "Answered without running anything" (issue #195).
+        let requestID = beginL2AIRequest()
+        let recorder = ActivityRecorder.active
+        let stepID = recorder?.begin(
+            kind: .tool, title: "Mail › mail.search", detail: intent.displayLabel)
 
         l2.currentTask = Task {
-            guard
-                let mailApp = await activateOrLaunchSemanticApp(
-                    bundleIdentifier: "com.apple.mail",
-                    appName: "Mail"
-                )
-            else {
-                await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open Mail.",
-                            isError: true
-                        ))
-                    l2.isLoading = false
-                    l2.currentTask = nil
+            @MainActor func finish(_ answer: String, ok: Bool, isError: Bool = false) {
+                if let stepID {
+                    recorder?.finish(stepID, status: ok ? .ok : .failed, output: answer)
                 }
+                l2.chatMessages.append(
+                    AIChatMessage(role: .assistant, content: answer, isError: isError))
+                finishL2AIRequest(requestID)
+            }
+
+            // Headless, as mail.search does it: Mail's window is never raised or typed into
+            // (owner, 2026-10-10: the menu-click route was slow, raised Mail and lost the
+            // sender token).
+            guard AppSettings.shared.mailMCPEnabled else {
+                finish("Mail access is disabled in Settings.", ok: false, isError: true)
                 return
             }
-
-            let pid = mailApp.processIdentifier
-            try? await Task.sleep(nanoseconds: 220_000_000)
-
-            let liveItems = AXMenuReader.shared.refreshAllMenuItems(for: pid, maxDepth: 6)
-            let mailboxSearchPath =
-                liveItems.first(where: { item in
-                    normalizedDockPillText(item.title) == "mailbox search"
-                        || normalizedDockPillText(item.path.joined(separator: " "))
-                            == "edit find mailbox search"
-                })?.path
-
-            var triggeredSearch = false
-            if let mailboxSearchPath {
-                triggeredSearch = AXMenuReader.shared.clickMenuItem(
-                    path: mailboxSearchPath, in: pid)
-            }
-            if !triggeredSearch {
-                AXMenuReader.shared.executeShortcut(char: "f", modifiers: 2, in: pid)
-                triggeredSearch = true
-            }
-
-            guard triggeredSearch else {
-                await MainActor.run {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: "❌ Couldn't open Mail search.",
-                            isError: true
-                        ))
-                    l2.isLoading = false
-                    l2.currentTask = nil
-                }
-                return
-            }
-
-            let injected = await injectMailSearchQuery(searchQuery, into: pid)
-            let appliedToken = injected ? await applyMailSearchTokenIntent(intent, in: pid) : false
-
-            await MainActor.run {
-                if injected {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content: appliedToken && intent.tokenKind != .generic
-                                ? "Opened Mailbox Search for \(intent.displayLabel)."
-                                : "Opened Mailbox Search for “\(searchQuery)”."
-                        ))
-                    searchState.query = ""
-                    l2.focusedPillIndex = nil
-                } else {
-                    l2.chatMessages.append(
-                        AIChatMessage(
-                            role: .assistant,
-                            content:
-                                "⚠️ Opened Mail search, but couldn't inject the query automatically.",
-                            isError: true
-                        ))
-                }
-                l2.isLoading = false
-                l2.currentTask = nil
-            }
+            // ponytail: mailboxSnapshot filters only sender and subject; "any" and
+            // attachment searches match the subject until the adapter grows those fields.
+            let bySender = intent.tokenKind == .sender
+            let summary = await Task.detached(priority: .userInitiated) {
+                MailAutomation.mailboxSnapshot(
+                    senderContains: bySender ? searchQuery : "",
+                    subjectContains: bySender ? "" : searchQuery)
+            }.value
+            searchState.query = ""
+            l2.focusedPillIndex = nil
+            finish(summary, ok: true)
         }
     }
 
