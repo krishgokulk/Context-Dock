@@ -222,6 +222,29 @@ final class CapabilityRegistry {
         ].joined(separator: "\n\n")
     }
 
+    /// The scoped app's capabilities, one line each, for a CLI that reaches them through
+    /// `dorax_run_capability`. Capability-first: the model sees `mail.search(sender, …)`
+    /// before it thinks of hand-writing osascript.
+    func cliCapabilityLines(for bundleID: String?) -> [String] {
+        // The app's own only: the unowned ones (clipboard, browser, shell-adjacent) are
+        // listed in every app and would bury `mail.search` under thirty unrelated lines.
+        capabilities(for: bundleID).filter { bundleID == nil || $0.appBundleID == bundleID }.map { capability in
+            let fields = capability.inputSchema.fields.map(\.name).joined(separator: ", ")
+            return "- \(capability.id)(\(fields)): \(capability.title) [risk=\(capability.riskLevel.rawValue)]"
+        }
+    }
+
+    /// The system-prompt paragraph that puts capabilities ahead of the shell. Empty when the
+    /// app has none, so an unscoped turn's prompt does not change.
+    func cliPromptBlock(for bundleID: String?, appName: String?) -> String {
+        let lines = cliCapabilityLines(for: bundleID)
+        guard !lines.isEmpty else { return "" }
+        return "DoraX capabilities for \(appName ?? "this app") — call these through the "
+            + "dorax_run_capability tool (id + input) BEFORE any shell command or script. "
+            + "Reads run at once; changes ask the user first. Use a shell or osascript only "
+            + "when no capability below fits.\n" + lines.joined(separator: "\n")
+    }
+
     /// Re-register the user's Global Commands as capabilities. Call after the
     /// command registry changes (or before a chat) so newly-added commands are
     /// visible to the AI without a relaunch.
