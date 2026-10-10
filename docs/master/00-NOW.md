@@ -46,6 +46,14 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-10 | UI/UX: "/" jumps to any app's scope from Global or a Context Dock (owner's Corner lane) | #222 |
+| 2026-10-10 | UI/UX: Finder from Global is Finder's own Context Dock, with an Ask AI row (owner's Corner lane) | #221 |
+| 2026-10-09 | Corner UI/UX: one field — apps are steps inside Global; ⌘ and swipes walk them (owner's Corner lane) | #220 |
+| 2026-10-09 | Corner UI/UX: layout previews show the desktop's windows; the app card opens in the sheet's right half (owner's Corner lane) | #219 |
+| 2026-10-08 | UI round 2: list duplicates, Dock ← chip, command arrows, Context Dock pill, drag to dock (owner's Corner lane) | #218 |
+| 2026-10-08 | Corner: resting on the apps folds into the dock; one ← back chip for every scope (owner's Corner lane) | #217 |
+| 2026-10-08 | Corner: Terminal freeze and keys; droplet split; app step-in rests as its own Context Dock (owner's Corner lane) | #216 |
+| 2026-10-07 | Corner: running app icons manage windows; pinned extensions in the apps piece; compact app card (owner's Corner lane) | #215 |
 | 2026-10-06 | E1c: Claude Code CLI loses WebFetch/WebSearch/Bash in private-data chats; `dorax_read_url` / `dorax_run_command` and on-device tools go through the outbound gate; owner hand-tested ("184 passed") | #187 |
 | 2026-10-05 | Mail chat reads the message body (selected, open or latest; Mail closed or open), fenced and capped; never routes Mail to Messages; owner hand-tested. Gate test moved to #184 | #183 |
 | 2026-10-04 | Mail chat: choices only for matching routes; a turn that ran a step shows no pick card (Corner, Dock, chat window); owner hand-tested ("quit mail") | #181 |
