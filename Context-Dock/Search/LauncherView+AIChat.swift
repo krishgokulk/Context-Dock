@@ -4543,8 +4543,12 @@ extension LauncherView {
             // Only an exact search command ("search mail from SBI") is claimed here; any
             // other sentence that mentions a sender goes to the model, which has
             // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
-            // this same function.
-            if let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery) {
+            // this same function. Mailbox Search is a menu click, so it is claimed only while
+            // Mail is open: a "/" scope on a closed Mail launches nothing and goes headless.
+            if let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery),
+                !NSRunningApplication.runningApplications(
+                    withBundleIdentifier: "com.apple.mail").isEmpty
+            {
                 executeMailMailboxSearch(intent: intent, userMessage: query)
                 return
             }
