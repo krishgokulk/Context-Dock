@@ -2,7 +2,8 @@
 // Context-Dock
 //
 // The Drop Shelf's surface: an invisible strip along the bottom edge that notices a drag,
-// and a pill in the bottom-right corner that catches it.
+// and the shelf icon at the end of every dock row — in the Dock and in the Corner — that
+// catches it. There is no card of its own: the icon is one more item in the shell's row.
 //
 // macOS never announces that a drag has started, so the shelf has to be a drop target to
 // find out. That makes the strip dangerous by construction — a full-width target sitting
@@ -17,7 +18,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum DropShelfMetrics {
-    static let collapsedSize = CGSize(width: 200, height: 56)
     static let expandedSize = CGSize(width: 372, height: 404)
     static let shadowPad: CGFloat = 28
     static let screenMargin: CGFloat = 20
@@ -37,8 +37,10 @@ enum DropShelfMetrics {
             height: expandedSize.height + shadowPad * 2)
     }
 
-    static func cardSize(for phase: DropShelfPhase) -> CGSize {
-        phase == .expanded ? expandedSize : collapsedSize
+    /// The card of items, when the shelf is open; nothing otherwise — collapsed, the shelf is
+    /// only its icon in the row.
+    static func cardSize(for phase: DropShelfPhase) -> CGSize? {
+        phase.isCardShown ? expandedSize : nil
     }
 
     /// What counts as a drag worth showing the shelf for.
@@ -86,39 +88,40 @@ final class DropShelfEdgeView: NSView {
     }
 }
 
-// MARK: - Pill
+// MARK: - Icon drop target
 
-/// Accepts the drop, and is the only part of the shelf that does.
-final class DropShelfPillView: NSView {
-    weak var controller: DropShelfController?
-    /// The card's rect in this view's coordinates. Everything outside it is click-through
-    /// so the transparent remainder of the window never swallows anything.
-    var interactiveRect: NSRect = .zero
+extension DropShelfMetrics {
+    /// What the shelf's icon (and open card) take from a SwiftUI drop: files, links and text.
+    /// Rich-text and image drags carry a plain-text or file form as well, which is the one
+    /// the shelf files.
+    static let dropTypes: [UTType] = [.fileURL, .url, .plainText, .utf8PlainText]
+}
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        registerForDraggedTypes(DropShelfMetrics.acceptedTypes)
+/// Makes a view the shelf's drop target — the icon in the row and, while it is open, the
+/// card. Shared by the Dock and the Corner. The pointer on it with a drag is `isTargeted`:
+/// it opens like any drag target, so the drop is seen to land.
+struct DropShelfDropTarget: ViewModifier {
+    let presentation: DropShelfPresentation
+    @State private var isTargeted = false
+
+    func body(content: Content) -> some View {
+        content
+            .onDrop(of: DropShelfMetrics.dropTypes, isTargeted: $isTargeted) { providers in
+                DropShelfController.shared.acceptDrop(providers: providers, into: presentation)
+            }
+            .onChange(of: isTargeted) { _, inside in
+                if inside {
+                    DropShelfController.shared.iconDragEntered(presentation)
+                } else {
+                    DropShelfController.shared.iconDragExited(presentation)
+                }
+            }
     }
+}
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let local = convert(point, from: superview)
-        guard interactiveRect.contains(local) else { return nil }
-        return super.hitTest(point)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        controller?.dragEntered()
-        return .copy
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        controller?.dragExitedPill()
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        controller?.acceptDrop(sender.draggingPasteboard) ?? false
+extension View {
+    func dropShelfTarget(_ presentation: DropShelfPresentation) -> some View {
+        modifier(DropShelfDropTarget(presentation: presentation))
     }
 }
 
@@ -133,7 +136,9 @@ final class DropShelfController: NSObject {
     static let shared = DropShelfController()
 
     let store = DropShelfStore.shared
+    /// The Corner's. The Dock keeps its own (`dockPresentation`); the store is the one shelf.
     let presentation = DropShelfPresentation()
+    let dockPresentation = DropShelfPresentation()
 
     private var edgePanels: [NSPanel] = []
     private var screenSink: AnyCancellable?
@@ -142,27 +147,107 @@ final class DropShelfController: NSObject {
     /// on the first before the enter on the second. Ending the drag on the next runloop
     /// pass lets that hand-off happen without the pill flickering away.
     private var dragEndTask: Task<Void, Never>?
+    /// The system-wide watch for a file drag starting anywhere (`watchSystemDrags`).
+    private var systemDragMonitors: [Any] = []
+    private var dragPasteboardCountAtMouseDown = 0
+    private var systemDragInFlight = false
 
     /// Called once at launch. Until this runs the shelf does not exist and cannot
     /// interfere with anything.
     func activate() {
         ensurePanels()
+        watchSystemDrags()
         presentation.itemCount = store.items.count
-        presentation.itemCountChanged()
+        dockPresentation.itemCount = store.items.count
         storeSink = store.$items.sink { [weak self] items in
-            guard let self else { return }
-            self.presentation.itemCount = items.count
-            self.presentation.itemCountChanged()
+            self?.presentation.itemCount = items.count
+            self?.dockPresentation.itemCount = items.count
         }
     }
 
     // MARK: Drag lifecycle
+
+    /// A file picked up anywhere — Finder, the desktop, a mail attachment — wakes the dock and
+    /// shows the shelf's icon at once, rather than when the drag happens to reach the screen
+    /// edge (owner 2026-10-08: "when the user drags something, wake up our dock and show the
+    /// drop shelf icon"). A drag is told from a plain button-held move by the drag
+    /// pasteboard: a new drag writes to it, so its count moves past where it stood when the
+    /// button went down, and what it holds is a file.
+    private func watchSystemDrags() {
+        guard systemDragMonitors.isEmpty else { return }
+        let drag = NSPasteboard(name: .drag)
+        if let down = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown],
+            handler: { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.dragPasteboardCountAtMouseDown = drag.changeCount
+                }
+            })
+        {
+            systemDragMonitors.append(down)
+        }
+        if let moved = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDragged],
+            handler: { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, !self.systemDragInFlight,
+                        DropShelfDragSighting.isFileDrag(
+                            countNow: drag.changeCount,
+                            countAtMouseDown: self.dragPasteboardCountAtMouseDown,
+                            types: drag.types ?? [])
+                    else { return }
+                    self.systemDragInFlight = true
+                    self.dragEntered()
+                }
+            })
+        {
+            systemDragMonitors.append(moved)
+        }
+        if let up = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseUp],
+            handler: { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, self.systemDragInFlight else { return }
+                    self.systemDragInFlight = false
+                    self.scheduleDragEnd()
+                }
+            })
+        {
+            systemDragMonitors.append(up)
+        }
+    }
 
     func dragEntered() {
         dragEndTask?.cancel()
         dragEndTask = nil
         presentation.dragEntered()
         ClipboardPanelController.shared.setSuppressed(true)
+        // The icon is the drop target, and it lives in the shell: bring the shell up for the
+        // drag if nothing has it on screen.
+        CornerDockController.shared.revealForShelfDrag()
+    }
+
+    /// The icon itself is under the drag, or the drag has left it. `presentation` is the
+    /// shell's own: the Corner's is the controller's, the Dock keeps one of its own so that
+    /// opening the shelf in one shell never opens a card in the other.
+    func iconDragEntered(_ presentation: DropShelfPresentation) {
+        if presentation === self.presentation {
+            dragEndTask?.cancel()
+            dragEndTask = nil
+        }
+        presentation.dragEntered()
+        presentation.iconDragEntered()
+        ClipboardPanelController.shared.setSuppressed(true)
+    }
+
+    func iconDragExited(_ presentation: DropShelfPresentation) {
+        presentation.iconDragExited()
+        if presentation === self.presentation {
+            scheduleDragEnd()
+        } else {
+            presentation.dragExited()
+            ClipboardPanelController.shared.setSuppressed(false)
+        }
     }
 
     /// An item is leaving the shelf by drag. The copy monitor stands down for the duration,
@@ -184,19 +269,55 @@ final class DropShelfController: NSObject {
             guard !Task.isCancelled, let self else { return }
             self.presentation.dragExited()
             ClipboardPanelController.shared.setSuppressed(false)
+            CornerDockController.shared.shelfDragEnded()
         }
     }
 
-    func acceptDrop(_ pasteboard: NSPasteboard) -> Bool {
+    /// A drop on the icon or the open card. Reads what the providers carry — files and links
+    /// first, text only when there is nothing else, as `DropShelfStore.ingest` does for a
+    /// pasteboard — and files it. A dragged pin (the strip's own reorder drag) is not a drop.
+    func acceptDrop(providers: [NSItemProvider], into target: DropShelfPresentation) -> Bool {
+        let carrying = providers.filter {
+            $0.canLoadObject(ofClass: NSURL.self) || $0.canLoadObject(ofClass: NSString.self)
+        }
+        guard !carrying.isEmpty else { return false }
         dragEndTask?.cancel()
-        let app = NSWorkspace.shared.frontmostApplication
-        let accepted = store.ingest(
-            pasteboard: pasteboard,
-            source: (name: app?.localizedName ?? "", bundleId: app?.bundleIdentifier ?? ""))
-        presentation.itemCount = store.items.count
-        presentation.dropCompleted()
+        // The drag is over the moment the drop is taken, not when its data has been read: the
+        // pointer leaving the icon right after the release must not read as the drag leaving
+        // without dropping, which would put an open shelf away before the item arrived.
+        target.dropCompleted()
+        if target !== presentation { presentation.dropCompleted() }
         ClipboardPanelController.shared.setSuppressed(false)
-        return accepted > 0
+        let app = NSWorkspace.shared.frontmostApplication
+        let source = (name: app?.localizedName ?? "", bundleId: app?.bundleIdentifier ?? "")
+        let group = DispatchGroup()
+        let collected = DropCollection()
+        for provider in carrying {
+            if provider.canLoadObject(ofClass: NSURL.self) {
+                group.enter()
+                _ = provider.loadObject(ofClass: NSURL.self) { object, _ in
+                    if let url = object as? URL { collected.add(url: url) }
+                    group.leave()
+                }
+            } else {
+                group.enter()
+                _ = provider.loadObject(ofClass: NSString.self) { object, _ in
+                    if let text = object as? String { collected.add(text: text) }
+                    group.leave()
+                }
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let (urls, text) = collected.snapshot()
+                self.store.ingest(urls: urls, text: DropShelfDropRule.shelvableText(text), source: source)
+                self.presentation.itemCount = self.store.items.count
+                self.dockPresentation.itemCount = self.store.items.count
+                CornerDockController.shared.shelfDragEnded()
+            }
+        }
+        return true
     }
 
     func remove(_ item: DropShelfItem) {
@@ -303,4 +424,35 @@ final class DropShelfController: NSObject {
         }
     }
 
+}
+
+/// What a drop's providers have given up so far; filled from their callback queues.
+final class DropCollection: @unchecked Sendable {
+    private let lock = NSLock()
+    private var urls: [URL] = []
+    private var texts: [String] = []
+
+    func add(url: URL) { lock.withLock { urls.append(url) } }
+    func add(text: String) { lock.withLock { texts.append(text) } }
+    func snapshot() -> (urls: [URL], texts: [String]) { lock.withLock { (urls, texts) } }
+}
+
+enum DropShelfDropRule {
+    /// The text a drop leaves on the shelf: everything dropped as text, joined — and nothing
+    /// for a dragged pin, whose reorder drag travels as a `dockpin:` string and is not
+    /// something the user means to keep.
+    static func shelvableText(_ texts: [String]) -> String? {
+        let kept = texts.filter { !$0.hasPrefix("dockpin:") }
+        return kept.isEmpty ? nil : kept.joined(separator: "\n")
+    }
+}
+
+/// Pure: whether a button-held move is a file being dragged — the drag pasteboard was
+/// written since the button went down, and it carries a file.
+enum DropShelfDragSighting {
+    static func isFileDrag(
+        countNow: Int, countAtMouseDown: Int, types: [NSPasteboard.PasteboardType]
+    ) -> Bool {
+        countNow != countAtMouseDown && types.contains(.fileURL)
+    }
 }

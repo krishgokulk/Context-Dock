@@ -327,6 +327,7 @@ struct InlineAdapterApprovalCard: View {
         case .shortcut: return request.action.shortcutName ?? "Shortcut"
         case .aiPrompt: return "AI prompt"
         case .pageJS: return "Page JavaScript"
+        case .savePageMarkdown: return "Save the page to Downloads as Markdown"
         }
     }
 
@@ -558,6 +559,16 @@ struct AIChatMessage: Identifiable, Equatable {
     var actionChoices: [ActionChoice] = []  // pick-one routes, rendered as buttons
     var trace: [String] = []  // routing steps ("Matching 31 actions…"), shown collapsed
     var runOutput: String?  // terminal/script output, collapsed behind a disclosure
+    /// One row per thing the turn ran, recorded where it executed. Not persisted: like
+    /// `trace`, it describes the turn that produced the answer.
+    var activity: [ActivityStep] = []
+
+    /// True when the turn that produced this message executed something: a recorded step, a
+    /// receipt, or a tool chip other than the routing lookup (which is only a search).
+    var ranAStep: Bool {
+        !activity.isEmpty || !evidenceReceipts.isEmpty
+            || mcpToolsRan.contains { $0 != "DoraX route lookup" }
+    }
 
     enum ChatRole {
         case user
@@ -576,8 +587,15 @@ struct AIChatMessage: Identifiable, Equatable {
     /// This sits in the initialiser on purpose. There are fifty-odd places that append an
     /// assistant message across the surfaces, and an invariant enforced at fifty call sites
     /// is one that the fifty-first will break. Every bubble is built here.
-    private static func presentable(_ content: String, role: ChatRole) -> String {
+    private static func presentable(
+        _ content: String, role: ChatRole, isStreamingPlaceholder: Bool
+    ) -> String {
         guard role == .assistant else { return content }
+        // The bubble a turn is about to write into. It is empty because nothing has been
+        // said yet, not because the app had nothing to say — turning it into the fallback
+        // showed "couldn't carry it out on this surface" under a spinner for a turn that was
+        // still running, and the first streamed token was then appended to that sentence.
+        if isStreamingPlaceholder { return content }
         // An empty assistant bubble is the same failure wearing a quieter face: it happens
         // when scaffolding was stripped and nothing was left, so the user sees the app
         // apparently having nothing to say about a request it understood. Say what
@@ -605,11 +623,13 @@ struct AIChatMessage: Identifiable, Equatable {
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
         // Defaults to now, which is right for a message being said. A message being
         // *loaded* has a time of its own and must pass it, or history claims to be current.
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        isStreamingPlaceholder: Bool = false
     ) {
         self.id = UUID()
         self.role = role
-        self.content = Self.presentable(content, role: role)
+        self.content = Self.presentable(
+            content, role: role, isStreamingPlaceholder: isStreamingPlaceholder)
         self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
@@ -648,13 +668,15 @@ struct AIChatMessage: Identifiable, Equatable {
         runOutput: String? = nil, actionChoices: [ActionChoice] = [],
         // Defaults to now, which is right for a message being said. A message being
         // *loaded* has a time of its own and must pass it, or history claims to be current.
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        isStreamingPlaceholder: Bool = false
     ) {
         self.id = id
         self.role = role
         // Streaming too: a partial object is not valid JSON and passes through untouched,
         // so this only bites once the message has actually settled into a complete call.
-        self.content = Self.presentable(content, role: role)
+        self.content = Self.presentable(
+            content, role: role, isStreamingPlaceholder: isStreamingPlaceholder)
         self.timestamp = timestamp
         self.isError = isError
         self.structuredData = structuredData
@@ -781,13 +803,19 @@ struct AIChatMessageView: View {
     /// Live activity used to be a sibling rendered *after* the whole message list, so once an
     /// answer started streaming it appeared above while the activity stayed pinned below —
     /// reading as though the reasoning came after the result. It belongs inside the assistant
-    /// turn, above the answer, where it collapses into `routerTraceView` in the same place
+    /// turn, above the answer, where it collapses into `ActivityRows` in the same place
     /// rather than being destroyed and redrawn somewhere else.
     var liveSteps: [String] = []
-    @State private var isTraceExpanded = false
+    /// Rows recorded for the turn still running into this message.
+    var liveActivity: [ActivityStep] = []
+    /// The finished record, when the surface keeps it beside the message rather than on it
+    /// (the dock). Empty means `message.activity`.
+    var activity: [ActivityStep] = []
     @State private var isRunOutputExpanded = false
     @State private var isEvidenceExpanded = false
     @State private var isEvaluationExpanded = false
+    /// Files the finished answer named (`TurnFileCards`), loaded off the main thread.
+    @State private var turnFiles: CapabilityResultTable?
     @ObservedObject private var settings = AppSettings.shared
 
     private var providerColor: SwiftUI.Color {
@@ -1498,48 +1526,31 @@ struct AIChatMessageView: View {
         Self.completedStepLines(trace: message.trace, toolCalls: message.mcpToolsRan)
     }
 
-    private var routerTraceView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.dockSoft) {
-                    isTraceExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: isTraceExpanded ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 8, weight: .bold))
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 9, weight: .semibold))
-                    Text(Self.traceSummary(completedStepLines))
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.primary.opacity(0.05), in: Capsule())
-            }
-            .buttonStyle(.plain)
+    private var durableStepLines: [String] {
+        ActivityNarration.durableTrace(completedStepLines)
+    }
 
-            if isTraceExpanded {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(completedStepLines.enumerated()), id: \.offset) { _, step in
-                        HStack(alignment: .top, spacing: 6) {
-                            Circle()
-                                .fill(Color.secondary.opacity(0.45))
-                                .frame(width: 4, height: 4)
-                                .padding(.top, 5)
-                            Text(step)
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-                .padding(.leading, 10)
-                .padding(.top, 4)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
+    /// File cards wait for the turn to finish: paths mid-stream are half-written, and
+    /// a card that appears and vanishes as the text grows is noise.
+    private var showsTurnFiles: Bool {
+        message.role == .assistant && !message.isError && !isStreaming
+            && liveSteps.isEmpty && liveActivity.isEmpty
+    }
+
+    private var turnFilesSource: TurnFileCards.Source? {
+        guard showsTurnFiles else { return nil }
+        return TurnFileCards.Source(
+            answer: message.content,
+            stepOutputs: finishedActivity.map(\.output) + [message.runOutput].compactMap { $0 },
+            excluding: message.attachments + message.recentFiles.map(\.url))
+    }
+
+    /// What ran for this answer: the recorded steps, or one per receipt for a path that
+    /// only wrote receipts.
+    private var finishedActivity: [ActivityStep] {
+        ActivityStep.steps(
+            recorded: activity.isEmpty ? message.activity : activity,
+            receipts: message.evidenceReceipts)
     }
 
     /// Collapsed script output. Header states the size so the user can judge whether to open it.
@@ -1591,27 +1602,24 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// Files sent with this message, as the same tiles the composer showed before sending —
+    /// the picture for an image, a card for anything else — so what was attached looks like
+    /// what is in the transcript.
     @ViewBuilder
     private var attachmentChips: some View {
-        let alignment: HorizontalAlignment = message.role == .user ? .trailing : .leading
-        VStack(alignment: alignment, spacing: 4) {
+        HStack(spacing: 6) {
             ForEach(message.attachments, id: \.absoluteString) { url in
-                HStack(spacing: 6) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                        .resizable()
-                        .frame(width: 18, height: 18)
-                    Text(url.lastPathComponent)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.primary.opacity(0.85))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(.primary.opacity(0.08)))
+                ChatAttachmentChip(url: url, style: .messageTile)
             }
         }
+    }
+
+    /// The blinking bar that says an answer is still arriving. Only an answer streams: the
+    /// App Chat transcript marks its *last* message as streaming while a turn runs, and
+    /// before the first token that last message is the user's own — which drew a provider-
+    /// coloured bar inside the blue bubble, reading as a stray text caret.
+    private var showsStreamingCursor: Bool {
+        isStreaming && message.role != .user
     }
 
     var body: some View {
@@ -1632,14 +1640,16 @@ struct AIChatMessageView: View {
                     attachmentChips
                 }
                 // Live activity, in the place the answer is about to occupy.
-                if message.role == .assistant, !liveSteps.isEmpty {
-                    LiveAgentProgressView(steps: liveSteps)
-                }
-                // Completed routing and tool activity stays behind one disclosure — the same
-                // work the live view showed while it ran, in the same position, so finishing
-                // collapses the block instead of moving it.
-                if message.role == .assistant, !completedStepLines.isEmpty {
-                    routerTraceView
+                if message.role == .assistant, !liveSteps.isEmpty || !liveActivity.isEmpty {
+                    LiveAgentProgressView(steps: liveSteps, activity: liveActivity)
+                } else if message.role == .assistant,
+                    !finishedActivity.isEmpty || !durableStepLines.isEmpty
+                {
+                    // Completed activity stays behind one disclosure — the same work the live
+                    // view showed while it ran, in the same position, so finishing collapses
+                    // the block instead of moving it. One row per step; narration only when
+                    // nothing ran as a step, and never the filler.
+                    ActivityRows(steps: finishedActivity, fallbackLines: durableStepLines)
                 }
                 // Script/terminal output — collapsed. A conversion log is hundreds of lines of
                 // ffmpeg banner the user did not ask to read; it belongs one tap away, not
@@ -1680,7 +1690,7 @@ struct AIChatMessageView: View {
                             content: message.content.isEmpty && isStreaming ? "" : message.content,
                             isError: message.isError
                         )
-                        if isStreaming {
+                        if showsStreamingCursor {
                             Rectangle()
                                 .fill(providerColor)
                                 .frame(width: 2, height: 14)
@@ -1700,6 +1710,13 @@ struct AIChatMessageView: View {
                     }
                     .foregroundStyle(message.role == .user ? Color.white : Color.primary)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+
+                // Files the finished answer named, as cards — every surface, every provider.
+                if showsTurnFiles, let turnFiles {
+                    CapabilityResultCard(table: turnFiles)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Files in this answer")
                 }
 
                 if !message.appLaunches.isEmpty {
@@ -1790,6 +1807,15 @@ struct AIChatMessageView: View {
             // `.assistant` received this spacer, so `.tool` expanded across the row and its
             // compact success bubble appeared centred.
             if message.role != .user { Spacer(minLength: 52) }
+        }
+        .task(id: turnFilesSource) {
+            guard let source = turnFilesSource else {
+                turnFiles = nil
+                return
+            }
+            let table = await TurnFileCards.table(for: source)
+            guard !Task.isCancelled else { return }
+            turnFiles = table
         }
     }
 
@@ -2140,6 +2166,7 @@ struct AdapterApprovalPopupView: View {
         case .shortcut: return "Shortcut: \(request.action.shortcutName ?? "")"
         case .aiPrompt: return "AI Prompt"
         case .pageJS: return "Page JavaScript"
+        case .savePageMarkdown: return "Save the page to Downloads as Markdown"
         }
     }
 

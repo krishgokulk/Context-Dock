@@ -122,6 +122,25 @@ struct FrontmostAppTaskPlan: Equatable {
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
+        // Finding a file by name is read-only, so it is offered freely: always in Finder, and in
+        // any app when the sentence is about a file. Spotlight is often off; find_files scans.
+        let fileTerms = [" file", " pdf", " document", " spreadsheet", " folder", "passport",
+                         "invoice", "receipt", "screenshot"]
+        if id.contains("finder") || fileTerms.contains(where: { (" " + lower).contains($0) }) {
+            tools.insert("find_files")
+        }
+        // A file to hand back (a csv, a markdown note, a Word document). It is a write and always
+        // asks, so it is offered only when the sentence names one of those outputs.
+        let outputTerms = ["csv", "markdown", ".md", "docx", "word document", "text file",
+                           "spreadsheet", "save it as a file", "output file", "export"]
+        if outputTerms.contains(where: { lower.contains($0) }) {
+            tools.insert("write_output_file")
+        }
+        // The user's Shortcuts: offered only when the sentence is about them. Running one asks.
+        let shortcutTerms = ["shortcut", "automation", "run my ", "siri"]
+        if shortcutTerms.contains(where: { lower.contains($0) }) {
+            tools.formUnion(["list_shortcuts", "run_shortcut"])
+        }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
         // operate_app is offered on action turns even when Computer Use is switched off for
         // this app, because its refusal *is* the offer: it tells the model to ask the user for

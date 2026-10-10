@@ -79,7 +79,67 @@ enum ActionReadiness {
         {
             return false
         }
+        if asksToFind(query),
+            isGenericEditCommand(path: candidate.menuPath, title: candidate.title)
+        {
+            return false
+        }
         return true
+    }
+
+    /// The Edit-menu commands every Mac app has, which say nothing about what the app does.
+    ///
+    /// Asked "find my passport pdfs" in a Finder chat, DoraX offered to run `Edit → Copy`
+    /// in another app entirely. Word overlap put it there and nothing asked the obvious
+    /// question: Copy is not an answer to "where is it". These rows are only ever reached
+    /// by ranking noise, so a search request must not be able to reach them at all.
+    private static let genericEditCommands: Set<String> = [
+        "copy", "paste", "cut", "select all", "undo", "redo",
+        "paste and match style", "paste and match formatting",
+    ]
+
+    /// Whether this candidate is one of those commands. Matched on the leaf of the menu
+    /// path, and only when it really hangs off the Edit menu — an app is free to have its
+    /// own "Copy" somewhere meaningful, and that one is not this rule's business.
+    static func isGenericEditCommand(path: [String]?, title: String) -> Bool {
+        let leaf = (path?.last ?? title)
+            .replacingOccurrences(of: "…", with: "")
+            .replacingOccurrences(of: "...", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard genericEditCommands.contains(leaf) else { return false }
+        guard let path, path.count > 1 else { return true }
+        return path.first?.lowercased() == "edit"
+    }
+
+    /// The request asks where something is, rather than for something to be done to it.
+    ///
+    /// Deliberately narrow — the words that only appear in a search. "show" and "list" are
+    /// left out: they open and arrange things as often as they look for them.
+    static func asksToFind(_ query: String) -> Bool {
+        let words = Set(
+            query.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init))
+        let searching: Set<String> = [
+            "find", "finding", "search", "searching", "locate", "where", "look", "looking",
+            "lookup", "filter",
+        ]
+        return !words.isDisjoint(with: searching)
+    }
+
+    /// Whether an app-scoped chat may offer to drive a *different* app.
+    ///
+    /// In an app chat the surface names the app, so the scoped app wins by default. Another
+    /// app becomes the target only when the sentence named it — which is the whole reason
+    /// a Finder chat asked to "find my passport pdfs" must never produce a Find My offer.
+    static func mayOfferCrossApp(
+        candidateApp: String?, scopedApp: String, namedApp: String?
+    ) -> Bool {
+        guard let candidateApp, !candidateApp.isEmpty else { return true }
+        guard candidateApp.caseInsensitiveCompare(scopedApp) != .orderedSame else { return true }
+        guard let namedApp, !namedApp.isEmpty else { return false }
+        return candidateApp.caseInsensitiveCompare(namedApp) == .orderedSame
     }
 
     /// The request itself asks for something to be deleted, emptied, removed or sent.
@@ -117,6 +177,9 @@ enum ActionReadiness {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
         let resolved = path.isEmpty ? [route.title] : path
+        if asksToFind(query), isGenericEditCommand(path: resolved, title: route.title) {
+            return false
+        }
         return !destroysSomething(path: resolved) || asksToDestroy(query)
     }
 }

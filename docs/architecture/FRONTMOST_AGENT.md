@@ -57,6 +57,16 @@ one caller is not a rule.
 question is answered, never offered as an action. Small, testable, and it removes the most
 visible way the assistant looks stupid.
 
+**Task 17 (2026-09-29): exact command or the model.** Asking intent first was not enough —
+"find my passport pdf" is an instruction, and word overlap still turned it into
+`Use Find My · Edit → Copy`. `offerScopedNativeAppAction` now offers a native action only
+when the sentence IS the command (`ExactCommand`: normalized equality with a menu title, an
+adapter action name or trigger, or a quoted / menu-path name; a trailing number is the
+command's value). Everything else is declined to the model, with the scoped app's
+partly-matching commands in the prompt as `run_menu_command` / `run_capability` candidates.
+The decision is `ScopedRoutePolicy.decide`; `RoutingPhrasebookTests` holds the owner's
+sentences and where each must land.
+
 ---
 
 ## 2a. The graph, end to end

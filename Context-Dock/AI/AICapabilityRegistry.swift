@@ -56,6 +56,9 @@ struct AICapabilityExecutionRequest {
 struct AICapabilityExecutionResult {
     let success: Bool
     let output: String
+    /// The value the executor read back after writing it, when it could. Set only by an
+    /// executor that actually re-read the setting — never inferred from its output.
+    var readBack: String? = nil
 }
 
 /// Whether a capability's entire authority comes from the user's explicit selection.
@@ -227,7 +230,12 @@ final class CapabilityRegistry {
             return "- \(capability.id): \(capability.title) | risk=\(capability.riskLevel.rawValue) | input=[\(fields)]"
         }
         return [
-            "Registered capabilities:\n" + entries.joined(separator: "\n"),
+            "Registered capabilities:\n" + entries.joined(separator: "\n")
+                // Said where the list is, because the list is what the model reads when it
+                // decides between a registered read and its own shell.
+                + "\n\nFor a question about a setting's current state (\"is Bluetooth on?\", "
+                + "\"what's the volume?\"), call its `.status` capability — a read with no "
+                + "approval — instead of running a shell command.",
             AppWorkflowToolCatalog.shared.promptBlock(for: bundleID)
         ].joined(separator: "\n\n")
     }
@@ -546,6 +554,9 @@ final class CapabilityRegistry {
                 let pageText = extensionContext?.pageText ?? snapshot?.text ?? ""
                 let pageURL = extensionContext?.url ?? snapshot?.url ?? ""
                 let pageTitle = extensionContext?.title ?? snapshot?.title ?? ""
+                if let reason = SensitivePageGuard.refusal(for: pageURL) {
+                    return .init(success: false, output: reason.message)
+                }
                 guard !pageText.isEmpty else {
                     return .init(
                         success: false,
@@ -806,11 +817,14 @@ final class AIExecutionEngine {
                 success: result.success,
                 output: result.output,
                 sideEffects: result.success ? [plan.explanation] : [],
-                verification: verificationStatus(
-                    for: plan,
-                    succeeded: result.success,
-                    output: result.output),
-                error: result.success ? nil : result.output
+                verification: result.readBack == nil || !result.success
+                    ? verificationStatus(
+                        for: plan,
+                        succeeded: result.success,
+                        output: result.output)
+                    : .verified,
+                error: result.success ? nil : result.output,
+                readBack: result.readBack
             )
         } catch {
             return AIUnifiedExecutionResult(
@@ -874,6 +888,28 @@ final class AIExecutionEngine {
     }
 }
 
+/// One unattended run's refusals. Bound around the run with `$current.withValue`, so every
+/// approval asked inside it — on any actor — is refused and recorded against that run alone.
+nonisolated final class UnattendedRun: @unchecked Sendable {
+    @TaskLocal static var current: UnattendedRun?
+
+    private let lock = NSLock()
+    private var asked: [String] = []
+
+    func record(_ what: String) {
+        lock.lock()
+        asked.append(what)
+        lock.unlock()
+    }
+
+    /// What was asked for while unattended, in order, so an eval can assert on it.
+    var requested: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return asked
+    }
+}
+
 @MainActor
 final class AICapabilityApprovalCenter: ObservableObject {
     static let shared = AICapabilityApprovalCenter()
@@ -892,10 +928,14 @@ final class AICapabilityApprovalCenter: ObservableObject {
     }
 
     @Published private(set) var pending: PendingApproval?
+    /// Requests that arrived while `pending` was on screen, oldest first.
+    private var waiting: [PendingApproval] = []
     private var expiryTask: Task<Void, Never>?
     private var isResolving = false
 
-    private init() {}
+    /// `internal` so a test can drive its own center. The app only ever uses `shared`; a test
+    /// on `shared` hears every other suite that asks for an approval while it runs.
+    init() {}
 
     /// Refuse every approval without showing one, and record what was asked.
     ///
@@ -906,52 +946,60 @@ final class AICapabilityApprovalCenter: ObservableObject {
     /// This makes the evaluation better, not merely safer. The question an eval should ask is
     /// "was the right approval requested?", which is a decision DoraX owns, rather than "did
     /// the side effect happen?", which depends on a person and on the state of their Mac.
-    static var refusesEveryApprovalUnattended = false
-
-    /// What was asked for while unattended, in order, so an eval can assert on it.
-    static private(set) var approvalsRequestedUnattended: [String] = []
+    ///
+    /// Scoped to the run's task, not the app: it was once a global flag, and while an MCP
+    /// run was in flight it refused approvals belonging to every other chat too.
+    nonisolated static var refusesEveryApprovalUnattended: Bool { UnattendedRun.current != nil }
 
     /// Record a refusal made somewhere other than this centre — adapter actions run their own
     /// gate and never reach requestApproval, which is how a blank note got created during an
     /// unattended run that reported no approvals at all.
-    static func recordUnattendedRefusal(_ what: String) {
-        approvalsRequestedUnattended.append(what)
+    nonisolated static func recordUnattendedRefusal(_ what: String) {
+        UnattendedRun.current?.record(what)
     }
 
-    static func beginUnattendedRun() {
-        refusesEveryApprovalUnattended = true
-        approvalsRequestedUnattended = []
-    }
-
-    static func endUnattendedRun() -> [String] {
-        refusesEveryApprovalUnattended = false
-        let asked = approvalsRequestedUnattended
-        approvalsRequestedUnattended = []
-        return asked
+    /// Run `body` unattended and return what it asked approval for, in order. Only work
+    /// inside `body`'s task tree is refused; an approval another chat asks for meanwhile is
+    /// shown as usual.
+    static func withUnattendedRun<T>(
+        _ body: () async throws -> T
+    ) async rethrows -> (result: T, approvalsRequested: [String]) {
+        let run = UnattendedRun()
+        let result = try await UnattendedRun.$current.withValue(run) { try await body() }
+        return (result, run.requested)
     }
 
     func requestApproval(
         plan: AIActionPlan, capability: AICapability, context: UserContext,
         chatScope: GeneralChatScope? = nil
     ) async -> Bool {
-        if Self.refusesEveryApprovalUnattended {
-            Self.approvalsRequestedUnattended.append(capability.id)
+        if let run = UnattendedRun.current {
+            run.record(capability.id)
             return false
         }
         return await withCheckedContinuation { continuation in
-            expiryTask?.cancel()
-            pending = PendingApproval(
+            let request = PendingApproval(
                 plan: plan,
                 capability: capability,
                 context: context,
                 chatScope: chatScope,
                 continuation: continuation
             )
-            expiryTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
-                guard !Task.isCancelled else { return }
-                self?.deny()
-            }
+            // One sheet at a time. A request that arrives while another is on screen waits its
+            // turn: assigning over `pending` would drop the first request's continuation, and
+            // its caller — a chat turn, or a CLI tool call — would wait for an answer forever.
+            if pending == nil { show(request) } else { waiting.append(request) }
+        }
+    }
+
+    /// Put `request` on screen and start its expiry.
+    private func show(_ request: PendingApproval) {
+        expiryTask?.cancel()
+        pending = request
+        expiryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.deny()
         }
     }
 
@@ -983,6 +1031,29 @@ final class AICapabilityApprovalCenter: ObservableObject {
             context: .appFocused(name: "Safari", bundleID: bundleId))
     }
 
+    /// The security gate's card (`OutboundGate`): an outbound tool wants to run in a turn that
+    /// holds private data and untrusted content. The same inbox, expiry and unattended refusal
+    /// as every other approval; only the plan differs. Not user-approvable ahead of time, so it
+    /// is high risk and never auto-granted.
+    func requestApprovalForOutbound(
+        plan: AIActionPlan, chatScope: GeneralChatScope? = nil
+    ) async -> Bool {
+        await requestApproval(
+            plan: plan,
+            capability: AICapability(
+                id: OutboundGate.approvalCapabilityID,
+                title: "Send data out of this chat",
+                appBundleID: nil,
+                inputSchema: .init(fields: []),
+                riskLevel: .high,
+                runsWithoutAdapter: true,
+                executor: { _ in
+                    throw AICapabilityError.blocked(
+                        "The outbound gate only asks; the tool itself runs the call.")
+                }),
+            context: .none, chatScope: chatScope)
+    }
+
     func approve() { resolve(true) }
 
     func deny() { resolve(false) }
@@ -1002,6 +1073,7 @@ final class AICapabilityApprovalCenter: ObservableObject {
         pending = nil
         isResolving = false
         request.continuation.resume(returning: granted)
+        if !waiting.isEmpty { show(waiting.removeFirst()) }
     }
 }
 

@@ -24,6 +24,10 @@ struct DockPill: Identifiable {
     var runApproval: String? = nil
     var rankingKind: String = ""
     var trackingIdentifier: String = ""
+    /// The Global search document this row came from, when it came from one. The Corner reads
+    /// it to step into a command, extension or tool rather than run the Dock's closure
+    /// (`AppChatPromptModel.scopeDocument(for:)`).
+    var searchDocumentID: String? = nil
     var searchTerms: [String] = []
     var rankingScore: Double = 0
     var menuItemImage: NSImage? = nil

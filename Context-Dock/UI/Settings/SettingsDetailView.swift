@@ -33,6 +33,8 @@ struct SettingsDetailView: View {
             IntegrationsSettingsPage(destination: integrationDestination)
         case .plugins:
             PluginsSettingsPage()
+        case .appPacks:
+            AppPacksSettingsPage()
         case .extensionsGlobalWithSelection,
              .extensionsGlobalWithoutSelection,
              .extensionsCLIToolScope,

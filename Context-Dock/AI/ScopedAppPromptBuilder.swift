@@ -296,6 +296,10 @@ enum ScopedAppPromptBuilder {
         }
 
         lines.append("")
+        // The same rule on every surface and at every size: what to say when the app in front
+        // exposes nothing. Kept in the compact (on-device) prompt too.
+        lines.append(ReadabilityFacts.instruction)
+        lines.append("")
         if compact {
             lines.append(
                 "Tool choice order: exact saved adapter action → exact live app menu for visible "
@@ -385,7 +389,13 @@ enum ScopedAppPromptBuilder {
             + "what they have highlighted. All four are read-only and need no approval, so "
             + "reach for them freely: a question about \"this page\", \"this file\" or "
             + "\"these\" is answered by reading it first, never from memory and never with "
-            + "\"I don't have access\". If you are unsure what an app can do, find_route "
+            + "\"I don't have access\". find_files looks for a file by name (Spotlight, then a scan of Desktop, "
+            + "Documents, Downloads and iCloud Drive) — use it, not mdfind, and quote the full "
+            + "paths it returns. write_output_file saves a .md, .txt, .csv or .docx the user asked "
+            + "for into ~/Documents/DoraX Outputs (they approve it) and returns its path — quote it. "
+            + "list_shortcuts names the user's Shortcuts; run_shortcut runs one (exact name, they "
+            + "approve each run) — never run one they did not ask for. "
+            + "If you are unsure what an app can do, find_route "
             + "lists what actually exists.")
         return lines.joined(separator: "\n")
     }

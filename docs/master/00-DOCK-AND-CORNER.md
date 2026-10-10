@@ -66,9 +66,9 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | App Chat (ask the frontmost app) | ✅ | ✅ | **Moved** | `[code]` App Chat hotkey |
 | General Chat | ✅ | ✅ | **Moved** — parity tasks 1, 2, 3, 6, 8 done | `[code]` CLAUDE.md current sequence |
 | Frontmost app's menu commands + actions | ✅ | 🟡 | **In progress** — plan 2026-09-08 Phases 1–2 done (ranking extracted to `FrontmostMenuMatcher`; actions and menus ranked together by `AppChatRowRanker`). Phase 3 (retire the Dock's copy) and Phase 4 (scope pills) not started: the Dock still builds its own `contextMenuPills` | `[code]` checked 2026-09-24 |
-| Clipboard | ✅ | ✅ | **Moved** — ambient pill + card. The Dock still keeps its own copy of the pasteboard rules (`LauncherView+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardPreviewCard` |
+| Clipboard | ✅ | ✅ | **Moved** — a scope in the result board over the field, Raycast-style (owner 2026-10-07; replaced the ambient pill + corner card, which a copy no longer raises). The Dock still keeps its own copy of the pasteboard rules (`LauncherView+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardBoardCard` |
 | Selection | ✅ | ✅ | **Moved**, and beyond the Dock — see §4a (#84) | `[code]` `SelectionScopeCard`, `CornerSelectionActionsTests` |
-| Drop shelf | — | ✅ | **Corner-only** | `[code]` `DropShelfWindow` |
+| Drop shelf | ✅ | ✅ | **Moved** — the Shelf is the last icon of every dock row, in both shells, in every scope (#147); click opens it in the shell, a drag over it drops onto it. The floating "Drop to Shelf" card is gone | `[code]` `DropShelfIcon`, `DockTools`; `DropShelfRowTests` |
 | Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[code]` corner rows run the Dock's `executeGlobalAppSearchResult` → `activateGlobalInlineScope`; `[plan]` 2026-09-10 scope stack, "plan only" |
 | CLI tools as a scope (+ terminal) | ✅ | ❌ | **Not moved** — same hand-off | `[plan]` 2026-09-10 Phases 3–4 |
 | Media Dock | ✅ | ❌ | **Not moved** — and Labs in v1 | `[code]` `MediaDockSurface` |

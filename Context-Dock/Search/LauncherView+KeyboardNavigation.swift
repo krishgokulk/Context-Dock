@@ -178,6 +178,16 @@ extension LauncherView {
             // navigating a folder panel also arrows through Global Context behind it.
             if previewOwnsKeyEvent(event) { return event }
 
+            // Esc puts an open Drop Shelf away, the way it closes every other card.
+            if event.keyCode == 53,
+                event.window === AppDelegate.shared?.launcherWindow,
+                event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                self.dockShelf.phase.isCardShown
+            {
+                self.dockShelf.collapse()
+                return nil
+            }
+
             // Space, decided in one place — see PreviewKeyRouter. It has to run before
             // anything else in this monitor: sitting further down, an earlier branch
             // swallowed it and Space did nothing in a file scope.
@@ -252,6 +262,20 @@ extension LauncherView {
             }
 
             let routingMode = self.keyRoutingMode
+
+            // ⌘R reads the app's live menus again (C12) — the Corner's re-read, by the same
+            // rule. Only over an app: Global Context, chat and the other modes pass it on.
+            if routingMode == .contextDock,
+                DockKeyRules.isMenuRereadKey(
+                    keyCode: event.keyCode, command: event.modifierFlags.contains(.command),
+                    control: event.modifierFlags.contains(.control),
+                    option: event.modifierFlags.contains(.option),
+                    shift: event.modifierFlags.contains(.shift)),
+                event.window === AppDelegate.shared?.launcherWindow
+            {
+                self.rereadLiveMenus()
+                return nil
+            }
             // General Chat's provider picker is an AppKit menu.  After that menu closes,
             // AppKit can leave the panel (rather than the NSTextView) as first responder, so
             // SwiftUI's TextField.onSubmit never receives Return.  Route that *unfocused* path

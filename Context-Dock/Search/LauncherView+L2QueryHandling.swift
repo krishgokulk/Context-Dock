@@ -320,9 +320,10 @@ extension LauncherView {
             // screen actually usable in the chat (e.g. "summarize this error").
             var blocks: [String] = []
             for url in imageFiles {
-                let text = ocrTextFromImageFile(url)
+                let outcome = ocrOutcomeFromImageFile(url)
+                let text = outcome.text
                 if text.isEmpty {
-                    blocks.append("- \(url.lastPathComponent) (screenshot — no text recognized)")
+                    blocks.append("- " + outcome.summary(label: url.lastPathComponent))
                 } else {
                     blocks.append(
                         "### \(url.lastPathComponent) (screenshot, recognized text)\n"
@@ -352,19 +353,13 @@ extension LauncherView {
 
     /// Local Vision OCR for an image file the user attached/captured in the scoped chat.
     /// Synchronous (Vision `perform` is sync) — fine for a single user-initiated capture.
-    func ocrTextFromImageFile(_ url: URL) -> String {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        do {
-            try VNImageRequestHandler(url: url, options: [:]).perform([request])
-            return (request.results ?? [])
-                .compactMap { $0.topCandidates(1).first?.string }
-                .joined(separator: "\n")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        } catch {
-            return ""
+    /// The shared recogniser (`ScreenCaptureService`), so the Dock and the Corner read an
+    /// attached screenshot the same way and both can tell "no text" from "could not read".
+    func ocrOutcomeFromImageFile(_ url: URL) -> OCROutcome {
+        guard let data = try? Data(contentsOf: url) else {
+            return .failed(reason: "the file could not be read")
         }
+        return ScreenCaptureService.recognizeTextOutcome(in: data)
     }
 
     func buildIntelligentL2Prompt(
@@ -579,7 +574,8 @@ extension LauncherView {
                                 currentWindow = tab.windowIndex
                                 prompt += "\n--- Window \(currentWindow) ---\n"
                             }
-                            prompt += "\(tab.tabIndex). \(tab.title)\n   \(tab.url)\n"
+                            let safe = ScopedGroundingBlocks.promptSafeTab(title: tab.title, url: tab.url)
+                            prompt += "\(tab.tabIndex). \(safe.title)\n   \(safe.url)\n"
                         }
                         if tabs.count > 50 {
                             prompt += "... and \(tabs.count - 50) more tabs\n"
@@ -615,6 +611,13 @@ extension LauncherView {
                         if text.count > 1000 {
                             prompt += "...\n"
                         }
+
+                    case .browserTab(let url, _)
+                    where ScopedGroundingBlocks.withheldPageBlock(forURL: url) != nil:
+                        // SensitivePageGuard refuses this page: its reason, never its content.
+                        prompt += "\n\n🌐 CURRENT TAB:\n"
+                        prompt += ScopedGroundingBlocks.withheldPageBlock(forURL: url) ?? ""
+                        prompt += "\n"
 
                     case .browserTab(let url, let title):
                         prompt += "\n\n🌐 CURRENT TAB:\n"
@@ -1036,7 +1039,9 @@ extension LauncherView {
                                         currentWindow = tab.windowIndex
                                         prompt += "\n--- Window \(currentWindow) ---\n"
                                     }
-                                    prompt += "\(tab.tabIndex). \(tab.title)\n   URL: \(tab.url)\n"
+                                    let safe = ScopedGroundingBlocks.promptSafeTab(
+                                        title: tab.title, url: tab.url)
+                                    prompt += "\(tab.tabIndex). \(safe.title)\n   URL: \(safe.url)\n"
                                 }
 
                                 if tabs.count > 50 {

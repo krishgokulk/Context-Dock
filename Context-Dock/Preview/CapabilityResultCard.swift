@@ -86,6 +86,10 @@ struct CapabilityResultCard: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
+                        .lineLimit(1)
+                }
+                if !row.paths.isEmpty {
+                    rowActions(row)
                 }
             }
 
@@ -115,8 +119,47 @@ struct CapabilityResultCard: View {
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { preview(row) }
+        // Drag the file out — into Mail, a Finder window, another app's document.
+        .onDrag {
+            guard let first = row.paths.first else { return NSItemProvider() }
+            return NSItemProvider(object: first as NSURL)
+        }
         .contextMenu { menu(for: row) }
         .help(row.paths.first?.path ?? "")
+    }
+
+    /// The three things a found file is for, one click each — a menu the user has to
+    /// know to right-click is how the answer stayed prose.
+    @ViewBuilder
+    private func rowActions(_ row: CapabilityResultRow) -> some View {
+        HStack(spacing: 2) {
+            actionButton("eye", help: "Quick Look", row: row) { preview(row) }
+            actionButton("arrow.up.forward.app", help: "Open", row: row) { open(row) }
+            actionButton("folder", help: "Reveal in Finder", row: row) { reveal(row) }
+        }
+    }
+
+    /// What VoiceOver, Voice Control and the "show names" overlay call a row's button. A card
+    /// holds up to a dozen rows, so a bare "Open" is a dozen identical names; the file is part
+    /// of the name.
+    static func actionLabel(_ action: String, for row: CapabilityResultRow) -> String {
+        let name = row.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? action : "\(action) \(name)"
+    }
+
+    private func actionButton(
+        _ symbol: String, help: String, row: CapabilityResultRow, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(Self.actionLabel(help, for: row))
     }
 
     @ViewBuilder
@@ -125,10 +168,8 @@ struct CapabilityResultCard: View {
         // Nothing here deletes: a tidy-up is the capability's job, through its own
         // approval, not a menu item hiding behind a search result.
         Button("Preview") { preview(row) }
-        Button("Reveal in Finder") {
-            NSWorkspace.shared.activateFileViewerSelecting(row.paths)
-        }
-        Button("Open") { row.paths.forEach { NSWorkspace.shared.open($0) } }
+        Button("Reveal in Finder") { reveal(row) }
+        Button("Open") { open(row) }
         Button("Copy Path\(row.paths.count > 1 ? "s" : "")") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(
@@ -136,9 +177,22 @@ struct CapabilityResultCard: View {
         }
     }
 
+    private func open(_ row: CapabilityResultRow) {
+        row.paths.forEach { NSWorkspace.shared.open($0) }
+    }
+
+    private func reveal(_ row: CapabilityResultRow) {
+        NSWorkspace.shared.activateFileViewerSelecting(row.paths)
+    }
+
+    /// A row of several files (a duplicate set) previews its own files; a row of one
+    /// previews it among the card's other files, so the arrow keys walk the card.
     private func preview(_ row: CapabilityResultRow) {
         guard let first = row.paths.first else { return }
+        let siblings = row.paths.count > 1
+            ? row.paths
+            : table.rows.compactMap { $0.paths.count == 1 ? $0.paths.first : nil }
         PreviewController.shared.present(
-            url: first, siblings: row.paths, toggleIfSame: false)
+            url: first, siblings: siblings, toggleIfSame: false)
     }
 }

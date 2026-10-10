@@ -1471,7 +1471,9 @@ extension LauncherView {
                                                 offerReminderRowAction(reminder, operation: operation)
                                             },
                                             userAvatarSymbol: providerSymbol,
-                                            assistantAvatarImage: scopedAppIcon
+                                            assistantAvatarImage: scopedAppIcon,
+                                            activity: chatConversation
+                                                .activityByMessageID[message.id] ?? []
                                         )
                                         .id(message.id)
                                     } else {
@@ -1491,7 +1493,11 @@ extension LauncherView {
                                             },
                                             userAvatarSymbol: providerSymbol,
                                             assistantAvatarImage: scopedAppIcon,
-                                            liveSteps: dockLiveSteps(for: message)
+                                            liveSteps: dockLiveSteps(for: message),
+                                            liveActivity: dockLiveSteps(for: message).isEmpty
+                                                ? [] : chatConversation.liveActivity,
+                                            activity: chatConversation
+                                                .activityByMessageID[message.id] ?? []
                                         )
                                         .id(message.id)
                                     }
@@ -1527,7 +1533,9 @@ extension LauncherView {
                                 // after that they render above its text instead, so the block
                                 // collapses where it stood rather than jumping.
                                 if l2.isLoading, !dockProgressBelongsToLastMessage {
-                                    LiveAgentProgressView(steps: dockLiveProgressSteps)
+                                    LiveAgentProgressView(
+                                        steps: dockLiveProgressSteps,
+                                        activity: chatConversation.liveActivity)
                                         .id("l2loading")
                                 }
                             }
@@ -2111,21 +2119,36 @@ extension LauncherView {
         submitAIQuery()
     }
 
-    /// Launch + warm the menu cache for any picked focus app that isn't running yet, so its
-    /// menu commands get listed and become callable via menu_call. Only invoked for
+    /// Warm the menu cache for any picked focus app that is running with a cold cache, so
+    /// its menu commands get listed and become callable via menu_call. Only invoked for
     /// action-shaped queries (not plain Q&A), and skips apps whose cache is already warm.
+    ///
+    /// This used to *launch* the closed ones first ("Opening Clock…"), which put an
+    /// application on screen while DoraX was still deciding what to offer — before any
+    /// approval, and sometimes for an app the user had not meant to name at all. Discovery
+    /// reads; approval opens. `CandidateDiscoveryPolicy` holds the rule and the test.
     func warmFocusAppMenusForAction() async {
-        for app in chatFocusApps {
-            let bundle = app.bundleId
-            guard !bundle.isEmpty, !bundle.hasPrefix("scope://") else { continue }
-            // Already warm? nothing to do.
-            let cached = AppMenuCapabilityCache.shared.menuItems(
-                bundleIdentifier: bundle, appName: app.name, query: "", maxResults: 1)
-            if !cached.isEmpty { continue }
-            await MainActor.run { aiMode.loadingStatus = "Opening \(app.name)…" }
-            guard let running = await AppAdapterManager.shared.launchAndActivate(bundleId: bundle)
+        let appsByBundleID = Dictionary(
+            chatFocusApps.map { ($0.bundleId, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let toRead = CandidateDiscoveryPolicy.menusToRead(
+            bundleIDs: chatFocusApps.map(\.bundleId),
+            isRunning: { bundleID in
+                NSRunningApplication
+                    .runningApplications(withBundleIdentifier: bundleID)
+                    .contains { !$0.isTerminated }
+            },
+            isCacheWarm: { bundleID in
+                !AppMenuCapabilityCache.shared.menuItems(
+                    bundleIdentifier: bundleID, appName: appsByBundleID[bundleID] ?? bundleID,
+                    query: "", maxResults: 1).isEmpty
+            })
+        for bundleID in toRead {
+            guard let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: bundleID)
+                .first(where: { !$0.isTerminated })
             else { continue }
-            await MainActor.run { aiMode.loadingStatus = "Reading \(app.name) menus…" }
+            let name = appsByBundleID[bundleID] ?? bundleID
+            await MainActor.run { aiMode.loadingStatus = "Reading \(name) menus…" }
             await MenuWarmCacheService.shared.warm(app: running, force: true)
         }
     }
@@ -3388,12 +3411,14 @@ extension LauncherView {
     func beginL2AIRequest() -> UUID {
         let requestID = UUID()
         l2.activeRequestID = requestID
+        AppChatConversation.shared.beginActivity()
         return requestID
     }
 
     func finishL2AIRequest(_ requestID: UUID) {
         guard l2.activeRequestID == requestID else { return }
         l2.activeRequestID = nil
+        AppChatConversation.shared.finishActivity()
         l2.isLoading = false
         l2.loadingStatus = nil
         l2.currentTask = nil
@@ -5244,22 +5269,30 @@ extension LauncherView {
                     return
                 }
 
-                // App UI work is proposed as a visible Computer Use action. Resolution is
-                // deterministic and local; the user's click is Allow Once. Only after that
+                // An exact command is proposed as a visible Computer Use action. Resolution
+                // is deterministic and local; the user's click is Allow Once. Only after that
                 // click may DoraX launch/restore the app and live-verify the cached menu path.
+                // Any other sentence is the model's (Task 17): the commands that partly
+                // matched are handed to it as candidates, and it chooses.
+                var scopedModelCandidates = ""
                 if submittedContextDockFiles.isEmpty,
                     submittedContextDockText == nil,
                     !self.isGlobalQueryModeActive,
                     frontmostTaskPlan.permitsUIAutomation,
-                    !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle),
-                    await self.offerScopedNativeAppAction(
+                    !self.isSafariPageUnderstandingReadQuery(query, bundleID: historyBundle)
+                {
+                    switch await self.offerScopedNativeAppAction(
                         query: query,
                         bundleId: scopedBundleId,
                         appName: scopedAppName.isEmpty
                             ? (frontmostName ?? frontmost.name) : scopedAppName,
                         requestID: l2RequestID)
-                {
-                    return
+                    {
+                    case .offered:
+                        return
+                    case .declined(let modelCandidates):
+                        scopedModelCandidates = modelCandidates
+                    }
                 }
 
                 await self.setL2LoadingStatus(
@@ -5428,7 +5461,7 @@ extension LauncherView {
                 // place to reason about what a small-context model is given up. The dock
                 // had this ordering and the window had its own; keeping two was how they
                 // answered the same question differently.
-                let activeContextPrompt: String = {
+                let activeContextAssembly: (prompt: String, sections: [String: Int]) = {
                     var prompt = ScopedPromptAssembler()
                     prompt.set(.sourceRule, frontmostTaskPlan.promptRule + "\n\n" + sourceDecision.promptRule)
                     prompt.append(
@@ -5443,12 +5476,18 @@ extension LauncherView {
                     prompt.set(.attachments, attachmentBlock)
                     prompt.set(.liveAppData, appleData)
                     prompt.set(.mcp, mcpBlock)
+                    prompt.set(.capabilities, scopedModelCandidates)
                     prompt.set(.skills, skillsBlock)
                     prompt.set(.userProfile, profileBlock)
                     prompt.set(.memory, memoryBlock)
                     prompt.set(.cli, runtimeCLIContextPrompt)
-                    return prompt.assemble(for: provider)
+                    // Section sizes only when the turn log will record them.
+                    return (
+                        prompt.assemble(for: provider),
+                        DoraXTurnLog.standard.isEnabled ? prompt.characterCounts(for: provider) : [:]
+                    )
                 }()
+                let activeContextPrompt = activeContextAssembly.prompt
 
                 if let guardedAnswer = await MainActor.run(body: {
                     self.scopedChatMissingInternalDataAnswer(
@@ -5504,6 +5543,7 @@ extension LauncherView {
                         apiKey: apiKey,
                         history: chatHistory,
                         imageAttachments: scopedImageAttachments,
+                        promptSections: activeContextAssembly.sections,
                         onStream: { event in
                             Task { @MainActor in
                                 self.applyDockStreamEvent(
@@ -5555,7 +5595,8 @@ extension LauncherView {
                         scopeName: scopedAppName.isEmpty
                             ? (frontmostName ?? frontmost.name) : scopedAppName,
                         userQuery: query,
-                        requestID: l2RequestID)
+                        requestID: l2RequestID,
+                        context: scopedConversationContext)
                     {
                         finalResponse = applied.answer
                         toolsRan += applied.toolsRan
@@ -5612,7 +5653,8 @@ extension LauncherView {
                     // to avoid "Exceeded model context window size" from Foundation Models.
                     let onDeviceHistory = Array(chatHistory.suffix(4))
                     let placeholder = AIChatMessage(
-                        role: .assistant, content: "", mcpToolsRan: memoryToolChips)
+                        role: .assistant, content: "", mcpToolsRan: memoryToolChips,
+                        isStreamingPlaceholder: true)
                     await MainActor.run { l2.chatMessages.append(placeholder) }
                     let msgId = placeholder.id
                     // Pass the raw query — buildContextPrompt inside streamOnDeviceResponse handles
@@ -5749,7 +5791,12 @@ extension LauncherView {
                         )
                     }
                     if Task.isCancelled {
-                        await MainActor.run { finishL2AIRequest(l2RequestID) }
+                        await MainActor.run {
+                            // Nothing was said, so the empty bubble the turn reserved goes
+                            // with it rather than lingering as a blank row.
+                            l2.chatMessages.removeAll { $0.id == msgId && $0.content.isEmpty }
+                            finishL2AIRequest(l2RequestID)
+                        }
                         return
                     }
                     // On-device MCP: if the streamed reply was a tool-call directive, run the
@@ -5777,7 +5824,8 @@ extension LauncherView {
                         scopedBundleId: scopedBundleId,
                         scopeName: onDeviceScopeName,
                         userQuery: query,
-                        requestID: l2RequestID)
+                        requestID: l2RequestID,
+                        context: scopedConversationContext)
                     {
                         // The on-device model routes actions as plain-text directives; without
                         // this the raw {"adapter_call":…} line was printed to the user.
@@ -5833,7 +5881,8 @@ extension LauncherView {
                             scopeName: scopedAppName.isEmpty
                                 ? (frontmostName ?? frontmost.name) : scopedAppName,
                             userQuery: query,
-                            requestID: l2RequestID)
+                            requestID: l2RequestID,
+                        context: scopedConversationContext)
                         {
                             finalReply = applied.answer
                             toolsRan += applied.toolsRan
@@ -5958,7 +6007,8 @@ extension LauncherView {
         scopedBundleId: String,
         scopeName: String,
         userQuery: String,
-        requestID: UUID
+        requestID: UUID,
+        context: UserContext = .none
     ) async -> (answer: String, toolsRan: [String])? {
         guard let invocation = AITypedInvocationResolver.invocation(from: response) else {
             return nil
@@ -6027,6 +6077,29 @@ extension LauncherView {
             let result = await ComputerUseRunner.run(
                 target: target, reason: invocation.arguments["reason"] ?? "", bundleID: bundle)
             return (result.output, [result.displayCommand])
+
+        case .capability:
+            // `{"finder.copyFiles": {…}}` or `{"capability_call": …}` arriving as final text.
+            // This case was missing, so the call fell to `default`, nothing ran, and the
+            // bubble was replaced by "couldn't carry it out on this surface" — on the Dock
+            // and the Corner alike, because the Corner is this pipeline. It now goes through
+            // the executor every other capability uses, with its approval, and a refusal
+            // names its reason.
+            await setL2LoadingStatus(
+                "Running \(invocation.capabilityID)…", requestID: requestID)
+            let outcome = await ChatCapabilityCallRecovery.run(
+                capabilityID: invocation.capabilityID,
+                arguments: invocation.arguments,
+                query: userQuery,
+                context: context,
+                scope: bundle.isEmpty
+                    ? .general : .contextDock(bundleID: bundle, appName: scopeName),
+                chatScope: GeneralChatScope(dockBundleId: bundle))
+            ChatConsoleLog.shared.append(
+                .tool, title: invocation.capabilityID,
+                output: outcome.output.isEmpty ? "(no output)" : outcome.output,
+                success: outcome.succeeded, scope: GeneralChatScope(dockBundleId: bundle))
+            return (outcome.text, outcome.succeeded ? [invocation.capabilityID] : [])
 
         default:
             return nil
@@ -6127,12 +6200,15 @@ extension LauncherView {
                 + "Do NOT call it again. Answer the user's request in one short plain sentence "
                 + "using this result: \(userQuery)"
             transcript.append(ChatMessage(role: .user, content: followup))
-            let next = (try? await AIProviderService.shared.sendWithTools(
-                followup, context: .none, provider: provider, apiKey: apiKey,
-                conversationHistory: transcript,
-                commandExecutor: { _, _, _ in (false, "", -1) },
-                additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
-            ))?.finalResponse ?? ""
+            // `followup` and the transcript carry a tool's result, not the user's words.
+            let next = (try? await TurnUserText.bind(typed: [userQuery], {
+                try await AIProviderService.shared.sendWithTools(
+                    followup, context: .none, provider: provider, apiKey: apiKey,
+                    conversationHistory: transcript,
+                    commandExecutor: { _, _, _ in (false, "", -1) },
+                    additionalSystemPrompt: systemPrompt.isEmpty ? nil : systemPrompt
+                )
+            }))?.finalResponse ?? ""
             if next.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return (answer: plainMCPAnswer(result), toolsRan: toolsRan)
             }
@@ -6428,6 +6504,11 @@ extension LauncherView {
 
         let title = payload["title"] as? String ?? ""
         let url = payload["url"] as? String ?? ""
+        if let withheld = await MainActor.run(body: {
+            ScopedGroundingBlocks.withheldPageBlock(forURL: url)
+        }) {
+            return withheld
+        }
         let text = payload["text"] as? String ?? ""
         let compacted = MarkItDownService.compact(text, for: query, limit: 5_000)
         let collected = (payload["links"] as? [[String: Any]] ?? [])
@@ -7221,8 +7302,10 @@ extension LauncherView {
             return prefAnswer
         }
 
-        let exactSelectedAdapterAction = hasExactSelectedAdapterAction(query: actionQuery)
-        if (!modelFirst || exactSelectedAdapterAction || resumedConfirmedHistoryRequest),
+        let generalRoute = ScopedRoutePolicy.generalChatRoute(
+            query: actionQuery, modelFirst: modelFirst,
+            selectedAppHasExactAction: hasExactSelectedAdapterAction(query: actionQuery))
+        if (generalRoute == .exactCommand || resumedConfirmedHistoryRequest),
            attachments.isEmpty, currentAISelectionSnapshot.isEmpty,
            let actionAnswer = await generalAIExecutableActionAnswer(query: actionQuery) {
             return actionAnswer
@@ -7340,7 +7423,8 @@ extension LauncherView {
                         let correction = AgentAnswerVerifier.correctionPrompt(
                             originalQuery: query, answer: finalResponse, executed: executed)
                         let (corrected, correctionExecuted) =
-                            try await AIProviderService.shared.sendWithTools(
+                            try await TurnUserText.bind(history: history, query: query, {
+                                try await AIProviderService.shared.sendWithTools(
                                 correction,
                                 context: .none,
                                 provider: toolProvider,
@@ -7352,6 +7436,7 @@ extension LauncherView {
                                 Task { @MainActor in self.setGeneralAIProgress(status) }
                             }
                             )
+                            })
                         finalResponse = corrected
                         executed += correctionExecuted
                     }
@@ -7362,7 +7447,8 @@ extension LauncherView {
                         let verification = AgentAnswerVerifier.verificationPrompt(
                             originalQuery: query, answer: finalResponse)
                         let (verified, verificationExecuted) =
-                            try await AIProviderService.shared.sendWithTools(
+                            try await TurnUserText.bind(history: history, query: query, {
+                                try await AIProviderService.shared.sendWithTools(
                                 verification,
                                 context: .none,
                                 provider: toolProvider,
@@ -7374,6 +7460,7 @@ extension LauncherView {
                                 Task { @MainActor in self.setGeneralAIProgress(status) }
                             }
                             )
+                            })
                         finalResponse = verified
                         executed += verificationExecuted
                     }

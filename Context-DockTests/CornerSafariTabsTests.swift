@@ -46,8 +46,9 @@ struct CornerSafariTabsTests {
         // apps; open it is the compact field — fitted, never the bar's width.
         let model = scope()
         #expect(model.showsTabBar && model.usesDockShell && model.fitsField)
+        // Open, every field is the Dock's input bar height (owner 2026-10-05).
         #expect(AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight)
-            == AppChatPromptMetrics.dockHeight)
+            == AppChatPromptMetrics.inputHeight)
         #expect(model.canRestAsDock == model.autoShrinkEnabled())
         // Guarded on "keep open": the test host reads the developer's own setting.
         if model.autoShrinkEnabled(), !model.isPinned {
@@ -55,11 +56,12 @@ struct CornerSafariTabsTests {
             #expect(model.foldToDock())
             #expect(model.phase == .dock)
         }
-        // Open, the field is its own compact width, not the strip's.
-        let open = AppChatPromptMetrics.size(
-            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
-            appBarPillWidth: AppChatPromptMetrics.appBarPillWidth(for: model)).width
+        // Open, the field is the shell's one width (#189) — the bar's own width at rest too.
+        let open = AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width
         #expect(open == AppChatPromptMetrics.boardWidth(for: model))
+        // At rest the bar fits its icons, never wider than the field it opens into.
+        #expect(AppChatPromptMetrics.shellSize(for: model, phase: .dock).width <= open)
+        #expect(open == DockShellWidth.current)
     }
 
     @Test("The open tabs are the bar's icons, all of them, in order")
@@ -78,12 +80,14 @@ struct CornerSafariTabsTests {
     @Test("The bar is the app's own: no Global pins, no Global tools")
     func theBarIsTheAppsOwn() {
         let model = scope()
+        model.shelfVisible = { true }
         #expect(model.stripPins.isEmpty)
         // Only the clipboard (for a copy's few seconds) and the selection (while there is
-        // one) join it; never an action result.
+        // one) join it, then the Drop Shelf, which every row ends with; never an action
+        // result.
         let selected = model.selection != nil ? 1 : 0
-        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 1 + selected)
-        #expect(model.dockToolCount(clipboardVisible: false, feedbackVisible: true) == selected)
+        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 1 + selected + 1)
+        #expect(model.dockToolCount(clipboardVisible: false, feedbackVisible: true) == selected + 1)
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
         #expect(chrome.stripPins.count == chrome.dockPins.pins.count)
     }
@@ -120,10 +124,11 @@ struct CornerSafariTabsTests {
         #expect(BrowserTabList.matching(tabs, query: "github pull").map(\.title) == ["Pull requests"])
     }
 
-    @Test("Other apps and other browsers keep their own shell and show no tabs")
+    @Test("Other browsers have the app's bar but show no tabs")
     func onlySafariShowsTabs() {
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
-        #expect(!chrome.showsTabBar && !chrome.usesDockShell)
+        // Every app's Context Dock has the bar (owner 2026-10-08); Chrome's holds no tabs.
+        #expect(chrome.showsTabBar && chrome.usesDockShell)
         #expect(!chrome.stripIcons.contains { chrome.isTabIcon($0.id) })
         #expect(!BrowserTabList.listsTabs(bundleID: "com.google.Chrome"))
     }
@@ -139,10 +144,13 @@ struct CornerSafariTabsTests {
     @Test("Every app's Context Dock is Global's height; without tabs it fits its field")
     func contextDockHeightAndFit() {
         let textEdit = scope(bundleID: "com.apple.TextEdit", name: "TextEdit")
-        #expect(textEdit.usesDockHeight && !textEdit.usesDockShell)
-        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25).
+        // Every app's Context Dock rests as a dock now (owner 2026-10-08); Finder's file
+        // search does not.
+        #expect(textEdit.usesDockHeight && textEdit.usesDockShell)
+        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25),
+        // and in front it rests and folds like any app's (owner 2026-10-08).
         let finder = scope(bundleID: "com.apple.finder", name: "Finder")
-        #expect(finder.usesDockHeight && !finder.usesDockShell)
+        #expect(finder.usesDockHeight && finder.usesDockShell)
         let fitted = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, running: 12, pinned: 3,
             fieldHeight: AppChatPromptMetrics.dockHeight, fitsContent: true)

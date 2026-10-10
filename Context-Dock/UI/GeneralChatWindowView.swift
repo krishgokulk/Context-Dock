@@ -796,7 +796,9 @@ struct GeneralChatWindowView: View {
                                 onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
-                                liveSteps: liveSteps(for: message))
+                                liveSteps: liveSteps(for: message),
+                                liveActivity: liveSteps(for: message).isEmpty
+                                    ? [] : model.activeActivity)
 
                             // What this answer built, where it built it. The panel lists
                             // everything the thread has ever produced, which is the wrong
@@ -819,7 +821,8 @@ struct GeneralChatWindowView: View {
                     // Only until there is an assistant message to draw them in — after that
                     // they render above its text, so the block collapses where it stood.
                     if model.isSending, !progressBelongsToLastMessage {
-                        LiveAgentProgressView(steps: windowLiveProgressSteps)
+                        LiveAgentProgressView(
+                            steps: windowLiveProgressSteps, activity: model.activeActivity)
                         .id("thinking")
                     }
                 }
@@ -862,10 +865,9 @@ struct GeneralChatWindowView: View {
     /// The question the newest answer asked, if it asked one and the user has not started
     /// typing over it. Same reading as the corner: one surface, two sizes.
     private var clarification: ChatClarification? {
-        guard !model.isSending, model.input.isEmpty,
-            let last = model.messages.last, last.role == .assistant, !last.isError
+        guard !model.isSending, model.input.isEmpty, let last = model.messages.last
         else { return nil }
-        return ChatClarification.parse(last.content)
+        return ChatClarification.offered(by: last)
     }
 
     private var composer: some View {

@@ -19,6 +19,9 @@ struct GeneralChatFocusApp: Identifiable, Hashable {
 }
 
 struct LauncherView: View {
+    /// The Drop Shelf's state in this shell — the Dock keeps its own, so opening the shelf here
+    /// never opens a card in the Corner. The store is the one shelf.
+    @ObservedObject var dockShelf = DropShelfController.shared.dockPresentation
     @State var searchState = SearchState()
     @State var queryChangeTask: Task<Void, Never>? = nil
     @State var queryChangeGeneration: Int = 0
@@ -445,7 +448,7 @@ struct LauncherView: View {
             }
     }
 
-    var expandedDockWidth: CGFloat { 660 }  // Spotlight-matched width
+    var expandedDockWidth: CGFloat { DockShellWidth.dockWindowWidth }  // Spotlight-matched
     var visibleDockWidth: CGFloat { expandedDockWidth }
 
     var acceptsMouseDrivenDockInteraction: Bool {
@@ -1432,10 +1435,13 @@ struct LauncherView: View {
                     if let pending {
                         if mine, dockOwnsInlineApproval {
                             AdapterApprovalWindowHost.close()
-                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                                pendingAdapterApproval = pending
+                            // Replayed on every re-render: set (and resize) only on a new request.
+                            if pendingAdapterApproval?.id != pending.id {
+                                withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                    pendingAdapterApproval = pending
+                                }
+                                requestWindowSizeUpdate(reason: .chatChanged)
                             }
-                            requestWindowSizeUpdate(reason: .chatChanged)
                         } else if ApprovalCenter.shared.needsFloatingWindow, !dockOwnsInlineApproval {
                             pendingAdapterApproval = nil
                             openAdapterApprovalWindow(request: pending)
@@ -1461,10 +1467,13 @@ struct LauncherView: View {
                 if let pending {
                     if dockOwnsInlineApproval {
                         AICapabilityApprovalWindowHost.close()
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                            pendingCapabilityApproval = pending
+                        // Replayed on every re-render: set (and resize) only on a new request.
+                        if pendingCapabilityApproval?.id != pending.id {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                pendingCapabilityApproval = pending
+                            }
+                            requestWindowSizeUpdate(reason: .chatChanged)
                         }
-                        requestWindowSizeUpdate(reason: .chatChanged)
                     } else if ApprovalCenter.shared.needsFloatingWindow {
                         pendingCapabilityApproval = nil
                         openAICapabilityApprovalWindow(pending: pending)
@@ -1490,10 +1499,13 @@ struct LauncherView: View {
                 if let pending {
                     if dockOwnsInlineApproval {
                         AIPrivacyApprovalWindowHost.close()
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                            pendingPrivacyApproval = pending
+                        // Replayed on every re-render: set (and resize) only on a new request.
+                        if pendingPrivacyApproval?.id != pending.id {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                pendingPrivacyApproval = pending
+                            }
+                            requestWindowSizeUpdate(reason: .chatChanged)
                         }
-                        requestWindowSizeUpdate(reason: .chatChanged)
                     } else if ApprovalCenter.shared.frontmostSurface == .dock {
                         pendingPrivacyApproval = nil
                         openAIPrivacyApprovalWindow(pending: pending)
@@ -1517,45 +1529,52 @@ struct LauncherView: View {
                 // Only what this surface asked for. A card from the chat window landing here
                 // is someone else's conversation appearing in the user's.
                 if let pending = pending, pending.origin == .dock {
+                    // THIS HANDLER MUST BE IDEMPOTENT. `$pendingApproval` is a fresh erased
+                    // publisher on every body evaluation and replays its value to each new
+                    // subscriber, so this runs again whenever the view re-renders while the
+                    // command waits. Every write below publishes something the view observes;
+                    // writing unconditionally is a loop that pins the main thread (#145).
+                    // Write only what is not already there.
+                    //
                     // A CLI scope is a real command workspace, not an app adapter. Keep its
                     // live status honest while the approval card is on screen.
                     let isCLIScope = currentGlobalScopedBundleID?.hasPrefix("cli://") == true
                         || l2.targetApp?.bundleId.hasPrefix("cli://") == true
-                    if isCLIScope, l2.isLoading {
-                        l2.loadingStatus = "Waiting for your approval to run \(pending.command)…"
+                    let waitingStatus = "Waiting for your approval to run \(pending.command)…"
+                    if isCLIScope, l2.isLoading, l2.loadingStatus != waitingStatus {
+                        l2.loadingStatus = waitingStatus
                     }
-                    let risk = pending.classification.riskLevel.displayName
-                    let approvalMsg = AIChatMessage(
-                        role: .approval,
-                        content: pending.command,
-                        structuredData: "\(pending.purpose)|||/\(risk)"
-                    )
+                    let approvalMsg = CommandApprovalCard.message(for: pending)
                     // An explicit app / CLI scope owns its entire conversation, including
                     // on-device tool approvals.  Checking L2 first used to send this card
                     // to an invisible L2 transcript while the visible scoped chat remained
                     // stuck on its empty streaming placeholder.
                     if searchState.activeSmartQueryKey != nil {
                         let alreadyShown = remPanelChatMessages.contains {
-                            $0.role == .approval && $0.content == pending.command
+                            $0.role == .approval
+                                && ($0.id == pending.id || $0.content == pending.command)
                         }
                         if !alreadyShown {
                             appendPanelMessage(approvalMsg)
                         }
+                        let waitingText = "Waiting for your approval to run the command below…"
                         if let statusIndex = remPanelChatMessages.lastIndex(where: {
                             $0.role == .assistant
                                 && $0.structuredData == "on-device-status"
-                        }) {
+                        }), remPanelChatMessages[statusIndex].content != waitingText {
                             let status = remPanelChatMessages[statusIndex]
                             remPanelChatMessages[statusIndex] = AIChatMessage(
                                 id: status.id,
                                 role: .assistant,
-                                content: "Waiting for your approval to run the command below…",
+                                content: waitingText,
                                 structuredData: "on-device-status"
                             )
                         }
                     } else if l2.targetApp != nil || showContextInDock {
-                        // L2 app scope active — show inline in L2 chat
-                        l2.chatMessages.append(approvalMsg)
+                        // L2 app scope active — show inline in L2 chat, once per request.
+                        if !CommandApprovalCard.isShown(id: pending.id, in: l2.chatMessages) {
+                            l2.chatMessages.append(approvalMsg)
+                        }
                     } else {
                         openCommandApprovalWindow(pending: pending)
                     }
@@ -1573,10 +1592,14 @@ struct LauncherView: View {
                 // whatever stage set it last ("Checking that actually happened…") and read as a
                 // hang while the answer was one click away, behind a window the dock had put on
                 // screen itself.
+                //
+                // Idempotent for the same reason as `onCommand`: this runs again on every
+                // re-render while the approval waits, so write only a changed line.
                 guard l2.isLoading else { return }
                 if let pending {
-                    l2.loadingStatus =
+                    let line =
                         "Waiting for your approval — \(pending.capability.title.lowercased())…"
+                    if l2.loadingStatus != line { l2.loadingStatus = line }
                 } else if l2.loadingStatus?.hasPrefix("Waiting for your approval") == true {
                     l2.loadingStatus = "Working…"
                 }
@@ -1592,13 +1615,14 @@ struct LauncherView: View {
                 guard isCLIScope else { return }
 
                 let status = command.map { "Running \($0)…" } ?? "Reading command result…"
-                if l2.isLoading {
+                // Idempotent: this replays on every re-render, so only a changed line is written.
+                if l2.isLoading, l2.loadingStatus != status {
                     l2.loadingStatus = status
                 }
                 if remPanelIsProcessing,
                     let statusIndex = remPanelChatMessages.lastIndex(where: {
                         $0.role == .assistant && $0.structuredData == "on-device-status"
-                    })
+                    }), remPanelChatMessages[statusIndex].content != status
                 {
                     let message = remPanelChatMessages[statusIndex]
                     remPanelChatMessages[statusIndex] = AIChatMessage(

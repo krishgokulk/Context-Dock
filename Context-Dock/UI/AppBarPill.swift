@@ -15,10 +15,18 @@ struct AppBarPill: View {
     var body: some View {
         let icons = model.allRunningIcons
         let lastPin = icons.lastIndex { model.isAppPinIcon($0.id) }
-        ScrollView(.horizontal, showsIndicators: false) {
+        // One fixed width (#189): the icons scroll inside it behind an overflow arrow, so a
+        // tab opening or closing never moves the field.
+        DockPillScroller(
+            width: AppChatPromptMetrics.appBarPillWidth(for: model),
+            height: AppChatPromptMetrics.appBarPillHeight,
+            itemIDs: icons.map(\.id),
+            visibleCount: AppChatPromptModel.appBarVisibleIcons
+        ) {
             HStack(spacing: AppChatPromptMetrics.appBarIconGap) {
                 ForEach(Array(icons.enumerated()), id: \.element.id) { index, icon in
                     cell(icon)
+                        .id(icon.id)
                     if index == lastPin, index < icons.count - 1 {
                         Rectangle()
                             .fill(Color.primary.opacity(0.22))
@@ -27,12 +35,8 @@ struct AppBarPill: View {
                 }
             }
             .padding(.horizontal, 8)
+            .frame(height: AppChatPromptMetrics.appBarPillHeight)
         }
-        // The room the field keeps for the pill: the same arithmetic the field's size uses,
-        // so the capsule and the space for it are one number.
-        .frame(
-            width: AppChatPromptMetrics.appBarPillWidth(for: model),
-            height: AppChatPromptMetrics.appBarPillHeight)
         .background(.regularMaterial, in: Capsule(style: .continuous))
         .overlay(
             Capsule(style: .continuous)

@@ -3272,6 +3272,7 @@ private struct AdapterActionRowView: View {
         case .shortcut:    return "scissors"
         case .aiPrompt:    return "sparkles"
         case .pageJS:      return "safari"
+        case .savePageMarkdown: return "arrow.down.doc"
         }
     }
 
@@ -3288,6 +3289,7 @@ private struct AdapterActionRowView: View {
         case .shortcut:    return .purple
         case .aiPrompt:    return .indigo
         case .pageJS:      return .cyan
+        case .savePageMarkdown: return .cyan
         }
     }
 

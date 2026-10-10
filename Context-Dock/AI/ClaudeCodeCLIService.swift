@@ -94,6 +94,20 @@ enum ClaudeCodeCLIService {
 
         var runsTools: Bool { self != .answerOnly }
 
+        /// The CLI's own tools that reach past this Mac: the network and a shell. They run
+        /// under the CLI's permissions, so DoraX's outbound gate never sees them.
+        static let outboundTools: Set<String> = ["WebFetch", "WebSearch", "Bash"]
+
+        /// The tools for one turn. A chat that can hold private data keeps the CLI's readers and
+        /// editors but not its network or shell (E1c): those go through DoraX's MCP tools
+        /// instead, where the gate runs with the turn's taint and asks before anything leaves.
+        func toolList(holdsPrivateData: Bool) -> String {
+            guard holdsPrivateData else { return toolList }
+            return toolList.split(separator: ",").map(String.init)
+                .filter { !Self.outboundTools.contains($0) }
+                .joined(separator: ",")
+        }
+
         var title: String {
             switch self {
             case .answerOnly: return "Answer only"
@@ -196,6 +210,58 @@ enum ClaudeCodeCLIService {
         }
     }
 
+    /// Adds what one stream-json line says to the turn record: the model, the CLI's own tool
+    /// calls, the first output, and the usage on the closing `result` line. Never the text.
+    nonisolated static func trace(streamLine line: String, into recorder: TurnRecorder) {
+        guard let object = jsonObject(line) else { return }
+        switch object["type"] as? String {
+        case "system":
+            if let model = object["model"] as? String { recorder.noteModel(model) }
+        case "assistant":
+            recorder.noteFirstToken()
+            let message = object["message"] as? [String: Any]
+            if let model = message?["model"] as? String { recorder.noteModel(model) }
+            let content = message?["content"] as? [[String: Any]] ?? []
+            recorder.noteToolCalls(content.compactMap { block in
+                block["type"] as? String == "tool_use" ? block["name"] as? String : nil
+            })
+        case "result":
+            if let round = traceRound(payload: object, streamed: true) {
+                recorder.noteRound(round)
+            }
+        default:
+            break
+        }
+    }
+
+    /// The one round a CLI run reports, from its `result` line. Nil for any other line.
+    nonisolated static func traceRound(streamLine line: String) -> TurnTrace.Round? {
+        guard let object = jsonObject(line), object["type"] as? String == "result" else {
+            return nil
+        }
+        return traceRound(payload: object, streamed: true)
+    }
+
+    /// The CLI's usage block, which counts input the way the Anthropic API does: without the
+    /// cached part.
+    nonisolated static func traceRound(payload: [String: Any], streamed: Bool) -> TurnTrace.Round? {
+        guard let usage = payload["usage"] as? [String: Any] else { return nil }
+        return .anthropicShaped(
+            uncachedInput: usage["input_tokens"] as? Int,
+            cacheRead: usage["cache_read_input_tokens"] as? Int,
+            cacheWrite: usage["cache_creation_input_tokens"] as? Int,
+            output: usage["output_tokens"] as? Int,
+            finishReason: payload["subtype"] as? String,
+            streamed: streamed,
+            duration: (payload["duration_ms"] as? Double).map { $0.rounded() / 1000 })
+    }
+
+    nonisolated private static func jsonObject(_ line: String) -> [String: Any]? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
     /// The exact argument list for one invocation. Pure, so the flags can be asserted without
     /// running the binary — they were guessed once and silently disabled every tool.
     static func arguments(
@@ -208,14 +274,18 @@ enum ClaudeCodeCLIService {
         /// DoraX's own MCP server, when it is switched on. Passing it is what lets the CLI see
         /// the screen the user is looking at and act on the app in front of them; without it
         /// the CLI is a coding agent in a terminal that happens to be driven by this app.
-        mcpConfigPath: String? = nil
+        mcpConfigPath: String? = nil,
+        /// The chat can hold the user's private data (`holdsPrivateData(scope:...)`). Defaults
+        /// to the safe answer: a caller that does not know is treated as one that does.
+        holdsPrivateData: Bool = true
     ) -> [String] {
         // `--tools` says which tools exist and `--allowedTools` grants them; a tool named in
         // only the first is refused at the moment it is called, which reads to the model as
         // the tool not existing.
+        let ownTools = access.toolList(holdsPrivateData: holdsPrivateData)
         let toolList = mcpConfigPath == nil
-            ? access.toolList
-            : ([access.toolList, "mcp__\(DoraXMCPServer.serverName)"]
+            ? ownTools
+            : ([ownTools, "mcp__\(DoraXMCPServer.serverName)"]
                 .filter { !$0.isEmpty }
                 .joined(separator: ","))
         var arguments = ["-p", prompt, "--tools", toolList]
@@ -236,6 +306,11 @@ enum ClaudeCodeCLIService {
             if let workingDirectory {
                 arguments.append(contentsOf: ["--add-dir", workingDirectory.path])
             }
+        } else if mcpConfigPath != nil {
+            // Answer-only withholds the CLI's OWN tools. DoraX's are DoraX acting, through its
+            // own gate and approval cards, which is what answer-only promises; declared but not
+            // allowed, every one of them was refused and a private chat had no way to fetch.
+            arguments.append(contentsOf: ["--allowedTools", toolList])
         }
         if let mcpConfigPath {
             arguments.append(contentsOf: ["--mcp-config", mcpConfigPath])
@@ -262,7 +337,31 @@ enum ClaudeCodeCLIService {
         /// Supplying it switches the CLI to streaming output.
         onProgress: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
+        // Its own turn record when nothing upstream started one; part of the caller's when
+        // something did (a scoped turn, sendWithTools).
+        try await TurnRecorder.run(provider: AIProvider.claudeCode.rawValue) {
+            try await sendUntraced(
+                prompt: prompt, systemPrompt: systemPrompt, model: model, access: access,
+                workingDirectory: workingDirectory, onProgress: onProgress)
+        }
+    }
+
+    private static func sendUntraced(
+        prompt: String,
+        systemPrompt: String?,
+        model: String?,
+        access: ToolAccess?,
+        workingDirectory: URL?,
+        onProgress: (@Sendable (String) -> Void)?
+    ) async throws -> String {
         guard let binary = binaryPath() else { throw Failure.notInstalled }
+        // Read here, in the turn's task, for the same reason as the activity recorder below.
+        let recorder = TurnRecorder.current
+        recorder?.notePass()
+        if let model { recorder?.noteModel(model) }
+        recorder?.notePromptSections([
+            "system": systemPrompt?.count ?? 0, "message": prompt.count,
+        ])
 
         let access = access ?? AppSettings.shared.claudeCodeToolAccess
         // Answering needs no folder, and reading project settings from wherever DoraX happened
@@ -271,50 +370,161 @@ enum ClaudeCodeCLIService {
         let directory: URL? = access.runsTools
             ? (workingDirectory ?? ChatWorkingDirectory.resolve(for: nil))
             : nil
+        // E1c: a chat that can hold private data gets none of the CLI's own network or shell.
+        // See ClaudeCodeCLIService+Privacy.swift.
+        let scope = ClaudeCodeChat.scope
+        var holdsPrivate = holdsPrivateData(
+            scope: scope, sessionHadPrivateRead: sessionTaint(scope).readPrivateData)
+        // At most twice: a turn stopped because a private read arrived while it held those
+        // tools runs again without them, and a turn without them is never stopped.
+        while true {
+            switch try await runOnce(
+                binary: binary, prompt: prompt, systemPrompt: systemPrompt, model: model,
+                access: access, directory: directory, scope: scope,
+                holdsPrivateData: holdsPrivate, recorder: recorder, onProgress: onProgress)
+            {
+            case .answered(let answer):
+                return answer
+            case .restartWithoutOutboundTools:
+                guard !holdsPrivate else {
+                    throw Failure.failed("Claude Code stopped before it answered.")
+                }
+                holdsPrivate = true
+                onProgress?("Restarting without web and shell tools…")
+            }
+        }
+    }
+
+    private enum Attempt {
+        case answered(String)
+        /// Stopped for a private read while it held the CLI's own outbound tools.
+        case restartWithoutOutboundTools
+    }
+
+    private static func runOnce(
+        binary: String,
+        prompt: String,
+        systemPrompt: String?,
+        model: String?,
+        access: ToolAccess,
+        directory: URL?,
+        scope: GeneralChatScope?,
+        holdsPrivateData: Bool,
+        recorder: TurnRecorder?,
+        onProgress: (@Sendable (String) -> Void)?
+    ) async throws -> Attempt {
         // The app's own MCP server, when the user has switched it on. Without this the CLI
         // cannot see the screen it is being asked about, and the app printed a `claude mcp add`
         // line and left the wiring to the user — so a turn under this provider had DoraX's
         // context in its prompt and none of DoraX's tools in its hands.
-        let mcpConfigPath = UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey)
-            ? DoraXMCPServer.writeCLIConfig()?.path
-            : nil
+        //
+        // The CLI's turn is a turn of DoraX's own too: it gets a record in the registry and its own
+        // MCP config naming it, so what the CLI reads through DoraX's tools (screen, selection,
+        // tabs) is held against that turn alone, and ends with it. See OutboundGate.
+        var mcpConfigPath: String?
+        var cliTurn: AgentTurnToken?
+        var ownsTurn = false
+        if UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey) {
+            let registry = AgentToolRegistry.shared
+            let turn: AgentTurnToken
+            if let shared = ClaudeCodeChat.turn, registry.liveTurn(id: shared.id.uuidString) != nil {
+                // A loop that runs DoraX capabilities between CLI passes already holds this
+                // conversation's taint; a fresh record would have forgotten what it read.
+                turn = shared
+            } else {
+                let bundleID = AgentToolRegistry.scopedBundleID(for: scope)
+                let earlier = sessionTaint(scope)
+                turn = registry.beginTurn(
+                    userText: TurnUserText.current ?? [],
+                    promptBlocks: [prompt, systemPrompt ?? ""],
+                    startsPrivate: OutboundGate.isPrivateDataApp(bundleID: bundleID)
+                        || earlier.readPrivateData,
+                    startsUntrusted: OutboundGate.isThirdPartyContentApp(bundleID: bundleID)
+                        || earlier.readUntrustedContent)
+                ownsTurn = true
+            }
+            cliTurn = turn
+            mcpConfigPath = DoraXMCPServer.writeCLIConfig(turn: turn)?.path
+            let ownTools = Set(access.toolList(holdsPrivateData: holdsPrivateData)
+                .split(separator: ",").map(String.init))
+            registerLiveTurn(turn.id, LiveTurn(
+                holdsOwnOutboundTools: !ownTools.isDisjoint(with: ToolAccess.outboundTools),
+                // The shell comes back through DoraX only where the user granted one and the
+                // CLI's own was taken away; elsewhere the CLI holds Bash itself, or none.
+                mayRunCommands: access == .full && holdsPrivateData,
+                scope: scope))
+        }
+        defer {
+            if let cliTurn {
+                finishLiveTurn(cliTurn.id)
+                let registry = AgentToolRegistry.shared
+                // What this turn read stays with its session: the next turn sends it again.
+                noteRead(registry.taint.taint(for: cliTurn), in: scope)
+                if ownsTurn { registry.endTurn(cliTurn) }
+                if let mcpConfigPath { try? FileManager.default.removeItem(atPath: mcpConfigPath) }
+            }
+        }
+        let stopped = { cliTurn.flatMap { liveTurn($0.id) }?.restartForPrivateRead == true }
+        let onLaunch: (Process) -> Void = { process in
+            if let cliTurn { setStop(cliTurn.id) { process.terminate() } }
+        }
+        // The turn's activity record, read here in the turn's task: the line handler runs
+        // on the pipe's thread, where the task-local is not visible. A turn that records
+        // activity streams, because the one-shot JSON says nothing about the tools it ran.
+        let activity = ActivityRecorder.active
+        let streams = onProgress != nil || activity != nil
         let arguments = arguments(
             prompt: prompt, systemPrompt: systemPrompt, model: model,
-            access: access, workingDirectory: directory, streaming: onProgress != nil,
-            mcpConfigPath: mcpConfigPath)
+            access: access, workingDirectory: directory, streaming: streams,
+            mcpConfigPath: mcpConfigPath, holdsPrivateData: holdsPrivateData)
         log.notice(
-            "claude cli access=\(access.rawValue, privacy: .public) dir=\(directory?.path ?? "-", privacy: .public)")
+            "claude cli access=\(access.rawValue, privacy: .public) private=\(holdsPrivateData, privacy: .public) dir=\(directory?.path ?? "-", privacy: .public)")
 
         // Streaming answers as it goes; the final text arrives on the last `result` line, so
         // it is captured here rather than parsed back out of the whole transcript afterwards.
-        if let onProgress {
+        if streams {
             var answer: String?
             var failure: String?
             _ = try await run(
                 binary: binary, arguments: arguments, workingDirectory: directory,
+                onLaunch: onLaunch,
                 onLine: { line in
+                    for event in CLIActivityEvent.claudeCode(streamLine: line) {
+                        activity?.apply(event)
+                    }
+                    if let recorder { trace(streamLine: line, into: recorder) }
                     switch parse(streamLine: line) {
-                    case .progress(let step): onProgress(step)
+                    case .progress(let step): onProgress?(step)
                     case .result(let text): answer = text
                     case .failure(let message): failure = message
                     case .ignored: break
                     }
                 })
+            if stopped() { return .restartWithoutOutboundTools }
             if let failure { throw Failure.failed(failure) }
             guard let answer, !answer.isEmpty else {
                 throw Failure.failed("Claude Code returned no answer.")
             }
-            return answer
+            return .answered(answer)
         }
 
         let output = try await run(
-            binary: binary, arguments: arguments, workingDirectory: directory)
+            binary: binary, arguments: arguments, workingDirectory: directory,
+            onLaunch: onLaunch)
+        if stopped() { return .restartWithoutOutboundTools }
         guard let payload = decodeFirstObject(in: output) else {
             // The CLI prints its auth complaint as prose, not JSON.
             if output.lowercased().contains("login") || output.lowercased().contains("auth") {
                 throw Failure.notAuthenticated
             }
             throw Failure.failed(String(output.prefix(300)))
+        }
+
+        if let recorder {
+            if let model = payload["model"] as? String { recorder.noteModel(model) }
+            if let round = traceRound(payload: payload, streamed: false) {
+                recorder.noteRound(round)
+            }
         }
 
         if let usage = payload["usage"] as? [String: Any] {
@@ -333,13 +543,15 @@ enum ClaudeCodeCLIService {
         guard let result = payload["result"] as? String, !result.isEmpty else {
             throw Failure.failed("Claude Code returned no answer.")
         }
-        return result
+        return .answered(result)
     }
 
     // MARK: - Process
 
     private static func run(
         binary: String, arguments: [String], workingDirectory: URL? = nil,
+        /// Handed the process once it starts, so the caller can stop it.
+        onLaunch: ((Process) -> Void)? = nil,
         onLine: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         try await withCheckedThrowingContinuation { continuation in
@@ -367,6 +579,7 @@ enum ClaudeCodeCLIService {
                 }
                 do {
                     try process.run()
+                    onLaunch?(process)
                 } catch {
                     continuation.resume(throwing: Failure.failed(error.localizedDescription))
                 }
@@ -393,6 +606,7 @@ enum ClaudeCodeCLIService {
             }
             do {
                 try process.run()
+                onLaunch?(process)
             } catch {
                 continuation.resume(throwing: Failure.failed(error.localizedDescription))
             }

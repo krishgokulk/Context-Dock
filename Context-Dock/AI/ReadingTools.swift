@@ -29,6 +29,8 @@ extension AgentToolRegistry {
         register(makeReadURLTool())
         register(makeReadFileTool())
         register(makeReadSelectionTool())
+        // Finding a file is reading too: paths out, nothing opened. See FileSearchTool.swift.
+        registerFileSearchTool()
     }
 
     // MARK: - The page in front of the user
@@ -73,19 +75,29 @@ extension AgentToolRegistry {
             let block = await MainActor.run {
                 ScopedGroundingBlocks.browserPage(bundleId: bundleID, query: focus)
             }
-            guard !block.isEmpty else {
-                return AgentToolResult(
-                    success: false,
-                    output: "The page could not be read. DoraX reads pages through its Safari "
-                        + "extension or the accessibility API; if neither is available, say "
-                        + "the page is unreadable rather than describing it from memory.",
-                    displayCommand: "read_page")
-            }
+            return await MainActor.run { AgentToolRegistry.readPageResult(block: block) }
+        }
+    }
+
+    /// Pure: what `read_page` returns for the page block it read. A page SensitivePageGuard
+    /// refused comes back as a plain refusal — outside the untrusted-content fence, so the
+    /// model reads the reason as DoraX's and tells the user — never as page content.
+    static func readPageResult(block: String) -> AgentToolResult {
+        guard !block.isEmpty else {
             return AgentToolResult(
-                success: true,
-                output: UntrustedContent.fenced(block, from: "the current web page"),
+                success: false,
+                output: "The page could not be read. DoraX reads pages through its Safari "
+                    + "extension or the accessibility API; if neither is available, say "
+                    + "the page is unreadable rather than describing it from memory.",
                 displayCommand: "read_page")
         }
+        if block.contains(ScopedGroundingBlocks.withheldMarker) {
+            return AgentToolResult(success: false, output: block, displayCommand: "read_page")
+        }
+        return AgentToolResult(
+            success: true,
+            output: UntrustedContent.fenced(block, from: "the current web page"),
+            displayCommand: "read_page")
     }
 
     // MARK: - A page that is not open
@@ -223,7 +235,7 @@ extension AgentToolRegistry {
             properties: [:],
             required: []
         ) { _, _ in
-            let reading = await MainActor.run { () -> String? in
+            let (reading, frontBundleID) = await MainActor.run { () -> (String?, String) in
                 let context = AXContextReader.shared.current
                 var lines: [String] = []
                 if let text = context.selectedText?.trimmingCharacters(
@@ -237,7 +249,20 @@ extension AgentToolRegistry {
                         "SELECTED FILES (\(context.selectedFilePaths.count)):")
                     lines += context.selectedFilePaths.prefix(30).map { "- \($0)" }
                 }
-                return lines.isEmpty ? nil : lines.joined(separator: "\n")
+                return (lines.isEmpty ? nil : lines.joined(separator: "\n"), context.bundleId)
+            }
+            // Mail's message pane is a WebKit view that may not expose the highlighted text to
+            // Accessibility. Mail can still say which message is open, so read that instead of
+            // reporting an empty selection while a message is on screen.
+            if reading == nil, frontBundleID.lowercased() == "com.apple.mail" {
+                let outcome = await MailReader.selected(using: LiveMailSource())
+                if outcome.hasMessage {
+                    return AgentToolResult(
+                        success: true,
+                        output: "No highlighted text could be read in Mail; this is the "
+                            + "message open in Mail:\n" + outcome.output,
+                        displayCommand: "read_selection")
+                }
             }
             guard let reading else {
                 return AgentToolResult(

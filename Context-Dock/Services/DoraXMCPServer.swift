@@ -174,6 +174,10 @@ final class DoraXMCPServer: ObservableObject {
 
     private struct Request {
         let authorization: String?
+        /// `X-DoraX-Turn`: present only on requests from a CLI turn DoraX itself launched.
+        var turnKey: String? = nil
+        /// `X-DoraX-Turn-Id`: which live turn of DoraX's own CLI this call belongs to.
+        var turnID: String? = nil
         let body: Data
     }
 
@@ -184,6 +188,8 @@ final class DoraXMCPServer: ObservableObject {
 
         var contentLength = 0
         var authorization: String?
+        var turnKey: String?
+        var turnID: String?
         for line in head.components(separatedBy: "\r\n").dropFirst() {
             let parts = line.split(separator: ":", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
@@ -192,11 +198,15 @@ final class DoraXMCPServer: ObservableObject {
             switch parts[0].lowercased() {
             case "content-length": contentLength = Int(parts[1]) ?? 0
             case "authorization": authorization = parts[1]
+            case attendedHeader.lowercased(): turnKey = parts[1]
+            case turnIDHeader.lowercased(): turnID = parts[1]
             default: break
             }
         }
         guard body.count >= contentLength else { return nil }
-        return Request(authorization: authorization, body: Data(body.prefix(contentLength)))
+        return Request(
+            authorization: authorization, turnKey: turnKey, turnID: turnID,
+            body: Data(body.prefix(contentLength)))
     }
 
     private static func httpResponse(status: String, json: Any?) -> Data {
@@ -234,7 +244,12 @@ final class DoraXMCPServer: ObservableObject {
             return Self.httpResponse(status: "202 Accepted", json: nil)
         }
 
-        log.notice("\(method, privacy: .public)")
+        let attended = Self.isAttendedCaller(turnKey: request.turnKey)
+        // Which turn this call belongs to, for the outbound gate: only a request carrying the
+        // attended key AND the id of a turn that is still live has one. Everyone else has none,
+        // and the gate treats a call with no turn as having touched everything.
+        let turn = attended ? AgentToolRegistry.shared.liveTurn(id: request.turnID) : nil
+        log.notice("\(method, privacy: .public) attended=\(attended, privacy: .public)")
         lastRequest = method
 
         let result: Any
@@ -247,14 +262,19 @@ final class DoraXMCPServer: ObservableObject {
             ]
 
         case "tools/list":
-            result = ["tools": Self.toolDefinitions]
+            result = [
+                "tools": Self.toolDefinitions(
+                    attended: attended, liveTurn: turn != nil,
+                    mayRunCommands: ClaudeCodeCLIService.mayRunCommands(turnID: turn?.id))
+            ]
 
         case "tools/call":
             let params = message["params"] as? [String: Any] ?? [:]
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             lastRequest = name
-            let text = await callTool(named: name, arguments: arguments)
+            let text = await callTool(
+                named: name, arguments: arguments, attended: attended, turn: turn)
             result = ["content": [["type": "text", "text": text]]]
 
         default:
@@ -272,6 +292,27 @@ final class DoraXMCPServer: ObservableObject {
 
     // MARK: - Handing this server to a CLI
 
+    /// The header that marks a request as coming from a CLI turn DoraX launched itself.
+    static let attendedHeader = "X-DoraX-Turn"
+
+    /// The header that says which live turn of DoraX's own CLI a call belongs to. Minted per
+    /// CLI turn (`AgentToolRegistry.beginTurn`) and written into that turn's own MCP config, so
+    /// two CLI turns at once never share what they have read.
+    static let turnIDHeader = "X-DoraX-Turn-Id"
+
+    /// Minted per app launch and only ever written into the config DoraX hands its own CLI.
+    /// The bearer token says a caller may talk to this server; this says the user is at the
+    /// keyboard in the chat that started the turn, so its approvals are shown, not refused.
+    /// An agent registered with `claude mcp add` never has it and stays unattended.
+    static let attendedTurnKey = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        .lowercased()
+
+    /// True only for DoraX's own CLI turns. Anything else — no header, a stale key from an
+    /// earlier launch — is an unknown caller and runs unattended.
+    static func isAttendedCaller(turnKey: String?) -> Bool {
+        turnKey == attendedTurnKey
+    }
+
     /// Writes the MCP config the Claude Code CLI is launched with, and returns its path.
     ///
     /// A file rather than an inline `--mcp-config` string, because the token is a bearer
@@ -281,7 +322,11 @@ final class DoraXMCPServer: ObservableObject {
     /// Rewritten on every launch rather than cached, so rotating the token cannot leave a
     /// stale file authorising nothing while the CLI reports a connection failure the user
     /// cannot explain.
-    static func writeCLIConfig() -> URL? {
+    ///
+    /// `turn` names the live turn this config belongs to. It gets its own file (so two CLI turns
+    /// at once do not overwrite each other's) and a header carrying the turn's id; the caller
+    /// deletes it when the turn ends.
+    static func writeCLIConfig(turn: AgentTurnToken? = nil) -> URL? {
         guard let directory = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Context-Dock")
@@ -289,13 +334,19 @@ final class DoraXMCPServer: ObservableObject {
         try? FileManager.default.createDirectory(
             at: directory, withIntermediateDirectories: true)
 
-        let url = directory.appendingPathComponent("claude-mcp-config.json")
+        let url = directory.appendingPathComponent(
+            turn.map { "claude-mcp-config-\($0.id.uuidString).json" } ?? "claude-mcp-config.json")
+        var headers: [String: String] = [
+            "Authorization": "Bearer \(token)",
+            attendedHeader: attendedTurnKey,
+        ]
+        if let turn { headers[turnIDHeader] = turn.id.uuidString }
         let config: [String: Any] = [
             "mcpServers": [
                 serverName: [
                     "type": "http",
                     "url": "http://127.0.0.1:\(port)/mcp",
-                    "headers": ["Authorization": "Bearer \(token)"],
+                    "headers": headers,
                 ]
             ]
         ]
@@ -319,7 +370,76 @@ final class DoraXMCPServer: ObservableObject {
 
     // MARK: - Tools
 
-    private static let toolDefinitions: [[String: Any]] = [
+    /// A turn DoraX launched is told its approvals reach the user; an outside agent is told
+    /// they are refused. Each description has to match what the call will actually do.
+    ///
+    /// `liveTurn`: the call belongs to a CLI turn DoraX is running now, so the outbound gate has
+    /// its taint and can ask in its chat. Only those get the network (`dorax_read_url`), and
+    /// the shell (`dorax_run_command`) only where `mayRunCommands` — the CLI's own were taken
+    /// away in a private chat (E1c) and the user's access level grants one.
+    static func toolDefinitions(
+        attended: Bool, liveTurn: Bool = false, mayRunCommands: Bool = false
+    ) -> [[String: Any]] {
+        guard attended else { return baseToolDefinitions }
+        var extra: [[String: Any]] = []
+        if liveTurn { extra.append(readURLDefinition) }
+        if liveTurn, mayRunCommands { extra.append(runCommandDefinition) }
+        return (baseToolDefinitions + extra).map { tool in
+            guard tool["name"] as? String == "dorax_ask" else { return tool }
+            var tool = tool
+            tool["description"] =
+                "Ask DoraX's own assistant to answer or do something on the user's Mac — a "
+                + "setting's state, the volume, an app action — and get back its answer, the "
+                + "steps it took and the receipts of what it ran. Anything that changes "
+                + "something shows the user DoraX's approval sheet and runs only if they "
+                + "approve; a denial comes back in the answer."
+            return tool
+        }
+    }
+
+    private static let readURLDefinition: [String: Any] = [
+        "name": "dorax_read_url",
+        "description":
+            "Fetch a web page by URL and read it as Markdown, through DoraX. Use this for every "
+            + "web address in this chat — you have no fetch tool of your own here. When this "
+            + "chat holds the user's private data and text they did not write, DoraX asks them "
+            + "before contacting the host; a refusal comes back as the result. Read-only.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "url": ["type": "string", "description": "The full URL, including https://."],
+                "focus": [
+                    "type": "string",
+                    "description": "Optional: what you are looking for on that page.",
+                ],
+            ] as [String: Any],
+            "required": ["url"],
+        ],
+    ]
+
+    private static let runCommandDefinition: [String: Any] = [
+        "name": "dorax_run_command",
+        "description":
+            "Run a shell command on the user's Mac through DoraX and get its output. Use this "
+            + "instead of a shell of your own — you have none in this chat. DoraX's approval "
+            + "applies: a command that changes something, or that could reach the network once "
+            + "this chat holds private data, is shown to the user first.",
+        "inputSchema": [
+            "type": "object",
+            "properties": [
+                "command": ["type": "string", "description": "The exact shell command."],
+                "purpose": ["type": "string", "description": "One line: what it does."],
+                "requires_approval": [
+                    "type": "boolean",
+                    "description": "True when it modifies files, installs software, or "
+                        + "cannot be undone.",
+                ],
+            ] as [String: Any],
+            "required": ["command", "purpose"],
+        ],
+    ]
+
+    private static let baseToolDefinitions: [[String: Any]] = [
         [
             "name": "dorax_frontmost_app",
             "description":
@@ -395,6 +515,71 @@ final class DoraXMCPServer: ObservableObject {
             ],
         ],
         [
+            "name": "dorax_find_files",
+            "description":
+                "Find files on the user's Mac by name — Spotlight first, then a bounded scan of "
+                + "Desktop, Documents, Downloads and iCloud Drive, so it works when Spotlight is "
+                + "off. Returns full absolute paths, newest first. Read-only.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "query": [
+                        "type": "string",
+                        "description": "Words the file name contains, e.g. \"passport pdf\".",
+                    ]
+                ] as [String: Any],
+                "required": ["query"],
+            ],
+        ],
+        [
+            "name": "dorax_list_shortcuts",
+            "description":
+                "List the names of the user's shortcuts in the Shortcuts app. Read-only.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [String: Any](),
+            ],
+        ],
+        [
+            "name": "dorax_run_shortcut",
+            "description":
+                "Run one of the user's shortcuts by its exact name (from dorax_list_shortcuts), "
+                + "with optional short text input. The user must approve each run in DoraX; when "
+                + "DoraX is not showing them the approval (an unattended agent), the call is "
+                + "refused and nothing runs. Returns the shortcut's output and exit status.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": ["type": "string", "description": "Exact shortcut name."],
+                    "input": ["type": "string", "description": "Optional short text input."],
+                ] as [String: Any],
+                "required": ["name"],
+            ],
+        ],
+        [
+            "name": "dorax_write_output_file",
+            "description":
+                "Write a new .md, .txt, .csv or .docx file into the user's DoraX Outputs folder "
+                + "(~/Documents/DoraX Outputs) and return its full path. Never overwrites. The "
+                + "user must approve each file in DoraX; when DoraX is not showing them the "
+                + "approval (an unattended agent), the call is refused and nothing is written.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": [
+                        "type": "string",
+                        "description": "Plain file name, no folders.",
+                    ],
+                    "format": [
+                        "type": "string",
+                        "description": "One of: md, txt, csv, docx.",
+                    ],
+                    "content": ["type": "string", "description": "The whole file content."],
+                ] as [String: Any],
+                "required": ["name", "format", "content"],
+            ],
+        ],
+        [
             "name": "dorax_browser_tabs",
             "description":
                 "The pages the user has open in Safari, with titles and URLs. Call this when "
@@ -403,16 +588,19 @@ final class DoraXMCPServer: ObservableObject {
         ],
     ]
 
-    /// Run one DoraX turn with nobody at the keyboard, and report what it decided.
+    /// Run one DoraX turn and report what it decided.
     ///
-    /// The point is testing the *decision*: which reader ran, which capability was chosen,
-    /// which approval was asked for. Approvals are refused throughout — an agent looping over
-    /// an eval set must not be able to send mail because a sheet resolved on its own, and
-    /// there is no one there to refuse it.
-    private func runUnattendedTurn(query: String, app: String?) async -> String {
+    /// Unattended (an outside agent): the point is testing the *decision* — which reader ran,
+    /// which capability was chosen, which approval was asked for. Approvals are refused
+    /// throughout — an agent looping over an eval set must not be able to send mail because a
+    /// sheet resolved on its own, and there is no one there to refuse it.
+    ///
+    /// Attended (a CLI turn DoraX launched from a chat): the user is right there, so approvals
+    /// go to the same sheet an in-app capability uses, and the capability runs if approved.
+    private func runTurn(query: String, app: String?, attended: Bool) async -> String {
         let resolved = await MainActor.run { () -> (scope: GeneralChatScope, name: String) in
             guard let app, !app.isEmpty else {
-                return (.thread(id: "dorax-mcp-eval"), "General Chat")
+                return (.thread(id: attended ? "dorax-cli-turn" : "dorax-mcp-eval"), "General Chat")
             }
             // Accept either a bundle id or the name a person would type.
             //
@@ -433,22 +621,30 @@ final class DoraXMCPServer: ObservableObject {
             return (.app(bundleId: app), app)
         }
 
-        await MainActor.run { AICapabilityApprovalCenter.beginUnattendedRun() }
         var liveSteps: [String] = []
         let answer: AppScopedChatService.Answer
+        var approvals: [String] = []
         do {
             // The steps the harness narrates as it works. Without this the tool whose whole
             // purpose is "check what DoraX did" returned an empty `steps` for a turn that had
             // read a page, listed fifteen tabs and chosen a route.
             let collected = StepCollector()
-            answer = try await AppScopedChatService.send(
-                scope: resolved.scope, appName: resolved.name, query: query, history: [],
-                onStatus: { step in collected.append(step) })
+            let send = {
+                try await AppScopedChatService.send(
+                    scope: resolved.scope, appName: resolved.name, query: query, history: [],
+                    onStatus: { step in collected.append(step) })
+            }
+            if attended {
+                answer = try await send()
+            } else {
+                let run = try await AICapabilityApprovalCenter.withUnattendedRun(send)
+                answer = run.result
+                approvals = run.approvalsRequested
+            }
             liveSteps = collected.steps
         } catch {
             // A turn that threw is a result an eval needs to see, reported in the same shape
             // as any other — not an exception the caller has to guess the meaning of.
-            _ = await MainActor.run { AICapabilityApprovalCenter.endUnattendedRun() }
             let failure: [String: Any] = [
                 "scope": resolved.name,
                 "failed": true,
@@ -460,14 +656,12 @@ final class DoraXMCPServer: ObservableObject {
             else { return "The turn failed: \(error.localizedDescription)" }
             return text
         }
-        let approvals = await MainActor.run { AICapabilityApprovalCenter.endUnattendedRun() }
 
         var payload: [String: Any] = [
             "answer": answer.text,
             "scope": resolved.name,
             "steps": liveSteps.isEmpty ? answer.trace : liveSteps + answer.trace,
             "toolChips": answer.toolChips,
-            "approvalsRequested": approvals,
             "receipts": answer.evidenceReceipts.map { receipt in
                 [
                     "command": receipt.command,
@@ -483,9 +677,12 @@ final class DoraXMCPServer: ObservableObject {
         if let enable = answer.enableApp {
             payload["blockedNeedingAccessTo"] = enable.name
         }
-        payload["note"] =
-            "Approvals were refused unattended. approvalsRequested is what DoraX decided to "
-            + "ask for; nothing was executed behind them."
+        if !attended {
+            payload["approvalsRequested"] = approvals
+            payload["note"] =
+                "Approvals were refused unattended. approvalsRequested is what DoraX decided to "
+                + "ask for; nothing was executed behind them."
+        }
 
         guard let data = try? JSONSerialization.data(
             withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
@@ -496,7 +693,26 @@ final class DoraXMCPServer: ObservableObject {
         return text
     }
 
-    private func callTool(named name: String, arguments: [String: Any]) async -> String {
+    private func callTool(
+        named name: String, arguments: [String: Any], attended: Bool, turn: AgentTurnToken? = nil
+    ) async -> String {
+        let registry = AgentToolRegistry.shared
+        // What the CLI turn has now read, for the outbound gate. These tools hand over the
+        // user's screen, selection, tabs and file names (private) from apps whose text the
+        // user did not write (untrusted).
+        switch name {
+        case "dorax_frontmost_app", "dorax_selection", "dorax_screenshot", "dorax_browser_tabs",
+            "dorax_find_files":
+            // E1c: a CLI turn still holding its own fetch or shell does not get the user's data;
+            // it is stopped and run again without them, and then this read goes ahead.
+            if let turn, ClaudeCodeCLIService.stopBeforePrivateRead(turnID: turn.id) {
+                return "Not read: DoraX is restarting this turn without web and shell tools "
+                    + "before it hands over the user's data. Stop here."
+            }
+            registry.taint.notePrivateRead(turn)
+            registry.taint.noteUntrusted(turn)
+        default: break
+        }
         switch name {
         case "dorax_frontmost_app":
             // Read live rather than trusting the shared snapshot. That snapshot updates on
@@ -536,10 +752,44 @@ final class DoraXMCPServer: ObservableObject {
             let query = (arguments["query"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return "dorax_ask needs a query." }
-            return await runUnattendedTurn(
+            return await runTurn(
                 query: query,
                 app: (arguments["app"] as? String)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines))
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                attended: attended)
+
+        case "dorax_find_files":
+            let query = (arguments["query"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return "dorax_find_files needs a query." }
+            return await AgentToolRegistry.runFileSearch(query: query).1
+
+        case "dorax_list_shortcuts":
+            return await AgentToolRegistry.runListShortcuts().1
+
+        case "dorax_run_shortcut":
+            if let target = OutboundGate.target(toolName: "run_shortcut", arguments: arguments),
+                let stopped = await registry.gateOutbound(
+                    target: target,
+                    what: AgentToolRegistry.outboundDescription(
+                        name: "run_shortcut", arguments: arguments),
+                    turn: turn, chatScope: nil, attended: attended)
+            {
+                return stopped.output
+            }
+            let result = await AgentToolRegistry.runRunShortcut(
+                name: arguments["name"] as? String ?? "",
+                input: arguments["input"] as? String,
+                scope: nil, attended: attended)
+            return result.output
+
+        case "dorax_write_output_file":
+            let result = await AgentToolRegistry.runWriteOutputFile(
+                name: arguments["name"] as? String ?? "",
+                format: arguments["format"] as? String ?? "",
+                content: arguments["content"] as? String ?? "",
+                scope: nil, attended: attended)
+            return result.output
 
         case "dorax_browser_tabs":
             let tabs = SafariTabManager.shared.cachedTabs(maxAge: 30)
@@ -547,8 +797,26 @@ final class DoraXMCPServer: ObservableObject {
                 return "No Safari tabs cached. Safari may not be running."
             }
             return tabs.prefix(40)
-                .map { "- \($0.title)\n  \($0.url)" }
+                .map { tab in
+                    // A bank or sign-in tab is listed by origin only: no title, path or query.
+                    ScopedGroundingBlocks.withheldTabRow(url: tab.url)
+                        ?? "- \(tab.title)\n  \(tab.url)"
+                }
                 .joined(separator: "\n")
+
+        case "dorax_read_url":
+            return await Self.readURL(arguments: arguments, turn: turn, registry: registry)
+
+        case "dorax_run_command":
+            guard ClaudeCodeCLIService.mayRunCommands(turnID: turn?.id) else {
+                return "Running commands is not available to this chat."
+            }
+            return await Self.runCommand(
+                arguments: arguments, turn: turn, registry: registry,
+                executor: { command, purpose, approval in
+                    await TerminalCommandExecutor.shared.run(
+                        command, purpose: purpose, modelRequiresApproval: approval)
+                })
 
         case "dorax_run_menu_command":
             // Deliberately the same tool the app's own chat uses, dispatched through the same
@@ -567,6 +835,17 @@ final class DoraXMCPServer: ObservableObject {
                 grantedApps[app.lowercased()] = bundleId
                 grantedApps[bundleId.lowercased()] = bundleId
             }
+            // An outside agent (unattended) cannot answer the gate's card, so it is held back
+            // here; a CLI turn DoraX launched is asked inside `dispatch` below.
+            if !attended,
+                let target = OutboundGate.target(
+                    toolName: "run_menu_command", arguments: ["app": app, "path": path]),
+                let stopped = await registry.gateOutbound(
+                    target: target, what: "run_menu_command: \(path)", turn: turn,
+                    chatScope: nil, attended: false)
+            {
+                return "Did not run — \(stopped.output)"
+            }
             let context = AgentToolContext(
                 // An outside agent gets no shell through this door. It asked for a menu
                 // command; the menu command is what it may have.
@@ -574,7 +853,7 @@ final class DoraXMCPServer: ObservableObject {
                     (false, "Running shell commands is not available through the DoraX MCP server.", 1)
                 },
                 userRequest: "Menu command requested by a connected coding agent: \(app) ▸ \(path)",
-                grantedApps: grantedApps)
+                grantedApps: grantedApps, turn: turn)
             let result = await AgentToolRegistry.shared.dispatch(
                 name: "run_menu_command",
                 arguments: ["app": app, "path": path],
@@ -587,6 +866,51 @@ final class DoraXMCPServer: ObservableObject {
         default:
             return "Unknown tool \(name)."
         }
+    }
+
+    // MARK: - Network and shell for a private CLI chat (E1c)
+
+    /// `dorax_read_url`: DoraX's own `read_url`, dispatched through the registry with the CLI
+    /// turn, so the outbound gate decides with what that turn has read and asks in its chat.
+    /// Only a live DoraX CLI turn has one; anyone else is refused before the gate is reached.
+    static func readURL(
+        arguments: [String: Any], turn: AgentTurnToken?, registry: AgentToolRegistry
+    ) async -> String {
+        guard let turn else {
+            return "dorax_read_url is only available to a chat DoraX is running."
+        }
+        let url = (arguments["url"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var forwarded: [String: Any] = ["url": url]
+        if let focus = arguments["focus"] as? String { forwarded["focus"] = focus }
+        let result = await registry.dispatch(
+            name: "read_url", arguments: forwarded,
+            context: AgentToolContext(
+                commandExecutor: { _, _, _ in
+                    (false, "Running shell commands is not part of reading a page.", 1)
+                },
+                userRequest: "Page requested by DoraX's Claude Code turn: \(url)",
+                chatScope: ClaudeCodeCLIService.chatScope(turnID: turn.id), turn: turn))
+        guard let result else { return "Reading web pages is unavailable in this build." }
+        return result.success ? result.output : "Not fetched — \(result.output)"
+    }
+
+    /// `dorax_run_command`: DoraX's own `run_command` — the outbound gate (E1b's allow-list
+    /// decides what reaches the network), then the executor's approval for anything risky.
+    static func runCommand(
+        arguments: [String: Any], turn: AgentTurnToken?, registry: AgentToolRegistry,
+        executor: @escaping (String, String, Bool) async -> (Bool, String, Int32)
+    ) async -> String {
+        guard let turn else {
+            return "dorax_run_command is only available to a chat DoraX is running."
+        }
+        let result = await registry.dispatch(
+            name: "run_command", arguments: arguments,
+            context: AgentToolContext(
+                commandExecutor: executor,
+                userRequest: "Command requested by DoraX's Claude Code turn",
+                chatScope: ClaudeCodeCLIService.chatScope(turnID: turn.id), turn: turn))
+        guard let result else { return "Running commands is unavailable in this build." }
+        return result.success ? result.output : "Did not run — \(result.output)"
     }
 
     /// The frontmost app's own accessibility state, read at the moment of the call.

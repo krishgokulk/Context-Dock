@@ -5,48 +5,53 @@ import Testing
 
 /// The diagnostic that replaces an OSLog nobody can read.
 ///
-/// Serialized because both tests share one file and one default: run in parallel, the test
-/// asserting nothing is written watches the other one write it.
-@Suite("Turn log", .serialized)
+/// Each test owns its switch and its file: a private UserDefaults suite and a temporary log,
+/// written through its own `DoraXTurnLog.Sink`. Nothing here reads or writes
+/// `UserDefaults.standard` or the app's own turns.log, so no other suite can reach it (#169).
+@Suite("Turn log")
 struct DoraXTurnLogTests {
-    private var fileURL: URL? {
-        FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("Context-Dock/turns.log")
+
+    /// A sink nobody else can see, switched on or off.
+    private struct OwnedSink {
+        let sink: DoraXTurnLog.Sink
+        let fileURL: URL
+        let suiteName: String
+
+        init(enabled: Bool) {
+            suiteName = "DoraXTurnLogTests.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defaults.set(enabled, forKey: DoraXTurnLog.enabledKey)
+            fileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("turn-log-\(UUID().uuidString).log")
+            sink = DoraXTurnLog.Sink(defaults: defaults, fileURL: fileURL)
+        }
+
+        func remove() {
+            try? FileManager.default.removeItem(at: fileURL)
+            UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName)
+        }
     }
 
     /// Off unless asked for: a turn log names the apps and questions a person asks, so it is
     /// not something to start writing because it might be useful later.
-    @Test func nothingIsWrittenUnlessItIsSwitchedOn() throws {
-        let defaults = UserDefaults.standard
-        let previous = defaults.bool(forKey: DoraXTurnLog.enabledKey)
-        defaults.set(false, forKey: DoraXTurnLog.enabledKey)
-        defer { defaults.set(previous, forKey: DoraXTurnLog.enabledKey) }
+    @Test func nothingIsWrittenUnlessItIsSwitchedOn() {
+        let owned = OwnedSink(enabled: false)
+        defer { owned.remove() }
 
-        let url = try #require(fileURL)
-        try? FileManager.default.removeItem(at: url)
-        DoraXTurnLog.record("must not appear")
-        // The write is queued; give it the chance it would have had.
-        Thread.sleep(forTimeInterval: 0.2)
+        owned.sink.record("must not appear")
+        owned.sink.flush()
 
-        #expect(!FileManager.default.fileExists(atPath: url.path))
+        #expect(!FileManager.default.fileExists(atPath: owned.fileURL.path))
     }
 
     @Test func aLineIsWrittenWhenItIsOn() throws {
-        let defaults = UserDefaults.standard
-        let previous = defaults.bool(forKey: DoraXTurnLog.enabledKey)
-        defaults.set(true, forKey: DoraXTurnLog.enabledKey)
-        defer {
-            defaults.set(previous, forKey: DoraXTurnLog.enabledKey)
-            try? FileManager.default.removeItem(at: fileURL!)
-        }
+        let owned = OwnedSink(enabled: true)
+        defer { owned.remove() }
 
-        let url = try #require(fileURL)
-        try? FileManager.default.removeItem(at: url)
-        DoraXTurnLog.record("turn prepared — provider=test")
-        Thread.sleep(forTimeInterval: 0.3)
+        owned.sink.record("turn prepared — provider=test")
+        owned.sink.flush()
 
-        let contents = try String(contentsOf: url, encoding: .utf8)
+        let contents = try String(contentsOf: owned.fileURL, encoding: .utf8)
         #expect(contents.contains("provider=test"))
     }
 }

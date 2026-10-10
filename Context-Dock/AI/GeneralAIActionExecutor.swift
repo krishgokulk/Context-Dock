@@ -10,7 +10,6 @@
 //
 // Route mapping:
 //   .adapter          → CapabilityRegistry executor (via AIExecutionEngine) or AdapterAction
-//   .shortcutRunner   → ShortcutRunner
 //   .keyboardShortcut → launch/activate app + CGEvent shortcut
 //   .verifiedMenu     → MenuExecutionCoordinator.executeVerifiedMenuAction (live-verified)
 //   .axFallback       → AXActionResolver, only after a live menu verification
@@ -245,8 +244,6 @@ final class GeneralAIActionExecutor {
             result = await executeVerifiedMenu(candidate, approval: approval)
         case .axFallback:
             result = await executeAXFallback(candidate)
-        case .shortcutRunner:
-            result = await executeShortcutRunner(candidate)
         case .automation:
             result = await executeAutomation(candidate)
         case .cli:
@@ -367,10 +364,9 @@ final class GeneralAIActionExecutor {
         // .adapter and .api reach this line only when the capability-id read-backs above
         // found nothing for them; a registered capability with a verifier never gets here.
         // .mcp returns whatever a server chose to return and there is no second call that
-        // means "did that land". .shortcutRunner hands off to Shortcuts, which reports its
-        // own success and nothing about the world afterwards. .automation composes in
+        // means "did that land". .automation composes in
         // another app — the window it opens is the outcome, and the user is looking at it.
-        case .adapter, .api, .mcp, .shortcutRunner, .automation:
+        case .adapter, .api, .mcp, .automation:
             return .notApplicable
 
         case .axFallback:
@@ -699,23 +695,6 @@ final class GeneralAIActionExecutor {
         return .init(success: true, message: "Ran \(candidate.title) via accessibility.")
     }
 
-    // MARK: - Shortcuts app
-
-    private func executeShortcutRunner(_ candidate: DoraXActionCandidate) async -> GeneralAIActionResult {
-        guard let name = candidate.shortcutName, !name.isEmpty else {
-            return .init(success: false, message: "No shortcut name on this route.")
-        }
-        do {
-            let output = try await ShortcutRunner.shared.runDirectly(name, with: .text(""))
-            let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .init(
-                success: true,
-                message: trimmed.isEmpty ? "Ran shortcut “\(name)”." : "Ran shortcut “\(name)”: \(trimmed)")
-        } catch {
-            return .init(success: false, message: "Shortcut “\(name)” failed: \(error.localizedDescription)")
-        }
-    }
-
     // MARK: - MCP tool route
 
     /// Execute a registered MCP tool through the SAME ranked-candidate/executor path as
@@ -872,6 +851,9 @@ final class GeneralAIActionExecutor {
             return .init(
                 success: false,
                 message: "The Safari extension context went stale — reload the page and try again.")
+        }
+        if let reason = SensitivePageGuard.refusal(for: context.url) {
+            return .init(success: false, message: reason.message)
         }
         do {
             let response = try await AIProviderRouter.shared.send(

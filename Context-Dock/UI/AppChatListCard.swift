@@ -16,7 +16,8 @@ import AppKit
 import SwiftUI
 
 enum AppChatListMetrics {
-    static let width = AppChatPromptMetrics.width
+    /// The board stands exactly as wide as the field below it: the shell's one width (#189).
+    static var width: CGFloat { DockShellWidth.current }
     static let rowHeight: CGFloat = 40
     static let headerHeight: CGFloat = 30
     /// Room above and below the rows.
@@ -28,11 +29,15 @@ enum AppChatListMetrics {
     /// becoming a terminal — a real PTY flow is a different surface, and this is not it.
     static let outputHeight: CGFloat = 150
 
+    /// The board's foot: what Return does, ⌘P and ⌘, (owner 2026-10-07), as the clipboard's
+    /// board ends.
+    static var footerHeight: CGFloat { BoardFooter.height }
+
     static func size(rows: Int, output: Bool = false, width: CGFloat = width) -> CGSize {
         CGSize(
             width: width,
             height: headerHeight + CGFloat(rows) * rowHeight
-                + (output ? outputHeight : 0) + verticalPadding * 2)
+                + (output ? outputHeight : 0) + verticalPadding * 2 + footerHeight)
     }
 }
 
@@ -89,12 +94,37 @@ private struct MenuRowIcon: View {
 struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
 
-    private var size: CGSize {
-        AppChatListMetrics.size(
-            rows: model.listRowCount, width: AppChatPromptMetrics.boardWidth(for: model))
+    /// The board: the list, and the highlighted row's preview beside it in the same card
+    /// (#191) — the same number the window reserves.
+    private var size: CGSize { model.boardSize }
+
+    /// The right half: the app's card when the chip opened it (owner 2026-10-08: "in the
+    /// right half of the result sheet"), the highlighted row's preview otherwise.
+    @ViewBuilder
+    private func previewPanel(_ preview: CornerBoardPreview) -> some View {
+        if case .appScope(let bundleID, _) = preview {
+            let panelHeight = size.height - 2 * AppChatListMetrics.verticalPadding
+                - AppChatListMetrics.footerHeight
+            AppScopeCard(
+                model: model,
+                appIcon: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                    .map { NSWorkspace.shared.icon(forFile: $0.path) },
+                close: { model.isShowingScopeCard = false },
+                width: CornerBoardLayout.panelWidth(board: size.width) - 10,
+                maxScrollHeight: max(panelHeight - 70, 120))
+                .boardPanelCard()
+        } else {
+            CornerBoardPreviewPanel(preview: preview)
+        }
     }
 
     var body: some View {
+        let preview = model.boardPreview
+        // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
+        // the list on the left, what the highlighted row is on the right — and one foot
+        // under both.
+        VStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
             Text(headerText)
                 .font(.system(size: 11))
@@ -119,7 +149,13 @@ struct AppChatListCard: View {
                             // to — `rows.first`, the same fallback the field's own icon
                             // reads — so a list showing none of them chosen was a list
                             // disagreeing with what its own Return key was about to do.
-                            let effectiveFocus = model.focusedMenuIndex ?? 0
+                            // Under Finder's Ask AI row, nothing chosen is that row.
+                            let effectiveFocus = model.showsAskAIRow
+                                ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
+                            if model.showsAskAIRow {
+                                askAIRow(isFocused: model.focusedMenuIndex == nil)
+                                    .id("ask-ai")
+                            }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
                                 Group {
                                     switch row {
@@ -135,6 +171,8 @@ struct AppChatListCard: View {
                                         fileRow(url, isFocused: index == effectiveFocus)
                                     case .cliSuggestion(let word):
                                         cliSuggestionRow(word, isFocused: index == effectiveFocus)
+                                    case .app(let entry):
+                                        appRow(entry, isFocused: index == effectiveFocus)
                                     }
                                 }
                                 .contextMenu { pinMenu(for: row) }
@@ -143,15 +181,44 @@ struct AppChatListCard: View {
                         }
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
-                        if let row = model.focusedRow { proxy.scrollTo(row.id) }
+                        if let row = model.focusedRow {
+                            proxy.scrollTo(row.id)
+                        } else if model.showsAskAIRow {
+                            proxy.scrollTo("ask-ai", anchor: .top)
+                        }
                     }
                     .onChange(of: model.query) { _, _ in
-                        if let row = model.rows.first { proxy.scrollTo(row.id, anchor: .top) }
+                        if model.showsAskAIRow {
+                            proxy.scrollTo("ask-ai", anchor: .top)
+                        } else if let row = model.rows.first {
+                            proxy.scrollTo(row.id, anchor: .top)
+                        }
                     }
                 }
             }
         }
+        .frame(
+            width: CornerBoardLayout.listWidth(board: size.width, preview: preview),
+            alignment: .topLeading)
+        if let preview {
+            // The preview's own inset card draws the edge between the halves.
+            Color.clear.frame(width: CornerBoardLayout.dividerWidth)
+            previewPanel(preview)
+                .frame(
+                    width: CornerBoardLayout.panelWidth(board: size.width),
+                    height: size.height - 2 * AppChatListMetrics.verticalPadding
+                        - AppChatListMetrics.footerHeight,
+                    alignment: .topLeading)
+                .transition(.opacity)
+        }
+        }
+        .animation(.smooth(duration: 0.18), value: preview)
         .padding(.vertical, AppChatListMetrics.verticalPadding)
+        .frame(
+            width: size.width, height: size.height - AppChatListMetrics.footerHeight,
+            alignment: .topLeading)
+        footer
+        }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
@@ -168,9 +235,90 @@ struct AppChatListCard: View {
         .onHover { _ in model.touch() }
     }
 
+    /// The board's foot: floating key pills, no bar (owner 2026-10-07). Return is not among
+    /// them — every highlighted row already shows its ↩ — but Tab is, when the row is a
+    /// scope Tab steps into (a CLI tool, a Global Command); then pin ⌘P and Settings ⌘,.
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if model.finderPathTrail.isEmpty {
+                Spacer(minLength: 0)
+            } else {
+                finderPathPills
+            }
+            if tabStepsIn {
+                BoardFooter.pill {
+                    BoardFooter.keycaps(["⇥"])
+                    Text("Tab").font(.system(size: 11.5, weight: .semibold))
+                }
+            }
+            BoardFooter.pill {
+                BoardFooter.button(
+                    model.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
+                    help: model.focusedRow != nil
+                        ? "Pin the chosen row (⌘P)"
+                        : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"),
+                    tinted: model.isPinned
+                ) { if !model.pinChosenRow() { model.togglePin() } }
+            }
+            BoardFooter.pill {
+                BoardFooter.button("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
+                    AppDelegate.shared?.showSettings()
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: AppChatListMetrics.footerHeight)
+    }
+
+    /// The folder being walked, as Finder's path bar shows it: one clickable pill per folder
+    /// from the disk down, the current one last and in bold (owner 2026-10-09).
+    private var finderPathPills: some View {
+        let trail = model.finderPathTrail
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(Array(trail.enumerated()), id: \.element) { index, url in
+                    if index > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Button { model.openFinderPathPill(url) } label: {
+                        BoardFooter.pill {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                            Text(FileManager.default.displayName(atPath: url.path))
+                                .font(.system(
+                                    size: 11.5,
+                                    weight: index == trail.count - 1 ? .semibold : .medium))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(url.path)
+                }
+            }
+        }
+        .defaultScrollAnchor(.trailing)
+    }
+
+    /// Tab steps into the highlighted row — the top one when none is — when it is a scope:
+    /// a CLI tool, a Global Command, an extension.
+    private var tabStepsIn: Bool {
+        guard let row = model.focusedRow ?? model.rows.first else { return false }
+        switch row {
+        case .global(let doc): return AppChatPromptModel.rightArrowStepsInto(doc.action)
+        case .cliSuggestion: return true
+        default: return false
+        }
+    }
+
     /// Names what the list is: what the app can do at rest, what matched once typing starts.
     private var headerText: String {
         let app = model.appName.isEmpty ? "App" : model.appName
+        if model.slashAppFilter != nil { return "Jump to an app, tool or command · ↩ steps in" }
         let typed = !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if typed { return "\(app) · \(model.rows.count) match\(model.rows.count == 1 ? "" : "es")" }
         return model.capabilitySummary.isEmpty ? "\(app) can" : model.capabilitySummary
@@ -181,7 +329,8 @@ struct AppChatListCard: View {
         if model.isGlobalScope { return "Search apps, tools and menus…" }
         // Scoped into an app from Global, the field is a filter over that app — so it says
         // what the dock says there, rather than offering to chat.
-        if model.returnsToGlobalScope {
+        // Finder is asked, however it was reached — the same field as Finder in front.
+        if model.returnsToGlobalScope, !model.isFinderScope {
             return AppScopeHint.placeholder(
                 bundleId: model.appBundleID, appName: model.appName,
                 hasActions: !model.adapterActions.isEmpty)
@@ -263,6 +412,86 @@ struct AppChatListCard: View {
         .onTapGesture { model.run(.cliSuggestion(word)) }
     }
 
+    /// An app "/" can jump to: its icon and name, and whether it is open. One that is not
+    /// still works — its scope runs on its adapters, CLI tools and skills, unlaunched.
+    private func appRow(_ entry: ChatAppEntry, isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if let icon = entry.icon {
+                    Image(nsImage: icon).resizable().aspectRatio(contentMode: .fit)
+                } else {
+                    Image(systemName: "app.dashed").font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 22, height: 22)
+            .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(entry.isRunning ? "Running" : "Not open · works without launching")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.run(.app(entry)) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// Finder's first row: what is typed, as a question to the AI. Return takes it until the
+    /// arrows choose a file or command (owner 2026-10-09).
+    private func askAIRow(isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Ask AI")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(model.query.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.submit() }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Ask AI: \(model.query)")
+    }
+
     /// A file or folder from the Finder scope, with the path it lives at — two files called
     /// "Downloads" are told apart by where they are, not by their name.
     private func fileRow(_ url: URL, isFocused: Bool) -> some View {
@@ -309,24 +538,8 @@ struct AppChatListCard: View {
                 model.toggleAppPin(row)
             }
         } else if let kind = DockPinKind(row: row) {
-            if DockPinStore.shared.isPinned(kind) {
-                Button("Unpin from Dock") {
-                    if let pin = DockPinStore.shared.pins.first(where: { $0.kind == kind }) {
-                        DockPinStore.shared.unpin(pin.id)
-                    }
-                }
-            } else {
-                Button("Pin to Dock") {
-                    let (title, documentID): (String, String?) = {
-                        switch row {
-                        case .global(let doc): return (doc.title, doc.id)
-                        case .file(let url): return (url.lastPathComponent, nil)
-                        case .dock(let pill): return (pill.name, nil)
-                        default: return ("", nil)
-                        }
-                    }()
-                    DockPinStore.shared.pin(kind, title: title, documentID: documentID)
-                }
+            Button(DockPinStore.shared.isPinned(kind) ? "Unpin from Dock" : "Pin to Dock") {
+                model.toggleDockPin(row)
             }
         }
     }

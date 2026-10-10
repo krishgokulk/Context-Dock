@@ -24,6 +24,16 @@ enum AppScopedChatService {
         subsystem: "com.krishgokul.ContextDock", category: "AppScopedChat")
 
     struct Answer {
+        /// A turn that asks which route to take. It is the whole turn: no step ran and none
+        /// may run until the user picks, so this carries no chips, receipts or rows.
+        static func asking(_ text: String, choices: [ActionChoice]) -> Answer {
+            Answer(text: text, toolChips: [], routeChoices: choices)
+        }
+
+        /// True when the turn is waiting on the user to pick a route, which is only valid if
+        /// nothing ran in it.
+        var isWaitingOnRouteChoice: Bool { !routeChoices.isEmpty }
+
         let text: String
         /// What actually ran, for the receipt chips — derived from execution, never from
         /// words in the question.
@@ -422,6 +432,13 @@ enum AppScopedChatService {
             + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query))
             + subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
 
+        // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
+        // "read the latest message and do what it says" as a question for Messages sent the
+        // user to enable an app they never asked for, and Mail never got read.
+        if scopeBundleID?.lowercased() == "com.apple.mail", !namesMessagesApp(query) {
+            candidates.removeAll { Self.isMessagesApp(bundleId: $0.bundleId) }
+        }
+
         let attachedBundleIDs = Set(
             attachedAppNames.compactMap { name -> String? in
                 NSWorkspace.shared.runningApplications
@@ -454,6 +471,18 @@ enum AppScopedChatService {
             companions: candidates.dropFirst().map {
                 EnableAppRequest.AppRef(name: $0.name, bundleId: $0.bundleId)
             })
+    }
+
+    nonisolated static func isMessagesApp(bundleId: String) -> Bool {
+        ["com.apple.mobilesms", "com.apple.messages"].contains(bundleId.lowercased())
+    }
+
+    /// Whether a sentence asks for the Messages app itself, not a mail message: only these
+    /// words say so. A bare "message" or "text" inside a Mail chat means the email.
+    nonisolated static func namesMessagesApp(_ query: String) -> Bool {
+        let q = query.lowercased()
+        return ["imessage", "sms", "text message", "messages app", "in messages",
+                "to messages", "from messages", "open messages"].contains(where: q.contains)
     }
 
     /// Whether a candidate app *is* the app this chat is already about.
@@ -665,6 +694,24 @@ enum AppScopedChatService {
         let conversationScope = Self.conversationScope(
             routingBundleId: routingBundleId, appName: appName)
 
+        // One registry turn for the whole loop (E1c). The capabilities DoraX runs between
+        // passes are gated and recorded against it, and a Claude Code pass joins it rather than
+        // starting a record that has forgotten the mail it was just handed.
+        let registry = AgentToolRegistry.shared
+        let chat = ClaudeCodeChat.scope
+        let earlier = ClaudeCodeCLIService.sessionTaint(chat)
+        let turn = registry.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: query),
+            promptBlocks: [systemPrompt, query],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: routingBundleId)
+                || earlier.readPrivateData,
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(bundleID: routingBundleId)
+                || earlier.readUntrustedContent)
+        defer {
+            ClaudeCodeCLIService.noteRead(registry.taint.taint(for: turn), in: chat)
+            registry.endTurn(turn)
+        }
+
         let toolsBlock = await withTimeout(
             seconds: 8, fallback: "", label: "scoped tool-less capability block"
         ) {
@@ -686,24 +733,26 @@ enum AppScopedChatService {
 
         for _ in 0..<4 {
             onStatus?(toolChips.isEmpty ? "Thinking…" : "Reading tool result…")
-            let raw = try await AIProviderService.shared.sendMessage(
-                loopQuery,
-                context: context,
-                provider: provider,
-                apiKey: apiKey,
-                conversationHistory: loopHistory,
-                additionalContextPrompt: promptWithTools,
-                attachments: attachments.map(AIAttachment.inferred(from:)),
-                // This surface supplies its own capability catalogue; letting the provider
-                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
-                // nothing here executes, and the directive ends up printed at the user.
-                surfaceScoped: true,
-                // A CLI provider's own steps belong in the same live list DoraX fills for
-                // its own work, rather than in a transcript nobody has open.
-                onStatus: onStatus.map { report in { step in
-                    Task { @MainActor in report(step) }
-                } }
-            )
+            let raw = try await ClaudeCodeChat.$turn.withValue(turn) {
+                try await AIProviderService.shared.sendMessage(
+                    loopQuery,
+                    context: context,
+                    provider: provider,
+                    apiKey: apiKey,
+                    conversationHistory: loopHistory,
+                    additionalContextPrompt: promptWithTools,
+                    attachments: attachments.map(AIAttachment.inferred(from:)),
+                    // This surface supplies its own capability catalogue; letting the provider
+                    // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
+                    // nothing here executes, and the directive ends up printed at the user.
+                    surfaceScoped: true,
+                    // A CLI provider's own steps belong in the same live list DoraX fills for
+                    // its own work, rather than in a transcript nobody has open.
+                    onStatus: onStatus.map { report in { step in
+                        Task { @MainActor in report(step) }
+                    } }
+                )
+            }
 
             // Say what is about to happen before it happens. The directive is already in the
             // answer text; reading it here costs nothing and is the difference between a live
@@ -711,7 +760,8 @@ enum AppScopedChatService {
             if let announced = AITypedInvocationResolver.invocation(from: raw) {
                 onStatus?(Self.runningLabel(for: announced))
             }
-            let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
+            let call = await GeneralChatCapabilityHub.shared.execute(
+                raw, scope: conversationScope, turn: turn, chatScope: chat)
             guard call.handled else {
                 var text = ChatAnswerSanitizer.clean(raw)
                 // The last rung, offered by DoraX rather than asked for by the model. Three
@@ -755,16 +805,18 @@ enum AppScopedChatService {
         // Loop budget exhausted — one final forced plain answer, same as General Chat's own
         // exhaustion path.
         onStatus?("Writing answer…")
-        let finalRaw = try await AIProviderService.shared.sendMessage(
-            loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
-            context: context,
-            provider: provider,
-            apiKey: apiKey,
-            conversationHistory: loopHistory,
-            additionalContextPrompt: promptWithTools,
-            attachments: attachments.map(AIAttachment.inferred(from:)),
-            surfaceScoped: true
-        )
+        let finalRaw = try await ClaudeCodeChat.$turn.withValue(turn) {
+            try await AIProviderService.shared.sendMessage(
+                loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
+                context: context,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: loopHistory,
+                additionalContextPrompt: promptWithTools,
+                attachments: attachments.map(AIAttachment.inferred(from:)),
+                surfaceScoped: true
+            )
+        }
         return Answer(text: ChatAnswerSanitizer.clean(finalRaw), toolChips: toolChips)
     }
 
@@ -882,6 +934,19 @@ enum AppScopedChatService {
     /// idea what was open in it, so it offered to reload a page it could not name.
     static func browserPageFacts(bundleID: String, query: String? = nil) -> String? {
         guard ScopedAppPromptBuilder.isBrowserBundle(bundleID) else { return nil }
+        guard let facts = unguardedBrowserPageFacts(bundleID: bundleID, query: query) else {
+            return nil
+        }
+        // A page SensitivePageGuard refuses contributes its reason, never its title or text.
+        if let withheld = ScopedGroundingBlocks.withheldPageBlock(forURL: facts.url) {
+            return withheld
+        }
+        return facts.text
+    }
+
+    private static func unguardedBrowserPageFacts(
+        bundleID: String, query: String?
+    ) -> (url: String, text: String)? {
         let detector = ContextDetector.shared
         switch bundleID {
         case "com.apple.Safari":
@@ -889,19 +954,19 @@ enum AppScopedChatService {
                 let context = SafariBrowserBridge.shared.currentContext()
             {
                 let text = context.compactedPageText(for: query, limit: 5_000)
-                return "Current page (read just now, factual):\nTitle: \(context.title)\n"
-                    + "URL: \(context.url)\nPage content:\n\(text)"
+                return (context.url, "Current page (read just now, factual):\nTitle: \(context.title)\n"
+                    + "URL: \(context.url)\nPage content:\n\(text)")
             }
             if let page = detector.getSafariContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         case "com.google.Chrome":
             if let page = detector.getChromeContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         case "company.thebrowser.Browser":
             if let page = detector.getArcContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         default:
             break
@@ -1120,6 +1185,37 @@ enum AppScopedChatService {
         /// scan…", "Verifying the result…". A surface with a status line shows these; one
         /// without passes nil and loses nothing.
         onStatus: ((String) -> Void)? = nil
+    ) async throws -> Answer {
+        // One record per turn in the turn log, when it is on: the prompt's sections, every
+        // provider pass, and the checks that fired, whichever route the turn takes below.
+        //
+        // The chat and what its user typed are bound for the turn, so the Claude Code CLI knows
+        // whether it may hold its own network and shell (E1c), and the outbound gate knows which
+        // addresses the user typed rather than the follow-up prompts DoraX composes.
+        try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
+            try await ClaudeCodeChat.$scope.withValue(scope) {
+                try await TurnUserText.bind(history: history, query: query) {
+                    try await sendUntraced(
+                        scope: scope, appName: appName, query: query, history: history,
+                        attachments: attachments, extraAppNames: extraAppNames,
+                        finderSelection: finderSelection, skillOverride: skillOverride,
+                        onStream: onStream, onStatus: onStatus)
+                }
+            }
+        }
+    }
+
+    private static func sendUntraced(
+        scope: GeneralChatScope,
+        appName: String,
+        query: String,
+        history: [ChatMessage],
+        attachments: [URL],
+        extraAppNames: [String],
+        finderSelection: [URL],
+        skillOverride: String?,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)?,
+        onStatus: ((String) -> Void)?
     ) async throws -> Answer {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
@@ -1346,11 +1442,20 @@ enum AppScopedChatService {
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")
-                return Answer(
-                    text:
-                        "\(routingAppName) can do that more than one way. Which should I use?",
-                    toolChips: [],
-                    routeChoices: routes.map(\.asActionChoice))
+                return Answer.asking(
+                    "\(routingAppName) can do that more than one way. Which should I use?",
+                    choices: routes.map(\.asActionChoice))
+            }
+            // The sentence IS one of the routes ("quit mail" is Mail ▸ Quit Mail): run it,
+            // rather than asking about it or leaving it to a model.
+            if let route = ChatRouteResolver.soleExactRoute(
+                routes, query: query, appName: routingAppName)
+            {
+                log.notice("stage: exact route \(route.kind.rawValue, privacy: .public)")
+                return await execute(
+                    route: route, query: query, history: history, scope: scope,
+                    appName: appName, attachments: attachments,
+                    extraAppNames: extraAppNames, finderSelection: finderSelection)
             }
             // Already answered for this app and this kind of request: take that route
             // without asking again.
@@ -1381,10 +1486,9 @@ enum AppScopedChatService {
             {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which invocation (\(routes.count, privacy: .public))")
-                return Answer(
-                    text: "There's more than one \(command) command for that. Which should I run?",
-                    toolChips: [],
-                    routeChoices: routes.map(\.asActionChoice))
+                return Answer.asking(
+                    "There's more than one \(command) command for that. Which should I run?",
+                    choices: routes.map(\.asActionChoice))
             }
             // A single read-only invocation is just the answer: run it and report.
             if routes.count == 1, let route = routes.first, route.isReadOnly {
@@ -1775,6 +1879,8 @@ enum AppScopedChatService {
             }
         }()
         let systemPrompt = prompt.assemble(for: provider, preserving: preservedSources)
+        TurnRecorder.current?.notePromptSections(
+            prompt.characterCounts(for: provider, preserving: preservedSources))
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, and Claude Code is deliberately
@@ -1898,36 +2004,26 @@ enum AppScopedChatService {
         }()
         if let call = prose {
             log.notice("recovering prose \(call.kind, privacy: .public)")
-            let capabilityID = call.id
-            if !capabilityID.isEmpty,
-                CapabilityRegistry.shared.capability(id: capabilityID) != nil
-            {
-                var input: [String: String] = [:]
-                for (key, value) in call.arguments { input[key] = String(describing: value) }
-                let plan = AIActionPlan(
-                    capability: capabilityID, input: input,
-                    explanation: "Requested in chat: \(query)")
-                let result = try? await AIExecutionEngine.shared.executeWithApproval(
-                    plan, context: context, chatScope: scope)
-                ChatConsoleLog.shared.append(
-                    .tool, title: capabilityID,
-                    output: result?.output ?? "(no output)",
-                    success: result?.success ?? false, scope: scope)
-                if let result, result.success {
-                    text = result.output.isEmpty
-                        ? "Done — \(capabilityID)."
-                        : result.output
-                } else {
-                    text = "\(capabilityID) didn't run."
-                }
+            // The same function the Dock and the Corner call: one executor, one approval, one
+            // set of named reasons.
+            var input: [String: String] = [:]
+            for (key, value) in call.arguments { input[key] = String(describing: value) }
+            let authorisation: AIConversationScope
+            if case .app(let bundleID) = scope {
+                authorisation = .contextDock(bundleID: bundleID, appName: appName)
             } else {
-                // An id that is not registered. Left alone, the JSON was stripped as
-                // scaffolding and the user got an empty bubble — the worst outcome, because
-                // it looks like the app simply had nothing to say.
-                text = capabilityID.isEmpty
-                    ? "I tried to run something but didn't name what."
-                    : "I tried to run `\(capabilityID)`, which isn't a capability on this Mac."
+                authorisation = .general
             }
+            let recovered = await ChatCapabilityCallRecovery.run(
+                capabilityID: call.id, arguments: input, query: query, context: context,
+                scope: authorisation, chatScope: scope)
+            if !call.id.isEmpty {
+                ChatConsoleLog.shared.append(
+                    .tool, title: call.id,
+                    output: recovered.output.isEmpty ? "(no output)" : recovered.output,
+                    success: recovered.succeeded, scope: scope)
+            }
+            text = recovered.text
         }
 
         // The model sometimes writes its tool call out as text instead of calling it. The
@@ -2084,7 +2180,9 @@ enum AppScopedChatService {
             workspace: ChatWorkingDirectory.resolve(for: nil))
         let installedWorkers = AIWorkerRegistry.shared.installed
         if AIWorkerOffer.shouldOffer(
-            hasLinkedRoute: !sendChoices.isEmpty, task: workerTask, workers: installedWorkers),
+            // A turn that already ran something is not asking where to start.
+            hasLinkedRoute: !sendChoices.isEmpty || !outcome.mcpToolsRan.isEmpty || !executed.isEmpty,
+            task: workerTask, workers: installedWorkers),
             let workerTask
         {
             sendChoices = AIWorkerOffer.choices(for: workerTask, workers: installedWorkers)

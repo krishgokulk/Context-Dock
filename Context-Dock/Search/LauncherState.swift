@@ -51,8 +51,51 @@ final class AppChatConversation: ObservableObject {
     /// The app the live conversation belongs to, for a surface that did not start it.
     @Published var scopeBundleId: String = ""
     @Published var scopeAppName: String = ""
+    /// Rows for the turn still running — one per tool call, recorded where it executed.
+    @Published private(set) var liveActivity: [ActivityStep] = []
+    /// The finished record, per answer. Keyed by message rather than stored on it: the
+    /// dock appends its answer from fifty-odd places, and every one of them would have to
+    /// remember to copy the steps across.
+    @Published private(set) var activityByMessageID: [UUID: [ActivityStep]] = [:]
+
+    private var recorder: ActivityRecorder?
+    private var messageCountAtStart = 0
 
     init() {}
+
+    /// Starts recording a dock turn. The dock's many entry points run in tasks nothing
+    /// binds, so its recorder is the fallback every unbound tool call reports to.
+    func beginActivity() {
+        recorder?.settle()
+        let recorder = ActivityRecorder { steps in
+            Task { @MainActor in
+                guard AppChatConversation.shared.isRecording else { return }
+                AppChatConversation.shared.liveActivity = steps
+            }
+        }
+        self.recorder = recorder
+        messageCountAtStart = messages.count
+        liveActivity = []
+        ActivityRecorder.fallback = recorder
+    }
+
+    private var isRecording: Bool { recorder != nil }
+
+    /// Ends the turn: the steps go to the answer it produced — the last assistant message
+    /// added since it began — and the live rows go away.
+    func finishActivity() {
+        guard let recorder else { return }
+        recorder.settle()
+        let steps = recorder.steps
+        if ActivityRecorder.fallback === recorder { ActivityRecorder.fallback = nil }
+        self.recorder = nil
+        liveActivity = []
+        guard !steps.isEmpty,
+            let answer = messages.dropFirst(min(messageCountAtStart, messages.count))
+                .last(where: { $0.role == .assistant })
+        else { return }
+        activityByMessageID[answer.id] = steps
+    }
 }
 
 struct L2State {

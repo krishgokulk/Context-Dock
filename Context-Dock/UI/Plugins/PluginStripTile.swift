@@ -114,15 +114,22 @@ struct PluginStripIcon: View {
 /// on the icon; closed by ×, by the tap that made the choice (a `set` action completing),
 /// by the pointer leaving a hover-opened card, or by the corner folding.
 struct CornerPluginCard: View {
-    let pin: DockPin
+    /// The strip pin it opened from; nil when Global search opened it into the board (D6).
+    let pin: DockPin?
     let manifest: PluginManifest
     @ObservedObject var model: AppChatPromptModel
+    /// What × and a completed choice do: put the strip's card away, or leave the board's scope.
+    private let onClose: (() -> Void)?
     @StateObject private var host: PluginHostModel
 
-    init(pin: DockPin, manifest: PluginManifest, model: AppChatPromptModel) {
+    init(
+        pin: DockPin?, manifest: PluginManifest, model: AppChatPromptModel,
+        onClose: (() -> Void)? = nil
+    ) {
         self.pin = pin
         self.manifest = manifest
         self.model = model
+        self.onClose = onClose
         _host = StateObject(wrappedValue: PluginHostModel(
             manifest: manifest, presentation: .panel, compact: true))
     }
@@ -147,9 +154,9 @@ struct CornerPluginCard: View {
                 // goes away with it.
                 chromeButton("macwindow", help: "Open as a window") {
                     PluginWindowManager.shared.open(manifest)
-                    model.dismissPluginCard()
+                    close()
                 }
-                chromeButton("xmark", help: "Close") { model.dismissPluginCard() }
+                chromeButton("xmark", help: "Close") { close() }
             }
             .frame(height: M.headerHeight)
             // What does not fit scrolls. The corner's swipe monitor only claims scrolls over
@@ -164,13 +171,17 @@ struct CornerPluginCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onHover { inside in model.windowRowHovered(inside) }
         .onAppear {
-            host.onActionCompleted = { [weak model] request, succeeded in
+            host.onActionCompleted = { request, succeeded in
                 // A choice made is the card's job done. A push or a failure keeps it up: the
                 // first is navigation inside it, the second has something to say.
                 guard succeeded, manifest.actions[request.name]?.type == "set" else { return }
-                model?.dismissPluginCard()
+                close()
             }
         }
+    }
+
+    private func close() {
+        if let onClose { onClose() } else { model.dismissPluginCard() }
     }
 
     private func chromeButton(_ symbol: String, help: String, action: @escaping () -> Void)

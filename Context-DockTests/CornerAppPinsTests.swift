@@ -215,11 +215,14 @@ struct CornerAppPinsTests {
         #expect(plan.layout.overflow > 0)
     }
 
-    @Test("Any app with pins gets the bar; one without keeps its plain field")
+    @Test("Every app has the bar: its pins when it has some, the running apps otherwise")
     func pinsGiveAnyAppTheBar() {
         let (store, _) = temporaryStore()
         let textEdit = scope(store, bundleID: "com.apple.TextEdit", name: "TextEdit")
-        #expect(!textEdit.showsTabBar)
+        // No pins: the bar still stands, holding the running apps (owner 2026-10-08).
+        #expect(textEdit.showsTabBar)
+        textEdit.updateTabStrip()
+        #expect(!textEdit.stripIcons.contains { textEdit.appPin(forIconID: $0.id) != nil })
         store.pin(.menuCommand(path: ["Format", "Make Plain Text"]), title: "Make Plain Text",
             app: "com.apple.TextEdit")
         #expect(textEdit.showsTabBar)
@@ -283,23 +286,28 @@ struct CornerAppPinsTests {
     func thePinButtonPinsTheMatch() {
         let (store, _) = temporaryStore()
         let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
+        // An ordinary command: a Window-menu one (Centre) now gives way to the Dock's window
+        // layout for it, which leads the list.
         model.allMenuItems = [AXMenuItem(
-            title: "Centre", path: ["Window", "Centre"], isEnabled: true,
+            title: "Duplicate", path: ["File", "Duplicate"], isEnabled: true,
             element: AXUIElementCreateSystemWide(), children: [])]
         // Nothing typed: no result to pin — the button is the ordinary keep-open pin.
         model.query = ""
         model.updateMenuMatches()
         #expect(model.pinnableResult == nil)
 
-        model.query = "cen"
+        model.query = "dup"
         model.updateMenuMatches()
-        let row = try! #require(model.pinnableResult)
-        #expect(row.title == "Centre")
+        guard let row = model.pinnableResult else {
+            Issue.record("no pinnable result for \"dup\"")
+            return
+        }
+        #expect(row.title == "Duplicate")
         #expect(!model.isPinnedToApp(row))
         model.toggleAppPin(row)
         #expect(model.isPinnedToApp(row), "the button's tint reads this")
         #expect(store.pins(forApp: "com.anthropic.claudefordesktop").map(\.kind)
-            == [.menuCommand(path: ["Window", "Centre"])])
+            == [.menuCommand(path: ["File", "Duplicate"])])
 
         // Typed, but nothing matches: back to keep-open.
         model.query = "zzzz-no-such-command"
@@ -309,12 +317,16 @@ struct CornerAppPinsTests {
 
     // MARK: One width
 
-    @Test("An app's field grows by its pill, and its result card is exactly as wide")
+    @Test("An app's field is the shell's one width, bar or no bar, and its card is as wide")
     func fieldAndCardShareOneWidth() {
+        // #189: the app's own pins never widen its field — they scroll in its bar's fixed
+        // pill. Only the dock's pins move the one width every surface shares.
         let (store, _) = temporaryStore()
         let model = scope(store, bundleID: "com.anthropic.claudefordesktop", name: "Claude")
-        let base = AppChatPromptMetrics.width
-        #expect(AppChatPromptMetrics.boardWidth(for: model) == base, "no pins: the base field")
+        let shell = DockShellWidth.current
+        #expect(AppChatPromptMetrics.boardWidth(for: model) == shell, "no pins: the shell")
+        // No pins: the bar holds the running apps (owner 2026-10-08) — however many this
+        // machine is running, so no fixed pill width to check here.
 
         store.pin(.menuCommand(path: ["Window", "Centre"]), title: "Centre",
             app: "com.anthropic.claudefordesktop")
@@ -322,11 +334,11 @@ struct CornerAppPinsTests {
             app: "com.anthropic.claudefordesktop")
         model.updateTabStrip()
         let pill = AppChatPromptMetrics.appBarPillWidth(for: model)
+        // Fitted to its two pins, not the widest capsule (owner 2026-10-05).
         #expect(pill == AppChatPromptMetrics.appBarPillWidth(icons: 2, divider: false))
-        let field = AppChatPromptMetrics.size(
-            for: .prompt, suggestions: 0, fitsContent: model.fitsField,
-            appBarPillWidth: pill).width
-        #expect(field == base + pill + AppChatPromptMetrics.appBarPillSpacing)
+        #expect(pill < AppChatPromptMetrics.appBarFixedPillWidth)
+        let field = AppChatPromptMetrics.shellSize(for: model, phase: .prompt).width
+        #expect(field == shell)
         #expect(AppChatListMetrics.size(
             rows: 3, width: AppChatPromptMetrics.boardWidth(for: model)).width == field)
     }

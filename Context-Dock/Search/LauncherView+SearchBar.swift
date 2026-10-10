@@ -595,6 +595,8 @@ extension LauncherView {
     /// - Other modes: idle = empty query with nothing to show. (The global app list / pills live in
     ///   currentListDockSurface, not searchState.results, so hasResultsToShow alone misses them.)
     var isIdleDockBar: Bool {
+        // An open shelf is content under the field: the card, not the bare pill.
+        if dockShelf.phase.isCardShown { return false }
         // Inside a folder the listing IS the surface, and an empty field means "everything
         // in here" rather than "nothing to show". Without this the sheet collapsed to the
         // idle pill the instant entering a folder cleared the query.
@@ -711,6 +713,23 @@ extension LauncherView {
                             revealClipboardDropTarget()
                         }
                     }
+
+                // The open shelf, in the same sheet as every other mode's content: opened from
+                // the icon at the end of the field, closed by it again or by Esc.
+                if dockShelf.phase.isCardShown {
+                    Rectangle()
+                        .fill(Theme.separator(isEffectiveDark))
+                        .frame(height: 1)
+                        .padding(.horizontal, 18)
+                    DropShelfCardContent(
+                        presentation: dockShelf, store: DropShelfController.shared.store,
+                        size: CGSize(width: resultsPanelWidth, height: 300)
+                    )
+                    .dropShelfTarget(dockShelf)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Drop shelf")
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                }
 
                 if usesVerticalListDockLayout && !inDockMode && listDockSurfaceShowsCurrentMode {
                     let revealed = isDockResultSheetRevealed
@@ -1320,6 +1339,11 @@ extension LauncherView {
                                 ? SwiftUI.Color.white.opacity(0.94)
                                 : SwiftUI.Color.black.opacity(0.82)
                             HStack(spacing: 6) {
+                                // Back first, as the Corner's scope chips lead (owner
+                                // 2026-10-08: the "← Name" chip in the main Dock window too).
+                                dockScopeBackArrow(color: chipTextColor, help: "Back (Esc)") {
+                                    clearSearchContext()
+                                }
                                 Image(systemName: symbol)
                                     .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(accent)
@@ -1328,24 +1352,9 @@ extension LauncherView {
                                     .font(.system(size: 15, weight: .semibold))
                                     .foregroundStyle(chipTextColor)
                                     .lineLimit(1)
-                                Button {
-                                    clearSearchContext()
-                                } label: {
-                                    Image(systemName: "minus")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(chipTextColor)
-                                        .frame(width: 16, height: 16)
-                                        .background(
-                                            chipTextColor.opacity(
-                                                systemColorScheme == .dark ? 0.14 : 0.10),
-                                            in: Circle())
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove \(label.lowercased()) scope")
-                                .opacity(0.72)
                             }
-                            .padding(.leading, 8)
-                            .padding(.trailing, 6)
+                            .padding(.leading, 4)
+                            .padding(.trailing, 10)
                             .padding(.vertical, 4)
                             .background(.regularMaterial, in: Capsule(style: .continuous))
                             .background(
@@ -1486,6 +1495,9 @@ extension LauncherView {
                                 ? SwiftUI.Color.white.opacity(0.94)
                                 : SwiftUI.Color.black.opacity(0.82)
                             HStack(spacing: 6) {
+                                dockScopeBackArrow(color: chipTextColor, help: "Back (Esc)") {
+                                    exitL2DockScope()
+                                }
                                 Button {
                                     openAppChatFromScopeCapsule(
                                         appName: target.name,
@@ -1517,24 +1529,9 @@ extension LauncherView {
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
-                                Button {
-                                    exitL2DockScope()
-                                } label: {
-                                    Image(systemName: "minus")
-                                        .font(.system(size: 9, weight: .bold))
-                                        .foregroundStyle(chipTextColor)
-                                        .frame(width: 16, height: 16)
-                                        .background(
-                                            chipTextColor.opacity(
-                                                systemColorScheme == .dark ? 0.14 : 0.10),
-                                            in: Circle())
-                                }
-                                .buttonStyle(.plain)
-                                .help("Remove app scope")
-                                .opacity(isHoveringL2ScopeChip ? 1 : 0.72)
                             }
-                            .padding(.leading, 8)
-                            .padding(.trailing, isHoveringL2ScopeChip ? 8 : 6)
+                            .padding(.leading, 4)
+                            .padding(.trailing, 10)
                             .padding(.vertical, 4)
                             .fixedSize(horizontal: true, vertical: false)
                             .layoutPriority(2)
@@ -2778,6 +2775,12 @@ extension LauncherView {
                             } else if shouldShowSelectionTrailingButton {
                                 selectionTrailingButton
                             }
+
+                            // The Drop Shelf: the last item of the row in every scope while it
+                            // holds something or a drag is in flight (`DropShelfVisibility`).
+                            // Click opens the shelf below the field; a drag over it drops
+                            // onto it.
+                            DockShelfSlot(presentation: dockShelf)
                         }
                     }
                     .padding(
@@ -4355,4 +4358,24 @@ enum GeneralChatReturnOwner {
 func generalChatReturnLog(_ what: String) {
     Logger(subsystem: "com.krishgokul.ContextDock", category: "GeneralChat")
         .notice("return: \(what, privacy: .public)")
+}
+
+extension LauncherView {
+    /// The "←" that leads a scope chip the user stepped into: the Corner's back chip, in the
+    /// Dock's colours, so leaving a scope looks and works the same in both shells.
+    func dockScopeBackArrow(
+        color: SwiftUI.Color, help: String, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: "arrow.left")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 22, height: 22)
+                .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel("Back")
+    }
 }

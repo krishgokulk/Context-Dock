@@ -230,6 +230,11 @@ extension LauncherView {
     }
 
     func connectCornerGlobalResults() {
+        GlobalContextResultSource.shared.windowLayoutResults = { query, bundleID, appName in
+            makeNativeWindowManagementPills(
+                rawScopedQuery: query, scopedBundleId: bundleID, scopedAppName: appName,
+                isGlobalScope: false)
+        }
         GlobalContextResultSource.shared.pureGlobalResults = { query in
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !q.isEmpty else { return [] }
@@ -276,6 +281,8 @@ extension LauncherView {
         pill.sourceBundleId = bundleIdentifier(forApplicationResult: result) ?? ""
         pill.rankingKind = result.type == .extensionCommand ? "globalCommand" : "application"
         pill.trackingIdentifier = result.trackingIdentifier
+        // A Global result's id is its search document's (`stableID: doc.id`).
+        pill.searchDocumentID = result.id
         pill.searchTerms = [result.title, result.subtitle]
         pill.rankingScore = result.score
         pill.keyboardShortcutLabel = result.displayBadges.first

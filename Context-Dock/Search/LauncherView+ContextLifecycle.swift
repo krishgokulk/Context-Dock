@@ -317,6 +317,9 @@ extension LauncherView {
             .onReceive(NotificationCenter.default.publisher(for: .launcherWindowOpened)) { _ in
                 handleLauncherWindowOpened()
             }
+            .onReceive(NotificationCenter.default.publisher(for: AXMenuReader.scriptedMenusDidLoad)) { note in
+                scriptedMenusDidLoad(pid: note.userInfo?["pid"] as? pid_t)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .globalSearchIndexRebuildRequested)) { _ in
                 rebuildGlobalSearchIndex()
                 if shouldUsePureGlobalAppSearch {
@@ -881,7 +884,7 @@ extension LauncherView {
                 handleClipboardEntriesRemovalRequest(note)
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
-                ClipboardPanelController.shared.show()
+                openClipboardFromNotification()
             }
             .onReceive(ClipboardIngestBus.shared.captures) { payload in
                 handleClipboardCapture(payload)
@@ -1337,6 +1340,30 @@ extension LauncherView {
 
     /// Called immediately when the frontmost app changes while the dock is open.
     /// Cancels any in-flight menu load and starts a fresh one for `app`.
+    /// A System Events walk (off the main thread) has read the menus of an app whose AX tree
+    /// is empty — VS Code and other Electron apps. If that is the Dock's app, reload so the
+    /// list fills in; the Corner does the same through `AppChatPromptModel`.
+    func scriptedMenusDidLoad(pid: pid_t?) {
+        guard let pid, let app = contextTargetApp(), app.processIdentifier == pid else { return }
+        reloadMenuForApp(app)
+    }
+
+    /// ⌘R (C12): read the Dock's app's live menus again, through the Corner's rule and the
+    /// shared `AXMenuReader.rereadMenus`, then reload the list from what it found. Finder and
+    /// CLI tools decline.
+    @discardableResult
+    func rereadLiveMenus() -> Bool {
+        guard let app = contextTargetApp(),
+            DockKeyRules.rereadsMenus(
+                appBundleID: app.bundleIdentifier ?? "",
+                isGlobalScope: isGlobalContextActive, isCLIScope: isCLIToolScopeLocked,
+                isFinder: app.bundleIdentifier == "com.apple.finder")
+        else { return false }
+        AXMenuReader.shared.rereadMenus(for: app.processIdentifier)
+        reloadMenuForApp(app)
+        return true
+    }
+
     func reloadMenuForApp(_ app: NSRunningApplication) {
         guard showContextInDock, !app.isTerminated else { return }
         let pid = app.processIdentifier
@@ -2719,5 +2746,19 @@ extension LauncherView {
             // hierarchy, so calling it here would select-all the already-typed text.
         }
         requestWindowSizeUpdate(reason: .rowLayoutChanged)
+    }
+}
+
+extension LauncherView {
+    /// The clipboard hotkey's notification: in the Dock's own sheet while the Dock is on
+    /// screen, in the Corner's board otherwise — a screen-capture toast's "Clipboard" button
+    /// arrives here with the Dock hidden. A method of its own because the `.onReceive` chain
+    /// it is called from is already at the limit the type checker will solve in time.
+    func openClipboardFromNotification() {
+        if AppDelegate.shared?.launcherWindow?.isVisible == true {
+            activateClipboardScope()
+        } else {
+            ClipboardPanelController.shared.show()
+        }
     }
 }

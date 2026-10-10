@@ -108,7 +108,7 @@ struct BrowserTabGroundingTests {
                 url: "https://llbrain.dev/install", title: "Install Llbrain",
                 windowIndex: 1, tabIndex: 1),
             BrowserTab(
-                url: "https://billing.example.com/4021", title: "Invoice 4021",
+                url: "https://invoices.example.com/4021", title: "Invoice 4021",
                 windowIndex: 1, tabIndex: 2),
         ]
     }
@@ -119,10 +119,10 @@ struct BrowserTabGroundingTests {
 
         #expect(section.contains("OPEN TABS (2 open in this browser):"))
         #expect(section.contains("- Install Llbrain — https://llbrain.dev/install (active"))
-        #expect(section.contains("- Invoice 4021 — https://billing.example.com/4021\n"))
+        #expect(section.contains("- Invoice 4021 — https://invoices.example.com/4021\n"))
         // The other tab's URL is present verbatim, which is what makes the question
         // answerable without a tool to go and fetch it.
-        #expect(section.contains("https://billing.example.com/4021"))
+        #expect(section.contains("https://invoices.example.com/4021"))
     }
 
     /// A tab row must not read as a page link to the evidence parser, or the receipt reports
