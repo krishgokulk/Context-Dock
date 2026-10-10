@@ -1004,7 +1004,7 @@ extension LauncherView {
         return false
     }
 
-    func injectMailSearchQuery(_ query: String, into pid: pid_t) async -> Bool {
+    func injectMailSearchQuery(_ query: String, into pid: pid_t, submit: Bool = true) async -> Bool {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
@@ -1018,7 +1018,7 @@ extension LauncherView {
                     ? false
                     : await typeMailSearchQuery(trimmed, into: focusedElement, pid: pid)
                 if didSetAXValue || didTypeValue {
-                    postKeyCode(36, to: pid)
+                    if submit { postKeyCode(36, to: pid) }
                     return true
                 }
             }
@@ -1031,7 +1031,7 @@ extension LauncherView {
                     ? false
                     : await typeMailSearchQuery(trimmed, into: searchField, pid: pid)
                 if didSetAXValue || didTypeValue {
-                    postKeyCode(36, to: pid)
+                    if submit { postKeyCode(36, to: pid) }
                     return true
                 }
             }
@@ -1109,8 +1109,12 @@ extension LauncherView {
                 return
             }
 
-            let injected = await injectMailSearchQuery(searchQuery, into: pid)
+            // Return would commit the plain text and close Mail's suggestion list, so a token
+            // search picks "Sender contains: …" first and presses Return only if none showed.
+            let wantsToken = intent.tokenKind != .generic
+            let injected = await injectMailSearchQuery(searchQuery, into: pid, submit: !wantsToken)
             let appliedToken = injected ? await applyMailSearchTokenIntent(intent, in: pid) : false
+            if injected, wantsToken, !appliedToken { postKeyCode(36, to: pid) }
 
             if injected {
                 searchState.query = ""
