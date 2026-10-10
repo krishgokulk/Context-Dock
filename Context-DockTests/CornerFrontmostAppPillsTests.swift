@@ -26,13 +26,19 @@ struct CornerFrontmostAppPillsTests {
         model.summon(app: "Code", bundleID: "com.microsoft.VSCode")
 
         // Read live, from the same sources the model itself reads — this asserts the
-        // mechanism ran, not a specific machine's set of running apps. The field's capacity
-        // grows with the screen and shrinks with the non-app pins, so it is read too rather
-        // than assumed to be four: a pinned folder changed it once and failed this test on
-        // one Mac with the code unchanged.
-        // An app with no pins shows every running app, itself included (owner 2026-10-08).
-        let expected = AppChatPromptModel.pillIcons()
-        let shown = min(expected.count, max(1, AppChatPromptModel.pillFieldCapacity))
+        // mechanism ran, not a specific machine's set of running apps. An app's Context
+        // Dock has the app bar (owner 2026-10-08): its pins, or every running app when it
+        // has none, with room for `appBarVisibleIcons` before the rest scroll. Assuming the
+        // plain field's list and capacity failed this on any Mac running more apps than
+        // that field holds.
+        let expected =
+            model.showsTabBar
+            ? model.tabStripIcons()
+            : AppChatPromptModel.pillIcons(excluding: "com.microsoft.VSCode")
+        let capacity =
+            model.showsTabBar
+            ? AppChatPromptModel.appBarVisibleIcons : AppChatPromptModel.pillFieldCapacity
+        let shown = min(expected.count, max(1, capacity))
         #expect(!model.globalMatchIcons.contains { $0.id == "seed" })
         #expect(model.globalMatchIcons.map(\.id) == expected.prefix(shown).map(\.id))
         #expect(model.globalOverflowCount == expected.count - shown)
