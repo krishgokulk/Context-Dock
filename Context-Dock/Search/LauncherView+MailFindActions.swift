@@ -775,6 +775,12 @@ extension LauncherView {
         ].contains(role)
     }
 
+    /// Elements one suggestion walk may visit. Mail's AX tree runs to tens of thousands of
+    /// nodes; the suggestion list sits in a front window near the top, well inside this.
+    final class MailSuggestionWalkBudget {
+        var remaining = 600
+    }
+
     struct MailSuggestionMatcher {
         let tokenKind: MailSearchTokenKind
         let normalizedQuery: String
@@ -887,11 +893,16 @@ extension LauncherView {
     func bestMailSuggestionTarget(
         in element: AXUIElement,
         matcher: MailSuggestionMatcher,
-        depth: Int = 0
+        depth: Int = 0,
+        budget: MailSuggestionWalkBudget = MailSuggestionWalkBudget()
     ) -> (element: AXUIElement, score: Int)? {
-        guard depth < 10 else { return nil }
+        guard depth < 10, budget.remaining > 0 else { return nil }
+        budget.remaining -= 1
 
         let role = axStringAttribute(element, kAXRoleAttribute as CFString) ?? ""
+        // A message body is a web page with thousands of nodes and never holds a search
+        // suggestion; walking it on the main actor froze DoraX (issue #195 hand check).
+        guard role != "AXWebArea" else { return nil }
         let actionNames = axStringArrayAttribute(element, "AXActions" as CFString)
         let directStrings = axSearchableStrings(for: element)
         let subtreeStrings =
@@ -914,7 +925,8 @@ extension LauncherView {
                 let childBest = bestMailSuggestionTarget(
                     in: child,
                     matcher: matcher,
-                    depth: depth + 1
+                    depth: depth + 1,
+                    budget: budget
                 )
             else { continue }
 
@@ -978,7 +990,10 @@ extension LauncherView {
         guard !candidates.isEmpty else { return true }
         let matcher = MailSuggestionMatcher(intent: intent, candidates: candidates)
 
-        for _ in 0..<12 {
+        // Bounded in time, not just attempts: each walk runs on the main actor. Without the
+        // token the plain-text search is already applied, so giving up is safe.
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
             let appElement = AXUIElementCreateApplication(pid)
             if pressMailSuggestion(in: appElement, matcher: matcher) {
                 return true
