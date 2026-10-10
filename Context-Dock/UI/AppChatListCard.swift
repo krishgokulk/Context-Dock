@@ -149,7 +149,13 @@ struct AppChatListCard: View {
                             // to — `rows.first`, the same fallback the field's own icon
                             // reads — so a list showing none of them chosen was a list
                             // disagreeing with what its own Return key was about to do.
-                            let effectiveFocus = model.focusedMenuIndex ?? 0
+                            // Under Finder's Ask AI row, nothing chosen is that row.
+                            let effectiveFocus = model.showsAskAIRow
+                                ? model.focusedMenuIndex : (model.focusedMenuIndex ?? 0)
+                            if model.showsAskAIRow {
+                                askAIRow(isFocused: model.focusedMenuIndex == nil)
+                                    .id("ask-ai")
+                            }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
                                 Group {
                                     switch row {
@@ -173,10 +179,18 @@ struct AppChatListCard: View {
                         }
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
-                        if let row = model.focusedRow { proxy.scrollTo(row.id) }
+                        if let row = model.focusedRow {
+                            proxy.scrollTo(row.id)
+                        } else if model.showsAskAIRow {
+                            proxy.scrollTo("ask-ai", anchor: .top)
+                        }
                     }
                     .onChange(of: model.query) { _, _ in
-                        if let row = model.rows.first { proxy.scrollTo(row.id, anchor: .top) }
+                        if model.showsAskAIRow {
+                            proxy.scrollTo("ask-ai", anchor: .top)
+                        } else if let row = model.rows.first {
+                            proxy.scrollTo(row.id, anchor: .top)
+                        }
                     }
                 }
             }
@@ -224,7 +238,11 @@ struct AppChatListCard: View {
     /// scope Tab steps into (a CLI tool, a Global Command); then pin ⌘P and Settings ⌘,.
     private var footer: some View {
         HStack(spacing: 8) {
-            Spacer(minLength: 0)
+            if model.finderPathTrail.isEmpty {
+                Spacer(minLength: 0)
+            } else {
+                finderPathPills
+            }
             if tabStepsIn {
                 BoardFooter.pill {
                     BoardFooter.keycaps(["⇥"])
@@ -248,6 +266,40 @@ struct AppChatListCard: View {
         }
         .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
+    }
+
+    /// The folder being walked, as Finder's path bar shows it: one clickable pill per folder
+    /// from the disk down, the current one last and in bold (owner 2026-10-09).
+    private var finderPathPills: some View {
+        let trail = model.finderPathTrail
+        return ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(Array(trail.enumerated()), id: \.element) { index, url in
+                    if index > 0 {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Button { model.openFinderPathPill(url) } label: {
+                        BoardFooter.pill {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                                .resizable()
+                                .frame(width: 14, height: 14)
+                            Text(FileManager.default.displayName(atPath: url.path))
+                                .font(.system(
+                                    size: 11.5,
+                                    weight: index == trail.count - 1 ? .semibold : .medium))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
+                        .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help(url.path)
+                }
+            }
+        }
+        .defaultScrollAnchor(.trailing)
     }
 
     /// Tab steps into the highlighted row — the top one when none is — when it is a scope:
@@ -274,7 +326,8 @@ struct AppChatListCard: View {
         if model.isGlobalScope { return "Search apps, tools and menus…" }
         // Scoped into an app from Global, the field is a filter over that app — so it says
         // what the dock says there, rather than offering to chat.
-        if model.returnsToGlobalScope {
+        // Finder is asked, however it was reached — the same field as Finder in front.
+        if model.returnsToGlobalScope, !model.isFinderScope {
             return AppScopeHint.placeholder(
                 bundleId: model.appBundleID, appName: model.appName,
                 hasActions: !model.adapterActions.isEmpty)
@@ -354,6 +407,44 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.run(.cliSuggestion(word)) }
+    }
+
+    /// Finder's first row: what is typed, as a question to the AI. Return takes it until the
+    /// arrows choose a file or command (owner 2026-10-09).
+    private func askAIRow(isFocused: Bool) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Ask AI")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                Text(model.query.trimmingCharacters(in: .whitespacesAndNewlines))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 4)
+            if isFocused {
+                Text("↩")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: AppChatListMetrics.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: 7)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0))
+                .padding(.horizontal, 8))
+        .contentShape(Rectangle())
+        .onTapGesture { model.submit() }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel("Ask AI: \(model.query)")
     }
 
     /// A file or folder from the Finder scope, with the path it lives at — two files called

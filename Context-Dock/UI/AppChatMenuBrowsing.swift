@@ -60,11 +60,13 @@ extension AppChatPromptModel {
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
 
-        // A Finder file search lists no menus. And Finder is the app whose menus the AX tree does not hold until they are opened, so the read below
-        // came back empty and fell through to a System Events walk of the whole menu bar —
-        // an AppleScript run on the main thread. → from Global into Finder froze the field
-        // (no caret, the next → ignored) and then crashed in AppleScriptQueue (2026-09-26).
-        guard !isFinderFileSearch else { return }
+        // Finder not in front (stepped into from Global) or walking a folder keeps the
+        // cached menus above and skips the live read. Finder is the app whose menus the AX
+        // tree does not hold until they are opened, so the read below came back empty and
+        // fell through to a System Events walk of the whole menu bar — an AppleScript run on
+        // the main thread. → from Global into Finder froze the field (no caret, the next →
+        // ignored) and then crashed in AppleScriptQueue (2026-09-26).
+        guard !finderSkipsLiveMenus else { return }
 
         // The AX read walks the whole menu bar, so it happens after the surface is up
         // rather than in front of it. Live items go first: where both have a row, the live
@@ -105,9 +107,8 @@ extension AppChatPromptModel {
             syncListPhase()
             return
         }
-        // Finder searches the disk when that is what was asked for — stepped into from Global,
-        // or walking a folder. In front, it lists its menus like any app, as the Dock does
-        // (owner 2026-09-28).
+        // Walking a folder lists that folder. Otherwise Finder is one Context Dock however it
+        // was reached — in front or stepped into from Global (owner 2026-10-09).
         if isFinderFileSearch {
             updateFinderResults(for: typed)
             updateGlobalTyping(for: typed)
@@ -140,7 +141,7 @@ extension AppChatPromptModel {
             syncListPhase()
             return
         }
-        if returnsToGlobalScope, !typed.isEmpty,
+        if returnsToGlobalScope, !typed.isEmpty, !isFinderScope,
             let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName) {
             rows = scoped.map(AppChatRow.dock)
             menuMatches = []
@@ -178,11 +179,14 @@ extension AppChatPromptModel {
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
-        // Finder in front: the files and folders of the window it shows — the Desktop when
-        // none is open — lead its menus, filtered by what is typed. Nothing matching either
-        // leaves the list empty, and Return asks the AI (owner 2026-10-08).
+        // Finder: the files and folders of its front window — the Desktop when none is
+        // open — lead its commands, filtered by what is typed; with none of those matching,
+        // the disk's files follow the commands (owner 2026-10-09). The Ask AI row stands
+        // above them all, and is what Return takes until the arrows choose a row.
         if isFinderScope, !isFinderFileSearch {
-            rows.insert(contentsOf: finderFrontFolderRows(matching: typed), at: 0)
+            let folderRows = finderFrontFolderRows(matching: typed)
+            rows.insert(contentsOf: folderRows, at: 0)
+            appendFinderDiskMatches(for: folderRows.isEmpty ? typed : "")
         }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
@@ -553,11 +557,6 @@ extension AppChatPromptModel {
         return true
     }
 
-    /// The app the field is talking to, among the running apps (its ring there).
-    func isCurrentApp(_ bundleID: String) -> Bool {
-        !isGlobalScope && !bundleID.isEmpty && bundleID == appBundleID
-    }
-
     /// The running app after `bundleID` along the pills — the first when it is not among
     /// them, none past the last.
     static func runningApp(after bundleID: String) -> (name: String, bundleID: String)? {
@@ -805,47 +804,61 @@ extension AppChatPromptModel {
         appBundleID == "com.apple.finder"
     }
 
-    /// Finder as a file search: stepped into from Global, or walking a folder. Finder in
-    /// front lists its menus instead, as the Dock's does.
+    /// Finder walking a folder: the list is that folder's entries. Otherwise Finder — in
+    /// front or stepped into from Global — is its own Context Dock (owner 2026-10-09).
     var isFinderFileSearch: Bool {
+        isFinderScope && !finderBrowseStack.isEmpty
+    }
+
+    /// Finder not in front (stepped into from Global) or walking a folder: its live menus
+    /// are not read — the cached ones stand (see `loadMenuItems`).
+    var finderSkipsLiveMenus: Bool {
         isFinderScope && (returnsToGlobalScope || !finderBrowseStack.isEmpty)
     }
 
-    /// Files and folders matching what is typed, from the same Spotlight index the dock's
-    /// Finder scope reads. Async: a metadata query cannot answer on the keystroke, so the
-    /// rows land a moment later and the generation guard drops anything overtaken by the
-    /// next keystroke.
-    func updateFinderResults(for typed: String) {
-        guard isFinderScope else { return }
-        // Inside a folder, what is typed filters that folder rather than searching the disk.
-        if let folder = finderBrowseStack.last {
-            rows = Self.folderListing(folder, matching: typed).map(AppChatRow.file)
-            focusedMenuIndex = nil
-            syncListPhase()
-            return
-        }
-        guard !typed.isEmpty else {
-            rows = []
-            syncListPhase()
-            return
-        }
+    /// Finder's list opens under an "Ask AI" row once something is typed: Return asks, ↓
+    /// chooses a file or command (owner 2026-10-09).
+    var showsAskAIRow: Bool {
+        isFinderScope && finderBrowseStack.isEmpty
+            && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The disk's files matching what is typed, after Finder's own rows — asked only when
+    /// the front window has none. Async (Spotlight); the generation guard drops a search
+    /// a later keystroke overtook. Empty `typed` only cancels the one in flight.
+    func appendFinderDiskMatches(for typed: String) {
         finderSearchGeneration &+= 1
+        guard !typed.isEmpty else { return }
         let generation = finderSearchGeneration
         let home = NSHomeDirectory()
-
         Task { @MainActor [weak self] in
             let paths = await LauncherView.spotlightSearchPaths(
-                predicate: NSPredicate(
-                    format: "kMDItemFSName LIKE[cd] %@", "*\(typed)*"),
+                predicate: NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(typed)*"),
                 inDirectories: [home],
                 sortByLastUsed: true,
                 limit: Self.menuRowLimit)
-            guard let self, self.finderSearchGeneration == generation, self.isFinderScope
+            guard let self, self.finderSearchGeneration == generation, self.isFinderScope,
+                !self.isFinderFileSearch
             else { return }
-            self.rows = paths.map { AppChatRow.file(URL(fileURLWithPath: $0)) }
-            self.focusedMenuIndex = nil
+            let shown = Set(self.rows.map(\.id))
+            let found = paths.map { AppChatRow.file(URL(fileURLWithPath: $0)) }
+                .filter { !shown.contains($0.id) }
+            guard !found.isEmpty else { return }
+            let focusedID = self.focusedRow?.id
+            self.rows += found
+            self.focusedMenuIndex = focusedID.flatMap { id in self.rows.firstIndex { $0.id == id } }
             self.syncListPhase()
         }
+    }
+
+    /// The folder being walked, filtered by what is typed.
+    func updateFinderResults(for typed: String) {
+        guard isFinderScope else { return }
+        rows = finderBrowseStack.last.map {
+            Self.folderListing($0, matching: typed).map(AppChatRow.file)
+        } ?? []
+        focusedMenuIndex = nil
+        syncListPhase()
     }
 
     // MARK: Finder in front (owner 2026-10-08)
@@ -908,6 +921,40 @@ extension AppChatPromptModel {
         updateMenuMatches()
         touch()
         return true
+    }
+
+    /// The folder being walked, from the disk down — the board's path pills, as Finder's own
+    /// path bar shows it (owner 2026-10-09). Empty when no folder is being walked.
+    var finderPathTrail: [URL] {
+        guard isFinderScope, let folder = finderBrowseStack.last else { return [] }
+        return Self.pathTrail(folder)
+    }
+
+    /// Every folder from the disk's root to `folder`, root first.
+    nonisolated static func pathTrail(_ folder: URL) -> [URL] {
+        var current = URL(fileURLWithPath: "/", isDirectory: true)
+        var trail = [current]
+        for component in folder.standardizedFileURL.pathComponents.dropFirst() {
+            current.appendPathComponent(component, isDirectory: true)
+            trail.append(current)
+        }
+        return trail
+    }
+
+    /// A path pill: the walk goes to that folder — back up the steps already taken when it is
+    /// one of them, else straight to it (Backspace then climbs out to Finder's list).
+    func openFinderPathPill(_ url: URL) {
+        guard isFinderScope, !finderBrowseStack.isEmpty else { return }
+        let path = url.standardizedFileURL.path
+        if let index = finderBrowseStack.firstIndex(where: { $0.standardizedFileURL.path == path }) {
+            finderBrowseStack = Array(finderBrowseStack.prefix(through: index))
+        } else {
+            finderBrowseStack = [url]
+        }
+        query = ""
+        focusedMenuIndex = nil
+        updateFinderResults(for: "")
+        touch()
     }
 
     nonisolated static func isFolder(_ url: URL) -> Bool {
@@ -1001,7 +1048,7 @@ extension AppChatPromptModel {
         // A Finder file search has no menus of its own to refresh.
         guard DockKeyRules.rereadsMenus(
             appBundleID: appBundleID, isGlobalScope: isGlobalScope, isCLIScope: isCLIScope,
-            isFinder: isFinderFileSearch)
+            isFinder: finderSkipsLiveMenus)
         else { return false }
         if let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == appBundleID && !$0.isTerminated
@@ -1018,12 +1065,11 @@ extension AppChatPromptModel {
     /// shows its commands, with the running apps standing beside the field.
     var showsWindowSnapshot: Bool { false }
 
-    /// A running app stepped into from Global (not Finder, a CLI tool or a command): it rests
+    /// A running app stepped into from Global, Finder included (not a CLI tool or a command): it rests
     /// as that app's own Context Dock — the field alone with the ⚙ chip, no sheet of its
     /// actions — and Return on the empty field brings the app forward (owner 2026-10-07).
     var isAppStepIn: Bool {
         returnsToGlobalScope && !appBundleID.isEmpty
-            && appBundleID != "com.apple.finder"
             && !isCLIScope && !showsExtensionPanel
     }
 
@@ -1222,6 +1268,7 @@ extension AppChatPromptModel {
         // A scope stepped into from Global answers with what was asked for — files in
         // Finder, a window elsewhere. Falling back to that app's menu list there filled the
         // board with "About Finder" and "AirDrop", which is not what the user came for.
+        if showsAskAIRow { return rows.isEmpty ? 0 : min(rows.count + 1, Self.menuRowLimit) }
         if returnsToGlobalScope { return min(rows.count, Self.menuRowLimit) }
         return min(rows.isEmpty ? suggestions.count : rows.count, Self.menuRowLimit)
     }
@@ -1248,8 +1295,10 @@ extension AppChatPromptModel {
         if phase == .prompt { set(.suggesting) }
         // The first press opens the list on a row — down at the top, up at the bottom —
         // as the Dock's does (DockKeyRules.listArrow, C1); after that the arrows move.
-        focusedMenuIndex = DockKeyRules.listArrow(
-            down: delta > 0, focused: focusedMenuIndex, count: rows.count)
+        focusedMenuIndex = showsAskAIRow
+            ? DockKeyRules.listArrowUnderAskRow(
+                down: delta > 0, focused: focusedMenuIndex, count: rows.count)
+            : DockKeyRules.listArrow(down: delta > 0, focused: focusedMenuIndex, count: rows.count)
         touch()
         return true
     }
@@ -1394,7 +1443,13 @@ extension AppChatPromptModel {
             updateMenuMatches()
             touch()
             pill.execute()
-        case .command(let item): runMenuItem(item)
+        case .command(let item):
+            // Finder stepped into from Global is not in front: a command acts on its front
+            // window, so Finder comes forward first (owner 2026-10-09).
+            if isFinderScope, returnsToGlobalScope {
+                AppActivation.bringForward(bundleID: appBundleID, name: appName)
+            }
+            runMenuItem(item)
         case .action(let action): runAdapterAction(action)
         case .cliSuggestion(let word):
             // Fills the field rather than running: a subcommand usually needs an argument,
@@ -1406,7 +1461,8 @@ extension AppChatPromptModel {
             query = ""
             updateMenuMatches()
             touch()
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            // Opens in its own app — a folder in Finder (owner 2026-10-09).
+            NSWorkspace.shared.open(url)
         case .global(let doc) where isSystemCommandAction(doc.action):
             // A Global Command opens its panel in the board. Running it outright is what
             // the launcher does, and it is the wrong move here: the corner is where the
@@ -1532,19 +1588,12 @@ extension AppChatPromptModel {
     /// This field searches rather than composes: Global itself, and any scope stepped into
     /// from it. Neither carries the composer's attach, send, expand or pin — the dock does
     /// not show them there either.
-    /// A search field, not a composer: Global, and the tools, commands and Finder reached from
-    /// it. A running app stepped into from Global is that app's Context Dock like any other —
-    /// "+", send, and Return asks it (owner 2026-10-09: stepping into Claude from Global, Return
-    /// ran its top menu row instead of asking Claude).
+    /// A search field, not a composer: Global, and the tools and commands reached from it.
+    /// A running app stepped into from Global — Finder too — is that app's Context Dock like
+    /// any other: "+", send, and Return asks it (owner 2026-10-09: stepping into Claude from
+    /// Global, Return ran its top menu row instead of asking Claude).
     var isSearchField: Bool {
-        isGlobalScope || (returnsToGlobalScope && !isAppStepIn && !isFinderScope)
-    }
-
-    /// Return in Finder (in front or stepped into): a file that matches opens; nothing
-    /// matching asks the AI, with Finder's tools (owner 2026-10-09).
-    var finderReturnOpensTopMatch: Bool {
-        isFinderScope && !rows.isEmpty
-            && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        isGlobalScope || (returnsToGlobalScope && !isAppStepIn)
     }
 
     /// The name the scope goes by, in one place so the chip and the check cannot disagree.
