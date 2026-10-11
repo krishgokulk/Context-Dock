@@ -100,7 +100,6 @@ struct PluginStripIcon: View {
                 .frame(width: Self.content, height: Self.content)
                 .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
                 .scaleEffect(scale, anchor: .bottom)
-                .animation(.snappy(duration: 0.18), value: scale)
             Circle().fill(.clear).frame(width: 4, height: 4)
         }
         .frame(

@@ -659,11 +659,9 @@ struct AppChatPromptPill: View {
         // The shell's own shape carries the morph: a capsule at dock height, the field's
         // 22-point card once it is open. Clipped to it so the wide layer never shows
         // outside the glass while the frame is still narrow.
-        .clipShape(
-            RoundedRectangle(cornerRadius: shellRadius, style: .continuous))
-        .glassEffect(
-            .regular.interactive(),
-            in: .rect(cornerRadius: shellRadius, style: .continuous))
+        // At rest the dock's icons magnify out of the capsule (#232): the clip opens upward
+        // and the glass widens with the row, in one modifier that owns both.
+        .modifier(DockMagnifiedGlass(active: model.phase == .dock, radius: shellRadius))
         // The dock glows in the result's colour; here the glass takes a stroke of it. Red
         // for anything destructive, the acted-on app's own colour otherwise, the phase's
         // when there is no app. Gone with the result.
