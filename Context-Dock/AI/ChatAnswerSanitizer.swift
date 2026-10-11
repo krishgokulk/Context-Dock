@@ -169,7 +169,13 @@ enum ChatAnswerSanitizer {
     /// The command from a `terminal_call` the model wrote as text rather than calling.
     /// Returned so the surface can run it and answer from the output instead of showing
     /// the user a JSON blob and stopping.
+    ///
+    /// Both forms: the JSON envelope, and the `[TERMINAL_COMMAND: …]` directive
+    /// AITerminalPrompts teaches. Only the JSON form was read here, so in a Finder scope
+    /// "list the files in Downloads" came back as `[TERMINAL_COMMAND: ls -la ~/Downloads]`,
+    /// nothing ran it, and the directive was the answer.
     static func terminalCall(in text: String) -> (command: String, purpose: String)? {
+        if let call = bracketTerminalCall(in: text) { return call }
         let pattern = "\\{\\s*\"terminal_call\"\\s*:\\s*\\{[\\s\\S]*?\\}\\s*\\}"
         guard let range = text.range(of: pattern, options: .regularExpression),
             let data = String(text[range]).data(using: .utf8),
@@ -179,5 +185,23 @@ enum ChatAnswerSanitizer {
             !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return nil }
         return (command, call["purpose"] as? String ?? "Answer the user's question")
+    }
+
+    /// `[TERMINAL_COMMAND: ls -la ~/Downloads]` with its optional `[COMMAND_PURPOSE: …]`.
+    private static func bracketTerminalCall(in text: String) -> (command: String, purpose: String)? {
+        func value(_ key: String) -> String? {
+            let pattern = "\\[\(key)\\s*:\\s*([^\\]]*)\\]"
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                let match = regex.firstMatch(
+                    in: text, range: NSRange(text.startIndex..., in: text)),
+                let range = Range(match.range(at: 1), in: text)
+            else { return nil }
+            let found = text[range]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`"))
+            return found.isEmpty ? nil : found
+        }
+        guard let command = value("TERMINAL_COMMAND") else { return nil }
+        return (command, value("COMMAND_PURPOSE") ?? "Answer the user's question")
     }
 }

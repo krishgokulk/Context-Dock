@@ -196,9 +196,7 @@ enum CodexCLIService {
             process.arguments = arguments
             process.currentDirectoryURL = workingDirectory ?? FileManager.default.temporaryDirectory
 
-            var environment = ProcessInfo.processInfo.environment
-            environment["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
-            process.environment = environment
+            process.environment = CLIChildEnvironment.make()
 
             // Closed stdin: `codex exec` otherwise waits on "Reading additional input from
             // stdin…" and the run never begins.

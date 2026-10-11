@@ -10,15 +10,15 @@
 
 ## In progress
 
-Coordinator: **none open.** The cloud planner session that ran 2026-09-30 → 2026-10-10 was closed by the owner to cut token use. Start a fresh one with `/planner` (cloud); it reads this file, the open PRs and the issue labels. The Mac session is the **builder** (`/loop /builder`).
+Coordinator: Desktop app (Mac), `/planner` session — since 2026-10-11 19:10 UTC (owner: "takeover"). The previous cloud planner (2026-09-30 → 2026-10-10) was closed to cut token use. The Mac `/loop /builder` session is the **builder**; it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
 
-Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Workspace: `docs/runbooks/my-workspace.md` (main checkout = daily app; `scripts/try-pr.sh <n>` for test builds).
+Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
-**State at hand-off (2026-10-10):**
-- **#210** (draft): CLI "Not logged in" when DoraX is launched from a Claude session; needs base merge, agent-run hand check, ready.
-- **#228** `ready`: Claude Code in app chats has no capability tool, so Mail questions shell out to `osascript` (slow, raw command shown). Do before #196.
-- **#196** `ready` P2, then #197 P3. #225 test-isolation fix is queued. #194 draft (owner's).
-- Owner noted #209 step 2 (Mail closed) without a result; confirm whether the headless read starts Mail (belongs to #197).
+**State (2026-10-11):**
+- Done today: #232 (#234), #231, #237. #147 Drop Shelf is long merged (#174).
+- **#228** `ready` (fix is PR #230: retarget from `main` to `general-chat-agent`, fix the failing `build`). **#239** `ready`: make #230, #210, #194, #78, #124 mergeable into the head, in that order.
+- **#238** Edge reveal: draft, CI green, owner hand check, owner merges. **#224**, **#210**, **#194**: CI green, behind head, merge without hand check.
+- Next after #228/#239: **#196** P2, then #197 P3. #225 test-isolation fix queued.
 
 ## Next, in order (GitHub issues)
 
@@ -50,6 +50,9 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-11 | #232 Corner dock magnification: continuous, unclipped, macOS-Dock smooth; search, clipboard, selection, shelf and feedback icons magnify too; owner hand-tested ("234 passed") | #234 |
+| 2026-10-11 | Clipboard board: ⌘↩ with several clips opens a paste-target picker; a mix of images with text or files pastes the images, not row labels; multi-clip drag to Finder; owner hand-tested ("237 passed"). The #232 session merged it itself — planners merge, builders never | #237 |
+| 2026-10-11 | Recovered from backup: MCP servers match bundle ids case-insensitively (Safari chats see `safari-mcp`); an app's name doing its ordinary job ("console", "notes") no longer offers that app; owner hand-tested ("231 passed"). Follow-ups: #233, #235 | #231 |
 | 2026-10-10 | Build log goes to `.build/build-debug.log`; `dev-run.sh`/`build-debug.sh` print only `build: OK` or the errors (agent tokens per build); owner hand-tested | #226 |
 | 2026-10-10 | #195 P1: the Mail search shortcut claims only an exact "search/find …" command and answers headless through `mail.search` (Mail's window untouched); the owner's "from" sentence goes to the model; panel no longer says "Answered without running anything" after a step; owner hand-tested | #209 |
 | 2026-10-10 | UI/UX: "/" jumps to any app's scope from Global or a Context Dock (owner's Corner lane) | #222 |

@@ -33,9 +33,23 @@ final class MCPServerManager: ObservableObject {
 
     private init() { load() }
 
+    /// Servers linked to an app.
+    ///
+    /// Matched case-insensitively and trimmed, because a bundle id reaches this from four
+    /// places — the installed-apps catalogue, a running `NSRunningApplication`, a stored
+    /// adapter, and whatever an agent typed over MCP — and those four do not agree on case.
+    /// They disagreed here: `safari-mcp` sat in `mcp_servers.json` linked to Safari while every
+    /// Safari chat was told "MCP servers: none linked", so the server the owner had added and
+    /// the settings page showed as Added was invisible to the model that needed it.
     func servers(forBundleId bundleId: String) -> [MCPServerConfig] {
-        servers
-            .filter { $0.bundleIds.contains(bundleId) }
+        let wanted = bundleId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !wanted.isEmpty else { return [] }
+        return servers
+            .filter { config in
+                config.bundleIds.contains {
+                    $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == wanted
+                }
+            }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 

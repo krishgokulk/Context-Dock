@@ -108,3 +108,52 @@ struct ScopedAccessGateTests {
         #expect(!bundles.contains("com.apple.safari"))
     }
 }
+
+// An app name that is also an ordinary word.
+@MainActor
+struct AppNameIsAlsoAWordTests {
+
+    @Test func aWordDoingItsOrdinaryJobIsNotARequestForThatApp() {
+        // Apple named its apps after nouns people use all day. "read the console output of this
+        // page" offered to enable Console.app; the same question with "messages" in a tool name
+        // offered Messages.
+        for query in [
+            "read the console output of the page open in Safari",
+            "use the browser_console_messages tool on this page",
+            "what music is on this page",
+            "show me the photos on this page",
+        ] {
+            let request = AppScopedChatService.appNeedingAccess(
+                query: query, scope: .app(bundleId: "com.apple.Safari"), attachedAppNames: [])
+            #expect(
+                request == nil,
+                "\(query) → offered \(request?.name ?? "nothing")")
+        }
+    }
+
+    @Test func pointingAtAnAppStillReachesIt() {
+        // The cue is how people actually name an app, and these must keep working.
+        for (query, expected) in [
+            ("save this page to my notes", "com.apple.notes"),
+            ("add this link in Notes", "com.apple.notes"),
+            ("open this in Messages", "com.apple.mobilesms"),
+        ] {
+            let request = AppScopedChatService.appNeedingAccess(
+                query: query, scope: .app(bundleId: "com.apple.Safari"), attachedAppNames: [])
+            let bundles = Set((request?.allApps ?? []).map { $0.bundleId.lowercased() })
+            #expect(
+                bundles.contains(where: { $0.contains(expected.split(separator: ".").last!) }),
+                "\(query) → \(bundles)")
+        }
+    }
+
+    @Test func theCueRuleIsAboutPointingNotAboutLength() {
+        #expect(AppScopedChatService.namesAppDeliberately(query: "open Notes", appName: "Notes"))
+        #expect(AppScopedChatService.namesAppDeliberately(query: "Notes: add a line", appName: "Notes"))
+        #expect(AppScopedChatService.namesAppDeliberately(query: "put it in the Notes app", appName: "Notes"))
+        #expect(!AppScopedChatService.namesAppDeliberately(query: "read the console output", appName: "Console"))
+        // A multi-word name is never typed by accident.
+        #expect(AppScopedChatService.namesAppDeliberately(
+            query: "what does visual studio code say", appName: "Visual Studio Code"))
+    }
+}

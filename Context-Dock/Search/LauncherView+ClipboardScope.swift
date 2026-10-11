@@ -430,70 +430,14 @@ extension LauncherView {
         writeClipboardEntriesToPasteboard([entry])
     }
 
-    /// Puts one *or many* clips on the pasteboard.
-    ///
-    /// Multi-clip writes are built as one `NSPasteboardItem` per clip, so Finder receives
-    /// every file URL (previously a `writeObjects` + `setString` mix clobbered the first
-    /// item and Finder pasted a single file, or a path string). The joined text
-    /// representation rides on the first item so plain-text targets still paste all of it.
+    /// Puts one *or many* clips on the pasteboard — through the one writer both shells share
+    /// (`ClipboardScopeService.writeToPasteboard`), so the Dock and the Corner cannot differ
+    /// on what a mixed selection pastes as.
     func writeClipboardEntriesToPasteboard(_ entries: [ClipboardEntry]) {
         guard !entries.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
         // The always-on monitor must not re-import what we just wrote — a clip re-entering
         // its own history churns the list (and the image blob behind it) for no reason.
-        defer { lastCheckedPasteboardCount = pasteboard.changeCount }
-
-        let fileURLs = entries.flatMap { entry in
-            entry.filePaths.map { URL(fileURLWithPath: $0) }
-        }
-        let images: [NSImage] = entries.compactMap {
-            clipboardImageData(for: $0).flatMap(NSImage.init(data:))
-        }
-        let joinedText = clipboardContextText(from: entries)
-
-        // Files win when every selected clip is a file clip: Finder/Mail/upload fields
-        // all expect fileURL items, and pasting the paths as text is never what was meant.
-        if !fileURLs.isEmpty, images.isEmpty {
-            var items: [NSPasteboardItem] = []
-            for (index, url) in fileURLs.enumerated() {
-                let item = NSPasteboardItem()
-                item.setString(url.absoluteString, forType: .fileURL)
-                if index == 0 {
-                    item.setString(fileURLs.map(\.path).joined(separator: "\n"), forType: .string)
-                }
-                items.append(item)
-            }
-            pasteboard.writeObjects(items)
-            return
-        }
-
-        // Image clips write the actual picture(s), never the "Image" placeholder or the
-        // OCR text — pasting an image used to hand the target a string.
-        if !images.isEmpty, images.count == entries.count {
-            pasteboard.writeObjects(images)
-            return
-        }
-
-        // Mixed selection: text first (that is what a paste into a document should yield),
-        // with any file URLs appended as extra items for file-aware targets.
-        var items: [NSPasteboardItem] = []
-        if !joinedText.isEmpty {
-            let item = NSPasteboardItem()
-            item.setString(joinedText, forType: .string)
-            items.append(item)
-        }
-        for url in fileURLs {
-            let item = NSPasteboardItem()
-            item.setString(url.absoluteString, forType: .fileURL)
-            items.append(item)
-        }
-        if items.isEmpty, let image = images.first {
-            pasteboard.writeObjects([image])
-            return
-        }
-        guard !items.isEmpty else { return }
-        pasteboard.writeObjects(items)
+        lastCheckedPasteboardCount = ClipboardScopeService.writeToPasteboard(entries)
     }
 
     func selectedClipboardEntriesForPaste(fallback entry: ClipboardEntry? = nil) -> [ClipboardEntry] {
@@ -600,7 +544,9 @@ extension LauncherView {
 
     func pasteClipboardEntriesToFrontmost(_ entries: [ClipboardEntry]) {
         guard !entries.isEmpty else { return }
-        writeClipboardEntriesToPasteboard(entries)
+        let batches = ClipboardScopeService.pasteBatches(for: entries)
+        // The first paste's clips go on now; any later ones follow it, one per paste.
+        writeClipboardEntriesToPasteboard(batches[0])
 
         let targetApp = AppDelegate.shared?.previousFrontmostApp
         let targetPID = targetApp?.processIdentifier ?? 0
@@ -621,6 +567,12 @@ extension LauncherView {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 postPasteShortcut(to: targetPID)
+                for (i, batch) in batches.enumerated().dropFirst() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35 * Double(i)) {
+                        writeClipboardEntriesToPasteboard(batch)
+                        postPasteShortcut(to: targetPID)
+                    }
+                }
             }
         }
     }

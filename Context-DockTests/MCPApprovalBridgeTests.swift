@@ -70,6 +70,25 @@ struct MCPApprovalBridgeTests {
         #expect(!(try askDescription(attended: true).contains("unattended")))
     }
 
+    /// A CLI turn launched by an attended `dorax_ask` is marked nested, and its own
+    /// `dorax_ask` is refused at once instead of starting yet another CLI turn.
+    @Test func aDoraxAskInsideADoraxAskIsRefusedAtOnce() throws {
+        func config(nested: Bool) throws -> String {
+            let url = try #require(
+                DoraXMCPServer.$insideAttendedAsk.withValue(nested) {
+                    DoraXMCPServer.writeCLIConfig()
+                })
+            // Only the test's own file goes; the plain one is the live app's.
+            defer { if nested { try? FileManager.default.removeItem(at: url) } }
+            return try String(contentsOf: url, encoding: .utf8)
+        }
+        #expect(try config(nested: true).contains(DoraXMCPServer.nestedHeader))
+        #expect(!(try config(nested: false).contains(DoraXMCPServer.nestedHeader)))
+
+        #expect(DoraXMCPServer.askRefusal(nested: false) == nil)
+        #expect(DoraXMCPServer.askRefusal(nested: true)?.contains("not available") == true)
+    }
+
     @Test func anAttendedCallerIsShownTheApprovalRatherThanRefused() async {
         #expect(!AICapabilityApprovalCenter.refusesEveryApprovalUnattended)
         let answer = Task { await ask("globalcmd.bluetooth") }
