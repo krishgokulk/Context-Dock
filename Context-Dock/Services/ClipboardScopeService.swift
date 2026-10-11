@@ -102,6 +102,10 @@ enum ClipboardScopeService {
         /// Anything mixed: the text a document would want, with file URLs appended as extra
         /// items for targets that understand them.
         case textWithFiles(text: String, files: [URL])
+        /// Pictures among other clips: each clip goes as its own pasteboard item, in the order
+        /// picked — the picture as an image, a file as a file URL, text as a string. Joining
+        /// them into one string is how "paste" delivered only words when images were picked.
+        case mixed
         case empty
     }
 
@@ -122,12 +126,28 @@ enum ClipboardScopeService {
         if imageCount > 0, imageCount == entries.count { return .images(count: imageCount) }
         if text.isEmpty, fileURLs.isEmpty, imageCount > 0 { return .images(count: imageCount) }
         if text.isEmpty && fileURLs.isEmpty { return .empty }
+        if imageCount > 0 { return .mixed }
         return .textWithFiles(text: text, files: fileURLs)
     }
 
     /// Writes the selection, and reports the change count it left behind so the always-on
     /// monitor can decline to re-import what we just wrote — a clip re-entering its own
     /// history churns the list, and the image blob behind it, for nothing.
+    /// What goes in each paste. Pictures go one paste at a time, in the order picked: a chat
+    /// box or editor reads the first item on the pasteboard and drops the rest, so several
+    /// images written together arrived as one. Files and text go as one paste.
+    static func pasteBatches(for entries: [Entry]) -> [[Entry]] {
+        guard entries.count > 1 else { return entries.isEmpty ? [] : [entries] }
+        switch payload(for: entries) {
+        case .images, .mixed: return entries.map { [$0] }
+        default: return [entries]
+        }
+    }
+
+    /// The change count of our own last write. The always-on monitor skips it: a paste from
+    /// the board is not a copy the user made, and re-importing it adds a duplicate clip.
+    nonisolated(unsafe) static private(set) var ownWriteChangeCount = -1
+
     @discardableResult
     static func writeToPasteboard(_ entries: [Entry]) -> Int {
         let pasteboard = NSPasteboard.general
@@ -154,6 +174,25 @@ enum ClipboardScopeService {
             let images = entries.compactMap { imageData(for: $0).flatMap(NSImage.init(data:)) }
             if !images.isEmpty { pasteboard.writeObjects(images) }
 
+        case .mixed:
+            var items: [NSPasteboardWriting] = []
+            for entry in entries {
+                if let image = imageData(for: entry).flatMap(NSImage.init(data:)) {
+                    items.append(image)
+                } else if !entry.filePaths.isEmpty {
+                    for path in entry.filePaths {
+                        let item = NSPasteboardItem()
+                        item.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
+                        items.append(item)
+                    }
+                } else if !entry.text.isEmpty {
+                    let item = NSPasteboardItem()
+                    item.setString(entry.text, forType: .string)
+                    items.append(item)
+                }
+            }
+            if !items.isEmpty { pasteboard.writeObjects(items) }
+
         case .textWithFiles(let text, let files):
             var items: [NSPasteboardItem] = []
             if !text.isEmpty {
@@ -169,6 +208,7 @@ enum ClipboardScopeService {
             if !items.isEmpty { pasteboard.writeObjects(items) }
         }
 
+        ownWriteChangeCount = pasteboard.changeCount
         return pasteboard.changeCount
     }
 

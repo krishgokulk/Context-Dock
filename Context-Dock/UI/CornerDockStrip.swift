@@ -14,6 +14,8 @@ struct CornerDockStrip: View {
     /// A pin draws only when the search index resolves it; a rebuilt index is a redraw.
     @ObservedObject private var index = GlobalSearchIndexStatus.shared
     @State private var hoveredID: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let magnifier = DockMagnifier.shared
     @State private var isDropTarget = false
     @State private var draggingPinID: UUID?
     /// The magnifier is being hovered and the field is about to come back. The icons draw
@@ -212,43 +214,43 @@ struct CornerDockStrip: View {
             // it, widens it back.
             // The field, folded: the magnifier in Global, the app's own icon in its Context
             // Dock — what the field says it is about when it opens.
-            foldedField { expandField() }
-                .scaleEffect(condensing ? 1.12 : 1)
-                // An app bar's icon flies into the field's app chip and shrinks to its size,
-                // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
-                .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
-                .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
-                // A fixed-length curve, not a spring: it has to have landed exactly when the
-                // chip's icon takes over, or the hand-off shows as a jump.
-                .animation(
-                    .timingCurve(0.3, 0, 0.2, 1,
-                        duration: AppChatPromptMetrics.dockMorphDuration * 0.3),
-                    value: gathered)
-                .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
-                // The hairline between the field, folded, and the apps — the same one the
-                // pins get. Drawn over room that is already there, so it costs no width, and
-                // centred between what the eye sees — the 20-point glyph, not its 48-point
-                // slot — and Finder. It belongs to the magnifier and leaves with it.
-                .overlay(alignment: .center) {
-                    let glyphEdge: CGFloat = 10
-                    let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.18))
-                        .frame(width: 1, height: M.dockIconSize * 0.7)
-                        .offset(x: (glyphEdge + appEdge) / 2)
-                        .allowsHitTesting(false)
-                }
-                // The field's own magnifier opens on this exact spot; this one hands over.
-                // An app bar's icon hands over only once it has landed on the chip.
-                .opacity(isDock ? 1 : 0)
-                .animation(gathersIntoAppBar ? appIconHandover : movingFade, value: isDock)
-                .allowsHitTesting(isDock)
+            DockMagnifiedSlot(id: "search") { magnify in
+                foldedField { expandField() }
+                    .scaleEffect(magnify)
+                    .scaleEffect(condensing ? 1.12 : 1)
+                    // An app bar's icon flies into the field's app chip and shrinks to its size,
+                    // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
+                    .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
+                    .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
+                    // A fixed-length curve, not a spring: it has to have landed exactly when the
+                    // chip's icon takes over, or the hand-off shows as a jump.
+                    .animation(
+                        .timingCurve(0.3, 0, 0.2, 1,
+                            duration: AppChatPromptMetrics.dockMorphDuration * 0.3),
+                        value: gathered)
+                    .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
+                    // The hairline between the field, folded, and the apps — the same one the
+                    // pins get. Drawn over room that is already there, so it costs no width, and
+                    // centred between what the eye sees — the 20-point glyph, not its 48-point
+                    // slot — and Finder. It belongs to the magnifier and leaves with it.
+                    .overlay(alignment: .center) {
+                        let glyphEdge: CGFloat = 10
+                        let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.18))
+                            .frame(width: 1, height: M.dockIconSize * 0.7)
+                            .offset(x: (glyphEdge + appEdge) / 2)
+                            .allowsHitTesting(false)
+                    }
+                    // The field's own magnifier opens on this exact spot; this one hands over.
+                    // An app bar's icon hands over only once it has landed on the chip.
+                    .opacity(isDock ? 1 : 0)
+                    .animation(gathersIntoAppBar ? appIconHandover : movingFade, value: isDock)
+                    .allowsHitTesting(isDock)
+            }
             // One region for apps: the pinned ones first, in the order the user placed
-            // them, then whatever else is running. Composed once for the whole pass —
-            // `scale(for:)` runs per icon per hover frame and must not compose again.
+            // them, then whatever else is running.
             let plan = self.plan
-            let ids = plan.composition.apps.map(\.id)
-                + plan.composition.otherPins.map(\.id.uuidString)
             // Each app flies to its own slot in the field's small pill and shrinks to its
             // size — drawn there, not laid out there, so the row's geometry never moves
             // (memory `corner-pill-size-must-be-pure`) — then hands over to the pill.
@@ -256,14 +258,14 @@ struct CornerDockStrip: View {
             if scrollsApps(plan) {
                 // More running than the row holds: every app, scrolling sideways in the room
                 // the shown ones and the "+N" took — the dock stays its one width.
-                scrollingApps(plan, ids: ids)
+                scrollingApps(plan)
             } else {
             ForEach(Array(plan.composition.apps.enumerated()), id: \.element.id) { index, slot in
                 if gathersIntoAppBar {
                     // Flies and shrinks to its place in the field's pill, then hands over to
                     // it: gone once it has arrived, back at once when the bar spreads out.
                     let inPill = index < AppChatPromptModel.appBarVisibleIcons
-                    appIcon(slot, ids: ids)
+                    appIcon(slot)
                         .scaleEffect(gathered
                             ? AppChatPromptMetrics.appBarIconSize / M.dockIconSize : 1)
                         .offset(x: gathered && inPill
@@ -279,7 +281,7 @@ struct CornerDockStrip: View {
                     // (#189), the way an app bar's pill already was. An app the pill does
                     // not show goes as it leaves.
                     let landsInPill = inPill(slot.bundleID)
-                    appIcon(slot, ids: ids)
+                    appIcon(slot)
                         .scaleEffect(gathered && !slidesToSplit ? M.pillIconScale : 1)
                         .offset(x: gathered
                             ? (slidesToSplit
@@ -331,7 +333,7 @@ struct CornerDockStrip: View {
                                 DockIconMenu(items: pinnedMenuItems(pin))
                             }
                     } else {
-                        pinnedIcon(pin, ids: ids)
+                        pinnedIcon(pin)
                     }
                 }
             }
@@ -343,7 +345,12 @@ struct CornerDockStrip: View {
                 // (`dockToolCount`): drawing more than it counts would overrun its width.
                 // The Drop Shelf is the last of them in every scope, pinned or not.
                 ForEach(toolKinds, id: \.self) { kind in
-                    toolView(kind)
+                    // Magnified like the icons beside them: the slot is the row's, the
+                    // glyph inside it grows.
+                    DockMagnifiedSlot(id: "tool.\(kind)") { magnify in
+                        toolView(kind).scaleEffect(magnify)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
         }
@@ -354,6 +361,7 @@ struct CornerDockStrip: View {
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
         .animation(.smooth(duration: 0.25), value: clipboard.showsDockIcon)
         .animation(.smooth(duration: 0.25), value: model.selection != nil)
+        .animation(.smooth(duration: 0.25), value: model.showsShelf)
         .padding(.horizontal, plan.layout.leadingInset)
         // The dock's own height at rest; the open field's while it is up, so the pins and
         // the shelf it keeps at the field's end sit on the field's centre line.
@@ -367,11 +375,28 @@ struct CornerDockStrip: View {
         // field the strip is drawn on top, and an empty stretch of it must not swallow a
         // click on the text. A background, not the strip's own content shape: that shape
         // bounds the whole subtree, and an empty one took the pill and the pins with it.
+        // The room above the capsule is the dock's too while the pointer is on it: magnified
+        // icons stand there, and leaving through the top must not read as leaving the strip.
+        .padding(.top, isDock && magnifier.isEngaged ? DockMagnification.headroom : 0)
         .background {
             Color.clear
                 .contentShape(Rectangle())
                 .allowsHitTesting(isDock)
         }
+        // ONE pointer for the whole strip (#232): each icon's size is a smooth function of
+        // its distance from it, not a step chosen by which icon was entered last.
+        .onContinuousHover(coordinateSpace: .named(DockMagnifier.space)) { phase in
+            switch phase {
+            case .active(let point) where isDock && !gathered && !reduceMotion:
+                magnifier.setPointer(point.x)
+            default:
+                magnifier.setPointer(nil)
+            }
+        }
+        .coordinateSpace(name: DockMagnifier.space)
+        .onChange(of: magnifier.isEngaged) { _, _ in CornerDockController.shared.refresh() }
+        .onChange(of: gathered) { _, _ in magnifier.setPointer(nil) }
+        .onDisappear { magnifier.setPointer(nil) }
         .onDrop(of: [.fileURL, .plainText], isTargeted: $isDropTarget) { providers in
             acceptDrop(providers)
         }
@@ -410,19 +435,23 @@ struct CornerDockStrip: View {
 
     /// An app, once. A pinned app that is running is this same icon with a dot under it —
     /// never a second copy beside the pins.
+    private func appIcon(_ slot: DockAppSlot) -> some View {
+        DockMagnifiedSlot(id: slot.id) { scale in appIconBody(slot, scale: scale) }
+    }
+
     @ViewBuilder
-    private func appIcon(_ slot: DockAppSlot, ids: [String]) -> some View {
+    private func appIconBody(_ slot: DockAppSlot, scale: CGFloat) -> some View {
         let id = slot.id
         DockStripIcon(
             image: slot.running?.icon ?? slot.pin?.kind.icon, title: slot.title,
             isRunning: slot.isRunning,
             isAvailable: slot.pin.map { $0.kind.isAvailable } ?? true,
-            scale: scale(for: id, among: ids)
+            scale: scale
         )
         // As the field's pill, the one Tab and ←/→ have highlighted (`DockKeyRules`).
-        .dockKeyboardFocus(!isDock && model.focusedPill.map {
+        .dockKeyboardFocus((!isDock && model.focusedPill.map {
             $0.bundleID == slot.bundleID || $0.id == slot.bundleID
-        } == true)
+        } == true) || (reduceMotion && isDock && hoveredID == id))
         .onHover { inside in
             // As the field's pill, resting on an app asks for the dock back, as the field's
             // own pill did.
@@ -476,7 +505,11 @@ struct CornerDockStrip: View {
 
     /// A pin that is not an app — a command, a CLI tool, a file, a folder. Apps never come
     /// through here; they are slots in the app region, pinned or not.
-    private func pinnedIcon(_ pin: DockPin, ids: [String]) -> some View {
+    private func pinnedIcon(_ pin: DockPin) -> some View {
+        DockMagnifiedSlot(id: pin.id.uuidString) { scale in pinnedIconBody(pin, scale: scale) }
+    }
+
+    private func pinnedIconBody(_ pin: DockPin, scale: CGFloat) -> some View {
         let document = pin.documentID.flatMap { GlobalSearchService.shared.document(withID: $0) }
         let image = pin.kind.icon ?? document?.icon
         let available: Bool = {
@@ -492,12 +525,12 @@ struct CornerDockStrip: View {
             .flatMap { PluginStripIcon.drawsLive($0) ? $0 : nil }
         return Group {
             if let liveIcon {
-                PluginStripIcon(manifest: liveIcon, scale: scale(for: pin.id.uuidString, among: ids))
+                PluginStripIcon(manifest: liveIcon, scale: scale)
                     .id(liveIcon.id)
             } else {
                 DockStripIcon(
                     image: image, title: pin.title, isRunning: false,
-                    isAvailable: available, scale: scale(for: pin.id.uuidString, among: ids),
+                    isAvailable: available, scale: scale,
                     fallbackSymbol: pin.kind.fallbackSymbol
                 )
             }
@@ -742,16 +775,15 @@ struct CornerDockStrip: View {
     }
 
     /// Every running app in the room the shown ones and the "+N" took, scrolling sideways.
-    private func scrollingApps(_ plan: DockStripPlan, ids: [String]) -> some View {
+    private func scrollingApps(_ plan: DockStripPlan) -> some View {
         let apps = plan.uncut?.apps ?? plan.composition.apps
         let slots = CGFloat(plan.composition.apps.count + 1)
         let width = slots * (M.dockIconSize + plan.layout.appSpread)
             + (slots - 1) * M.dockIconGap
-        let allIDs = apps.map(\.id) + plan.composition.otherPins.map(\.id.uuidString)
         return ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: M.dockIconGap) {
                 ForEach(apps) { slot in
-                    appIcon(slot, ids: allIDs)
+                    appIcon(slot)
                         .padding(.leading, plan.layout.appSpread)
                 }
             }
@@ -763,16 +795,6 @@ struct CornerDockStrip: View {
         .animation(
             .smooth(duration: AppChatPromptMetrics.dockMorphDuration * 0.8), value: gathered)
         .allowsHitTesting(isDock)
-    }
-
-    /// Dock magnify: the hovered icon up, its neighbours a little, everything else at rest.
-    /// `ids` is the row as drawn, passed in rather than rebuilt per icon.
-    private func scale(for id: String, among ids: [String]) -> CGFloat {
-        guard let hoveredID else { return 1 }
-        if hoveredID == id { return 1.25 }
-        guard let a = ids.firstIndex(of: hoveredID), let b = ids.firstIndex(of: id)
-        else { return 1 }
-        return abs(a - b) == 1 ? 1.1 : 1
     }
 
     // MARK: Actions
@@ -906,7 +928,6 @@ struct DockStripIcon: View {
                 height: AppChatPromptMetrics.dockIconSize - 8)
             .opacity(isAvailable ? 1 : 0.4)
             .scaleEffect(scale, anchor: .bottom)
-            .animation(.snappy(duration: 0.18), value: scale)
             Circle()
                 .fill(Color.primary.opacity(isRunning ? 0.6 : 0))
                 .frame(width: 4, height: 4)

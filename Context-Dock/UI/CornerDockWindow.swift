@@ -698,11 +698,19 @@ final class CornerDockController: NSObject {
         guard let panel, let hostView else { return }
         defer { syncAutoHide() }
         let slots = currentSlots()
-        let rects = [
+        var rects = [
             slots.shelf, slots.preview, slots.clipboard, slots.selection, slots.list,
             slots.prompt,
         ]
             .compactMap { $0 }
+        // Magnified icons stand above the capsule and past its ends (#232): while the pointer
+        // is on the dock that room answers it too, or leaving through the top would shrink
+        // the icon the pointer is on.
+        if prompt.phase == .dock, DockMagnifier.shared.isEngaged, let dock = slots.prompt {
+            rects.append(CGRect(
+                x: dock.minX - 48, y: dock.maxY, width: dock.width + 96,
+                height: DockMagnification.headroom))
+        }
 
         // Nothing moved, nothing to do. The models this follows republish on every
         // keystroke — the draft is `@Published` — and without this the corner recomputed
@@ -1601,6 +1609,18 @@ final class CornerDockController: NSObject {
 
     private func applyClipboardBoardKey(_ key: ClipboardBoardKey) {
         let controller = ClipboardPanelController.shared
+        // The target picker owns the keys while it is up: arrows walk it, Return chooses,
+        // Esc puts it away and leaves the board as it was.
+        if clipboardModel.targetPicker != nil {
+            switch key {
+            case .move(let step, _): clipboardModel.targetPicker?.move(step)
+            case .paste, .copy:
+                if let target = clipboardModel.targetPicker?.chosen { controller.chooseTarget(target) }
+            case .back, .clearFilter: clipboardModel.targetPicker = nil
+            default: break
+            }
+            return
+        }
         switch key {
         case .back:
             controller.closeBoard()
@@ -1613,6 +1633,11 @@ final class CornerDockController: NSObject {
         case .copy:
             let entries = clipboardModel.actionableEntries()
             guard !entries.isEmpty else { return }
+            // Several picked: where should they go? One: it is copied, as before.
+            if entries.count > 1, !clipboardModel.selectedIDs.isEmpty {
+                controller.openTargetPicker(entries)
+                return
+            }
             controller.copy(entries)
             controller.finishBoard()
         case .delete:
