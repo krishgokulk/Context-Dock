@@ -361,6 +361,7 @@ struct CornerDockStrip: View {
         .animation(.smooth(duration: 0.25), value: feedback.current?.id)
         .animation(.smooth(duration: 0.25), value: clipboard.showsDockIcon)
         .animation(.smooth(duration: 0.25), value: model.selection != nil)
+        .animation(.smooth(duration: 0.25), value: model.showsShelf)
         .padding(.horizontal, plan.layout.leadingInset)
         // The dock's own height at rest; the open field's while it is up, so the pins and
         // the shelf it keeps at the field's end sit on the field's centre line.
