@@ -90,3 +90,22 @@ struct AppScopeCardHoldTests {
         #expect(model.isStandDownArmed)
     }
 }
+
+@Suite("App settings card in the result sheet's right half")
+@MainActor
+struct AppScopeCardPlacementTests {
+
+    @Test("Open, the card is the board's right half and keeps the board tall enough for it")
+    func theCardIsTheRightHalf() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Notes", bundleID: "com.apple.Notes")
+        #expect(model.boardPreview != .appScope(bundleID: "com.apple.Notes", name: "Notes"))
+
+        model.isShowingScopeCard = true
+        #expect(model.boardPreview == .appScope(bundleID: "com.apple.Notes", name: "Notes"))
+        #expect(model.boardSize.height >= AppScopeBoardMetrics.height)
+
+        model.isShowingScopeCard = false
+        #expect(model.boardPreview != .appScope(bundleID: "com.apple.Notes", name: "Notes"))
+    }
+}

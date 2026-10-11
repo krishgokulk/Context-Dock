@@ -4540,14 +4540,12 @@ extension LauncherView {
                 return
             }
 
-            if shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery) != nil {
-                Task {
-                    let intent = await resolvedMailMailboxSearchIntent(for: rawScopedSearchQuery)
-                    guard let intent else { return }
-                    await MainActor.run {
-                        self.executeMailMailboxSearch(intent: intent, userMessage: query)
-                    }
-                }
+            // Only an exact search command ("search mail from SBI") is claimed here; any
+            // other sentence that mentions a sender goes to the model, which has
+            // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
+            // this same function. It runs headless (mail.search); Mail's window is not touched.
+            if let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery) {
+                executeMailMailboxSearch(intent: intent, userMessage: query)
                 return
             }
         }

@@ -137,6 +137,9 @@ struct DockStripComposition: Equatable {
 struct DockStripPlan {
     let composition: DockStripComposition
     let layout: AppChatPromptMetrics.DockLayout
+    /// Every app, before the cut for room: what the resting dock scrolls through in the
+    /// room the shown ones take, rather than ending on "+N" (owner 2026-10-08).
+    var uncut: DockStripComposition? = nil
 
     /// What is running and what resolves, remembered briefly.
     ///
@@ -303,6 +306,7 @@ struct DockStripPlan {
                 running: running, pins: pins, runningBundleIDs: runningBundleIDs,
                 unresolvedDocumentIDs: unresolvedDocumentIDs, widgetSlots: widgetSlots,
                 capacity: layout.shownRunning),
-            layout: layout)
+            layout: layout,
+            uncut: full)
     }
 }

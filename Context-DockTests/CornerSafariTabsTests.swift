@@ -124,10 +124,11 @@ struct CornerSafariTabsTests {
         #expect(BrowserTabList.matching(tabs, query: "github pull").map(\.title) == ["Pull requests"])
     }
 
-    @Test("Other apps and other browsers keep their own shell and show no tabs")
+    @Test("Other browsers have the app's bar but show no tabs")
     func onlySafariShowsTabs() {
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
-        #expect(!chrome.showsTabBar && !chrome.usesDockShell)
+        // Every app's Context Dock has the bar (owner 2026-10-08); Chrome's holds no tabs.
+        #expect(chrome.showsTabBar && chrome.usesDockShell)
         #expect(!chrome.stripIcons.contains { chrome.isTabIcon($0.id) })
         #expect(!BrowserTabList.listsTabs(bundleID: "com.google.Chrome"))
     }
@@ -143,10 +144,13 @@ struct CornerSafariTabsTests {
     @Test("Every app's Context Dock is Global's height; without tabs it fits its field")
     func contextDockHeightAndFit() {
         let textEdit = scope(bundleID: "com.apple.TextEdit", name: "TextEdit")
-        #expect(textEdit.usesDockHeight && !textEdit.usesDockShell)
-        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25).
+        // Every app's Context Dock rests as a dock now (owner 2026-10-08); Finder's file
+        // search does not.
+        #expect(textEdit.usesDockHeight && textEdit.usesDockShell)
+        // Finder too, desktop-only mode included: one bar for every app (owner 2026-09-25),
+        // and in front it rests and folds like any app's (owner 2026-10-08).
         let finder = scope(bundleID: "com.apple.finder", name: "Finder")
-        #expect(finder.usesDockHeight && !finder.usesDockShell)
+        #expect(finder.usesDockHeight && finder.usesDockShell)
         let fitted = AppChatPromptMetrics.size(
             for: .prompt, suggestions: 0, running: 12, pinned: 3,
             fieldHeight: AppChatPromptMetrics.dockHeight, fitsContent: true)

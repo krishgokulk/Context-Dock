@@ -1602,27 +1602,24 @@ struct AIChatMessageView: View {
         }
     }
 
+    /// Files sent with this message, as the same tiles the composer showed before sending —
+    /// the picture for an image, a card for anything else — so what was attached looks like
+    /// what is in the transcript.
     @ViewBuilder
     private var attachmentChips: some View {
-        let alignment: HorizontalAlignment = message.role == .user ? .trailing : .leading
-        VStack(alignment: alignment, spacing: 4) {
+        HStack(spacing: 6) {
             ForEach(message.attachments, id: \.absoluteString) { url in
-                HStack(spacing: 6) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
-                        .resizable()
-                        .frame(width: 18, height: 18)
-                    Text(url.lastPathComponent)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.primary.opacity(0.85))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(.primary.opacity(0.08)))
+                ChatAttachmentChip(url: url, style: .messageTile)
             }
         }
+    }
+
+    /// The blinking bar that says an answer is still arriving. Only an answer streams: the
+    /// App Chat transcript marks its *last* message as streaming while a turn runs, and
+    /// before the first token that last message is the user's own — which drew a provider-
+    /// coloured bar inside the blue bubble, reading as a stray text caret.
+    private var showsStreamingCursor: Bool {
+        isStreaming && message.role != .user
     }
 
     var body: some View {
@@ -1693,7 +1690,7 @@ struct AIChatMessageView: View {
                             content: message.content.isEmpty && isStreaming ? "" : message.content,
                             isError: message.isError
                         )
-                        if isStreaming {
+                        if showsStreamingCursor {
                             Rectangle()
                                 .fill(providerColor)
                                 .frame(width: 2, height: 14)

@@ -1937,25 +1937,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The prompt is about the app the user is looking at, so the app is captured here —
     /// before opening the prompt makes Context-Dock frontmost.
-    func activateAppChatPrompt() {
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        // Capture the user-facing app before the corner panel activates Context-Dock.
-        // If the panel is already key, this helper remembers the app behind it instead
-        // of accidentally turning the next cycle into "Chat with Context-Dock".
+    /// The app the user is working in, as the corner's Context Dock target — read before the
+    /// corner takes the keys. If the panel is already key, the helper remembers the app
+    /// behind it instead of turning the next summon into "Chat with Context-Dock".
+    func frontmostChatTarget() -> CornerChatTarget {
         let target = Self.appChatTargetApplication(
             menuBarOwner: menuBarOwningUserFacingApplication(),
             remembered: previousFrontmostApp,
             rawFrontmost: NSWorkspace.shared.frontmostApplication,
             ownBundleID: Bundle.main.bundleIdentifier ?? "")
-        let chatTarget = CornerChatTarget(
+        return CornerChatTarget(
             name: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
             summary: AppChatSuggestionProvider.summary(for: target))
+    }
+
+    func activateAppChatPrompt(toggles: Bool = true) {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        let chatTarget = frontmostChatTarget()
         CornerDockController.shared.activate()
-        CornerChatPresentation.shared.cycle(target: chatTarget)
+        if toggles {
+            CornerChatPresentation.shared.cycle(target: chatTarget)
+        } else {
+            CornerChatPresentation.shared.showFrontmostApp(target: chatTarget)
+        }
+    }
+
+    /// ⌘⌘: the app in front's Context Dock. Pressed again while that is up (and not slid away
+    /// by auto-hide), it puts the corner away, as the other scope hotkeys do.
+    func activateContextDockFromDoubleCommand() {
+        let presentation = CornerDockController.shared.chatPresentation
+        if presentation.isVisible, presentation.mode == .frontmostApp,
+            !CornerDockController.shared.isAutoHidden
+        {
+            presentation.dismiss()
+            return
+        }
+        // From Global or General, straight to the app's Context Dock — not a toggle that
+        // would put a visible corner away instead.
+        activateAppChatPrompt(toggles: false)
+        CornerDockController.shared.armKeyboard()
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.
@@ -2171,7 +2195,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.command),
                 hasOtherModifiers: !flags.intersection([.option, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleCommandGlobalContext {
-                DispatchQueue.main.async { self.activateGlobalContextScope() }
+                // ⌘⌘ opens the Context Dock of the app in front; a single ⌘ tap switches to
+                // Global, and Backspace on its empty field goes there too (owner 2026-10-08).
+                DispatchQueue.main.async { self.activateContextDockFromDoubleCommand() }
             }
             if optionTap.update(
                 isDown: flags.contains(.option),
@@ -2462,6 +2488,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
+        // The clipboard opens in whichever shell's result sheet is on screen (owner
+        // 2026-10-07): the Dock's own clipboard scope while the Dock is up, the Corner's
+        // board otherwise.
+        if launcherWindow?.isVisible == true {
+            NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
+            return
+        }
         ClipboardPanelController.shared.toggle()
     }
 

@@ -48,8 +48,14 @@ struct CornerLivePanel: View {
         messages.last { $0.role == .assistant && !$0.isError }
     }
 
+    /// The last turn's answer, failed or not. A step that failed is still a step that ran:
+    /// skipping error answers showed an older turn's steps, or none at all.
+    private var lastTurnAnswer: AIChatMessage? {
+        messages.last { $0.role == .assistant }
+    }
+
     private var finishedSteps: [ActivityStep] {
-        guard let answer = lastAnswer else { return [] }
+        guard let answer = lastTurnAnswer else { return [] }
         let recorded = conversation.activityByMessageID[answer.id] ?? answer.activity
         return ActivityStep.steps(recorded: recorded, receipts: answer.evidenceReceipts)
     }
@@ -167,7 +173,9 @@ struct CornerLivePanel: View {
                     }
                 }
             } else {
-                Text("Answered without running anything.")
+                // Only what was recorded can be vouched for. "Answered without running
+                // anything" was said of turns a pre-model shortcut had run (issue #195).
+                Text("No steps recorded for this answer.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(.secondary)
             }
