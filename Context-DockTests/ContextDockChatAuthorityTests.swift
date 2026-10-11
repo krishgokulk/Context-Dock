@@ -55,7 +55,7 @@ struct ContextDockChatAuthorityTests {
     @Test func adapterPermitsEverything() {
         for route: DoraXActionCandidate.ExecutionRoute in
             [.appLaunch, .verifiedMenu, .keyboardShortcut, .mcp, .adapter, .cli, .api,
-             .automation, .axFallback, .shortcutRunner]
+             .automation, .axFallback]
         {
             #expect(AppAccessPolicy.allows(route, at: .adapter))
         }

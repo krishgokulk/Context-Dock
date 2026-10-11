@@ -7,7 +7,10 @@ enum IntegrationScope: String, CaseIterable, Identifiable, Codable {
 }
 
 enum IntegrationDetailTab: String, CaseIterable, Identifiable, Codable {
-    case overview, actions, resources, access
+    /// `agent` is the app's AGENT.md — how it behaves, written as a file it owns. It sits
+    /// between what the app *can* do (actions, resources) and what it is *allowed* to do
+    /// (access), because that is where it belongs in the reading.
+    case overview, actions, resources, agent, access
 
     var id: Self { self }
     var title: String { rawValue.capitalized }

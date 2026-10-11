@@ -589,11 +589,18 @@ extension LauncherView {
 
         requestWindowSizeUpdate(reason: .modeChanged)
 
+        // Re-scoping the context dock to the next app is for a dock that is on screen. This
+        // view outlives the window being hidden and still hears every termination, and
+        // activateContextDock() *shows* the dock — so quitting an app from the corner chat
+        // brought the dock up over the user's work, scoped to whatever came next. A dock the
+        // user is not looking at has nothing to re-scope.
         if shouldStayInContextDockAfterQuit,
             let fallback,
-            fallback.bundleIdentifier != nil
+            fallback.bundleIdentifier != nil,
+            AppDelegate.shared?.launcherWindow?.isVisible == true
         {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                guard AppDelegate.shared?.launcherWindow?.isVisible == true else { return }
                 AppDelegate.shared?.activateContextDock()
             }
         }
@@ -1043,138 +1050,6 @@ extension LauncherView {
         return owners
     }
 
-    var globalRunningAppStrip: some View {
-        // Deferred menu-only matches: strip shows the OWNING app's pill (Messages
-        // for "new message"); ↓ or tap expands the sheet.
-        let menuOwners = globalStripMenuOwnerApps
-        // Deferred single result + token fallback share the SearchResult pill row.
-        let tokenResults: [SearchResult] = {
-            guard menuOwners.isEmpty, !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch
-            else { return [] }
-            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !q.isEmpty,
-                cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
-                let state = cachedGlobalGroupedState
-            else { return [] }
-            // Exactly one row → show it as the pill instead of a half-empty sheet.
-            if state.appResults.count == 1, state.menuPills.isEmpty, state.appMenuGroups.isEmpty {
-                return state.appResults
-            }
-            if state.totalCount == 0 {
-                return tokenMatchedAppResults(for: q)
-            }
-            return []
-        }()
-        let apps = menuOwners.isEmpty && tokenResults.isEmpty ? globalRunningAppStripApps : []
-        return Group {
-            if !menuOwners.isEmpty {
-                HStack(spacing: 5) {
-                    ForEach(menuOwners, id: \.bundleId) { owner in
-                        Button {
-                            _ = expandGlobalContextTypingMatch(selectFirst: false)
-                        } label: {
-                            if let icon = owner.icon {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 17, height: 17)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            } else {
-                                Image(systemName: "app")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.secondary.opacity(0.75))
-                                    .frame(width: 17, height: 17)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .focusable(false)
-                        .help("\(owner.name) — press ↓ to show results")
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(.regularMaterial, in: Capsule(style: .continuous))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(
-                            Color.accentColor.opacity(systemColorScheme == .dark ? 0.45 : 0.35),
-                            lineWidth: 0.7)
-                )
-                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
-            } else if !tokenResults.isEmpty {
-                HStack(spacing: 5) {
-                    ForEach(Array(tokenResults.enumerated()), id: \.offset) { _, result in
-                        Button {
-                            result.action()
-                            searchState.query = ""
-                        } label: {
-                            if let icon = result.icon {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 17, height: 17)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            } else {
-                                Image(systemName: "app")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.secondary.opacity(0.75))
-                                    .frame(width: 17, height: 17)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .focusable(false)
-                        .help(result.title)
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(.regularMaterial, in: Capsule(style: .continuous))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(
-                            Color.accentColor.opacity(systemColorScheme == .dark ? 0.45 : 0.35),
-                            lineWidth: 0.7)
-                )
-                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
-            } else if !apps.isEmpty {
-                HStack(spacing: 5) {
-                    ForEach(apps, id: \.processIdentifier) { app in
-                        Button {
-                            // Running-app pills are app switchers — activate, unminimize, front,
-                            // and centre the window. They do NOT scope to the app's menus.
-                            activateRunningAppFromDock(app)
-                        } label: {
-                            if let icon = resolvedRunningAppIcon(for: app) {
-                                Image(nsImage: icon)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 17, height: 17)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                            } else {
-                                Image(systemName: "app")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundStyle(.secondary.opacity(0.75))
-                                    .frame(width: 17, height: 17)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .focusable(false)
-                    }
-                }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(.regularMaterial, in: Capsule(style: .continuous))
-                .overlay(
-                    Capsule(style: .continuous)
-                        .strokeBorder(
-                            Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
-                            lineWidth: 0.7)
-                )
-                .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
-            }
-        }
-    }
-
     var shouldShowSafariTabStrip: Bool {
         showContextInDock
             && !isGlobalContextActive
@@ -1194,15 +1069,7 @@ extension LauncherView {
             : safariTabPickerTabs
         guard !tabs.isEmpty else { return [] }
         let currentURLKey = normalizedBrowserTabURLKey(currentBrowserPageURL()?.absoluteString)
-        let ordered = tabs.sorted { lhs, rhs in
-            if let currentURLKey {
-                let lhsIsCurrent = normalizedBrowserTabURLKey(lhs.url) == currentURLKey
-                let rhsIsCurrent = normalizedBrowserTabURLKey(rhs.url) == currentURLKey
-                if lhsIsCurrent != rhsIsCurrent { return lhsIsCurrent }
-            }
-            if lhs.windowIndex != rhs.windowIndex { return lhs.windowIndex < rhs.windowIndex }
-            return lhs.tabIndex < rhs.tabIndex
-        }
+        let ordered = BrowserTabList.ordered(tabs, currentURL: currentBrowserPageURL()?.absoluteString)
         let visible = ordered.filter { tab in
             guard isContextDockChatConnected else { return true }
             guard let currentURLKey else { return true }
@@ -1212,15 +1079,7 @@ extension LauncherView {
     }
 
     func normalizedBrowserTabURLKey(_ raw: String?) -> String? {
-        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !raw.isEmpty,
-            let url = URL(string: raw)
-        else { return nil }
-        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-        components?.fragment = nil
-        var key = (components?.url ?? url).absoluteString.lowercased()
-        while key.hasSuffix("/") { key.removeLast() }
-        return key
+        BrowserTabList.normalizedURLKey(raw)
     }
 
     var connectedBrowserPageGhostTitle: String? {
@@ -1301,12 +1160,8 @@ extension LauncherView {
     }
 
     func safariTabStripIcon(for tab: SafariTab) -> NSImage? {
-        guard let url = URL(string: tab.url) else { return nil }
-        if let favicon = FaviconStore.shared.icon(for: url) {
-            return preparedDockIcon(favicon)
-        }
-        FaviconStore.shared.fetchIfNeeded(for: url)
-        return nil
+        guard let favicon = BrowserTabList.favicon(for: tab) else { return nil }
+        return preparedDockIcon(favicon)
     }
 
     func selectSafariTabFromStrip(_ tab: SafariTab) {

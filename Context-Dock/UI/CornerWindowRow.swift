@@ -127,8 +127,23 @@ struct CornerWindowRow: View {
         model.dismiss()
     }
 
+    /// The × closes that window — and, when it is the app's last one, the app with it. A
+    /// closed last window leaves most Mac apps running with nothing on screen, which is
+    /// the × having done nothing as far as anyone looking at the row can tell.
     private func close(_ window: WindowSnapshot) {
-        AXWindowControl.close(windowID: window.id, bundleID: bundleID)
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+        let name = apps.first?.localizedName ?? "That app"
+        if snapshots.windowSnapshots(for: bundleID).count <= 1 {
+            let quit = apps.reduce(false) { $0 || $1.terminate() }
+            DockActionFeedback.appQuit(name, bundleID: bundleID, succeeded: quit)
+            // The dock stays awake: only the row of the app that is gone goes away.
+            model.dismissDockPreview()
+            return
+        }
+        guard AXWindowControl.close(windowID: window.id, bundleID: bundleID) else {
+            AppToast.show("\(name) didn't let that window be closed", icon: "macwindow", duration: 3)
+            return
+        }
         // The row is a picture of the machine; take another one once the app has acted.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
             snapshots.forgetWindows(bundleID: bundleID)

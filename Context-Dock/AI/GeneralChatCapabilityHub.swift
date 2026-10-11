@@ -276,6 +276,17 @@ final class GeneralChatCapabilityHub {
                 + "shell command to type, paste or insert text — they do not do it.",
             "- To press a menu item in an app (Minimize, Save, Quit, Close, a View toggle), "
                 + "run `app.menu.click` with {\"path\": \"Window > Minimize\"}.",
+            // The cached menu map is a snapshot, and apps that build menus on demand — every
+            // Electron app — are half-missing from it. Told only about app.menu.click, a model
+            // that cannot find an item in the cache correctly concludes it cannot press it,
+            // and hands the click back to the user. This is the line that gives it somewhere
+            // else to look.
+            "- When the command you need is NOT in the cached menu list (many apps build "
+                + "menus only when opened, so the list is incomplete), reply with ONLY: "
+                + "{\"operate_app\": {\"target\": \"Check for Updates\", \"reason\": \"why\"}}. "
+                + "DoraX reads the app's LIVE menu bar, shows the user the exact item and "
+                + "presses it once they approve. Use it before telling the user to click "
+                + "something themselves — that is the last thing to say, not the first.",
             "- Something the user attached to the message is read with the read_attachment "
                 + "tool, never guessed at from the clipboard.",
             // Deliberately "when one FITS", not "when one EXISTS". The stronger phrasing was
@@ -606,7 +617,15 @@ final class GeneralChatCapabilityHub {
     /// Dispatch a tool command the model emitted through the tool loop.
     /// Returns handled=false when the command is not an app tool call (caller falls back
     /// to the terminal bridge or treats the text as the final answer).
-    func execute(_ command: String, scope: AIConversationScope) async -> ToolCallResult {
+    ///
+    /// `turn`: the registry turn of the loop calling this (the tool-less scoped loop, E1c). With
+    /// one, an outbound capability goes through the outbound gate with that turn's taint, and
+    /// what each call read is recorded against it. Without one, the capability runs as before:
+    /// a caller with no turn record has nothing the gate could judge it by.
+    func execute(
+        _ command: String, scope: AIConversationScope, turn: AgentTurnToken? = nil,
+        chatScope: GeneralChatScope? = nil
+    ) async -> ToolCallResult {
         guard let invocation = AITypedInvocationResolver.invocation(from: command) else {
             return ToolCallResult(handled: false, success: false, output: "", label: "")
         }
@@ -639,13 +658,31 @@ final class GeneralChatCapabilityHub {
                         output: error.localizedDescription,
                         label: "\(tool) blocked")
                 }
+                let registry = AgentToolRegistry.shared
+                if let turn,
+                    let target = OutboundGate.capabilityTarget(
+                        id: tool, input: input, lookups: registry.outboundLookups),
+                    let stopped = await registry.gateOutbound(
+                        target: target, what: "run_capability: \(tool)", turn: turn,
+                        chatScope: chatScope)
+                {
+                    return ToolCallResult(
+                        handled: true, success: false, output: stopped.output,
+                        label: stopped.deniedByUser ? "\(tool) declined" : "\(tool) held back")
+                }
                 let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(
                     plan, context: .none)
+                if let turn {
+                    registry.taint.record(
+                        toolName: "run_capability", arguments: ["capability_id": tool],
+                        output: result.output, succeeded: result.success, turn: turn)
+                }
                 return ToolCallResult(
                     handled: true,
                     success: result.success,
                     output: result.success
-                        ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                        ? result.resultLine(
+                            isWrite: CapabilityRegistry.shared.capability(id: tool)?.riskLevel != .low)
                         : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
                     label: "\(tool) via built-in")
             }
@@ -681,6 +718,11 @@ final class GeneralChatCapabilityHub {
             do {
                 let result = try await MCPRuntime.shared.callProviderReadOnlyTool(
                     bundleId: bundleId, server: server, tool: tool, arguments: arguments)
+                if let turn {
+                    AgentToolRegistry.shared.taint.record(
+                        toolName: "run_mcp_tool", arguments: [:], output: result,
+                        succeeded: true, turn: turn)
+                }
                 return ToolCallResult(handled: true, success: true, output: result, label: label)
             } catch {
                 return ToolCallResult(
@@ -733,7 +775,9 @@ final class GeneralChatCapabilityHub {
                 handled: true,
                 success: result.success,
                 output: result.success
-                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    ? result.resultLine(
+                        isWrite: CapabilityRegistry.shared.capability(
+                            id: invocation.capabilityID)?.riskLevel != .low)
                     : "\(invocation.capabilityID) failed: \(result.error ?? "Unknown error")",
                 label: invocation.capabilityID)
 
@@ -779,6 +823,45 @@ final class GeneralChatCapabilityHub {
                 output: out.isEmpty ? "Ran \(path.joined(separator: " ▸ "))" : out,
                 label: "\(path.joined(separator: " ▸ ")) via menu")
 
+        case .operateApp:
+            let target = invocation.arguments["target"] ?? ""
+            let bundleId = invocation.arguments["bundleId"]
+                ?? scopedBundleID(for: scope)
+                ?? AXContextReader.shared.current.bundleId
+            guard !target.isEmpty, !bundleId.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No command named for Computer Use, or no app to operate.",
+                    label: "computer use blocked")
+            }
+            let result = await ComputerUseRunner.run(
+                target: target, reason: invocation.arguments["reason"] ?? "",
+                bundleID: bundleId)
+            return ToolCallResult(
+                handled: true, success: result.success, output: result.output,
+                // The label is what the step row shows while this runs, so it names the item
+                // being pressed rather than the tool doing the pressing — "11 steps" told the
+                // owner nothing about what their Mac was about to do.
+                label: result.displayCommand)
+
+        case .appScript:
+            let name = invocation.arguments["name"] ?? ""
+            guard !name.isEmpty else {
+                return ToolCallResult(
+                    handled: true, success: false,
+                    output: "No script named.", label: "app script blocked")
+            }
+            let chatScope: GeneralChatScope = {
+                if case .contextDock(let bundleID, _) = scope { return .app(bundleId: bundleID) }
+                return .general
+            }()
+            let scriptResult = await AppAgentScriptRunner.run(
+                name: name, reason: invocation.arguments["reason"] ?? "",
+                scope: chatScope, query: name)
+            return ToolCallResult(
+                handled: true, success: scriptResult.success, output: scriptResult.output,
+                label: scriptResult.displayCommand)
+
         case .terminal:
             let plan = AIActionPlan(
                 capability: "terminal.runCommand",
@@ -799,7 +882,7 @@ final class GeneralChatCapabilityHub {
                 handled: true,
                 success: result.success,
                 output: result.success
-                    ? result.output + "\n\nVerification: \(result.verification.displayName)."
+                    ? result.resultLine(isWrite: true)
                     : "Terminal command failed: \(result.error ?? "Unknown error")",
                 label: "Terminal")
 

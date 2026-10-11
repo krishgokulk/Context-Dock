@@ -31,9 +31,24 @@ final class AppUpdateService: ObservableObject {
     @Published private(set) var lastChecked: Date? = nil
     @Published private(set) var downloadProgress: Double = 0
 
-    private let manifestURL = URL(
-        string: "https://raw.githubusercontent.com/krishgokulk/Context-Dock/main/update-manifest.json"
-    )!
+    /// Release channels. Each reads its own manifest from `main`: `update-manifest.json` is beta
+    /// (every build shipped so far reads it), `update-manifest-stable.json` is stable.
+    /// `scripts/release-prep.sh` writes them and `scripts/ship.sh` publishes the DMG they name.
+    enum Channel: String {
+        case beta
+        case stable
+
+        static let defaultsKey = "updates.channel"
+
+        static func current(in defaults: UserDefaults = .standard) -> Channel {
+            Channel(rawValue: defaults.string(forKey: defaultsKey) ?? "") ?? .beta
+        }
+
+        var manifestURL: URL {
+            let file = self == .stable ? "update-manifest-stable.json" : "update-manifest.json"
+            return URL(string: "https://raw.githubusercontent.com/krishgokulk/Context-Dock/main/\(file)")!
+        }
+    }
 
     private init() {}
 
@@ -65,8 +80,16 @@ final class AppUpdateService: ObservableObject {
         status = .checking
         downloadProgress = 0
         do {
-            let (data, response) = try await URLSession.shared.data(from: manifestURL)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+            let channel = Channel.current()
+            let (data, response) = try await URLSession.shared.data(from: channel.manifestURL)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            // Until the first stable release there is no stable manifest: nothing to update to.
+            if channel == .stable, statusCode == 404 {
+                lastChecked = Date()
+                status = .upToDate
+                return
+            }
+            guard statusCode == 200 else {
                 throw URLError(.badServerResponse)
             }
             let manifest = try JSONDecoder().decode(UpdateManifest.self, from: data)

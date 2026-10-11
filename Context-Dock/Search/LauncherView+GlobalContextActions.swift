@@ -230,6 +230,11 @@ extension LauncherView {
     }
 
     func connectCornerGlobalResults() {
+        GlobalContextResultSource.shared.windowLayoutResults = { query, bundleID, appName in
+            makeNativeWindowManagementPills(
+                rawScopedQuery: query, scopedBundleId: bundleID, scopedAppName: appName,
+                isGlobalScope: false)
+        }
         GlobalContextResultSource.shared.pureGlobalResults = { query in
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !q.isEmpty else { return [] }
@@ -276,6 +281,8 @@ extension LauncherView {
         pill.sourceBundleId = bundleIdentifier(forApplicationResult: result) ?? ""
         pill.rankingKind = result.type == .extensionCommand ? "globalCommand" : "application"
         pill.trackingIdentifier = result.trackingIdentifier
+        // A Global result's id is its search document's (`stableID: doc.id`).
+        pill.searchDocumentID = result.id
         pill.searchTerms = [result.title, result.subtitle]
         pill.rankingScore = result.score
         pill.keyboardShortcutLabel = result.displayBadges.first
@@ -2973,7 +2980,7 @@ extension LauncherView {
             // Resolve icon: prefer live running icon, fall back to doc's pre-cached icon
             let icon: NSImage?
             switch doc.action {
-            case .userExtension:
+            case .userExtension, .plugin:
                 icon = doc.icon
             case .activatePID(let pid, let bundleId, let path):
                 let app =
@@ -3253,7 +3260,7 @@ extension LauncherView {
             if !trimmedQuery.isEmpty {
                 AppUsageLearner.shared.recordQueryIntent(query: trimmedQuery, wasMenu: false)
             }
-        case .systemCommandScope, .cliScope, .adapterAction:
+        case .systemCommandScope, .cliScope, .adapterAction, .plugin:
             AppUsageLearner.shared.recordAction(doc.usageTrackingKey, inBundleID: usableBundleId)
             AppUsageLearner.shared.recordAction(doc.title, inBundleID: usableBundleId)
         case .cachedMenu(_, _, let path, _, _):
@@ -3440,10 +3447,30 @@ extension LauncherView {
             }
         }
 
-        // 6. Global system commands
+        // 6. Global system commands — minus any whose plugin is installed. Installing a
+        // migrated plugin does not delete the original (the Phase 8 cut-over does), so
+        // without this both answer to the same name and one of the two rows is quietly the
+        // old implementation. Uninstall the plugin and the command is back.
+        let enabledManifests = PluginRegistry.shared.enabledPlugins.map(\.manifest)
+        let supersededLegacyIDs = PluginSupersession.legacyIDs(in: enabledManifests)
+        let replacedNames = PluginSupersession.replacedNames(in: enabledManifests)
         for command in SystemCommandsRegistry.shared.commands where command.isEnabled {
+            guard !PluginSupersession.supersedes(
+                legacyID: command.id.uuidString, covered: supersededLegacyIDs),
+                !PluginSupersession.supersedes(legacyName: command.name, replaced: replacedNames)
+            else { continue }
             let icon = NSImage(systemSymbolName: command.icon, accessibilityDescription: command.name)
             addIfNew(.init(systemCommand: command, icon: icon))
+        }
+
+        // 6b. Installed plugins, which answer to their own name wherever search reaches.
+        for installed in PluginRegistry.shared.enabledPlugins {
+            let manifest = installed.manifest
+            addIfNew(
+                .init(
+                    plugin: manifest,
+                    icon: NSImage(
+                        systemSymbolName: manifest.icon, accessibilityDescription: manifest.name)))
         }
         GlobalSearchIndexStatus.shared.update(
             progress: 0.55,
@@ -3486,6 +3513,9 @@ extension LauncherView {
         // Global Extensions the user built. They reached the launcher's own list and no
         // further, so Global Context and the corner could not find one by any name (#15).
         for ext in UserGlobalExtensionStore.shared.enabledExtensions {
+            guard !PluginSupersession.supersedes(
+                legacyID: ext.id.uuidString, covered: supersededLegacyIDs)
+            else { continue }
             addIfNew(
                 .init(
                     userExtension: ext,
@@ -5074,16 +5104,7 @@ extension LauncherView {
         let root = descriptor.path.first.map(normalizedDockPillText) ?? ""
         let pathText = descriptor.path.map(normalizedDockPillText).joined(separator: " ")
         // Stable commands that live under History/Bookmarks but are NOT URL rows.
-        let name = normalizedDockPillText(descriptor.name)
-        let stableCommands: Set<String> = [
-            "show all history", "show history", "show personal history",
-            "clear history", "clear history…", "clear history...",
-            "back", "forward", "home", "reopen last closed window",
-            "reopen all windows from last session", "show bookmarks",
-            "edit bookmarks", "add bookmark", "add bookmark…", "bookmark all tabs",
-            "show bookmarks editor", "add to reading list",
-        ]
-        if stableCommands.contains(name) { return false }
+        if BrowserStableMenuCommand.isStable(title: descriptor.name) { return false }
         return root == "history"
             || root == "bookmarks"
             || pathText.contains("recent")

@@ -57,9 +57,15 @@ final class AppToast: ObservableObject {
             // toasts/notifications. Persistent toasts and those with an action button keep
             // the floating pill (the inline feedback is transient and button-less), and the
             // floating pill is the fallback whenever the dock is closed.
+            // The corner is a surface too: a result raised while the corner chat is up
+            // and the dock is not belongs in the corner, in its own idiom — an icon in the
+            // strip, a tint on the shell — rather than as a separate pill floating over
+            // the bottom of the screen. Both surfaces read the same notification, so one
+            // post reaches whichever is on screen.
             let canRouteToDock =
                 !persistent && actionTitle == nil
-                && AppDelegate.shared?.launcherWindow?.isVisible == true
+                && (AppDelegate.shared?.launcherWindow?.isVisible == true
+                    || CornerDockController.shared.isCornerChatVisible)
             if canRouteToDock {
                 let warning =
                     icon.contains("exclamationmark") || icon.contains("shield")
@@ -224,11 +230,15 @@ struct ToastPillView: View {
                             .foregroundStyle(t.tint)
                             .frame(width: 20)
 
+                        // With a button beside it the message gives way, from the middle: a
+                        // long file name held its full width and squeezed "Reveal" into an
+                        // empty capsule (owner 2026-09-28, Save as Markdown).
                         Text(t.message)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                            .fixedSize()
+                            .truncationMode(.middle)
+                            .fixedSize(horizontal: t.actionTitle == nil, vertical: false)
 
                         if let progress = t.progress {
                             Text("\(Int((progress * 100).rounded()))%")
@@ -248,8 +258,10 @@ struct ToastPillView: View {
                                     .padding(.vertical, 5)
                                     .background(t.tint.opacity(0.12), in: Capsule())
                                     .overlay(Capsule().strokeBorder(t.tint.opacity(0.35), lineWidth: 0.8))
+                                    .fixedSize()
                             }
                             .buttonStyle(.plain)
+                            .layoutPriority(1)
                         }
                     }
                     if let progress = t.progress {

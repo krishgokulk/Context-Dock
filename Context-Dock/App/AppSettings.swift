@@ -895,6 +895,9 @@ class AppSettings: ObservableObject {
     /// Centred, with the input bar under it, it reads as a dock — which is what it has
     /// become, rather than a corner annex to one.
     @AppStorage("cornerDockAnchor") var cornerDockAnchorRaw: String = CornerDockAnchor.right.rawValue
+    /// The macOS Dock's "Automatically hide and show": the resting strip slides below the
+    /// bottom edge, and the pointer reaching that edge under it brings it back.
+    @AppStorage("cornerDockAutoHide") var cornerDockAutoHide: Bool = false
     @AppStorage("automaticUpdatesEnabled") var automaticUpdatesEnabled: Bool = true
     @AppStorage("openDownloadedUpdatesAutomatically") var openDownloadedUpdatesAutomatically: Bool =
         true

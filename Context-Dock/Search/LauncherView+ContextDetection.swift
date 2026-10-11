@@ -1280,7 +1280,7 @@ extension LauncherView {
                 if (count of windows) = 0 then return ""
                 set currentTab to current tab of front window
                 set js to "document.body ? document.body.innerText : ''"
-                return do JavaScript js in currentTab
+                return (URL of currentTab) & linefeed & (do JavaScript js in currentTab)
             end tell
             """
 
@@ -1289,12 +1289,17 @@ extension LauncherView {
             return nil
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
         if error != nil {
             return nil
         }
 
-        let text = output.stringValue ?? ""
+        // The first line is the tab's address: a page SensitivePageGuard refuses is not read.
+        let raw = output.stringValue ?? ""
+        let lines = raw.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+        let pageURL = lines.first.map(String.init) ?? ""
+        guard SensitivePageGuard.allows(pageURL) else { return nil }
+        let text = lines.count > 1 ? String(lines[1]) : ""
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             return nil
@@ -1317,7 +1322,7 @@ extension LauncherView {
             return []
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
         if error != nil {
             return []
         }
@@ -1352,7 +1357,7 @@ extension LauncherView {
             return []
         }
 
-        let output = scriptObject.executeAndReturnError(&error)
+        let output = scriptObject.executeSerialized(error: &error)
         if error != nil {
             return []
         }

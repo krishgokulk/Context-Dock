@@ -489,7 +489,7 @@ final class CrossAppRouter {
                 .replacingOccurrences(of: "{file}", with: rawText.replacingOccurrences(of: "\"", with: "\\\""))
             if let appleScript = NSAppleScript(source: script) {
                 var error: NSDictionary?
-                appleScript.executeAndReturnError(&error)
+                appleScript.executeSerialized(error: &error)
                 if error == nil { return }
             }
         }

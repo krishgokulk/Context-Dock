@@ -480,7 +480,7 @@ struct ShortcutsProviderAdapter: AIProviderAdapter {
                     continuation.resume(throwing: AIServiceError.networkError("Could not create Shortcuts request"))
                     return
                 }
-                let output = script.executeAndReturnError(&details)
+                let output = script.executeSerialized(error: &details)
                 if let details {
                     let message = details["NSAppleScriptErrorMessage"] as? String ?? "Shortcuts execution failed"
                     continuation.resume(throwing: AIServiceError.networkError(message))

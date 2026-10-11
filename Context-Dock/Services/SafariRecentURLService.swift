@@ -158,7 +158,7 @@ final class SafariRecentURLService: @unchecked Sendable {
         """
         var error: NSDictionary?
         guard let appleScript = NSAppleScript(source: script),
-            let output = appleScript.executeAndReturnError(&error).stringValue
+            let output = appleScript.executeSerialized(error: &error).stringValue
         else { return [] }
 
         var seen = Set<String>()

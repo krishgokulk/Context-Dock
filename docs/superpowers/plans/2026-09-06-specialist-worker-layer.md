@@ -4,7 +4,7 @@
 bounded problem to an installed coding agent — inside an authority envelope derived from the
 scope it was asked in — instead of ending at "add a route in Settings".
 
-**Status:** built through Task 7 (2026-09-15). The Release-build half of Task 7 is blocked by a toolchain crash unrelated to this layer — brain issue #25.
+**Status:** complete (2026-09-23). #25 is fixed, so Task 7's Release-build half ran: zero aborts at `91e7615`, product built and signed. Suite 1856 / 0. Two hand checks remain and only the owner can do them — see Task 7.
 
 **Origin:** a user analysis of why Claude Code and Codex "feel more powerful", checked against
 the code. Its architecture was right and is followed here; two of its factual claims were not,
@@ -135,12 +135,38 @@ verify independently: app version, filesystem state, git state, package-manager 
 the worker recommends needs its own second approval; delegation approval is not execution
 approval.
 
-### ◑ Task 7 — Regression and performance proof (suite + escalation done; Release build blocked by #25)
+### ✅ Task 7 — Regression and performance proof (done 2026-09-23, `91e7615`)
 
-Typing latency unchanged; Context Dock live context unchanged; simple VS Code actions still use
-`code`/menu directly; a worker never runs before approval; a Context Dock delegation receives
-only that app's envelope; broader requests offer General AI escalation instead. Debug and
-Release build; full suite.
+Each claim, and what actually holds it:
+
+| Claim | Held by |
+|---|---|
+| A Context Dock delegation gets only that app's envelope | `anAppScopedTaskReachesOnlyThatApp`, and the rest of `AIWorkerTaskTests` |
+| Broader requests offer General AI escalation | `theEscalationNamesTheScopeAndTheWayOut` |
+| A worker is not offered for a question, or outside its domain | `AIWorkerRoutingTests`, `AIWorkerOfferTests` |
+| Typing latency unchanged — discovery never on the typing path | Structural: `Task.detached(priority: .utility)` once at `ILauncherApp.swift:692`; every later read is a cached `AIWorkerRegistry` lookup |
+| A worker never runs before approval | Structural: both `AIWorkerRunner.run` call sites are inside the `ActionChoice` handler, keyed by `AIWorkerOffer.worker(for:)` |
+| Simple VS Code actions still use `code`/menu directly | **Was held by nothing.** Now `AIWorkerOffer.shouldOffer(hasLinkedRoute:task:workers:)` + five tests |
+| Debug and Release build; full suite | Both green at `91e7615`; suite 1856 / 0 |
+
+The gap worth recording: the ordering was a bare `sendChoices.isEmpty` inline in
+`AppScopedChatService`. Removing it would have started offering a paid specialist beside
+routes that already work, with the whole suite still green. It is a function now for the same
+reason `ComputerUseFallback.shouldOffer` is one — the rung below this made its own ordering
+checkable, and this one had not.
+
+`hasLinkedRoute` asks whether anything linked *could* carry the request out, not whether it
+succeeded. A route that exists and failed is still a route; falling through to a worker because
+a command errored is a different decision and is not this one.
+
+No test was written for "a worker never runs before approval". The only available ones would
+grep source or restate the choice mapping already covered, and neither constrains the
+invariant. It is structural, and saying so beats a green test that holds nothing.
+
+**Still owed, and only the owner can do them** — an agent cannot watch the app:
+
+1. A real Codex delegation from an app-scoped chat: offer → steps → report → read-back note.
+2. The escalation message on a `sudo …` request.
 
 ## What this plan will not do
 

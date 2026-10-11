@@ -24,7 +24,10 @@ enum AppScopeHint {
             return "search files and folders"
         }
         if AXWebReader.shared.isBrowser(bundleId: bundleId) {
-            return "tabs, page cmds, menu cmds"
+            // "tabs" only where the tabs are listed (Safari); saying it elsewhere offered
+            // something neither shell showed.
+            return BrowserTabList.listsTabs(bundleID: bundleId)
+                ? "tabs, page cmds, menu cmds" : "page cmds, menu cmds"
         }
         if bundleId == "com.microsoft.VSCode" || lowerName.contains("code") {
             return "run tasks, commands, menu cmds"

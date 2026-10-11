@@ -153,7 +153,7 @@ final class SafariTabManager {
         end tell
         """
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 guard let appleScript = NSAppleScript(source: script) else {
                     continuation.resume(returning: []); return
                 }
@@ -196,7 +196,7 @@ final class SafariTabManager {
             activate
         end tell
         """
-        DispatchQueue.global(qos: .userInitiated).async {
+        AppleScriptQueue.shared.async {
             NSAppleScript(source: script)?.executeAndReturnError(nil)
         }
     }
@@ -236,7 +236,7 @@ final class SafariTabManager {
         end tell
         """
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 guard let s = NSAppleScript(source: script) else {
                     continuation.resume(returning: nil); return
                 }
@@ -268,7 +268,7 @@ final class SafariTabManager {
         end tell
         """
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 guard let s = NSAppleScript(source: script) else {
                     continuation.resume(returning: nil); return
                 }
@@ -351,7 +351,7 @@ final class SafariTabManager {
 
     private func runAppleScript(_ source: String) async -> String? {
         await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 guard let s = NSAppleScript(source: source) else {
                     continuation.resume(returning: nil); return
                 }
@@ -386,7 +386,7 @@ final class SafariTabManager {
         end tell
         """
         return await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 guard let s = NSAppleScript(source: script) else {
                     continuation.resume(returning: ""); return
                 }
@@ -405,7 +405,7 @@ final class SafariTabManager {
             close tab \(tab.tabIndex) of window \(tab.windowIndex)
         end tell
         """
-        DispatchQueue.global(qos: .userInitiated).async {
+        AppleScriptQueue.shared.async {
             NSAppleScript(source: script)?.executeAndReturnError(nil)
         }
     }
@@ -421,7 +421,7 @@ final class SafariTabManager {
             activate
         end tell
         """
-        DispatchQueue.global(qos: .userInitiated).async {
+        AppleScriptQueue.shared.async {
             NSAppleScript(source: script)?.executeAndReturnError(nil)
         }
     }

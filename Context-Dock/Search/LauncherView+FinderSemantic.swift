@@ -953,7 +953,7 @@ extension LauncherView {
                     mcpToolsRan: memoryToolChips))
             Task.detached(priority: .userInitiated) {
                 var err: NSDictionary?
-                NSAppleScript(source: script)?.executeAndReturnError(&err)
+                NSAppleScript(source: script)?.executeSerialized(error: &err)
                 if let err {
                     let message = err["NSAppleScriptErrorMessage"] as? String ?? "Script error"
                     await MainActor.run {
@@ -1061,13 +1061,13 @@ extension LauncherView {
     @discardableResult
     func runAppleScript(_ source: String) async -> String? {
         return await withCheckedContinuation { cont in
-            DispatchQueue.global(qos: .userInitiated).async {
+            AppleScriptQueue.shared.async {
                 var err: NSDictionary?
                 guard let s = NSAppleScript(source: source) else {
                     cont.resume(returning: nil)
                     return
                 }
-                let result = s.executeAndReturnError(&err)
+                let result = s.executeSerialized(error: &err)
                 cont.resume(returning: result.stringValue)
             }
         }

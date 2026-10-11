@@ -11,21 +11,78 @@ import Foundation
 enum CornerChatMode: Equatable {
     case frontmostApp
     /// Everything running, not one app: the machine's menus and actions, ranked together.
-    /// Between the two chats deliberately — it is the frontmost app's scope widened, not a
-    /// different conversation.
+    /// The layer above the frontmost app — its scope widened, not a different conversation.
     case globalContext
     case general
+}
 
-    /// The order the scopes are walked in, left to right.
-    static let walk: [CornerChatMode] = [.general, .globalContext, .frontmostApp]
+/// Where the corner's keys and swipes go — the Dock's navigation, in one place, so the keys
+/// and the swipes can never disagree about what sits next to what (00-DOCK-AND-CORNER §4b).
+///
+///                  Global Context
+///                        ↑↓
+///     General Chat  ←/→  Context Dock (the frontmost app)
+///                        ↑↓
+///                    Media Dock
+///
+/// General Chat is a place you step into from either scope and back out of to the one you
+/// came from. Global Context and the frontmost app are layers, one above the other. The
+/// Media Dock is not in the corner yet (00-DOCK-AND-CORNER §4), so the step below the
+/// frontmost app goes nowhere for now.
+enum CornerNavigation {
+    enum Move: Equatable {
+        /// ← on an empty field.
+        case leftKey
+        /// → on an empty field.
+        case rightKey
+        /// A sideways swipe. `right` is the fingers moving right, whatever the scroll setting.
+        case swipeSideways(right: Bool)
+        /// ↑, or a swipe down — the layer above.
+        case layerUp
+        /// ↓, or a swipe up — the layer below.
+        case layerDown
+    }
 
-    /// The scope `delta` steps away, or nil at either end. The walk does not wrap: running
-    /// off the end and reappearing on the other side reads as the surface losing its place.
-    static func step(from current: CornerChatMode, by delta: Int) -> CornerChatMode? {
-        guard let index = walk.firstIndex(of: current) else { return nil }
-        let next = index + delta
-        guard walk.indices.contains(next) else { return nil }
-        return walk[next]
+    /// Pure: the scope a move lands on, or nil where the Dock does nothing.
+    /// `origin` is the scope General Chat was entered from.
+    static func destination(
+        for move: Move, from mode: CornerChatMode, origin: CornerChatMode
+    ) -> CornerChatMode? {
+        if mode == .general {
+            switch move {
+            // Back to where the trip started — by the key pointing that way, by a swipe the
+            // opposite way to the one that came in, and by either vertical move.
+            case .rightKey, .swipeSideways(right: false), .layerUp, .layerDown: return origin
+            case .leftKey, .swipeSideways(right: true): return nil
+            }
+        }
+        switch move {
+        // Fingers left to right go into General Chat; right to left comes back (owner
+        // 2026-10-09: one direction each way). The monitor reads the fingers, not the
+        // scroll, so the trackpad's scrolling-direction setting does not flip it.
+        case .leftKey, .swipeSideways(right: true): return .general
+        case .rightKey, .swipeSideways(right: false): return nil
+        case .layerUp: return mode == .frontmostApp ? .globalContext : nil
+        case .layerDown: return mode == .globalContext ? .frontmostApp : nil
+        }
+    }
+}
+
+/// A trackpad gesture over the corner's field, read the way the Dock reads it: sideways
+/// past 70 points and 1.8 times the vertical travel, vertical past 55 points and 1.15 times
+/// the sideways travel. Totals include the momentum, so a fast flick counts.
+enum CornerSwipe {
+    static func classify(dx: CGFloat, dy: CGFloat) -> CornerNavigation.Move? {
+        let horizontal = abs(dx)
+        let vertical = abs(dy)
+        if horizontal > 70, horizontal > vertical * 1.8 {
+            return .swipeSideways(right: dx > 0)
+        }
+        if vertical > 55, vertical > horizontal * 1.15 {
+            // The Dock's sign: negative is the swipe up, which goes to the layer below.
+            return dy < 0 ? .layerDown : .layerUp
+        }
+        return nil
     }
 }
 
@@ -134,18 +191,6 @@ final class CornerChatPresentation: ObservableObject {
     }
 
     func showFrontmostApp(target: CornerChatTarget) {
-        #if DEBUG
-        // Temporary trace: who brings the app chat up while the selection card is showing.
-        let trace = "\(Date()) showFrontmostApp(\(target.name))\n"
-            + Thread.callStackSymbols.prefix(14).joined(separator: "\n") + "\n\n"
-        if let data = trace.data(using: .utf8),
-            let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/dorax-trace.log"))
-        {
-            handle.seekToEndOfFile(); handle.write(data); try? handle.close()
-        } else {
-            try? trace.write(toFile: "/tmp/dorax-trace.log", atomically: true, encoding: .utf8)
-        }
-        #endif
         latestTarget = target
         cancelGeneralStandDown()
         mode = .frontmostApp
@@ -178,22 +223,36 @@ final class CornerChatPresentation: ObservableObject {
         appChat.expectAnswer()
     }
 
+    /// The scope General Chat was entered from, and goes back to.
+    private(set) var generalOrigin: CornerChatMode = .frontmostApp
+
+    /// ← on an empty field: into General Chat. With something typed the arrow is the caret's.
     @discardableResult
     func handleLeftArrow(draft: String) -> Bool {
-        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let next = CornerChatMode.step(from: mode, by: -1)
-        else { return false }
-        show(next)
-        return true
+        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return navigate(.leftKey)
     }
 
-    /// General → the frontmost app's chat, the way `handleLeftArrow` goes the other way.
-    /// It returns to the app that is in front now, not the one the trip started from.
+    /// → on an empty field: out of General Chat, back to where the trip started.
     @discardableResult
     func handleRightArrow(draft: String) -> Bool {
-        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let next = CornerChatMode.step(from: mode, by: 1)
+        guard draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        return navigate(.rightKey)
+    }
+
+    /// ↑ / ↓ with nothing to move through: the layer above or below.
+    @discardableResult
+    func handleLayerKey(up: Bool) -> Bool {
+        navigate(up ? .layerUp : .layerDown)
+    }
+
+    /// Carry out one move of `CornerNavigation`. False where the Dock does nothing.
+    @discardableResult
+    func navigate(_ move: CornerNavigation.Move) -> Bool {
+        guard let next = CornerNavigation.destination(
+            for: move, from: mode, origin: generalOrigin)
         else { return false }
+        if next == .general { generalOrigin = mode }
         show(next)
         return true
     }
@@ -224,32 +283,44 @@ final class CornerChatPresentation: ObservableObject {
     /// while the corner's own panel holds key focus, which reports us, the same trap the
     /// hotkey path already routes around via the menu-bar owner instead.
     private func currentFrontmostTarget() -> CornerChatTarget? {
-        guard let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
-              !app.isTerminated,
-              let bundleID = app.bundleIdentifier, !bundleID.isEmpty
-        else { return nil }
-        let target = CornerChatTarget(
-            name: app.localizedName ?? bundleID,
-            bundleID: bundleID,
-            suggestions: AppChatSuggestionProvider.suggestions(for: app),
-            summary: AppChatSuggestionProvider.summary(for: app))
+        guard let target = frontmostTargetProvider() else { return nil }
         latestTarget = target
         return target
     }
 
-    /// A swipe walks the same scopes the arrows do, one step per swipe.
+    /// Who is in front, as a closure.
     ///
-    /// It used to jump straight between the two chats, which was the whole walk when there
-    /// were only two. With Global Context between them, a gesture that skipped it would
-    /// disagree with the arrow keys about what sits next to what.
+    /// The default is the real read, and it stays the behaviour: returning to the app scope
+    /// goes to the app in front NOW. A test cannot have an opinion about that — the answer is
+    /// whatever app happens to own the menu bar while the suite runs — so two tests here
+    /// passed or failed depending on what was open on the developer's screen (#30). They set
+    /// this to `{ nil }` and walk back to the target they gave, which is the thing they are
+    /// actually about.
+    var frontmostTargetProvider: () -> CornerChatTarget? = {
+        guard let app = AppDelegate.shared?.menuBarOwningUserFacingApplication(),
+              !app.isTerminated,
+              let bundleID = app.bundleIdentifier, !bundleID.isEmpty
+        else { return nil }
+        return CornerChatTarget(
+            name: app.localizedName ?? bundleID,
+            bundleID: bundleID,
+            suggestions: AppChatSuggestionProvider.suggestions(for: app),
+            summary: AppChatSuggestionProvider.summary(for: app))
+    }
+
+    /// A finished swipe over the field. Whatever is typed stays where it is — the owner's
+    /// call (§4b W10): the Dock swipes with text in the field, and so does the corner; each
+    /// scope keeps its own draft.
     @discardableResult
-    func handleHorizontalSwipe(deltaX: CGFloat, draft: String) -> Bool {
-        guard abs(deltaX) > 70,
-              draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let next = CornerChatMode.step(from: mode, by: deltaX > 0 ? -1 : 1)
-        else { return false }
-        show(next)
-        return true
+    func handleSwipe(_ move: CornerNavigation.Move) -> Bool {
+        navigate(move)
+    }
+
+    /// The sideways half, by distance — kept for the callers and tests that speak in points.
+    @discardableResult
+    func handleHorizontalSwipe(deltaX: CGFloat, draft: String = "") -> Bool {
+        guard let move = CornerSwipe.classify(dx: deltaX, dy: 0) else { return false }
+        return handleSwipe(move)
     }
 
     /// A question asked from the clip preview: General is already answering it, so the
@@ -280,10 +351,20 @@ final class CornerChatPresentation: ObservableObject {
         mode = .general
         isVisible = true
         generalPhase = .expanded
-        generalChat.reloadFromStore()
         generalChat.openSession(.general, title: "General Chat")
         armGeneralStandDown(after: AppChatPromptModel.idleDwell)
+        // The switch is drawn from what is already in memory; the disk catches up once it
+        // has landed. Reloading first — listing the dock's chat folder and decoding the
+        // thread index on the main thread — held every switch into General on the disk,
+        // which is the lag the owner saw (2026-10-05).
+        generalReloadTask?.cancel()
+        generalReloadTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, let self, self.mode == .general else { return }
+            self.generalChat.reloadFromStore()
+        }
     }
+    private var generalReloadTask: Task<Void, Never>?
 
     func composerInteracted() {
         guard mode == .general else { return }

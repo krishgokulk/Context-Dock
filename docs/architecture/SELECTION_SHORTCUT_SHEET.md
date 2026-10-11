@@ -1,8 +1,10 @@
 # Selection Shortcut Sheet
 
+> **As built (2026-09-24).** Long-press ⌘ was removed — ⌘ only tap-toggles scope now (`Search/LauncherView+KeyboardNavigation.swift`). The selection opens in the corner as `SelectionScopeCard`; what that card still lacks is in `docs/master/00-DOCK-AND-CORNER.md` §4a.
+
 Selection Shortcut Sheet is DoraX selection-aware action engine.
 
-It appears on long-press Command and shows actions for current selected text, file, URL, image, clipboard, and frontmost app context.
+It shows actions for current selected text, file, URL, image, clipboard, and frontmost app context.
 
 ## Not A Launcher
 
@@ -68,7 +70,7 @@ Rules:
 ## UI
 
 Rules:
-- Opens fast on long-press Command.
+- Opens fast from the Selection Scope hotkey (Settings → Hotkeys → Custom Shortcuts), or by itself on launch when a selection exists and no hotkey is set.
 - Keeps same sheet identity while results update.
 - Supports arrow navigation.
 - Supports pointer click.

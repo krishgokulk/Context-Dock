@@ -18,13 +18,20 @@ final class WebResearchSession: ObservableObject {
     var count: Int    { pages.count }
 
     func addPage(_ snap: PageSnapshot) {
+        // A page SensitivePageGuard refuses never joins a session that is sent to a model.
+        guard SensitivePageGuard.allows(snap.url) else {
+            AppToast.show(
+                SensitivePageGuard.refusal(for: snap.url)?.message ?? "", icon: "hand.raised",
+                duration: 4)
+            return
+        }
         guard !pages.contains(where: { $0.url == snap.url }) else { return }
         pages.append(snap)
     }
 
     /// Update the stored text for a page once it has been fetched.
     func updateText(url: String, text: String) {
-        guard let idx = pages.firstIndex(where: { $0.url == url }) else { return }
+        guard SensitivePageGuard.allows(url), let idx = pages.firstIndex(where: { $0.url == url }) else { return }
         let old = pages[idx]
         pages[idx] = PageSnapshot(url: old.url, text: text, title: old.title, timestamp: old.timestamp)
     }

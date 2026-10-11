@@ -68,7 +68,7 @@ enum AppAccessPolicy {
             switch route {
             case .verifiedMenu, .appLaunch, .keyboardShortcut:
                 return true
-            case .adapter, .mcp, .api, .cli, .shortcutRunner, .axFallback, .automation:
+            case .adapter, .mcp, .api, .cli, .axFallback, .automation:
                 return false
             }
         case .awareness:

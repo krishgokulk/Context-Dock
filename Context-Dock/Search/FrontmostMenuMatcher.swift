@@ -126,15 +126,18 @@ enum FrontmostMenuMatcher {
     }
 
     /// Rows every app has, which say nothing about what *this* app does.
+    ///
+    /// Whole words, not substrings: a substring "close" dropped History ▸ Reopen Last Closed
+    /// Window from Global Context as if it were File ▸ Close.
     static func isGenericAppMenu(_ item: AXMenuItem) -> Bool {
-        let title = DockTextMatch.normalized(item.title)
-        let genericPatterns = [
+        let words = Set(DockTextMatch.tokens(item.title))
+        let genericWords: Set<String> = [
             "about", "help", "quit", "exit", "close",
             "settings", "preferences", "options",
             "hide", "show", "reveal",
             "services", "documentation",
         ]
-        return genericPatterns.contains { title.contains($0) }
+        return !words.isDisjoint(with: genericWords)
     }
 
     static func allowed(_ items: [AXMenuItem], policy: Policy) -> [AXMenuItem] {

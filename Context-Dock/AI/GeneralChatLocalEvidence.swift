@@ -55,6 +55,10 @@ enum GeneralChatLocalEvidence {
 
         for doc in documents {
             switch doc.action {
+            case .plugin:
+                // A plugin is a surface, not evidence about the machine. Phase 5b gives it a
+                // voice in a turn through its declared tools, which is a different path.
+                continue
             case .cachedMenu(_, let appName, let path, let shortcutChar, _):
                 guard menus.count < menuLimit else { continue }
                 let trail = path.filter { !$0.isEmpty }.joined(separator: " ▸ ")

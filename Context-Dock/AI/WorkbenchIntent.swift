@@ -135,6 +135,11 @@ enum WorkbenchIntent {
     struct Outcome {
         let text: String
         let chips: [String]
+        /// An `ExtensionProposalData` as JSON when the answer is something to approve
+        /// rather than something that happened — a revision of a saved action. The chat
+        /// puts it on the message as `structuredData`, and the ordinary proposal card
+        /// draws it on whichever surface asked.
+        var proposalJSON: String? = nil
     }
 
     static func handle(_ intent: Intent, scope: GeneralChatScope) async -> Outcome {
@@ -178,6 +183,41 @@ enum WorkbenchIntent {
                 .first { $0.bundleId == bundleID }?.name
             ?? bundleID
 
+        // Authoring is the last resort, which the header has always claimed and nothing
+        // enforced: "minimise after 10 min" wrote a second action beside the one that
+        // already minimises after five. Ask what this request actually is first.
+        let saved = AppAdapterManager.shared.adapter(for: bundleID)?.actions ?? []
+        let existing = ActionReuse.best(among: saved, request: request)
+        switch ActionReuse.decide(existing: existing, request: request) {
+        case .run(let value):
+            guard let existing else { break }
+            let (ok, output) = await AppAdapterManager.shared.execute(
+                existing, context: AXContextReader.shared.current,
+                targetBundleId: bundleID, query: request, value: value)
+            let ran = value.map { "**\(existing.name)** already does that — ran it at \($0)." }
+                ?? "**\(existing.name)** already does that, so I ran it."
+            return Outcome(
+                text: ok
+                    ? ran + (output.isEmpty ? "" : "\n\n\(output)")
+                    : "**\(existing.name)** is the action for that, but it failed: \(output)",
+                chips: ["reused · \(existing.name)"])
+
+        case .revise:
+            guard let existing else { break }
+            guard let revision = await WorkflowAuthor.revise(
+                existing: existing, request: request, bundleID: bundleID, appName: appName)
+            else { break }   // Fall through to authoring rather than leaving them with nothing.
+            let card = AdapterActionProposalInstaller.proposalData(
+                for: revision, replacing: existing)
+            return Outcome(
+                text: WorkflowAuthor.revisionText(existing: existing, revised: revision),
+                chips: ["revises · \(existing.name)"],
+                proposalJSON: card.asJSON())
+
+        case .author:
+            break
+        }
+
         guard let proposal = await WorkflowAuthor.propose(
             request: request, bundleID: bundleID, appName: appName)
         else {
@@ -186,12 +226,12 @@ enum WorkbenchIntent {
                     + "what should happen, to what — and I'll try again.",
                 chips: [])
         }
-        let saved = await WorkflowAuthor.save(proposal)
+        let authored = await WorkflowAuthor.save(proposal)
         return Outcome(
             text: WorkflowAuthor.approvalText(proposal)
-                + "\n\nSaved as **\(saved.name)**. Ask for it by name, or say "
-                + "“\(proposal.triggers.first ?? saved.name)”.",
-            chips: ["authored · \(saved.name)"])
+                + "\n\nSaved as **\(authored.name)**. Ask for it by name, or say "
+                + "“\(proposal.triggers.first ?? authored.name)”.",
+            chips: ["authored · \(authored.name)"])
     }
 
     /// Hands the observation to Claude Code with whatever DoraX is holding.

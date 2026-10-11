@@ -44,6 +44,23 @@ enum ScopedAppPromptBuilder {
 
     /// Drops provisionally-linked CLIs unless the question names them: a guess about which
     /// binary belongs to an app must not be advertised as one of the app's capabilities.
+    /// One action's line in the inventory.
+    ///
+    /// An action that declares a value says so here, with its unit and what it runs at
+    /// otherwise. Without that the model has no way to know a number can be passed: the
+    /// owner's saved "Minimize Code After Delay" was listed as a bare id and name, so
+    /// "minimise code app after 2min" had nothing to aim the two minutes at.
+    static func inventoryLine(for action: AdapterAction) -> String {
+        let flag = (action.requiresApproval || action.isDestructive) ? " [approval]" : ""
+        var line = "    • \(action.id) — \(action.name)\(flag)"
+        if let label = action.valueLabel {
+            let fallback = action.valueDefault.map { ", default \($0)" } ?? ""
+            line += " [takes a value in \(label)\(fallback) — pass it as 'value', or say "
+                + "the number in the request]"
+        }
+        return line
+    }
+
     static func promptRelevantCLIPackages(
         _ packages: [TerminalPackage], bundleId: String, query: String
     ) -> [TerminalPackage] {
@@ -168,6 +185,50 @@ enum ScopedAppPromptBuilder {
         let shortcuts = actions.filter { $0.type == .shortcut }
         let skillCount = SkillStore.shared.skills(for: bundleId).filter(\.isEnabled).count
 
+        // The app's own profile, when it has one: how this app is meant to be worked with,
+        // written by the user in a file rather than inferred here from verbs and bundle ids.
+        // Placed above the inventory because it says which of those to reach for. Apps with no
+        // profile are unchanged — every branch below is the fallback.
+        if let profile = AppAgentProfileStore.shared.profile(
+            forBundleID: bundleId, appName: appName), !profile.isEmpty
+        {
+            lines.append("")
+            lines.append("## How \(appName) is worked with (this app's profile)")
+            if !profile.summary.isEmpty { lines.append(profile.summary) }
+            if !profile.instructions.isEmpty { lines.append(profile.instructions) }
+            if !profile.never.isEmpty {
+                lines.append("Never, in this app:")
+                lines += profile.never.map { "- \($0)" }
+            }
+            if !profile.verify.isEmpty {
+                lines.append(
+                    "Check your own work with these: "
+                    + profile.verify.keys.sorted()
+                        .map { "\($0) → \(profile.verify[$0] ?? "")" }
+                        .joined(separator: ", ")
+                    + ". Report what the check read, not that you did it.")
+            }
+            // A declared script is unreachable unless the model is told how to ask for one.
+            // Asked to run `tabs-to-md.sh`, a tool-less provider went hunting the file system
+            // with shell commands instead — the wrong answer by the wrong authority.
+            if let scripts = profile.tools.scripts, !scripts.isEmpty {
+                lines.append(
+                    "Scripts this app carries: " + scripts.joined(separator: ", ")
+                    + ". Run one with the run_app_script tool, or — if you were given no tools "
+                    + "this turn — reply with ONLY "
+                    + "{\"app_script\": {\"name\": \"\(scripts[0])\"}}. Never look for these "
+                    + "files yourself and never run them through the shell: the name is the "
+                    + "whole interface, and the user approves each run.")
+            }
+            let declared = profile.tools.allNames
+            if !declared.isEmpty {
+                lines.append(
+                    "Routes this app declares, in preference order: "
+                    + declared.joined(separator: ", ")
+                    + ". Prefer these over anything else listed below.")
+            }
+        }
+
         lines.append("")
         lines.append("Integrations linked to \(appName) (pick the best fit for each request):")
         if actions.isEmpty {
@@ -179,8 +240,7 @@ enum ScopedAppPromptBuilder {
                 + "do NOT ask \"would you like me to?\". Actions marked [approval] pop a native "
                 + "confirmation on their own, so still just call them. Available:")
             for a in actions.prefix(30) {
-                let flag = (a.requiresApproval || a.isDestructive) ? " [approval]" : ""
-                lines.append("    • \(a.id) — \(a.name)\(flag)")
+                lines.append(inventoryLine(for: a))
             }
         }
         lines.append(
@@ -236,6 +296,10 @@ enum ScopedAppPromptBuilder {
         }
 
         lines.append("")
+        // The same rule on every surface and at every size: what to say when the app in front
+        // exposes nothing. Kept in the compact (on-device) prompt too.
+        lines.append(ReadabilityFacts.instruction)
+        lines.append("")
         if compact {
             lines.append(
                 "Tool choice order: exact saved adapter action → exact live app menu for visible "
@@ -265,8 +329,25 @@ enum ScopedAppPromptBuilder {
             + "the answer. Never end with \"I can't\" while an approvable read-only command "
             + "exists. Writes, installs, deletes and anything touching remote state still "
             + "wait for that approval and are never proposed as read-only.")
+        // The rung below a verified menu, and the reason a stale cache is no longer the end of
+        // the road. Asked to update VS Code, every layer read the cached menu map, Electron had
+        // not built its menus when that map was written, and `Code ▸ Check for Updates…` was
+        // therefore invisible — so a working route was reported as impossible.
         lines.append(
-            "Never claim a tool is unavailable, ungranted, or \"not granted this session\". "
+            "Last rung: operate_app. When no adapter action, MCP tool, API, Shortcut, CLI or "
+            + "listed menu command fits, and run_menu_command has already failed or found "
+            + "nothing, call operate_app with the command in the app's own words — or, if you "
+            + "were given no tools this turn, reply with ONLY "
+            + "{\"operate_app\": {\"target\": \"Check for Updates\", \"reason\": \"why\"}}. "
+            + "It reads the "
+            + "LIVE menu bar — including menus this app builds only when opened, which are "
+            + "absent from the list above — and the user approves the exact item before it is "
+            + "pressed. Try it before concluding a UI command cannot be reached; never use it "
+            + "for something a listed route already does.")
+        lines.append(
+            "Never claim a tool is unavailable, ungranted, or \"not granted this session\" — "
+            + "Computer Use (operate_app) is the one exception, and it says so itself when it "
+            + "is switched off. "
             + "There is no per-session tool grant in this app: a capability either exists for "
             + "this scope or does not, and an app outside the chat's scope produces its own "
             + "enable request. Describing a permission system that does not exist teaches the "
@@ -308,7 +389,13 @@ enum ScopedAppPromptBuilder {
             + "what they have highlighted. All four are read-only and need no approval, so "
             + "reach for them freely: a question about \"this page\", \"this file\" or "
             + "\"these\" is answered by reading it first, never from memory and never with "
-            + "\"I don't have access\". If you are unsure what an app can do, find_route "
+            + "\"I don't have access\". find_files looks for a file by name (Spotlight, then a scan of Desktop, "
+            + "Documents, Downloads and iCloud Drive) — use it, not mdfind, and quote the full "
+            + "paths it returns. write_output_file saves a .md, .txt, .csv or .docx the user asked "
+            + "for into ~/Documents/DoraX Outputs (they approve it) and returns its path — quote it. "
+            + "list_shortcuts names the user's Shortcuts; run_shortcut runs one (exact name, they "
+            + "approve each run) — never run one they did not ask for. "
+            + "If you are unsure what an app can do, find_route "
             + "lists what actually exists.")
         return lines.joined(separator: "\n")
     }

@@ -21,14 +21,21 @@ struct CornerGeneralChatSnapshot {
 }
 
 enum CornerGeneralChatMetrics {
-    /// The composer row, matched to App mode's `inputHeight` deliberately. The two modes
-    /// are one surface: a General composer that stands taller than the App one makes the
-    /// switch between them look like the window changed rather than the scope.
-    static var composerRowHeight: CGFloat { AppChatPromptMetrics.inputHeight }
-    static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentRowHeight }
+    /// The composer row, matched to the Context Dock field deliberately. The two modes are
+    /// one surface: a General composer that stands at another height makes the switch
+    /// between them look like the window changed rather than the scope. That field moved to
+    /// Global's bar height on 2026-09-25 and this row kept the old one (owner 2026-09-26:
+    /// "general chat looks different").
+    static var composerRowHeight: CGFloat { AppChatPromptMetrics.fieldHeight(global: true) }
+    static var attachmentRowHeight: CGFloat { AppChatPromptMetrics.attachmentTileRowHeight }
     static let dividerHeight: CGFloat = 1
     /// Nothing typed, nothing said: the row on its own, exactly as App mode rests.
     static var compactHeight: CGFloat { composerRowHeight }
+    /// The composer row with its text wrapped over `lines` lines — Global's and an app's
+    /// field follow the same rule from the same height (`DockFieldLines`).
+    static func rowHeight(lines: Int) -> CGFloat {
+        DockFieldLines.fieldHeight(base: composerRowHeight, lines: lines)
+    }
     static let maximumHeight: CGFloat = 620
     /// What one exchange is worth. Named because App mode reads it too: the two modes are
     /// one surface and have to grow at the same rate, or the same conversation gets more
@@ -51,10 +58,14 @@ enum CornerGeneralChatMetrics {
     /// moment a chat started — and pushing the transcript aside to make room would
     /// disturb what the user is reading. A sheet over the field disturbs nothing.
     static func composerHeight(
-        hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false
+        hasAttachments: Bool, slashMatchCount: Int = 0, hasApproval: Bool = false,
+        lines: Int = 1
     ) -> CGFloat {
-        var result = compactHeight
-        if hasApproval { result += ApprovalCard.height + dividerHeight }
+        // A long prompt grows the row upward, to three lines (#189).
+        var result = rowHeight(lines: lines)
+        if hasApproval {
+            result += ApprovalCard.reservedHeight(for: .corner) + dividerHeight
+        }
         if slashMatchCount > 0 {
             result += ChatSlashAppList.height(for: slashMatchCount) + dividerHeight
         }
@@ -103,7 +114,8 @@ enum CornerGeneralChatMetrics {
         starterCount: Int = 0,
         starterHasConnections: Bool = false,
         liveStepCount: Int = 0,
-        clarificationOptionCount: Int = 0
+        clarificationOptionCount: Int = 0,
+        composerLines: Int = 1
     ) -> CGFloat {
         // Two cards with the corner's gap between them, so what is drawn and what the
         // shell hit-tests are the same number.
@@ -117,20 +129,8 @@ enum CornerGeneralChatMetrics {
             clarificationOptionCount: clarificationOptionCount)
         let composer = composerHeight(
             hasAttachments: hasAttachments, slashMatchCount: slashMatchCount,
-            hasApproval: hasApproval)
+            hasApproval: hasApproval, lines: composerLines)
         return board > 0 ? board + CornerDockLayout.gap + composer : composer
-    }
-
-    /// The one definition of "nothing has happened in this chat yet", read by the view that
-    /// draws the starter and the metrics that size it. Two copies of this condition is a
-    /// card sized for one state showing another.
-    @MainActor
-    static func showsStarter(for model: GeneralChatWindowModel) -> Bool {
-        model.activeScope == .general
-            && model.messages.isEmpty
-            && !model.isSending
-            && model.input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && model.attachments.isEmpty
     }
 
     /// The options the newest answer is offering, if it is offering any and the user has
@@ -138,8 +138,8 @@ enum CornerGeneralChatMetrics {
     @MainActor
     static func clarificationOptionCount(for model: GeneralChatWindowModel) -> Int {
         guard !model.isSending, model.input.isEmpty,
-            let last = model.messages.last, last.role == .assistant, !last.isError,
-            let clarification = ChatClarification.parse(last.content)
+            let last = model.messages.last,
+            let clarification = ChatClarification.offered(by: last)
         else { return 0 }
         return clarification.options.count
     }
@@ -147,34 +147,32 @@ enum CornerGeneralChatMetrics {
     @MainActor
     /// The board's height for this model — read from the same places `size(for:)` reads,
     /// so the card drawn above the field and the room reserved for it stay one number.
+    /// No start card in the corner (owner 2026-10-05): General opens as its field alone,
+    /// the way Global and an app's Context Dock do, and the board appears with the first
+    /// question. The Chat Window keeps its start screen.
     static func boardHeight(for model: GeneralChatWindowModel) -> CGFloat {
-        let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
-        return boardHeight(
+        boardHeight(
             messageCount: model.messages.count,
             isSending: model.isSending,
-            showsStarter: showsStarter(for: model),
-            starterCount: connected.count,
-            starterHasConnections: !connected.isEmpty,
             liveStepCount: model.activeProgress.count,
             clarificationOptionCount: clarificationOptionCount(for: model))
     }
 
     static func size(for model: GeneralChatWindowModel) -> CGSize {
         let slashMatches = ChatSlashAppPicker.matches(for: model.input)
-        let connected = AppAdapterManager.shared.adapters.filter(\.isEnabled)
         return CGSize(
-            width: CornerDockLayout.cardWidth,
+            // The shell's one width (#189): General stands exactly as wide as Global and
+            // every app's Context Dock, so switching mode changes only what is inside.
+            width: DockShellWidth.current,
             height: height(
                 messageCount: model.messages.count,
                 isSending: model.isSending,
                 hasAttachments: !model.attachments.isEmpty,
                 slashMatchCount: slashMatches.count,
                 hasApproval: ApprovalCenter.shared.pending(for: .corner) != nil,
-                showsStarter: showsStarter(for: model),
-                starterCount: connected.count,
-                starterHasConnections: !connected.isEmpty,
                 liveStepCount: model.activeProgress.count,
-                clarificationOptionCount: clarificationOptionCount(for: model)))
+                clarificationOptionCount: clarificationOptionCount(for: model),
+                composerLines: model.cornerComposerLines))
     }
 }
 
@@ -193,7 +191,6 @@ struct CornerGeneralChatView: View {
 
     private var size: CGSize { CornerGeneralChatMetrics.size(for: model) }
     private var showsTranscript: Bool { !model.messages.isEmpty || model.isSending }
-    private var showsStarter: Bool { CornerGeneralChatMetrics.showsStarter(for: model) }
 
     /// The conversation, the start screen, or the `/` picker: a card of its own above the
     /// field, exactly as App mode puts the app's commands above its field. The two modes
@@ -213,16 +210,22 @@ struct CornerGeneralChatView: View {
                     .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
                     .transition(.opacity)
             }
+            let composerHeight = CornerGeneralChatMetrics.composerHeight(
+                hasAttachments: !model.attachments.isEmpty,
+                slashMatchCount: slashMatches.count,
+                hasApproval: approvals.pending(for: .corner) != nil,
+                lines: model.cornerComposerLines)
+            // The Context Dock's capsule when the row stands alone, its 22-point card once
+            // something sits over it — the same rule that field follows.
+            let radius = composerHeight <= CornerGeneralChatMetrics.composerRowHeight
+                ? composerHeight / 2 : 22
             composer
-                .frame(
-                    width: size.width,
-                    height: CornerGeneralChatMetrics.composerHeight(
-                        hasAttachments: !model.attachments.isEmpty,
-                        slashMatchCount: slashMatches.count,
-                        hasApproval: approvals.pending(for: .corner) != nil))
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.16)))
+                .frame(width: size.width, height: composerHeight)
+                .background(GlassBackground(cornerRadius: radius, isDark: true))
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(.white.opacity(0.16)))
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
         .frame(width: size.width, height: size.height, alignment: .bottom)
@@ -246,15 +249,6 @@ struct CornerGeneralChatView: View {
                 header
                 Divider().opacity(0.18)
                 transcript
-            } else if showsStarter {
-                GeneralChatStartView(
-                    onPick: { prompt in
-                        model.input = prompt
-                        model.send()
-                    },
-                    compact: true
-                )
-                .transition(.opacity)
             }
         }
     }
@@ -416,12 +410,8 @@ struct CornerGeneralChatView: View {
     /// Only the newest message, and only when the turn has finished: an older question has
     /// already been answered, and one still being written is not a question yet.
     private var clarification: ChatClarification? {
-        guard !model.isSending,
-            let last = model.messages.last,
-            last.role == .assistant,
-            !last.isError
-        else { return nil }
-        return ChatClarification.parse(last.content)
+        guard !model.isSending, let last = model.messages.last else { return nil }
+        return ChatClarification.offered(by: last)
     }
 
     /// Answering by pointing sends what the option says, so the next turn reads a request
@@ -441,10 +431,13 @@ struct CornerGeneralChatView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             AIChatMessageView(
                                 message: message,
+                                onInstallProposal: { model.installProposal($0) },
                                 onEnableApp: { model.enableApp($0) },
                                 onPickAction: { model.pickRoute($0) },
                                 liveSteps: message.id == model.messages.last?.id
-                                    ? model.activeProgress : [])
+                                    ? model.activeProgress : [],
+                                liveActivity: message.id == model.messages.last?.id
+                                    ? model.activeActivity : [])
 
                             // What this answer built. The model extracts artifacts for every
                             // scope, and the window shows them under the message that made
@@ -468,7 +461,7 @@ struct CornerGeneralChatView: View {
                     // so the surface that could explain itself least was the one asked the
                     // broadest questions.
                     if model.isSending {
-                        LiveAgentProgressView(steps: waitingSteps)
+                        LiveAgentProgressView(steps: waitingSteps, activity: model.activeActivity)
                             .id("live-progress")
                     }
                 }
@@ -557,7 +550,7 @@ struct CornerGeneralChatView: View {
             // the turn is waiting on.
             if let request = approvals.pending(for: .corner) {
                 ApprovalCard(request: request)
-                    .frame(height: ApprovalCard.height)
+                    .frame(height: ApprovalCard.height(for: request))
                     .padding(.horizontal, 12)
                 Divider().opacity(0.18)
             }
@@ -584,9 +577,9 @@ struct CornerGeneralChatView: View {
 
             if !model.attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 8) {
                         ForEach(model.attachments, id: \.self) { url in
-                            ChatAttachmentChip(url: url) {
+                            ChatAttachmentChip(url: url, style: .composerTile) {
                                 model.attachments.removeAll { $0 == url }
                             }
                         }
@@ -648,8 +641,14 @@ struct CornerGeneralChatView: View {
                     ? nil
                     : { CornerDockController.shared.chatPresentation.toggleGeneralPin() },
                 rendersSlashMatches: false,
-                drawsChrome: false)
-                .frame(height: CornerGeneralChatMetrics.composerRowHeight)
+                drawsChrome: false,
+                cornerStyle: true,
+                onTextHeightChange: { height in
+                    let lines = DockFieldLines.lines(measuredTextHeight: height)
+                    if model.cornerComposerLines != lines { model.cornerComposerLines = lines }
+                })
+                .frame(height: CornerGeneralChatMetrics.rowHeight(
+                    lines: model.cornerComposerLines))
                 .focused($composerFocused)
                 .simultaneousGesture(TapGesture().onEnded {
                     CornerDockController.shared.requestComposerFocus()

@@ -95,7 +95,7 @@ Rules:
 - App-scoped content only.
 - No universal search takeover.
 
-## AI Assistant Mode
+## General Chat
 
 Uses Unified Dock Shell.
 

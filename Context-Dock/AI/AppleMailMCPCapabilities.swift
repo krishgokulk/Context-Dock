@@ -1,7 +1,8 @@
 import Foundation
 
 // First-party Apple Mail capabilities.
-//   mail.recent         → recent inbox messages       (.low)
+//   mail.recent         → recent inbox headers + the newest body   (.low)
+//   mail.read           → one message's body by id (default: newest) (.low)
 //   mail.search         → filtered mailbox search     (.low)
 //   mail.currentMessage → the message on screen       (.low)
 //   mail.createDraft    → opens a composer            (.medium, approval)
@@ -16,6 +17,7 @@ enum AppleMailMCPCapabilities {
 
     static func register(in registry: CapabilityRegistry) {
         registerRecent(registry)
+        registerRead(registry)
         registerSearch(registry)
         registerCurrentMessage(registry)
         registerCreateDraft(registry)
@@ -69,7 +71,7 @@ enum AppleMailMCPCapabilities {
         registry.register(
             AICapability(
                 id: "mail.currentMessage",
-                title: "Read the Open Email",
+                title: "Read the selected or open email, body included",
                 appBundleID: "com.apple.mail",
                 inputSchema: .init(fields: []),
                 riskLevel: .low
@@ -77,25 +79,11 @@ enum AppleMailMCPCapabilities {
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")
                 }
-                let message = await withCheckedContinuation { continuation in
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        continuation.resume(returning: AppleAppsAPI.shared.getSelectedEmail())
-                    }
-                }
-                // Absence reported as absence. "Summarise this email" with nothing selected
-                // has no answer, and inventing one is the failure this whole pass is about.
-                guard let message else {
-                    return .init(
-                        success: true,
-                        output: "No message is selected in Mail (or Mail isn't running).")
-                }
-                let subject = (message["subject"] as? String) ?? "(no subject)"
-                let sender = (message["sender"] as? String) ?? "?"
-                let date = (message["date"] as? String) ?? ""
-                let body = (message["body"] as? String) ?? ""
-                return .init(
-                    success: true,
-                    output: "Subject: \(subject)\nFrom: \(sender)\nDate: \(date)\n\n\(body)")
+                // Absence reported as absence, and only when Mail was asked and had nothing:
+                // "summarise this email" with nothing selected has no answer, and inventing
+                // one is the failure this whole pass is about. The body is fenced and capped.
+                let outcome = await MailReader.selected(using: LiveMailSource())
+                return .init(success: outcome.success, output: outcome.output)
             }
         )
     }
@@ -141,7 +129,7 @@ enum AppleMailMCPCapabilities {
         registry.register(
             AICapability(
                 id: "mail.recent",
-                title: "Get Recent Emails",
+                title: "Get recent emails (headers with ids) and read the newest one's body",
                 appBundleID: "com.apple.mail",
                 inputSchema: .init(fields: [
                     .init(name: "limit", description: "How many recent inbox messages (default 10)", required: false)
@@ -151,25 +139,32 @@ enum AppleMailMCPCapabilities {
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")
                 }
-                let limit = max(1, min(Int(request.input["limit"] ?? "10") ?? 10, 40))
-                let emails = await withCheckedContinuation { continuation in
-                    DispatchQueue.global(qos: .userInitiated).async {
-                        continuation.resume(returning: AppleAppsAPI.shared.getRecentEmails(limit: limit))
-                    }
+                let limit = Int(request.input["limit"] ?? "10") ?? 10
+                let outcome = await MailReader.recent(limit: limit, using: LiveMailSource())
+                return .init(success: outcome.success, output: outcome.output)
+            }
+        )
+    }
+
+    // MARK: - mail.read
+
+    private static func registerRead(_ registry: CapabilityRegistry) {
+        registry.register(
+            AICapability(
+                id: "mail.read",
+                title: "Read an email's full body (the latest one, or by id from mail.recent)",
+                appBundleID: "com.apple.mail",
+                inputSchema: .init(fields: [
+                    .init(name: "id", description: "Message id from mail.recent; leave empty for the latest message", required: false)
+                ]),
+                riskLevel: .low
+            ) { request in
+                guard AppSettings.shared.mailMCPEnabled else {
+                    throw AICapabilityError.blocked("Mail access is disabled in Settings.")
                 }
-                if emails.isEmpty {
-                    return .init(success: true, output: "No recent inbox messages (or Mail isn't running).")
-                }
-                let lines = emails.prefix(30).map { m -> String in
-                    let subject = (m["subject"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "(no subject)"
-                    let sender = (m["sender"] as? String) ?? "?"
-                    let unread = (m["read"] as? Bool) == false ? "● " : ""
-                    let date = (m["date"] as? String) ?? ""
-                    return "\(unread)\(subject) — \(sender)\(date.isEmpty ? "" : " · \(date)")"
-                }
-                return .init(
-                    success: true,
-                    output: "Recent inbox (\(emails.count)):\n" + lines.joined(separator: "\n"))
+                let outcome = await MailReader.read(
+                    id: request.input["id"] ?? "", using: LiveMailSource())
+                return .init(success: outcome.success, output: outcome.output)
             }
         )
     }

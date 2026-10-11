@@ -1,5 +1,7 @@
 # Corner becomes the frontmost-app surface
 
+> **As built (checked 2026-09-24).** The table below is the 2026-09-08 decision, not today's app. ⌘⌘ (double-press Command) opens **Global Context in the corner**, not in the Dock; ⌥⌥ still shows the launcher. Phases 1–2 of this plan shipped (`FrontmostMenuMatcher`, `AppChatRowRanker`); Phases 3–4 have not started. Current status: `docs/master/00-DOCK-AND-CORNER.md` §4.
+
 **Decided 2026-09-08.** The two entry points get one job each:
 
 | Surface | Opened by | Owns |

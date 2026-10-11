@@ -402,6 +402,13 @@ struct ILauncherApp: App {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    /// True when this process is the host XCTest loaded the test bundle into, not the app a
+    /// person launched.
+    static let isHostingTests: Bool = {
+        let env = ProcessInfo.processInfo.environment
+        return env["XCTestConfigurationFilePath"] != nil || env["XCTestBundlePath"] != nil
+    }()
+
     /// Pointer monitors that keep the transparent part of the launcher click-through.
     private var pointerTransparencyGlobalMonitor: Any?
     private var pointerTransparencyLocalMonitor: Any?
@@ -593,6 +600,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self  // Register global reference
+        // Before anything else can send one: in the test host every Apple Event fails fast
+        // instead of waiting 120 s for an Automation prompt nobody answers.
+        if Self.isHostingTests { TestHostAppleEventBlocker.install() }
         // The agent-facing server, only if the user turned it on. Started here rather than
         // lazily: an agent's first tool call must not be the thing that starts the server,
         // or that call fails and the agent concludes the capability does not exist.
@@ -602,6 +612,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // one) otherwise stalls every reader for seconds, and the ones on the main thread
         // take the whole dock down with them.
         AXMessagingTimeout.installProcessDefault()
+        // Plugin actions ask before they run. Installed here, once, because PluginRuntime's
+        // default provider REFUSES: a surface that forgot to install one would get a plugin
+        // whose buttons quietly do nothing, and "nothing happened" is the hardest bug to
+        // report. Routing through AICapabilityApprovalCenter keeps one approval surface.
+        PluginCapability.installApprovalProvider()
+        // The plugins the app ships, written onto disk where every other plugin lives so they
+        // can be read and edited by hand. Never overwrites an edited one.
+        PluginEssentials.seedIfNeeded()
         // Which apps exist on this Mac, read once in the background. Nothing owned this
         // before, so the catalog was built by whichever feature happened to touch an app
         // first — and General Chat, asked about an app on an empty desktop, resolved
@@ -619,11 +637,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // before establishing connection". That is why this project believed it could not
         // have automated tests: it could, the host was quitting before they started.
         let bundleID = Bundle.main.bundleIdentifier ?? ""
-        let underTest = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-            || ProcessInfo.processInfo.environment["XCTestBundlePath"] != nil
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-        if !others.isEmpty, !underTest {
+        if !others.isEmpty, !Self.isHostingTests {
             // Notify the existing instance to show its window
             DistributedNotificationCenter.default().postNotificationName(
                 .init("com.ilauncher.showWindow"), object: nil, deliverImmediately: true)
@@ -1524,10 +1540,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Only keep an ALREADY-visible dock on top. Never resurrect a dock the
         // user hid — otherwise switching/activating apps re-opens it. Manual
         // show/hide only. (Bottom dock is exempt; it's meant to be persistent.)
-        guard window.isVisible || settings.effectiveDockAtBottom else { return }
+        // `isVisible` alone is not "shown": the window is ordered in at alpha 0 from launch,
+        // and forcing alpha to 1 here is what made the hidden dock appear whenever any app
+        // quit, launched or activated. A dock the user can see already has its alpha.
+        guard (window.isVisible && window.alphaValue > 0.01) || settings.effectiveDockAtBottom
+        else { return }
         applyPersistentDockBehavior()
         suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
-        window.alphaValue = 1
         window.orderFrontRegardless()
         if activate {
             window.makeKeyAndOrderFront(nil)
@@ -1918,25 +1937,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     /// The prompt is about the app the user is looking at, so the app is captured here —
     /// before opening the prompt makes Context-Dock frontmost.
-    func activateAppChatPrompt() {
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        // Capture the user-facing app before the corner panel activates Context-Dock.
-        // If the panel is already key, this helper remembers the app behind it instead
-        // of accidentally turning the next cycle into "Chat with Context-Dock".
+    /// The app the user is working in, as the corner's Context Dock target — read before the
+    /// corner takes the keys. If the panel is already key, the helper remembers the app
+    /// behind it instead of turning the next summon into "Chat with Context-Dock".
+    func frontmostChatTarget() -> CornerChatTarget {
         let target = Self.appChatTargetApplication(
             menuBarOwner: menuBarOwningUserFacingApplication(),
             remembered: previousFrontmostApp,
             rawFrontmost: NSWorkspace.shared.frontmostApplication,
             ownBundleID: Bundle.main.bundleIdentifier ?? "")
-        let chatTarget = CornerChatTarget(
+        return CornerChatTarget(
             name: target?.localizedName ?? "",
             bundleID: target?.bundleIdentifier ?? "",
             suggestions: AppChatSuggestionProvider.suggestions(for: target),
             summary: AppChatSuggestionProvider.summary(for: target))
+    }
+
+    func activateAppChatPrompt(toggles: Bool = true) {
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        let chatTarget = frontmostChatTarget()
         CornerDockController.shared.activate()
-        CornerChatPresentation.shared.cycle(target: chatTarget)
+        if toggles {
+            CornerChatPresentation.shared.cycle(target: chatTarget)
+        } else {
+            CornerChatPresentation.shared.showFrontmostApp(target: chatTarget)
+        }
+    }
+
+    /// ⌘⌘: the app in front's Context Dock. Pressed again while that is up (and not slid away
+    /// by auto-hide), it puts the corner away, as the other scope hotkeys do.
+    func activateContextDockFromDoubleCommand() {
+        let presentation = CornerDockController.shared.chatPresentation
+        if presentation.isVisible, presentation.mode == .frontmostApp,
+            !CornerDockController.shared.isAutoHidden
+        {
+            presentation.dismiss()
+            return
+        }
+        // From Global or General, straight to the app's Context Dock — not a toggle that
+        // would put a visible corner away instead.
+        activateAppChatPrompt(toggles: false)
+        // Already that app's resting dock, slid away by auto-hide: showing it again changed
+        // nothing, so it stayed hidden (owner 2026-10-11). Open the field, as a fresh ⌘⌘ does.
+        CornerDockController.shared.prompt.expandFromDock(seeding: nil)
+        CornerDockController.shared.armKeyboard()
     }
 
     /// Global hotkey → open (pin) a Quick Note sticky.
@@ -2152,7 +2198,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.command),
                 hasOtherModifiers: !flags.intersection([.option, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleCommandGlobalContext {
-                DispatchQueue.main.async { self.activateGlobalContextScope() }
+                // ⌘⌘ opens the Context Dock of the app in front; a single ⌘ tap switches to
+                // Global, and Backspace on its empty field goes there too (owner 2026-10-08).
+                DispatchQueue.main.async { self.activateContextDockFromDoubleCommand() }
             }
             if optionTap.update(
                 isDown: flags.contains(.option),
@@ -2443,6 +2491,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
+        // The clipboard opens in whichever shell's result sheet is on screen (owner
+        // 2026-10-07): the Dock's own clipboard scope while the Dock is up, the Corner's
+        // board otherwise.
+        if launcherWindow?.isVisible == true {
+            NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
+            return
+        }
         ClipboardPanelController.shared.toggle()
     }
 
@@ -2461,7 +2516,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         lastHotkeyFiredAt = now
 
         let presentation = CornerDockController.shared.chatPresentation
-        if presentation.isVisible, presentation.mode == .globalContext {
+        // Slid below the screen by auto-hide is not "open": the press brings it up.
+        if presentation.isVisible, presentation.mode == .globalContext,
+            !CornerDockController.shared.isAutoHidden
+        {
             presentation.dismiss()
             return
         }

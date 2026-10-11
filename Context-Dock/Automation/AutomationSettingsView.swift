@@ -1342,7 +1342,7 @@ struct AutomationSettingsView: View {
         case .workflows:
             return "Context rules and multi-step automation."
         case .shortcutSheetWorkflows:
-            return "Selection-aware actions for the long-press Command shortcut sheet."
+            return "Selection-aware actions for the selected text, file or URL."
         case .advanced:
             return "Developer-facing cache and diagnostics."
         default:
@@ -3775,8 +3775,8 @@ struct AutomationAdapterDetailView: View {
         delay 0.2
         tell application "System Events" to keystroke "," using command down
         """
-        DispatchQueue.global(qos: .userInitiated).async {
-            NSAppleScript(source: script)?.executeAndReturnError(nil)
+        AppleScriptQueue.shared.async {
+            NSAppleScript(source: script)?.executeSerialized(error: nil)
         }
     }
 

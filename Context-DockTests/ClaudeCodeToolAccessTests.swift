@@ -17,12 +17,14 @@ import Testing
 @MainActor
 struct ClaudeCodeToolAccessTests {
 
+    /// A coding chat with no private read: the one place the CLI keeps its own fetch and
+    /// shell (E1c — ClaudeCodeOutboundGateTests covers the chats that lose them).
     private func arguments(
         _ access: ClaudeCodeCLIService.ToolAccess, directory: URL? = URL(fileURLWithPath: "/tmp/x")
     ) -> [String] {
         ClaudeCodeCLIService.arguments(
             prompt: "hello", systemPrompt: "ctx", model: "opus",
-            access: access, workingDirectory: directory)
+            access: access, workingDirectory: directory, holdsPrivateData: false)
     }
 
     /// Three things the CLI needs to run anything non-interactively, and passing two of them

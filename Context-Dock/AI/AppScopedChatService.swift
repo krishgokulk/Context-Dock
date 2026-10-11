@@ -24,6 +24,16 @@ enum AppScopedChatService {
         subsystem: "com.krishgokul.ContextDock", category: "AppScopedChat")
 
     struct Answer {
+        /// A turn that asks which route to take. It is the whole turn: no step ran and none
+        /// may run until the user picks, so this carries no chips, receipts or rows.
+        static func asking(_ text: String, choices: [ActionChoice]) -> Answer {
+            Answer(text: text, toolChips: [], routeChoices: choices)
+        }
+
+        /// True when the turn is waiting on the user to pick a route, which is only valid if
+        /// nothing ran in it.
+        var isWaitingOnRouteChoice: Bool { !routeChoices.isEmpty }
+
         let text: String
         /// What actually ran, for the receipt chips — derived from execution, never from
         /// words in the question.
@@ -39,6 +49,10 @@ enum AppScopedChatService {
         /// Files the answer named that exist on disk, so the surface can offer them
         /// instead of leaving a path in a paragraph for the user to retype.
         var files: [URL] = []
+        /// Records the capabilities actually read this turn — notes, files, links, apps —
+        /// as rows every surface draws the same way. Produced where the reading happened,
+        /// never parsed back out of the answer's prose.
+        var rows: [ChatResultRow] = []
         /// Typed proof of what ran and what was freshly read back. The Console keeps the
         /// complete log; these receipts make the important outcome visible in the message.
         var evidenceReceipts: [DoraXActionReceipt] = []
@@ -49,6 +63,11 @@ enum AppScopedChatService {
         /// Source collection and planning work performed before tools ran. The window keeps
         /// this behind its completed Steps disclosure instead of exposing debug chips.
         var trace: [String] = []
+        /// An `ExtensionProposalData` as JSON when the answer is something to approve
+        /// rather than something that happened — a revision of a saved action. The surface
+        /// puts it on the message as `structuredData` and the ordinary proposal card draws
+        /// it, so both chats offer the same decision.
+        var proposalJSON: String? = nil
     }
 
     struct ObservedMenuEvidence: Equatable {
@@ -112,6 +131,12 @@ enum AppScopedChatService {
     private static func rememberPendingRoutes(_ routes: [ChatRoute], scope: GeneralChatScope) {
         pendingRoutesByScope[scope.storageKey] = Dictionary(
             uniqueKeysWithValues: routes.map { ($0.id, $0) })
+    }
+
+    /// The ids this thread is currently offering, so a surface can tell a route it holds
+    /// from a candidate another store holds before it tells the user something is gone.
+    static func pendingRouteIDs(for scope: GeneralChatScope) -> [String] {
+        Array(pendingRoutesByScope[scope.storageKey]?.keys ?? [:].keys)
     }
 
     /// Runs a route the user picked, then has the model phrase the result. The output is
@@ -396,27 +421,40 @@ enum AppScopedChatService {
         // "do i have any reminder today" names Reminders, but the resolver matches whole
         // words against app names, so the singular missed and the question fell through to
         // a model with no access and no explanation. Try the plural too.
+        //
+        // Two sources, because one alone offers half the job: apps the sentence names
+        // outright, and apps it is plainly about. "Create a note all opened tabs in safari"
+        // names Safari and says "a note" — singular, and not an app name at all — so reading
+        // only the names offered Safari, reading only the subjects offered Notes, and the
+        // cross-app planner needs both in scope before it will look at the request.
+        // An app name that is also an ordinary word needs a cue before it counts as a request
+        // to reach that app.
+        //
+        // Apple named its apps after nouns people use all day: Console, Notes, Messages, Music,
+        // Photos, Pages, Preview, Home, Books, Weather, Code. "read the console output of this
+        // page" offered to enable Console.app; "browser_console_messages" offered Messages. The
+        // cue is how a person actually points at an app — *in* Notes, *to* Notes, *using*
+        // Safari, or naming it first — and it costs nothing for the requests that do mean it.
         let named =
-            GeneralAIActionResolver.shared.namedInstalledApp(in: query)
-            ?? GeneralAIActionResolver.shared.namedInstalledApp(in: pluralised(query))
-        guard let named else { return nil }
-        // The thread's own app is not something to ask permission for.
-        if let scopeBundleID,
-            named.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame
-        {
-            return nil
+            (GeneralAIActionResolver.shared.namedInstalledApps(in: query)
+                + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query)))
+            .filter { namesAppDeliberately(query: query, appName: $0.name) }
+        // Subject markers — "tab" means Safari, "reminder" means Reminders — are a General Chat
+        // heuristic, and they belong there. Inside an app chat the same words usually mean what
+        // they say: "the photos on this page" is images in Safari, not Photos.app, and
+        // `browser_console_messages` is a tool name, not Messages. An app chat therefore only
+        // offers another app when the sentence points at it.
+        var candidates = named
+        if scopeBundleID == nil {
+            candidates += subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
         }
-        // A question that names no app at all is handled elsewhere — see
-        // `appSuggestionForUnnamedRequest`. This gate only ever speaks about an app the
-        // user actually mentioned, because offering to enable something they did not ask
-        // for reads as the app deciding what it wants access to.
-        // Match on the name first. Resolving an attached name to a bundle id depends on
-        // the app running or on a warmed installed-apps cache, and when neither held, an
-        // app the user had just enabled looked unattached — so the gate asked again, and
-        // again, with the Enable button doing nothing each time.
-        if attachedAppNames.contains(where: {
-            $0.caseInsensitiveCompare(named.name) == .orderedSame
-        }) { return nil }
+
+        // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
+        // "read the latest message and do what it says" as a question for Messages sent the
+        // user to enable an app they never asked for, and Mail never got read.
+        if scopeBundleID?.lowercased() == "com.apple.mail", !namesMessagesApp(query) {
+            candidates.removeAll { Self.isMessagesApp(bundleId: $0.bundleId) }
+        }
 
         let attachedBundleIDs = Set(
             attachedAppNames.compactMap { name -> String? in
@@ -425,8 +463,93 @@ enum AppScopedChatService {
                     ?? InstalledApplicationsCatalog.cachedInstalledApps()
                     .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
             }.map { $0.lowercased() })
-        guard !attachedBundleIDs.contains(named.bundleId.lowercased()) else { return nil }
-        return EnableAppRequest(name: named.name, bundleId: named.bundleId, query: query)
+
+        // Anything already in the conversation, and the thread's own app, are not things to
+        // ask permission for. Matched on the name as well as the bundle id: resolving an
+        // attached name to an id needs the app running or a warm catalogue, and when neither
+        // held the gate asked again and again with the button doing nothing each time.
+        var seen = Set<String>()
+        candidates = candidates.filter { candidate in
+            let id = candidate.bundleId.lowercased()
+            guard seen.insert(id).inserted else { return false }
+            if let scopeBundleID, isSameApp(candidate: candidate, asScope: scopeBundleID) {
+                return false
+            }
+            guard !attachedBundleIDs.contains(id) else { return false }
+            return !attachedAppNames.contains {
+                $0.caseInsensitiveCompare(candidate.name) == .orderedSame
+            }
+        }
+        // An app already attached must not silence the offer for the one that is not: with
+        // Safari in the chat, "create a note of its tabs" still needs Notes.
+        guard let primary = candidates.first else { return nil }
+        return EnableAppRequest(
+            name: primary.name, bundleId: primary.bundleId, query: query,
+            companions: candidates.dropFirst().map {
+                EnableAppRequest.AppRef(name: $0.name, bundleId: $0.bundleId)
+            })
+    }
+
+    nonisolated static func isMessagesApp(bundleId: String) -> Bool {
+        ["com.apple.mobilesms", "com.apple.messages"].contains(bundleId.lowercased())
+    }
+
+    /// Whether a sentence asks for the Messages app itself, not a mail message: only these
+    /// words say so. A bare "message" or "text" inside a Mail chat means the email.
+    nonisolated static func namesMessagesApp(_ query: String) -> Bool {
+        let q = query.lowercased()
+        return ["imessage", "sms", "text message", "messages app", "in messages",
+                "to messages", "from messages", "open messages"].contains(where: q.contains)
+    }
+
+    /// Whether the sentence points at this app, rather than merely containing its name.
+    ///
+    /// Two shapes count, and both are how people actually name an app: a cue word in front of
+    /// it ("in Notes", "to Notes", "using Safari", "open Code"), or the app named first ("Notes:
+    /// add a line"). Everything else is the word doing its ordinary job — "the console output",
+    /// "my music", "these photos" — and reaching into an app on the strength of that is how a
+    /// Safari question about a page's console offered to open Console.app.
+    static func namesAppDeliberately(query: String, appName: String) -> Bool {
+        let lowered = query.lowercased()
+        let name = appName.lowercased()
+        guard !name.isEmpty else { return false }
+        // A multi-word name is never an accident: nobody writes "visual studio code" by chance.
+        guard !name.contains(" ") else { return true }
+
+        let words = lowered
+            .split { !$0.isLetter && !$0.isNumber && $0 != "." }
+            .map(String.init)
+        guard let index = words.firstIndex(where: { $0 == name || $0 == name + "'s" }) else {
+            // The name appears only as part of a longer token — `browser_console_messages`
+            // splits on `_`, so this is the "not even a word here" case.
+            return false
+        }
+        if index == 0 { return true }
+        let cues: Set<String> = [
+            "in", "to", "from", "into", "with", "using", "via", "on", "inside", "open",
+            "launch", "through", "my",
+        ]
+        if cues.contains(words[index - 1]) { return true }
+        // "the Notes app", "in the Notes app"
+        if index + 1 < words.count, words[index + 1] == "app" { return true }
+        return false
+    }
+
+    /// Whether a candidate app *is* the app this chat is already about.
+    ///
+    /// Compared by name as well as by bundle id, because not every caller scopes by id: the
+    /// MCP server falls back to `.app(bundleId: "Safari")` when the installed-apps cache is
+    /// cold, and a gate comparing ids then decided that Safari was a different app from
+    /// Safari — so a Safari chat asked to enable Safari, for a question its own tools answer.
+    private static func isSameApp(
+        candidate: (name: String, bundleId: String), asScope scopeBundleID: String
+    ) -> Bool {
+        if candidate.bundleId.caseInsensitiveCompare(scopeBundleID) == .orderedSame {
+            return true
+        }
+        // A scope id with no dot in it is a display name wearing a bundle id's clothes.
+        guard !scopeBundleID.contains(".") else { return false }
+        return candidate.name.caseInsensitiveCompare(scopeBundleID) == .orderedSame
     }
 
     /// The apps that could answer a question that names none, when the chat has none open.
@@ -447,6 +570,18 @@ enum AppScopedChatService {
         guard GeneralAIActionResolver.shared.namedInstalledApp(in: query) == nil else {
             return []
         }
+        return Array(subjectApps(in: query).prefix(3))
+            .map { EnableAppRequest(name: $0.name, bundleId: $0.bundleId, query: query) }
+    }
+
+    /// Apps a sentence is *about* without naming them: "a note" means Notes, "tabs" means
+    /// Safari, "reminder" means Reminders.
+    ///
+    /// Split out because the same knowledge answers two questions. It was reachable only
+    /// when a request named no app at all, so "create a note of all the open tabs in Safari"
+    /// — which names Safari and only implies Notes — could offer one of the two apps it
+    /// needed and never the pair.
+    static func subjectApps(in query: String) -> [(bundleId: String, name: String)] {
         let lowered = query.lowercased()
         // Subjects, not verbs: the word that says what the question is about.
         let subjects: [(markers: [String], bundleId: String, name: String)] = [
@@ -460,17 +595,33 @@ enum AppScopedChatService {
             (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
             (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
         ]
-        var found: [EnableAppRequest] = []
-        for subject in subjects where subject.markers.contains(where: lowered.contains) {
+        // Whole words, not substrings.
+        //
+        // `browser_console_messages` — the name of a Safari MCP tool — contains "message", so a
+        // question naming that tool offered to enable Messages instead of answering. The same
+        // lesson the app-name matcher already learned: a word inside another word is not that
+        // word, and an identifier is full of them.
+        let words = Set(
+            lowered
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init))
+        func mentions(_ marker: String) -> Bool {
+            let parts = marker.split(separator: " ").map(String.init)
+            // A multi-word marker ("talk to", "task list") still matches as a phrase.
+            guard parts.count == 1 else { return lowered.contains(marker) }
+            return words.contains(marker) || words.contains(marker + "s")
+        }
+
+        var found: [(bundleId: String, name: String)] = []
+        for subject in subjects where subject.markers.contains(where: mentions) {
             // Only apps that are actually here. Offering to enable something not installed
             // is a dead end dressed as an option.
             guard NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: subject.bundleId) != nil
             else { continue }
-            found.append(
-                EnableAppRequest(name: subject.name, bundleId: subject.bundleId, query: query))
+            found.append((subject.bundleId, subject.name))
         }
-        return Array(found.prefix(3))
+        return found
     }
 
     /// Runs `operation` on a detached task and gives up on it after `seconds`.
@@ -549,6 +700,50 @@ enum AppScopedChatService {
             """
     }
 
+    /// What a step row should say *while* a directive runs.
+    ///
+    /// The rows were written after the call returned — "Running X…" appeared once X had
+    /// already run — so a turn that pressed a menu item or ran a shell command showed nothing
+    /// at the moment it mattered, then collapsed into "11 steps". The owner's words: the
+    /// command shows but it did not run, and while running it did not show the command. Half
+    /// of that is this line; the other half is calling it before `execute`.
+    ///
+    /// Names the thing, not the mechanism: a person reading a row wants "Pressing Code ▸ Check
+    /// for Updates…", not "running an operateApp invocation".
+    nonisolated static func runningLabel(for invocation: AITypedInvocation) -> String {
+        switch invocation.kind {
+        case .menuAction:
+            let path = (invocation.arguments["path"] ?? "")
+                .components(separatedBy: "\u{1F}")
+                .filter { !$0.isEmpty }
+                .joined(separator: " ▸ ")
+            return path.isEmpty ? "Pressing a menu item…" : "Pressing \(path)…"
+        case .operateApp:
+            let target = invocation.arguments["target"] ?? ""
+            return target.isEmpty
+                ? "Reading the live menu bar…"
+                : "Looking for “\(target)” in the live menu bar…"
+        case .appScript:
+            let name = invocation.arguments["name"] ?? ""
+            return name.isEmpty ? "Running this app's script…" : "Running \(name)…"
+        case .terminal:
+            // The command itself, because that is the thing the user is deciding about — a
+            // row saying "running a command" is the same as saying nothing.
+            let command = (invocation.arguments["command"] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return command.isEmpty ? "Running a command…" : "Running `\(command)`…"
+        case .adapterAction:
+            let action = invocation.arguments["actionId"] ?? ""
+            return action.isEmpty ? "Running an app action…" : "Running \(action)…"
+        case .mcp:
+            return "Running \(invocation.capabilityID)…"
+        case .capability:
+            return "Running \(invocation.capabilityID)…"
+        case .share:
+            return "Sharing…"
+        }
+    }
+
     private static func runToolLessScopedTurn(
         query: String,
         systemPrompt: String,
@@ -566,6 +761,24 @@ enum AppScopedChatService {
         let conversationScope = Self.conversationScope(
             routingBundleId: routingBundleId, appName: appName)
 
+        // One registry turn for the whole loop (E1c). The capabilities DoraX runs between
+        // passes are gated and recorded against it, and a Claude Code pass joins it rather than
+        // starting a record that has forgotten the mail it was just handed.
+        let registry = AgentToolRegistry.shared
+        let chat = ClaudeCodeChat.scope
+        let earlier = ClaudeCodeCLIService.sessionTaint(chat)
+        let turn = registry.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: query),
+            promptBlocks: [systemPrompt, query],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: routingBundleId)
+                || earlier.readPrivateData,
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(bundleID: routingBundleId)
+                || earlier.readUntrustedContent)
+        defer {
+            ClaudeCodeCLIService.noteRead(registry.taint.taint(for: turn), in: chat)
+            registry.endTurn(turn)
+        }
+
         // Claude Code with the DoraX MCP server on reaches capabilities as real tools, so it
         // gets them listed first and the prose "ask, run, re-ask" protocol is left out —
         // two protocols for the same capability is how it ended up hand-writing osascript.
@@ -574,13 +787,15 @@ enum AppScopedChatService {
                 UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey)
             else { return nil }
             let bundleID = routingBundleId.flatMap { $0.isEmpty ? nil : $0 }
-            DoraXMCPServer.shared.turn = DoraXMCPServer.Turn(
+            DoraXMCPServer.shared.capabilityTurn = DoraXMCPServer.CapabilityTurn(
                 scope: bundleID.map { .app(bundleId: $0) }, userRequest: query,
                 onProgress: onStatus.map { report in { step in report(step) } })
             return CapabilityRegistry.shared.cliPromptBlock(for: bundleID, appName: appName)
         }
         defer {
-            if mcpCapabilityBlock != nil { Task { @MainActor in DoraXMCPServer.shared.turn = nil } }
+            if mcpCapabilityBlock != nil {
+                Task { @MainActor in DoraXMCPServer.shared.capabilityTurn = nil }
+            }
         }
 
         let toolsBlock: String
@@ -609,35 +824,68 @@ enum AppScopedChatService {
 
         for _ in 0..<4 {
             onStatus?(toolChips.isEmpty ? "Thinking…" : "Reading tool result…")
-            let raw = try await AIProviderService.shared.sendMessage(
-                loopQuery,
-                context: context,
-                provider: provider,
-                apiKey: apiKey,
-                conversationHistory: loopHistory,
-                additionalContextPrompt: promptWithTools,
-                attachments: attachments.map(AIAttachment.inferred(from:)),
-                // This surface supplies its own capability catalogue; letting the provider
-                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
-                // nothing here executes, and the directive ends up printed at the user.
-                surfaceScoped: true
-            )
+            let raw = try await ClaudeCodeChat.$turn.withValue(turn) {
+                try await AIProviderService.shared.sendMessage(
+                    loopQuery,
+                    context: context,
+                    provider: provider,
+                    apiKey: apiKey,
+                    conversationHistory: loopHistory,
+                    additionalContextPrompt: promptWithTools,
+                    attachments: attachments.map(AIAttachment.inferred(from:)),
+                    // This surface supplies its own capability catalogue; letting the provider
+                    // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
+                    // nothing here executes, and the directive ends up printed at the user.
+                    surfaceScoped: true,
+                    // A CLI provider's own steps belong in the same live list DoraX fills for
+                    // its own work, rather than in a transcript nobody has open.
+                    onStatus: onStatus.map { report in { step in
+                        Task { @MainActor in report(step) }
+                    } }
+                )
+            }
 
-            let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
+            // Say what is about to happen before it happens. The directive is already in the
+            // answer text; reading it here costs nothing and is the difference between a live
+            // row and a receipt.
+            if let announced = AITypedInvocationResolver.invocation(from: raw) {
+                onStatus?(Self.runningLabel(for: announced))
+            }
+            let call = await GeneralChatCapabilityHub.shared.execute(
+                raw, scope: conversationScope, turn: turn, chatScope: chat)
             guard call.handled else {
-                let text = ChatAnswerSanitizer.clean(raw)
+                var text = ChatAnswerSanitizer.clean(raw)
+                // The last rung, offered by DoraX rather than asked for by the model. Three
+                // turns in a row ended with the model naming operate_app as the thing it
+                // lacked while the item sat in the live menu bar — noticing you have run out
+                // of routes is this layer's job, not the model's.
+                if ComputerUseFallback.shouldOffer(
+                    intent: taskPlan.intent, ranAnything: executedAnything,
+                    bundleID: routingBundleId ?? ""),
+                    let pressed = await ComputerUseFallback.offer(
+                        query: query, bundleID: routingBundleId ?? "", appName: appName)
+                {
+                    text += ComputerUseFallback.note(for: pressed)
+                    return Answer(
+                        text: text, toolChips: toolChips + [pressed.displayCommand])
+                }
                 // The model cannot know why a request to *do* something failed here — it
                 // was given neither tools nor the reason — unless something in this very
                 // loop already ran.
                 let notice = executedAnything
                     ? nil
-                    : ProviderActionNotice.note(provider: provider, intent: taskPlan.intent)
+                    : ProviderActionNotice.note(
+                        provider: provider, intent: taskPlan.intent,
+                        // Live app data is evidence too: this turn read the user's real tabs
+                        // and then told them it could not act.
+                        producedEvidence: !toolChips.isEmpty)
                 return Answer(text: text + (notice ?? ""), toolChips: toolChips)
             }
 
             executedAnything = true
             toolChips.append(call.label)
-            onStatus?("Running \(call.label)…")
+            // Past tense, because by here it has. The row above it said what was running.
+            onStatus?(call.success ? "Ran \(call.label)" : "\(call.label) did not run")
             loopHistory.append(ChatMessage(role: .user, content: loopQuery))
             loopHistory.append(ChatMessage(role: .assistant, content: raw))
             loopQuery = Self.toolResultFollowUp(
@@ -648,16 +896,18 @@ enum AppScopedChatService {
         // Loop budget exhausted — one final forced plain answer, same as General Chat's own
         // exhaustion path.
         onStatus?("Writing answer…")
-        let finalRaw = try await AIProviderService.shared.sendMessage(
-            loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
-            context: context,
-            provider: provider,
-            apiKey: apiKey,
-            conversationHistory: loopHistory,
-            additionalContextPrompt: promptWithTools,
-            attachments: attachments.map(AIAttachment.inferred(from:)),
-            surfaceScoped: true
-        )
+        let finalRaw = try await ClaudeCodeChat.$turn.withValue(turn) {
+            try await AIProviderService.shared.sendMessage(
+                loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
+                context: context,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: loopHistory,
+                additionalContextPrompt: promptWithTools,
+                attachments: attachments.map(AIAttachment.inferred(from:)),
+                surfaceScoped: true
+            )
+        }
         return Answer(text: ChatAnswerSanitizer.clean(finalRaw), toolChips: toolChips)
     }
 
@@ -775,6 +1025,19 @@ enum AppScopedChatService {
     /// idea what was open in it, so it offered to reload a page it could not name.
     static func browserPageFacts(bundleID: String, query: String? = nil) -> String? {
         guard ScopedAppPromptBuilder.isBrowserBundle(bundleID) else { return nil }
+        guard let facts = unguardedBrowserPageFacts(bundleID: bundleID, query: query) else {
+            return nil
+        }
+        // A page SensitivePageGuard refuses contributes its reason, never its title or text.
+        if let withheld = ScopedGroundingBlocks.withheldPageBlock(forURL: facts.url) {
+            return withheld
+        }
+        return facts.text
+    }
+
+    private static func unguardedBrowserPageFacts(
+        bundleID: String, query: String?
+    ) -> (url: String, text: String)? {
         let detector = ContextDetector.shared
         switch bundleID {
         case "com.apple.Safari":
@@ -782,19 +1045,19 @@ enum AppScopedChatService {
                 let context = SafariBrowserBridge.shared.currentContext()
             {
                 let text = context.compactedPageText(for: query, limit: 5_000)
-                return "Current page (read just now, factual):\nTitle: \(context.title)\n"
-                    + "URL: \(context.url)\nPage content:\n\(text)"
+                return (context.url, "Current page (read just now, factual):\nTitle: \(context.title)\n"
+                    + "URL: \(context.url)\nPage content:\n\(text)")
             }
             if let page = detector.getSafariContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         case "com.google.Chrome":
             if let page = detector.getChromeContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         case "company.thebrowser.Browser":
             if let page = detector.getArcContext() {
-                return "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)"
+                return (page.url, "Current page (read just now, factual):\nTitle: \(page.title)\nURL: \(page.url)")
             }
         default:
             break
@@ -1014,12 +1277,48 @@ enum AppScopedChatService {
         /// without passes nil and loses nothing.
         onStatus: ((String) -> Void)? = nil
     ) async throws -> Answer {
+        // One record per turn in the turn log, when it is on: the prompt's sections, every
+        // provider pass, and the checks that fired, whichever route the turn takes below.
+        //
+        // The chat and what its user typed are bound for the turn, so the Claude Code CLI knows
+        // whether it may hold its own network and shell (E1c), and the outbound gate knows which
+        // addresses the user typed rather than the follow-up prompts DoraX composes.
+        try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
+            try await ClaudeCodeChat.$scope.withValue(scope) {
+                try await TurnUserText.bind(history: history, query: query) {
+                    try await sendUntraced(
+                        scope: scope, appName: appName, query: query, history: history,
+                        attachments: attachments, extraAppNames: extraAppNames,
+                        finderSelection: finderSelection, skillOverride: skillOverride,
+                        onStream: onStream, onStatus: onStatus)
+                }
+            }
+        }
+    }
+
+    private static func sendUntraced(
+        scope: GeneralChatScope,
+        appName: String,
+        query: String,
+        history: [ChatMessage],
+        attachments: [URL],
+        extraAppNames: [String],
+        finderSelection: [URL],
+        skillOverride: String?,
+        onStream: (@Sendable (AIProviderStreamEvent) -> Void)?,
+        onStatus: ((String) -> Void)?
+    ) async throws -> Answer {
         let settings = AppSettings.shared
         let provider = settings.selectedAIProvider
         let rawKey = provider.requiresAPIKey ? settings.getAPIKey(for: provider) : ""
         let apiKey: String? = rawKey.isEmpty ? nil : rawKey
 
         log.notice("send start scope=\(scope.storageKey, privacy: .public) provider=\(provider.rawValue, privacy: .public)")
+
+        // Rows belong to the turn that read them. Clearing here means last turn's notes can
+        // never appear under this turn's answer, which is worse than showing none — a stale
+        // card looks current.
+        ChatResultRowCollector.shared.begin(scope: scope)
 
         // Local inspection precedes app access and specialist bridges. "Is Claude Code
         // installed?" is not a request for Claude Code to inspect a repository, and "is
@@ -1084,7 +1383,9 @@ enum AppScopedChatService {
         if let intent = WorkbenchIntent.intent(in: query) {
             log.notice("stage: workbench intent")
             let outcome = await WorkbenchIntent.handle(intent, scope: scope)
-            return Answer(text: outcome.text, toolChips: outcome.chips)
+            return Answer(
+                text: outcome.text, toolChips: outcome.chips,
+                proposalJSON: outcome.proposalJSON)
         }
         // A question aimed at Claude Code runs Claude Code. It is the only route here that
         // can read the user's repository — files, branch, CLAUDE.md — so answering it from
@@ -1095,6 +1396,10 @@ enum AppScopedChatService {
             let result = await ClaudeCodeBridge.shared.ask(
                 query: query, scope: scope, attachments: attachments,
                 onProgress: { activity in
+                    // Into the step rows, not only the console. The owner watched their app
+                    // be upgraded and could not tell how: the bridge was reporting every
+                    // tool call, to a panel nobody had open.
+                    onStatus?(activity)
                     ChatConsoleLog.shared.append(
                         .note, title: "claude code", output: activity, success: true,
                         scope: scope)
@@ -1125,6 +1430,11 @@ enum AppScopedChatService {
                     .first { $0.name.caseInsensitiveCompare(name) == .orderedSame }?.bundleId
                 if let bundleId { scopeApps.append((bundleId, name)) }
             }
+            // One app, once. A combined chat can hold an app that is also the thread's own,
+            // and resolving its routes twice both doubled the catalogue the model orders from
+            // and produced the duplicate ids that crashed the planner.
+            var seenScopeApps = Set<String>()
+            scopeApps = scopeApps.filter { seenScopeApps.insert($0.0.lowercased()).inserted }
 
             // Planning used to require two or more apps in the thread, which meant "find
             // the newest export and open it" — two steps in one app — was answered as a
@@ -1151,9 +1461,20 @@ enum AppScopedChatService {
                     // The thread's own apps, and only those. Routes were resolved from this
                     // set, so a step outside it means the plan drifted from what was
                     // offered — checked per step rather than trusted once.
+                    // The plan itself, before anything runs. A person watching should see
+                    // what DoraX intends to do while it is doing it — the owner's report was
+                    // a spinner, then a paragraph claiming an app could not be launched
+                    // while that app sat open on screen.
+                    onStatus?("Planned \(plan.steps.count) steps · \(plan.summary)")
+                    for (index, step) in plan.steps.enumerated() {
+                        onStatus?(
+                            "  \(index + 1). \(step.purpose.isEmpty ? step.route.title : step.purpose)"
+                            + " — \(step.route.appName) · \(step.route.kind.routeLabel)")
+                    }
                     let results = await ChatPlanRunner.run(
                         plan, query: query,
-                        authorizedBundleIds: Set(scopeApps.map { $0.0.lowercased() }))
+                        authorizedBundleIds: Set(scopeApps.map { $0.0.lowercased() }),
+                        onStep: { line in onStatus?(line) })
                     let receipt = ChatPlanRunner.receipt(plan, results: results)
                     let allSucceeded = ChatPlanRunner.fullyConfirmed(plan, results: results)
                     // Only a plan that ran end to end is offerable as a recipe. Keeping a
@@ -1202,17 +1523,30 @@ enum AppScopedChatService {
                 for: query, bundleId: bundleId, appName: routingAppName)
             // Questions may use genuine read-only data integrations, but never screen-driving
             // menu commands or writes. A menu click is not a way to find out what a menu lists.
-            let routes = GeneralAIActionResolver.shared.asksOnly(query)
+            let permitted = GeneralAIActionResolver.shared.asksOnly(query)
                 ? resolvedRoutes.filter { $0.isReadOnly && !$0.kind.takesTheScreen }
                 : resolvedRoutes
+            // A destructive command is not an answer to a constructive request. Asked to
+            // create a note, this list offered `Edit ▸ Delete Note` third — word overlap put
+            // it there, and one mis-click loses the user's work.
+            let routes = permitted.filter { ActionReadiness.isOfferable($0, query: query) }
             if ChatRouteResolver.shouldAsk(routes: routes, bundleId: bundleId, query: query) {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which route (\(routes.count, privacy: .public))")
-                return Answer(
-                    text:
-                        "\(routingAppName) can do that more than one way. Which should I use?",
-                    toolChips: [],
-                    routeChoices: routes.map(\.asActionChoice))
+                return Answer.asking(
+                    "\(routingAppName) can do that more than one way. Which should I use?",
+                    choices: routes.map(\.asActionChoice))
+            }
+            // The sentence IS one of the routes ("quit mail" is Mail ▸ Quit Mail): run it,
+            // rather than asking about it or leaving it to a model.
+            if let route = ChatRouteResolver.soleExactRoute(
+                routes, query: query, appName: routingAppName)
+            {
+                log.notice("stage: exact route \(route.kind.rawValue, privacy: .public)")
+                return await execute(
+                    route: route, query: query, history: history, scope: scope,
+                    appName: appName, attachments: attachments,
+                    extraAppNames: extraAppNames, finderSelection: finderSelection)
             }
             // Already answered for this app and this kind of request: take that route
             // without asking again.
@@ -1243,10 +1577,9 @@ enum AppScopedChatService {
             {
                 rememberPendingRoutes(routes, scope: scope)
                 log.notice("stage: asking which invocation (\(routes.count, privacy: .public))")
-                return Answer(
-                    text: "There's more than one \(command) command for that. Which should I run?",
-                    toolChips: [],
-                    routeChoices: routes.map(\.asActionChoice))
+                return Answer.asking(
+                    "There's more than one \(command) command for that. Which should I run?",
+                    choices: routes.map(\.asActionChoice))
             }
             // A single read-only invocation is just the answer: run it and report.
             if routes.count == 1, let route = routes.first, route.isReadOnly {
@@ -1637,6 +1970,8 @@ enum AppScopedChatService {
             }
         }()
         let systemPrompt = prompt.assemble(for: provider, preserving: preservedSources)
+        TurnRecorder.current?.notePromptSections(
+            prompt.characterCounts(for: provider, preserving: preservedSources))
         log.notice("stage: prompt ready (\(systemPrompt.count, privacy: .public) chars)")
 
         // Apple Intelligence has no function-calling API, and Claude Code is deliberately
@@ -1760,36 +2095,26 @@ enum AppScopedChatService {
         }()
         if let call = prose {
             log.notice("recovering prose \(call.kind, privacy: .public)")
-            let capabilityID = call.id
-            if !capabilityID.isEmpty,
-                CapabilityRegistry.shared.capability(id: capabilityID) != nil
-            {
-                var input: [String: String] = [:]
-                for (key, value) in call.arguments { input[key] = String(describing: value) }
-                let plan = AIActionPlan(
-                    capability: capabilityID, input: input,
-                    explanation: "Requested in chat: \(query)")
-                let result = try? await AIExecutionEngine.shared.executeWithApproval(
-                    plan, context: context, chatScope: scope)
-                ChatConsoleLog.shared.append(
-                    .tool, title: capabilityID,
-                    output: result?.output ?? "(no output)",
-                    success: result?.success ?? false, scope: scope)
-                if let result, result.success {
-                    text = result.output.isEmpty
-                        ? "Done — \(capabilityID)."
-                        : result.output
-                } else {
-                    text = "\(capabilityID) didn't run."
-                }
+            // The same function the Dock and the Corner call: one executor, one approval, one
+            // set of named reasons.
+            var input: [String: String] = [:]
+            for (key, value) in call.arguments { input[key] = String(describing: value) }
+            let authorisation: AIConversationScope
+            if case .app(let bundleID) = scope {
+                authorisation = .contextDock(bundleID: bundleID, appName: appName)
             } else {
-                // An id that is not registered. Left alone, the JSON was stripped as
-                // scaffolding and the user got an empty bubble — the worst outcome, because
-                // it looks like the app simply had nothing to say.
-                text = capabilityID.isEmpty
-                    ? "I tried to run something but didn't name what."
-                    : "I tried to run `\(capabilityID)`, which isn't a capability on this Mac."
+                authorisation = .general
             }
+            let recovered = await ChatCapabilityCallRecovery.run(
+                capabilityID: call.id, arguments: input, query: query, context: context,
+                scope: authorisation, chatScope: scope)
+            if !call.id.isEmpty {
+                ChatConsoleLog.shared.append(
+                    .tool, title: call.id,
+                    output: recovered.output.isEmpty ? "(no output)" : recovered.output,
+                    success: recovered.succeeded, scope: scope)
+            }
+            text = recovered.text
         }
 
         // The model sometimes writes its tool call out as text instead of calling it. The
@@ -1939,24 +2264,43 @@ enum AppScopedChatService {
         // Nothing linked could carry this out, and it is work rather than a question: offer a
         // specialist instead of ending at what cannot be done. Offered, never taken — the
         // buttons are the whole point, and a worker costs minutes where a route costs none.
-        if sendChoices.isEmpty,
-            let task = AIWorkerTask.bounded(
-                goal: sendIntent,
-                scope: scope,
-                appName: appName,
-                workspace: ChatWorkingDirectory.resolve(for: nil))
+        let workerTask = AIWorkerTask.bounded(
+            goal: sendIntent,
+            scope: scope,
+            appName: appName,
+            workspace: ChatWorkingDirectory.resolve(for: nil))
+        let installedWorkers = AIWorkerRegistry.shared.installed
+        if AIWorkerOffer.shouldOffer(
+            // A turn that already ran something is not asking where to start.
+            hasLinkedRoute: !sendChoices.isEmpty || !outcome.mcpToolsRan.isEmpty || !executed.isEmpty,
+            task: workerTask, workers: installedWorkers),
+            let workerTask
         {
-            let workers = AIWorkerRegistry.shared.installed
-            let offers = AIWorkerOffer.choices(for: task, workers: workers)
-            if !offers.isEmpty {
-                sendChoices = offers
-                text += "\n\n---\n" + AIWorkerOffer.explanation(for: task, workers: workers)
-            }
+            sendChoices = AIWorkerOffer.choices(for: workerTask, workers: installedWorkers)
+            text += "\n\n---\n"
+                + AIWorkerOffer.explanation(for: workerTask, workers: installedWorkers)
         }
 
+        // The rung below every offer above, and the last one there is: nothing linked ran, no
+        // worker fits, and the thing the user asked for is sitting in the app's live menu bar
+        // where the cached map could not see it. The card names the exact item, so the user is
+        // answering "press this?" rather than "trust me?".
+        var computerUseChips: [String] = []
+        if ComputerUseFallback.shouldOffer(
+            intent: taskPlan.intent, ranAnything: !chips.isEmpty || !executed.isEmpty,
+            bundleID: routingBundleId ?? ""),
+            let pressed = await ComputerUseFallback.offer(
+                query: query, bundleID: routingBundleId ?? "", appName: appName, scope: scope)
+        {
+            text += ComputerUseFallback.note(for: pressed)
+            computerUseChips = [pressed.displayCommand]
+        }
+
+        let producedRows = ChatResultRowCollector.shared.take(scope: scope)
         return Answer(
-            text: text, toolChips: chips,
+            text: text, toolChips: chips + computerUseChips,
             routeChoices: sendChoices,
+            rows: producedRows,
             evidenceReceipts: sourceReceipts + executed.map(DoraXActionReceipt.init),
             subjectiveEvaluation: outcome.subjectiveEvaluation,
             trace: sourceTrace)

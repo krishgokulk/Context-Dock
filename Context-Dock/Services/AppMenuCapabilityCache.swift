@@ -303,6 +303,9 @@ final class AppMenuCapabilityCache {
     nonisolated private func isVolatileMenuPath(_ path: [String]) -> Bool {
         let normalized = path.map(Self.normalize).filter { !$0.isEmpty }
         guard !normalized.isEmpty else { return false }
+        // A command at a fixed place under History (Reopen Last Closed Window, the
+        // Recently Closed submenu) is not a page row; only the rows are volatile.
+        if let title = path.last, BrowserStableMenuCommand.isStable(title: title) { return false }
         let volatileBranches: Set<String> = [
             "history",
             "bookmarks",

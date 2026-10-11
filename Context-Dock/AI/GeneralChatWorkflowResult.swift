@@ -36,7 +36,7 @@ struct GeneralChatWorkflowResult {
             case .verifiedMenu, .keyboardShortcut, .axFallback: return .appMenu
             case .mcp: return .mcp
             case .cli: return .cli
-            case .adapter, .api, .shortcutRunner, .automation, .appLaunch: return .appAdapter
+            case .adapter, .api, .automation, .appLaunch: return .appAdapter
             }
         }
     }

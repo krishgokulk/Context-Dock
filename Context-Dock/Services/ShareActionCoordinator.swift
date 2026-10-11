@@ -60,6 +60,41 @@ final class ShareActionCoordinator {
 
     private var destinationCache: [String: (entries: [ShareDestinationEntry], timestamp: Date)] = [:]
 
+    // MARK: Ranking — one score for every list of share destinations (Dock and corner)
+
+    /// A destination's row id, the same in the Dock's list and the corner's.
+    nonisolated static func destinationRowID(normalizedTitle: String) -> String {
+        "share-dest-\(normalizedTitle)"
+    }
+
+    /// Pure: whether a destination is listed for what is typed ("" lists all).
+    nonisolated static func destinationMatches(normalizedTitle: String, normalizedQuery: String)
+        -> Bool
+    {
+        normalizedQuery.isEmpty || normalizedTitle.contains(normalizedQuery)
+    }
+
+    /// The usage key a destination is learned under.
+    nonisolated static func usageKey(normalizedTitle: String) -> String {
+        "share-dest:\(normalizedTitle)"
+    }
+
+    /// Pure. Frecency: destinations used most rank first; the system's order breaks ties.
+    nonisolated static func rankingScore(usage: Double, systemIndex: Int) -> Double {
+        usage * 1_000 + Double(1_000 - systemIndex)
+    }
+
+    nonisolated static func rankingScore(normalizedTitle: String, systemIndex: Int) -> Double {
+        rankingScore(
+            usage: UsageTracker.shared.getScore(for: usageKey(normalizedTitle: normalizedTitle)),
+            systemIndex: systemIndex)
+    }
+
+    /// Learn that this destination was chosen, so it ranks higher next time.
+    nonisolated static func recordUse(normalizedTitle: String) {
+        UsageTracker.shared.recordAccess(for: usageKey(normalizedTitle: normalizedTitle))
+    }
+
     private func shareItemsSignature(_ items: [Any]) -> String {
         items.map { item -> String in
             if let url = item as? URL { return url.path }

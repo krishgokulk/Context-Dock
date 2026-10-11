@@ -4,6 +4,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case general
     case aiProviders
     case integrations
+    case plugins
+    case appPacks
     case extensionsGlobalWithSelection
     case extensionsGlobalWithoutSelection
     case extensionsCLIToolScope
@@ -27,11 +29,13 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .aiProviders: return "AI Providers"
         case .integrations: return "Integrations"
+        case .plugins: return "Plugins"
+        case .appPacks: return "App Packs"
         case .extensionsGlobalWithSelection: return "With Selection"
         case .extensionsGlobalWithoutSelection: return "Commands"
         case .extensionsCLIToolScope: return "CLI Tool Scope"
-        case .extensionImport: return "Create Extension"
-        case .frontmostAppAdapters: return "App Adapters"
+        case .extensionImport: return "Plugin Creator"
+        case .frontmostAppAdapters: return "App Pack Actions"
         case .mediaActions: return "Media Actions"
         case .workflows: return "Automation / Workflows"
         case .shortcutSheetWorkflows: return "Selection Scope"
@@ -50,11 +54,13 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return "Launch, layers, clipboard, and app behavior."
         case .aiProviders: return "Choose provider and verify model access."
         case .integrations: return "Apps and global capabilities."
+        case .plugins: return "Global Context plugins, and what they draw."
+        case .appPacks: return "Every app's actions, skills and tools, and the System packs — each on or off."
         case .extensionsGlobalWithSelection: return "Actions shown for selected text, files, URLs, and media."
         case .extensionsGlobalWithoutSelection: return "Always-available global commands."
         case .extensionsCLIToolScope: return "Pinned command-line tools available everywhere."
-        case .extensionImport: return "Create manually or paste AI-generated extension JSON."
-        case .frontmostAppAdapters: return "App-specific adapters and actions."
+        case .extensionImport: return "Describe a plugin and draft it with AI, or write the manifest by hand."
+        case .frontmostAppAdapters: return "Each app's App Pack and its actions."
         case .mediaActions: return "Image, video, audio, and PDF actions."
         case .workflows: return "Context rules and automation flows."
         case .shortcutSheetWorkflows: return "Actions for the Selection Scope — share and act on selected text or files."
@@ -73,6 +79,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return "gearshape.fill"
         case .aiProviders: return "brain.head.profile"
         case .integrations: return "app.connected.to.app.below.fill"
+        case .plugins: return "puzzlepiece.extension.fill"
+        case .appPacks: return "shippingbox.fill"
         case .extensionsGlobalWithSelection: return "selection.pin.in.out"
         case .extensionsGlobalWithoutSelection: return "globe"
         case .extensionsCLIToolScope: return "terminal.fill"
@@ -96,6 +104,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return .blue
         case .aiProviders: return .purple
         case .integrations: return .orange
+        case .plugins: return .indigo
+        case .appPacks: return .orange
         case .extensionsGlobalWithSelection: return .teal
         case .extensionsGlobalWithoutSelection: return .indigo
         case .extensionsCLIToolScope: return .green
@@ -164,10 +174,14 @@ extension SettingsSidebarSection {
             rows: [
                 // One row for every capability. The pages it replaced keep their enum raw
                 // values so old deep links still resolve, but they no longer have their own
-                // destinations. Create Extension stays: its paste-JSON authoring flow has no
-                // equivalent in the workspace yet.
+                // destinations. The Create Extension importer is retired: the Creator drafts
+                // a plugin from a description and its prompt can be pasted into any AI, which
+                // is what the importer's copy-a-template flow was for. Its row keeps the
+                // page's raw value so a deep link lands on the Creator's door.
+                SettingsSidebarRow(SettingsPage.appPacks.title, page: .appPacks),
                 SettingsSidebarRow(SettingsPage.integrations.title, page: .integrations),
-                SettingsSidebarRow("Create Extension", page: .extensionImport)
+                SettingsSidebarRow(SettingsPage.plugins.title, page: .plugins),
+                SettingsSidebarRow("Plugin Creator", page: .extensionImport)
             ]
         ),
         SettingsSidebarSection(

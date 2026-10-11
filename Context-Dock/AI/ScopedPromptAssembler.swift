@@ -144,6 +144,30 @@ struct ScopedPromptAssembler {
         for provider: AIProvider,
         preserving sourceSections: Set<ScopedPromptSection> = []
     ) -> String {
+        let kept = keptSections(for: provider, preserving: sourceSections)
+        return ScopedPromptSection.allCases
+            .compactMap { kept[$0] }
+            .joined(separator: "\n\n")
+    }
+
+    /// Characters per section of the prompt `assemble` produces, by section name — what the
+    /// turn record shows so the heavy section is a number, not a guess. A dropped section is
+    /// absent; a shortened one counts what was kept.
+    func characterCounts(
+        for provider: AIProvider,
+        preserving sourceSections: Set<ScopedPromptSection> = []
+    ) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for (section, text) in keptSections(for: provider, preserving: sourceSections) {
+            counts[String(describing: section)] = text.count
+        }
+        return counts
+    }
+
+    private func keptSections(
+        for provider: AIProvider,
+        preserving sourceSections: Set<ScopedPromptSection>
+    ) -> [ScopedPromptSection: String] {
         var kept = blocks
         if let budget = Self.budget(for: provider) {
             var used = kept.values.reduce(0) { $0 + $1.count + 2 }
@@ -191,8 +215,6 @@ struct ScopedPromptAssembler {
                 if shortened.count >= text.count { break }
             }
         }
-        return ScopedPromptSection.allCases
-            .compactMap { kept[$0] }
-            .joined(separator: "\n\n")
+        return kept
     }
 }

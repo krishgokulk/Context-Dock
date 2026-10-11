@@ -24,6 +24,17 @@ struct ChatRoute: Identifiable, Equatable {
         /// way to carry out a request, and it belongs in the same list as the rest.
         case skill
         case model
+        /// DoraX drives the app's interface — AX press first, pixel click last.
+        ///
+        /// A route like the rest, not the thing that happens when everything else failed.
+        /// It was reachable only through `ComputerUseFallback`, gated on nothing else having
+        /// run, which is backwards: for App Store's "Update All" there is no headless path
+        /// and the button is right there, so driving the screen is the honest answer rather
+        /// than a consolation after a failure.
+        ///
+        /// Ranked last and labelled plainly, because it is the most expensive surface and
+        /// the least verifiable.
+        case computerUse
 
         /// What picking this actually does, in the user's terms. "No window opens" is the
         /// distinction people care about far more than which subsystem is involved.
@@ -35,6 +46,7 @@ struct ChatRoute: Identifiable, Equatable {
             case .mcpTool: return "App data · no window opens"
             case .skill: return "Your saved workflow for this app"
             case .model: return "Answer without running anything"
+            case .computerUse: return "DoraX drives the screen"
             }
         }
 
@@ -48,13 +60,28 @@ struct ChatRoute: Identifiable, Equatable {
             case .cli: return 3
             case .menuCommand: return 4
             case .skill: return 5
-            case .model: return 6
+            case .computerUse: return 6
+            case .model: return 7
             }
         }
 
         /// True when running it takes the screen. The user is choosing between "answer me"
         /// and "drive my Mac"; that is the cost that matters to them.
-        var takesTheScreen: Bool { self == .menuCommand }
+        var takesTheScreen: Bool { surface == .takesScreen || surface == .opensApp }
+
+        /// What this route costs, in the vocabulary the index and the decision layer share.
+        ///
+        /// `takesTheScreen` came first and asked a narrower question — it meant "the app
+        /// comes forward". Keeping both as separate truths is how two gates end up
+        /// disagreeing, so it is a projection of this now rather than a second source.
+        var surface: CapabilityRecord.Surface {
+            switch self {
+            case .adapterAction, .mcpTool, .cli: return .headless
+            case .menuCommand: return .opensApp
+            case .computerUse: return .takesScreen
+            case .skill, .model: return .advisory
+            }
+        }
 
         /// The execution mechanism this route uses, in the vocabulary the authority layer
         /// speaks. `nil` for the two kinds that run nothing.
@@ -70,7 +97,9 @@ struct ChatRoute: Identifiable, Equatable {
             case .adapterAction: return .adapter
             case .menuCommand: return .verifiedMenu
             case .mcpTool: return .mcp
-            case .skill, .model: return nil
+            // Computer Use has its own consent path and its own tool; it must not be handed
+            // to the generic executor, which knows nothing about per-app operate permission.
+            case .computerUse, .skill, .model: return nil
             }
         }
 
@@ -82,6 +111,7 @@ struct ChatRoute: Identifiable, Equatable {
             case .mcpTool: return "server.rack"
             case .skill: return "brain.head.profile"
             case .model: return "text.bubble"
+            case .computerUse: return "cursorarrow.rays"
             }
         }
     }
@@ -141,6 +171,12 @@ struct ChatRoute: Identifiable, Equatable {
         candidate.operation = isReadOnly ? .read : .execute
 
         switch kind {
+        case .computerUse:
+            // Unreachable: `executionRoute` is nil for this kind, so a Computer Use route
+            // never becomes a candidate in the first place. Stated rather than defaulted,
+            // because a `default:` here would silently hand a future kind to the generic
+            // executor, which knows nothing about per-app operate consent.
+            return nil
         case .adapterAction:
             candidate.adapterActionID = payload
         case .menuCommand:
@@ -210,7 +246,9 @@ enum ChatRouteResolver {
     /// True when the user asked for something to be *done*. "what page am I on" is a
     /// question about state; offering to run a menu command for it is noise, and the
     /// answer should come from context the app already exposes.
-    static func isActionRequest(_ query: String) -> Bool {
+    /// `nonisolated` because it is pure string work and the task plan — which is not
+    /// main-actor isolated — has to ask the same question this answers.
+    nonisolated static func isActionRequest(_ query: String) -> Bool {
         let lowered = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let questionStarts = [
             "what", "which", "who", "when", "where", "why", "how", "is ", "are ", "do ",
@@ -238,45 +276,93 @@ enum ChatRouteResolver {
         return actionVerbs.contains { lowered.hasPrefix($0) || lowered.contains(" \($0) ") }
     }
 
+    /// Words longer than two letters, lowercased.
+    nonisolated static func wordTerms(_ text: String) -> Set<String> {
+        Set(
+            text.lowercased().split { !$0.isLetter && !$0.isNumber }
+                .map(String.init).filter { $0.count > 2 })
+    }
+
+    /// Verbs that only point at an app. "open in Mail" names the app and a verb; it does not
+    /// name a command, so nothing in the app's menus is a route for it.
+    private nonisolated static let appPointingVerbs: Set<String> = [
+        "open", "launch", "start", "show", "switch", "use", "go",
+    ]
+
+    /// What the user asked for, with the app's own name taken out.
+    ///
+    /// Empty when nothing but the app and a pointing verb is left ("open in mail"), because
+    /// then there is no command to match and any list offered would be noise.
+    nonisolated static func contentTerms(query: String, appName: String) -> Set<String> {
+        let all = wordTerms(query)
+        let nameWords = wordTerms(appName)
+        guard !nameWords.isEmpty, !all.isDisjoint(with: nameWords) else { return all }
+        let rest = all.subtracting(nameWords)
+        return rest.isSubset(of: appPointingVerbs) ? [] : rest
+    }
+
+    /// True when the text shares a word with the request.
+    nonisolated static func termsMatch(_ haystack: String, terms: Set<String>) -> Bool {
+        let words = Set(
+            haystack.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        return !words.isDisjoint(with: terms)
+    }
+
+    /// A stricter test for commands that take the screen.
+    ///
+    /// One shared word is enough to match a tool that answers quietly and wrong; it is
+    /// not enough to justify driving someone's menu bar. "Open it" matched "File ▸ Open
+    /// and Close Window" on the word "open" alone, and a plan step that was supposed to
+    /// open a screenshot closed a window instead. So most of the command's own words
+    /// must be words the user said — short commands ("Open", "New Folder") still match
+    /// on one or two, while a four-word command needs real overlap.
+    nonisolated static func commandStronglyMatches(_ command: String, terms: Set<String>) -> Bool {
+        // Glue words carry no intent and are everywhere: "and" is what let "Open and
+        // Close Window" clear the bar for "…and open it".
+        let glue: Set<String> = [
+            "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
+            "me", "my", "this", "that", "then", "please",
+        ]
+        let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
+            .filter { !glue.contains($0) }
+        guard !words.isEmpty else { return false }
+        let matched = words.filter { terms.contains($0) }.count
+        if words.count <= 2 { return matched >= 1 }
+        return Double(matched) / Double(words.count) >= 0.5
+    }
+
+    /// The one route that IS the sentence ("quit mail" and `Mail ▸ Quit Mail`), when exactly
+    /// one does. A single exact command needs no question and no model.
+    static func soleExactRoute(
+        _ routes: [ChatRoute], query: String, appName: String
+    ) -> ChatRoute? {
+        let exact = routes.filter { route in
+            let leaf = route.kind == .menuCommand
+                ? (route.title.components(separatedBy: " ▸ ").last ?? route.title)
+                : route.title
+            return ExactCommand.matches(query: query, titles: [leaf], appNames: [appName])
+        }
+        return exact.count == 1 ? exact[0] : nil
+    }
+
     static func routes(
         for query: String, bundleId: String, appName: String
     ) async -> [ChatRoute] {
         guard !bundleId.isEmpty else { return [] }
         let lowered = query.lowercased()
-        let terms = Set(
-            lowered.split { !$0.isLetter && !$0.isNumber }
-                .map(String.init).filter { $0.count > 2 })
+        // The request's own words, without the app's name. In a Mail chat every command
+        // that contains "Mail" shares a word with "quit mail" — Hide Mail, Mail Help, Get
+        // New Mail, and every skill whose title starts with the app — so the name matched
+        // everything and the choice list held no answer to the question.
+        let terms = contentTerms(query: query, appName: appName)
         guard !terms.isEmpty else { return [] }
+        let contentQuery = terms.count < wordTerms(lowered).count
+            ? terms.sorted().joined(separator: " ") : query
 
-        func matches(_ haystack: String) -> Bool {
-            let words = Set(
-                haystack.lowercased().split { !$0.isLetter && !$0.isNumber }
-                    .map(String.init))
-            return !words.isDisjoint(with: terms)
-        }
-
-        /// A stricter test for commands that take the screen.
-        ///
-        /// One shared word is enough to match a tool that answers quietly and wrong; it is
-        /// not enough to justify driving someone's menu bar. "Open it" matched "File ▸ Open
-        /// and Close Window" on the word "open" alone, and a plan step that was supposed to
-        /// open a screenshot closed a window instead. So most of the command's own words
-        /// must be words the user said — short commands ("Open", "New Folder") still match
-        /// on one or two, while a four-word command needs real overlap.
+        func matches(_ haystack: String) -> Bool { termsMatch(haystack, terms: terms) }
         func stronglyMatches(_ command: String) -> Bool {
-            // Glue words carry no intent and are everywhere: "and" is what let "Open and
-            // Close Window" clear the bar for "…and open it".
-            let glue: Set<String> = [
-                "and", "the", "a", "an", "of", "to", "in", "on", "for", "with", "it",
-                "me", "my", "this", "that", "then", "please",
-            ]
-            let words = command.lowercased().split { !$0.isLetter && !$0.isNumber }
-                .map(String.init)
-                .filter { !glue.contains($0) }
-            guard !words.isEmpty else { return false }
-            let matched = words.filter { terms.contains($0) && !glue.contains($0) }.count
-            if words.count <= 2 { return matched >= 1 }
-            return Double(matched) / Double(words.count) >= 0.5
+            commandStronglyMatches(command, terms: terms)
         }
 
         var routes: [ChatRoute] = []
@@ -340,7 +426,7 @@ enum ChatRouteResolver {
         }
 
         let menuItems = AppMenuCapabilityCache.shared.menuItems(
-            bundleIdentifier: bundleId, appName: appName, query: query, maxResults: 6)
+            bundleIdentifier: bundleId, appName: appName, query: contentQuery, maxResults: 6)
         for item in menuItems
         where item.isLeaf && !item.path.isEmpty
             // Match the command, not its menu. Matching any path component is what put
@@ -435,6 +521,10 @@ enum ChatRouteResolver {
             case .skill: executionRoute = .adapter
             // Answering without running anything needs no permission to run anything.
             case .model: return true
+            // Its permission is per-app operate consent, asked at the point of the press by
+            // ComputerUseTool. Filtering it here against AppAccessPolicy would be a second
+            // gate answering a question the first one does not ask.
+            case .computerUse: return true
             }
             return AppAccessPolicy.allows(executionRoute, at: level)
         }
@@ -487,6 +577,11 @@ enum ChatRouteResolver {
         if route.isReadOnly { return .granted(.accessPolicy) }
         switch route.kind {
         case .menuCommand, .mcpTool:
+            return .ask
+        // Never granted from here. The press itself is consented per app, and offering it
+        // as pre-approved would let an access level stand in for a decision about driving
+        // somebody's screen.
+        case .computerUse:
             return .ask
         case .adapterAction, .cli, .skill, .model:
             return .granted(.accessPolicy)
@@ -575,6 +670,18 @@ enum ChatRouteResolver {
             // Neither runs anything: the caller answers with the skill's instructions in
             // the prompt. Returning "nothing happened" here is the honest result.
             return (true, "")
+
+        case .computerUse:
+            // Not run from here, deliberately. `ComputerUseTool` owns the press: it reads
+            // the live UI rather than this route's payload, resolves the phrase with typed
+            // refusals, checks per-app operate consent, and takes before-and-after evidence.
+            // Reimplementing any of that here would be the second execution path the whole
+            // capability layer exists to avoid.
+            return (
+                false,
+                "This route is carried out by operate_app, which asks for permission to "
+                    + "drive \(route.appName) and records what the screen did. It is not run "
+                    + "from the route executor.")
         }
     }
 }

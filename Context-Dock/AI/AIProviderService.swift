@@ -189,7 +189,13 @@ class AIProviderService: ObservableObject {
         conversationHistory: [ChatMessage] = [],
         additionalContextPrompt: String = "",
         attachments: [AIAttachment] = [],
-        surfaceScoped: Bool = false
+        surfaceScoped: Bool = false,
+        /// What the provider is doing right now, for surfaces that show live steps.
+        ///
+        /// Only the tool-carrying path reported this, so a Claude Code turn — which runs a
+        /// CLI with its own tools and reports every one of them — sat silent until it
+        /// finished. The owner watched an app be upgraded with no account of how.
+        onStatus: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
 
         #if DEBUG
@@ -286,7 +292,8 @@ class AIProviderService: ObservableObject {
                     message: message, history: conversationHistory),
                 systemPrompt: contextPrompt,
                 model: AppSettings.shared.claudeCodeModel.isEmpty
-                    ? nil : AppSettings.shared.claudeCodeModel)
+                    ? nil : AppSettings.shared.claudeCodeModel,
+                onProgress: onStatus.map { report in { step in report(step) } })
             currentResponse = response
             return response
         }
@@ -496,17 +503,21 @@ class AIProviderService: ObservableObject {
                 let browser = AppDelegate.shared?.previousFrontmostApp
                     ?? NSWorkspace.shared.runningApplications.first(where: { AXWebReader.shared.isBrowser(bundleId: $0.bundleIdentifier ?? "") })
                 let pid = browser?.processIdentifier ?? 0
-                prompt += "\n\n## CURRENT WEB PAGE\nURL: \(urlString)\n"
-                if let snap = AXWebReader.shared.cachedSnapshot(for: pid), !snap.text.isEmpty {
-                    if !snap.title.isEmpty { prompt += "Title: \(snap.title)\n" }
-                    prompt += "\n### Page Content (live, extracted from screen):\n"
-                    prompt += snap.text
-                    prompt += "\n\nAnswer ONLY using this content — it is the ACTUAL live text on screen.\n"
+                if let withheld = ScopedGroundingBlocks.withheldPageBlock(forURL: urlString) {
+                    prompt += "\n\n## CURRENT WEB PAGE\n\(withheld)\n"
                 } else {
-                    Task { @MainActor in
-                        AXWebReader.shared.refresh(pid: pid, currentURL: urlString)
+                    prompt += "\n\n## CURRENT WEB PAGE\nURL: \(urlString)\n"
+                    if let snap = AXWebReader.shared.cachedSnapshot(for: pid), !snap.text.isEmpty {
+                        if !snap.title.isEmpty { prompt += "Title: \(snap.title)\n" }
+                        prompt += "\n### Page Content (live, extracted from screen):\n"
+                        prompt += snap.text
+                        prompt += "\n\nAnswer ONLY using this content — it is the ACTUAL live text on screen.\n"
+                    } else {
+                        Task { @MainActor in
+                            AXWebReader.shared.refresh(pid: pid, currentURL: urlString)
+                        }
+                        prompt += "(Page content loading — answer from URL context for now)\n"
                     }
-                    prompt += "(Page content loading — answer from URL context for now)\n"
                 }
                 if browser?.bundleIdentifier?.hasPrefix("com.apple.Safari") == true {
                     if includePrivateSafariData {
@@ -527,13 +538,17 @@ class AIProviderService: ObservableObject {
                 let pid = frontmost.processIdentifier
                 // Always inject current URL (fast AX read) even if full page isn't cached yet
                 let liveURL = AXContextReader.shared.current.currentURL ?? ""
+                let withheld = ScopedGroundingBlocks.withheldPageBlock(forURL: liveURL)
                 prompt += "\n\n## CURRENT WEB PAGE\n"
-                prompt += "URL: \(liveURL.isEmpty ? "(unknown)" : liveURL)\n"
+                prompt += withheld.map { "\($0)\n" }
+                    ?? "URL: \(liveURL.isEmpty ? "(unknown)" : liveURL)\n"
 
                 let research = WebResearchSession.shared
                 // Only use research session if at least one page has actual text content
                 let researchHasContent = research.pages.contains { !$0.text.isEmpty }
-                if !research.isEmpty && researchHasContent {
+                if withheld != nil {
+                    // A page SensitivePageGuard refuses: nothing of it goes in the prompt.
+                } else if !research.isEmpty && researchHasContent {
                     prompt += research.count > 1 ? research.contextBlock : research.singlePageBlock
                 } else if let snap = AXWebReader.shared.cachedSnapshot(for: pid), !snap.text.isEmpty {
                     if !snap.title.isEmpty { prompt += "Title: \(snap.title)\n" }
@@ -1248,6 +1263,22 @@ class AIProviderService: ObservableObject {
             return await commandExecutor(command, purpose, approval)
         }
 
+        // One record per turn in the turn log, when it is on. A verifier pass or a retry
+        // inside a scoped turn joins that turn's record instead of writing its own.
+        return try await TurnRecorder.run(provider: provider.rawValue) {
+        let recorder = TurnRecorder.current
+        // The first fragment of the answer the user could read. Observed here, once, rather
+        // than in each provider's stream parser.
+        let observedStream: (@Sendable (AIProviderStreamEvent) -> Void)?
+        if let onStream, let recorder {
+            observedStream = { event in
+                if case .text = event { recorder.noteFirstToken() }
+                onStream(event)
+            }
+        } else {
+            observedStream = onStream
+        }
+
         return try await TaskRunStore.shared.track(
             request: resume.source?.request ?? message,
             provider: String(describing: provider),
@@ -1306,7 +1337,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1328,7 +1359,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1347,7 +1378,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1368,7 +1399,7 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OllamaToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1393,7 +1424,7 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1420,7 +1451,7 @@ class AIProviderService: ObservableObject {
                 chatScope: chatScope,
                 grantedApps: grantedApps,
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus)
 
         case .claudeBridge:
@@ -1446,7 +1477,7 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
@@ -1473,12 +1504,15 @@ class AIProviderService: ObservableObject {
                 extraHeaders: [:],
                 transport: OpenAICompatibleToolProviderAdapter(),
                 simulateAllTools: simulateAllTools,
-                onStream: onStream,
+                onStream: observedStream,
                 onStatus: onStatus
             )
 
         default:
+            // The caller falls back to the plain path, which is not part of this record.
+            recorder?.noteFallback("on_device_plain_path")
             throw AIServiceError.unsupportedProvider("onDevice_fallback")
+        }
         }
         }
     }

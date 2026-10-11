@@ -51,8 +51,51 @@ final class AppChatConversation: ObservableObject {
     /// The app the live conversation belongs to, for a surface that did not start it.
     @Published var scopeBundleId: String = ""
     @Published var scopeAppName: String = ""
+    /// Rows for the turn still running — one per tool call, recorded where it executed.
+    @Published private(set) var liveActivity: [ActivityStep] = []
+    /// The finished record, per answer. Keyed by message rather than stored on it: the
+    /// dock appends its answer from fifty-odd places, and every one of them would have to
+    /// remember to copy the steps across.
+    @Published private(set) var activityByMessageID: [UUID: [ActivityStep]] = [:]
+
+    private var recorder: ActivityRecorder?
+    private var messageCountAtStart = 0
 
     init() {}
+
+    /// Starts recording a dock turn. The dock's many entry points run in tasks nothing
+    /// binds, so its recorder is the fallback every unbound tool call reports to.
+    func beginActivity() {
+        recorder?.settle()
+        let recorder = ActivityRecorder { steps in
+            Task { @MainActor in
+                guard AppChatConversation.shared.isRecording else { return }
+                AppChatConversation.shared.liveActivity = steps
+            }
+        }
+        self.recorder = recorder
+        messageCountAtStart = messages.count
+        liveActivity = []
+        ActivityRecorder.fallback = recorder
+    }
+
+    private var isRecording: Bool { recorder != nil }
+
+    /// Ends the turn: the steps go to the answer it produced — the last assistant message
+    /// added since it began — and the live rows go away.
+    func finishActivity() {
+        guard let recorder else { return }
+        recorder.settle()
+        let steps = recorder.steps
+        if ActivityRecorder.fallback === recorder { ActivityRecorder.fallback = nil }
+        self.recorder = nil
+        liveActivity = []
+        guard !steps.isEmpty,
+            let answer = messages.dropFirst(min(messageCountAtStart, messages.count))
+                .last(where: { $0.role == .assistant })
+        else { return }
+        activityByMessageID[answer.id] = steps
+    }
 }
 
 struct L2State {
@@ -171,10 +214,35 @@ struct PendingSelectionShare: Equatable {
 }
 
 /// A one-tap offer to scope the chat to an app the user asked about but hasn't selected.
+///
+/// Carries every app the request named, not only the first. "Create a note of all the open
+/// tabs in Safari" is one piece of work across two apps, and enabling one of them leaves the
+/// chat unable to do the job — the cross-app planner needs both in scope before it runs at
+/// all, so a single-app offer turned a workflow into a list of Notes commands.
 struct EnableAppRequest: Equatable {
+    struct AppRef: Equatable {
+        let name: String
+        let bundleId: String
+    }
+
     let name: String
     let bundleId: String
     let query: String
+    /// The other apps the same sentence named, enabled by the same tap.
+    var companions: [AppRef] = []
+
+    /// Every app this offer would enable, the primary first.
+    var allApps: [AppRef] {
+        [AppRef(name: name, bundleId: bundleId)] + companions
+    }
+
+    /// "Notes", or "Notes and Safari", or "Notes, Safari and Mail" — what the button says it
+    /// will do, so a tap that changes the scope of a conversation says so first.
+    var appsSentence: String {
+        let names = allApps.map(\.name)
+        guard names.count > 1 else { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+    }
 }
 
 /// One route the user can pick when several fit the request equally well.

@@ -15,6 +15,9 @@
 import Foundation
 
 enum CornerKeyboardClaimant: Equatable {
+    /// A field inside a plugin's tile or card that the user clicked into. Loudest of all:
+    /// the caret is visibly there, and nothing else in the corner should hear the keys.
+    case plugin
     case clipboard
     case selection
     case chat
@@ -37,8 +40,10 @@ enum CornerKeyboardOwner {
     static func owner(
         clipboardArmed: Bool,
         selectionWantsKeyboard: Bool,
-        chatShowsInput: Bool
+        chatShowsInput: Bool,
+        pluginEditing: Bool = false
     ) -> CornerKeyboardClaimant {
+        if pluginEditing { return .plugin }
         if clipboardArmed { return .clipboard }
         if selectionWantsKeyboard { return .selection }
         if chatShowsInput { return .chat }
@@ -52,15 +57,34 @@ enum CornerKeyboardOwner {
     /// exactly what stops it becoming key. Only the chat field ever dropped that style, so
     /// a selection card summoned by hotkey named itself the keyboard's owner, focused its
     /// field, and could not receive a single keystroke.
+    /// Whether a change of the field's phase may take the keyboard for the Corner.
+    ///
+    /// Opening the field (from hidden, the badge or the resting strip) is the user asking for
+    /// it — a hotkey, a hover, a typed letter — so it takes the keys. Letting go always may.
+    /// But a move between two open phases — the list closing after its dwell, an answer
+    /// landing, the field following the frontmost app the user just clicked — is not a
+    /// request: while the user is working in another app it must not pull DoraX back in front
+    /// (`NSApp.activate(ignoringOtherApps:)`), which is how the app in front stopped taking
+    /// keys whenever the Corner was open (owner, 2026-09-27).
+    static func phaseChangeMayTakeKeys(
+        from previous: AppChatPromptPhase, to next: AppChatPromptPhase, cornerHasKeys: Bool
+    ) -> Bool {
+        if cornerHasKeys { return true }
+        if !next.showsInput { return true }
+        return !previous.showsInput
+    }
+
     static func panelHoldsKeyboard(
         clipboardArmed: Bool,
         selectionWantsKeyboard: Bool,
-        chatShowsInput: Bool
+        chatShowsInput: Bool,
+        pluginEditing: Bool = false
     ) -> Bool {
         owner(
             clipboardArmed: clipboardArmed,
             selectionWantsKeyboard: selectionWantsKeyboard,
-            chatShowsInput: chatShowsInput) != .none
+            chatShowsInput: chatShowsInput,
+            pluginEditing: pluginEditing) != .none
     }
 
     /// Should the App Chat field hold the caret right now?

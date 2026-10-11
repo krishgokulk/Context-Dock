@@ -169,12 +169,22 @@ enum AIProviderStreaming {
         var blocks: [Int: PartialBlock] = [:]
         var stopReason: String?
         var usage: AnthropicUsage?
+        /// Input and cache counts arrive on `message_start`; `message_delta` may carry only
+        /// the output. Without the first, a streamed round looked as if nothing was cached.
+        var startUsage: AnthropicUsage?
 
         for try await line in try await eventLines(for: request, label: "Anthropic") {
             guard let payload = jsonPayload(of: line) else { continue }
             let type = payload["type"] as? String ?? ""
 
             switch type {
+            case "message_start":
+                if let raw = (payload["message"] as? [String: Any])?["usage"],
+                    let data = try? JSONSerialization.data(withJSONObject: raw)
+                {
+                    startUsage = try? JSONDecoder().decode(AnthropicUsage.self, from: data)
+                }
+
             case "content_block_start":
                 let index = payload["index"] as? Int ?? 0
                 let block = payload["content_block"] as? [String: Any] ?? [:]
@@ -257,7 +267,18 @@ enum AIProviderStreaming {
         guard !content.isEmpty else {
             throw AIServiceError.emptyResponse("The provider streamed no content.")
         }
-        return AnthropicToolResponse(content: content, stop_reason: stopReason, usage: usage)
+        // The delta's counts are cumulative and win where present; the start fills the rest.
+        let merged: AnthropicUsage? =
+            startUsage == nil && usage == nil
+            ? nil
+            : AnthropicUsage(
+                input_tokens: usage?.input_tokens ?? startUsage?.input_tokens,
+                output_tokens: usage?.output_tokens ?? startUsage?.output_tokens,
+                cache_creation_input_tokens: usage?.cache_creation_input_tokens
+                    ?? startUsage?.cache_creation_input_tokens,
+                cache_read_input_tokens: usage?.cache_read_input_tokens
+                    ?? startUsage?.cache_read_input_tokens)
+        return AnthropicToolResponse(content: content, stop_reason: stopReason, usage: merged)
     }
 
     // MARK: - OpenAI-shaped

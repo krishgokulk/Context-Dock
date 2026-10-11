@@ -16,24 +16,26 @@ struct CornerChatPresentationTests {
         CornerChatTarget(name: "Safari", bundleID: "com.apple.Safari")
     }
 
-    /// App Chat arrows into General, so General has to arrow back — a keyboard that can
-    /// only make the trip one way leaves the user reaching for the mouse to undo it.
+    /// ← steps into General Chat from either scope and → steps back to that scope — the
+    /// Dock's ←/→ toggle (§4b W4), so a keyboard trip is never one-way.
     @Test func theArrowRouteBetweenModesRunsBothWays() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { nil }
         subject.showFrontmostApp(target: code)
 
-        // Global Context sits between the two chats, so the walk outward is two steps.
-        #expect(subject.handleLeftArrow(draft: "") == true)
-        #expect(subject.mode == .globalContext)
         #expect(subject.handleLeftArrow(draft: "") == true)
         #expect(subject.mode == .general)
-
-        #expect(subject.handleRightArrow(draft: "") == true)
-        #expect(subject.mode == .globalContext)
+        #expect(subject.handleLeftArrow(draft: "") == false)
         #expect(subject.handleRightArrow(draft: "") == true)
         #expect(subject.mode == .frontmostApp)
+
+        subject.showGlobalContext()
+        #expect(subject.handleLeftArrow(draft: "") == true)
+        #expect(subject.mode == .general)
+        #expect(subject.handleRightArrow(draft: "") == true)
+        #expect(subject.mode == .globalContext)
     }
 
     /// With something typed the arrows belong to the text, in both directions.
@@ -45,7 +47,7 @@ struct CornerChatPresentationTests {
         _ = subject.handleLeftArrow(draft: "")
 
         #expect(subject.handleRightArrow(draft: "half a question") == false)
-        #expect(subject.mode == .globalContext)
+        #expect(subject.mode == .general)
     }
 
     @Test func theHotkeySummonsFrontmostAppChat() {
@@ -64,15 +66,17 @@ struct CornerChatPresentationTests {
         let app = AppChatPromptModel(conversation: AppChatConversation())
         let general = GeneralChatWindowModel()
         let subject = CornerChatPresentation(appChat: app, generalChat: general)
+        // No live frontmost app: this test is about drafts surviving a walk, and the real
+        // read answers with whatever owns the menu bar while the suite runs (#30).
+        subject.frontmostTargetProvider = { nil }
 
         subject.cycle(target: code)
         app.query = "app draft"
-        // App → Global → General, one step per swipe.
+        // App → General, one swipe left to right.
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.mode == .general)
         general.input = "general draft"
         // Swiping back, not the hotkey: the hotkey puts the corner away now.
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
         #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
 
         #expect(subject.mode == .frontmostApp)
@@ -100,13 +104,13 @@ struct CornerChatPresentationTests {
     /// point means "come back", and it comes back pointed at whatever is in front now.
     @Test func theHotkeyBringsBackAShrunkenCorner() {
         let app = AppChatPromptModel(conversation: AppChatConversation())
+        // The badge path: with "fold on its own" on, the app rests as its bar instead.
+        app.autoShrinkEnabled = { false }
         let subject = CornerChatPresentation(
             appChat: app, generalChat: GeneralChatWindowModel())
         subject.cycle(target: code)
-        // Idling away from the suggestions closes them to the plain field first now —
-        // the dock's own results sheet works the same way — before the whole thing
-        // shrinks to the app's icon like any other untouched prompt.
-        app.standDown()
+        // The field opens plain — no suggestions sheet to close first — so one idle step
+        // is the badge.
         app.standDown()
         #expect(app.phase == .mini)
 
@@ -152,32 +156,100 @@ struct CornerChatPresentationTests {
         subject.showFrontmostApp(target: code)
 
         #expect(subject.handleLeftArrow(draft: "") == true)
-        #expect(subject.mode == .globalContext)
+        #expect(subject.mode == .general)
 
         subject.showFrontmostApp(target: code)
         #expect(subject.handleLeftArrow(draft: "editing") == false)
         #expect(subject.mode == .frontmostApp)
     }
 
+    @Test func comingBackToTheSameAppKeepsWhatWasTyped() {
+        // The real case, and the one worth protecting: you are in an app, swipe to General,
+        // swipe back. The app in front has not changed, so the draft is still there. The
+        // walk re-resolves the frontmost app by design — this pins that re-resolving to the
+        // SAME app is not a reason to lose anything.
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(appChat: app, generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { code }
+
+        subject.showFrontmostApp(target: code)
+        app.query = "half a question"
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.mode == .frontmostApp)
+        #expect(app.appBundleID == code.bundleID)
+        #expect(app.query == "half a question")
+    }
+
+    @Test func steppingIntoAnotherAppTakesYouToThatAppsChat() {
+        // The other half of the same rule, also by design: leave the corner, click a
+        // different app, come back — you are in THAT app's chat, with its own draft, not
+        // still talking to the app you started in.
+        let app = AppChatPromptModel(conversation: AppChatConversation())
+        let subject = CornerChatPresentation(appChat: app, generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { code }
+        subject.showFrontmostApp(target: code)
+        app.query = "for code"
+
+        let other = CornerChatTarget(
+            name: "Safari", bundleID: "com.apple.Safari", suggestions: [], summary: "")
+        subject.frontmostTargetProvider = { other }
+        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(app.appBundleID == other.bundleID)
+        #expect(app.query.isEmpty)
+
+        // And the first app's draft was kept, not discarded — going back finds it.
+        subject.frontmostTargetProvider = { code }
+        subject.show(.frontmostApp)
+        #expect(app.query == "for code")
+    }
+
+    /// Fingers left to right go into General Chat from either scope, right to left come back
+    /// to the scope it came from, and neither does the other's job (owner 2026-10-09: "not
+    /// either direction").
     @Test func horizontalSwipeMatchesDockDirectionAndReturnsToLatestApp() {
         let subject = CornerChatPresentation(
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { nil }
         subject.showFrontmostApp(target: code)
 
-        // From the app scope there is nothing further right, and one swipe left is one
-        // step of the same walk the arrows take.
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == false)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
-        #expect(subject.mode == .globalContext)
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == false)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
         #expect(subject.mode == .general)
-        // And nothing further left of General.
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: "") == false)
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
-        #expect(subject.handleHorizontalSwipe(deltaX: -90, draft: "") == true)
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == false)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
         #expect(subject.mode == .frontmostApp)
         #expect(subject.appChat.appBundleID == code.bundleID)
+
+        subject.showGlobalContext()
+        #expect(subject.handleHorizontalSwipe(deltaX: 90) == true)
+        #expect(subject.mode == .general)
+        #expect(subject.handleHorizontalSwipe(deltaX: -90) == true)
+        #expect(subject.mode == .globalContext)
+    }
+
+    /// ↑/↓ and vertical swipes move between the layers: Global Context above the frontmost
+    /// app, and General Chat left the way it was entered.
+    @Test func theLayerKeysMoveBetweenGlobalAndTheApp() {
+        let subject = CornerChatPresentation(
+            appChat: AppChatPromptModel(conversation: AppChatConversation()),
+            generalChat: GeneralChatWindowModel())
+        subject.frontmostTargetProvider = { nil }
+        subject.showFrontmostApp(target: code)
+
+        #expect(subject.handleLayerKey(up: true) == true)
+        #expect(subject.mode == .globalContext)
+        #expect(subject.handleLayerKey(up: true) == false)
+        #expect(subject.handleLayerKey(up: false) == true)
+        #expect(subject.mode == .frontmostApp)
+        // Nothing below the app until the Media Dock moves into the corner.
+        #expect(subject.handleLayerKey(up: false) == false)
+
+        _ = subject.handleLeftArrow(draft: "")
+        #expect(subject.handleLayerKey(up: false) == true)
+        #expect(subject.mode == .frontmostApp)
     }
 
     @Test func generalChatShrinksThenHidesAndHoverRestoresIt() {
@@ -185,8 +257,9 @@ struct CornerChatPresentationTests {
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
+        // Left to right goes into General Chat.
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
-        #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
+        #expect(subject.mode == .general)
 
         subject.standDown()
         #expect(subject.generalPhase == .mini)
@@ -206,6 +279,7 @@ struct CornerChatPresentationTests {
             appChat: AppChatPromptModel(conversation: AppChatConversation()),
             generalChat: GeneralChatWindowModel())
         subject.showFrontmostApp(target: code)
+        // Left to right goes into General Chat.
         #expect(subject.handleHorizontalSwipe(deltaX: 90, draft: ""))
 
         subject.toggleGeneralPin()

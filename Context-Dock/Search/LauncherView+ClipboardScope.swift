@@ -430,70 +430,14 @@ extension LauncherView {
         writeClipboardEntriesToPasteboard([entry])
     }
 
-    /// Puts one *or many* clips on the pasteboard.
-    ///
-    /// Multi-clip writes are built as one `NSPasteboardItem` per clip, so Finder receives
-    /// every file URL (previously a `writeObjects` + `setString` mix clobbered the first
-    /// item and Finder pasted a single file, or a path string). The joined text
-    /// representation rides on the first item so plain-text targets still paste all of it.
+    /// Puts one *or many* clips on the pasteboard — through the one writer both shells share
+    /// (`ClipboardScopeService.writeToPasteboard`), so the Dock and the Corner cannot differ
+    /// on what a mixed selection pastes as.
     func writeClipboardEntriesToPasteboard(_ entries: [ClipboardEntry]) {
         guard !entries.isEmpty else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
         // The always-on monitor must not re-import what we just wrote — a clip re-entering
         // its own history churns the list (and the image blob behind it) for no reason.
-        defer { lastCheckedPasteboardCount = pasteboard.changeCount }
-
-        let fileURLs = entries.flatMap { entry in
-            entry.filePaths.map { URL(fileURLWithPath: $0) }
-        }
-        let images: [NSImage] = entries.compactMap {
-            clipboardImageData(for: $0).flatMap(NSImage.init(data:))
-        }
-        let joinedText = clipboardContextText(from: entries)
-
-        // Files win when every selected clip is a file clip: Finder/Mail/upload fields
-        // all expect fileURL items, and pasting the paths as text is never what was meant.
-        if !fileURLs.isEmpty, images.isEmpty {
-            var items: [NSPasteboardItem] = []
-            for (index, url) in fileURLs.enumerated() {
-                let item = NSPasteboardItem()
-                item.setString(url.absoluteString, forType: .fileURL)
-                if index == 0 {
-                    item.setString(fileURLs.map(\.path).joined(separator: "\n"), forType: .string)
-                }
-                items.append(item)
-            }
-            pasteboard.writeObjects(items)
-            return
-        }
-
-        // Image clips write the actual picture(s), never the "Image" placeholder or the
-        // OCR text — pasting an image used to hand the target a string.
-        if !images.isEmpty, images.count == entries.count {
-            pasteboard.writeObjects(images)
-            return
-        }
-
-        // Mixed selection: text first (that is what a paste into a document should yield),
-        // with any file URLs appended as extra items for file-aware targets.
-        var items: [NSPasteboardItem] = []
-        if !joinedText.isEmpty {
-            let item = NSPasteboardItem()
-            item.setString(joinedText, forType: .string)
-            items.append(item)
-        }
-        for url in fileURLs {
-            let item = NSPasteboardItem()
-            item.setString(url.absoluteString, forType: .fileURL)
-            items.append(item)
-        }
-        if items.isEmpty, let image = images.first {
-            pasteboard.writeObjects([image])
-            return
-        }
-        guard !items.isEmpty else { return }
-        pasteboard.writeObjects(items)
+        lastCheckedPasteboardCount = ClipboardScopeService.writeToPasteboard(entries)
     }
 
     func selectedClipboardEntriesForPaste(fallback entry: ClipboardEntry? = nil) -> [ClipboardEntry] {
@@ -600,7 +544,9 @@ extension LauncherView {
 
     func pasteClipboardEntriesToFrontmost(_ entries: [ClipboardEntry]) {
         guard !entries.isEmpty else { return }
-        writeClipboardEntriesToPasteboard(entries)
+        let batches = ClipboardScopeService.pasteBatches(for: entries)
+        // The first paste's clips go on now; any later ones follow it, one per paste.
+        writeClipboardEntriesToPasteboard(batches[0])
 
         let targetApp = AppDelegate.shared?.previousFrontmostApp
         let targetPID = targetApp?.processIdentifier ?? 0
@@ -621,6 +567,12 @@ extension LauncherView {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 postPasteShortcut(to: targetPID)
+                for (i, batch) in batches.enumerated().dropFirst() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35 * Double(i)) {
+                        writeClipboardEntriesToPasteboard(batch)
+                        postPasteShortcut(to: targetPID)
+                    }
+                }
             }
         }
     }
@@ -1055,184 +1007,20 @@ extension LauncherView {
     }
 
     @ViewBuilder
+    /// One shared-scope result row. The drawing lives in `SharedResultRow`; this supplies the
+    /// launcher state it consults and keeps the name the call sites already use.
     func sharedResultRow(_ row: SharedResultRowModel) -> some View {
-        Button {
-            row.open()
-        } label: {
-            HStack(spacing: 12) {
-                ZStack {
-                    if let image = row.image {
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 30, height: 30)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    } else {
-                        Image(systemName: row.systemIcon)
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(accentColor(for: row.accentColorName))
-                    }
-                }
-                .frame(width: 34, height: 34)
-                .opacity(row.isEnabled ? 1 : 0.38)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(row.title)
-                        .font(.system(size: 13, weight: row.isUnread ? .semibold : .medium))
-                        .foregroundStyle(row.isEnabled ? .primary : .secondary)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        if !row.subtitle.isEmpty {
-                            Text(row.subtitle)
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        ForEach(row.badges, id: \.self) { badge in
-                            Text(badge)
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Color.primary.opacity(0.07),
-                                    in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        }
-                    }
-                }
-                .opacity(row.isEnabled ? 1 : 0.46)
-
-                Spacer(minLength: 12)
-
-                if let sourceImage = row.sourceImage {
-                    Image(nsImage: sourceImage)
-                        .resizable()
-                        .interpolation(.high)
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 18)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                        .padding(3)
-                        .background(
-                            .ultraThinMaterial,
-                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.6)
-                        )
-                }
-
-                if let trailing = row.trailingText {
-                    Text(trailing)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .fixedSize()
-                }
-
-                if row.isExpandable, let toggle = row.toggleExpand {
-                    Button {
-                        toggle()
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.secondary.opacity(0.8))
-                            .rotationEffect(.degrees(row.isExpanded ? 0 : -90))
-                            .frame(width: 22, height: 22)
-                            .background(Color.white.opacity(0.06), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(row.isExpanded ? "Collapse files" : "Expand files")
-                }
-
-                if let copy = row.copy {
-                    Button {
-                        copy()
-                    } label: {
-                        Image(systemName: "doc.on.clipboard")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary.opacity(0.72))
-                            .frame(width: 22, height: 22)
-                            .background(Color.white.opacity(0.06), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Copy")
-                }
-            }
-            .padding(.leading, row.isChild ? 34 : 12)
-            .padding(.trailing, 12)
-            .padding(.vertical, row.isChild ? 4 : 6)
-            .contentShape(Rectangle())
-            .background(
-                ZStack {
-                    if row.isFocused {
-                        Capsule(style: .continuous)
-                            .fill(.ultraThinMaterial)
-                            .matchedGeometryEffect(
-                                id: dockResultFocusEffectID,
-                                in: compactScopeFocusNamespace,
-                                properties: .frame,
-                                isSource: false
-                            )
-                        Capsule(style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(isEffectiveDark ? 0.18 : 0.24),
-                                        Color.white.opacity(isEffectiveDark ? 0.055 : 0.10),
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        Capsule(style: .continuous)
-                            .strokeBorder(
-                                LinearGradient(
-                                    colors: [
-                                        Color.white.opacity(0.34),
-                                        Color.white.opacity(0.08),
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 0.8
-                            )
-                        Capsule(style: .continuous)
-                            .strokeBorder(Color.white.opacity(0.38), lineWidth: 1.0)
-                            .blur(radius: 2.2)
-                    } else if row.isUnread {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.07))
-                    }
-                }
-            )
-            .padding(.horizontal, 8)
-            .padding(.vertical, 1)
-        }
-        .buttonStyle(.plain)
-        .disabled(!row.isEnabled)
-        .modifier(OptionalDragProviderModifier(provider: row.dragProvider))
-        .onHover { hovering in
-            guard hovering, acceptsMouseDrivenDockInteraction else { return }
-            guard !isCompactSmartScope else { return }
-            if isKeyboardNavigation {
-                isKeyboardNavigation = false
-            }
-            row.focus()
-            refreshQuickLookPreviewForCurrentFocusIfVisible()
-        }
-        .animation(.dockStandard, value: row.isFocused)
-        .contextMenu {
-            if let copy = row.copy {
-                Button("Copy") { copy() }
-            }
-            if let markRead = row.markRead {
-                Button("Mark as Read") { markRead() }
-            }
-            if let remove = row.remove {
-                Button("Remove", role: .destructive) { remove() }
-            }
-        }
+        SharedResultRow(
+            row: row,
+            isEffectiveDark: isEffectiveDark,
+            acceptsMouseDrivenDockInteraction: acceptsMouseDrivenDockInteraction,
+            isCompactSmartScope: isCompactSmartScope,
+            isKeyboardNavigation: Binding(
+                get: { isKeyboardNavigation }, set: { isKeyboardNavigation = $0 }),
+            focusEffectID: dockResultFocusEffectID,
+            focusNamespace: compactScopeFocusNamespace,
+            accentColor: { accentColor(for: $0) },
+            onFocusedByHover: { refreshQuickLookPreviewForCurrentFocusIfVisible() })
     }
 
     func notificationScopeSections() -> [SharedResultSectionModel] {

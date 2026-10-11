@@ -465,15 +465,20 @@ final class AXContextReader {
     private func findWebAreaSelection(
         in element: AXUIElement, depth: Int, visited: inout Int
     ) -> String? {
-        guard depth < 10, visited < 400 else { return nil }
+        guard depth < 14, visited < 1_500 else { return nil }
         visited += 1
 
         var roleRef: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
-        if (roleRef as? String) == "AXWebArea" {
+        let role = roleRef as? String
+        if role == "AXWebArea" {
             // Read the web area's selection; never recurse into its DOM subtree.
             return selectedText(of: element)
         }
+        // A message list is a column of rows with no web view inside. Mail's list sits before
+        // its message pane, and walking every row spent the whole budget before the pane
+        // (a WebKit view holding the highlighted text) was reached.
+        if role == "AXTable" || role == "AXOutline" || role == "AXList" { return nil }
 
         var childRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &childRef)

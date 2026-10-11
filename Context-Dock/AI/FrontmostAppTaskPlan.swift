@@ -69,7 +69,18 @@ struct FrontmostAppTaskPlan: Equatable {
         // already taught this file's neighbours.
         let actionWords = ["create ", "draft ", "reply ", "send ", "delete ", "move ", "rename ", "install ", "open ", "play ", "save ", "write ", "add ", "remove ", "update ", "run ", "close ", "quit ", "enable ", "disable ", "export "]
         let readWords = ["find ", "search ", "list ", "show ", "read ", "what ", "which ", "who ", "when ", "how many", "summar", "check "]
+        // The window verbs are deliberately not added to `actionWords` above: matched by
+        // substring they would read "how do i hide the sidebar?" as a command. They live in
+        // ChatRouteResolver.isActionRequest, which already refuses question shapes — a
+        // leading what/which/how, a trailing "?" — so asking about a verb stays a question
+        // while commanding with one is an action.
+        //
+        // Without this, "minimise code app after 2min" planned as intent .answer: the turn
+        // was handed run_adapter_action AND an inventory naming the saved action, and then
+        // told in its own task contract that its job was to answer a question. It described
+        // the action instead of calling it, which is exactly what the contract asked for.
         let hasAction = actionWords.contains(where: lower.contains)
+            || ChatRouteResolver.isActionRequest(intentQuery)
         let hasRead = readWords.contains(where: lower.contains)
         let intent: Intent = complexity == .extended ? .workflow : (hasAction ? .act : (hasRead ? .read : .answer))
 
@@ -111,8 +122,35 @@ struct FrontmostAppTaskPlan: Equatable {
         if needsPage { tools.insert("read_page") }
         if needsLink { tools.insert("read_url") }
         if hasSelection { tools.insert("read_selection") }
+        // Finding a file by name is read-only, so it is offered freely: always in Finder, and in
+        // any app when the sentence is about a file. Spotlight is often off; find_files scans.
+        let fileTerms = [" file", " pdf", " document", " spreadsheet", " folder", "passport",
+                         "invoice", "receipt", "screenshot"]
+        if id.contains("finder") || fileTerms.contains(where: { (" " + lower).contains($0) }) {
+            tools.insert("find_files")
+        }
+        // A file to hand back (a csv, a markdown note, a Word document). It is a write and always
+        // asks, so it is offered only when the sentence names one of those outputs.
+        let outputTerms = ["csv", "markdown", ".md", "docx", "word document", "text file",
+                           "spreadsheet", "save it as a file", "output file", "export"]
+        if outputTerms.contains(where: { lower.contains($0) }) {
+            tools.insert("write_output_file")
+        }
+        // The user's Shortcuts: offered only when the sentence is about them. Running one asks.
+        let shortcutTerms = ["shortcut", "automation", "run my ", "siri"]
+        if shortcutTerms.contains(where: { lower.contains($0) }) {
+            tools.formUnion(["list_shortcuts", "run_shortcut"])
+        }
         if hasAttachments { tools.formUnion(["read_attachment", "read_file"]) }
-        if hasAction { tools.formUnion(["run_menu_command", "send_keys", "window_control"]) }
+        // operate_app is offered on action turns even when Computer Use is switched off for
+        // this app, because its refusal *is* the offer: it tells the model to ask the user for
+        // permission in one line. Withholding it until the setting is on means nobody who has
+        // not already found the setting ever learns the rung exists.
+        if hasAction {
+            tools.formUnion([
+                "run_menu_command", "send_keys", "window_control", "operate_app",
+            ])
+        }
 
         return Self(goal: intentQuery.trimmingCharacters(in: .whitespacesAndNewlines), appName: appName,
                     bundleId: bundleId, intent: intent, sources: sources,

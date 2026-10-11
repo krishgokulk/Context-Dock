@@ -294,7 +294,10 @@ final class AppleNotesExecutionService {
 
     func createNote(title: String, body: String, folder: String?) async throws -> String {
         let safeTitle = escapeForAppleScript(title)
-        let safeBody = escapeForAppleScript(body)
+        // Notes stores `body` as HTML. A plain-text body arrives with its newlines collapsed
+        // — fourteen tabs came out as one unbroken paragraph — and nothing reports it: the
+        // script succeeds and the note exists. See AppleNotesBodyFormatter.
+        let safeBody = escapeForAppleScript(AppleNotesBodyFormatter.html(from: body))
         let script: String
         if let folder, !folder.isEmpty {
             let safeFolder = escapeForAppleScript(folder)
@@ -320,7 +323,7 @@ final class AppleNotesExecutionService {
 
     func appendToNote(id: String, text: String) async throws {
         let escapedID = escapeForAppleScript(id)
-        let safeText = escapeForAppleScript(text)
+        let safeText = escapeForAppleScript(AppleNotesBodyFormatter.html(from: text))
         let script = """
         tell application "Notes"
             set n to note id "\(escapedID)"
@@ -340,7 +343,8 @@ final class AppleNotesExecutionService {
             statements.append("set name of n to \"\(escapeForAppleScript(title))\"")
         }
         if let body {
-            statements.append("set body of n to \"\(escapeForAppleScript(body))\"")
+            statements.append(
+                "set body of n to \"\(escapeForAppleScript(AppleNotesBodyFormatter.html(from: body)))\"")
         }
         guard !statements.isEmpty else { return }
         let script = """

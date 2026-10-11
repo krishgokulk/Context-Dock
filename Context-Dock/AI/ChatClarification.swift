@@ -31,6 +31,19 @@ struct ChatClarification: Equatable {
     private static let maximumLabelLength = 120
     private static let maximumOptions = 6
 
+    /// What a finished assistant message is asking the user to pick, if anything.
+    ///
+    /// One rule for the Corner and the chat window: a turn that ran a step does not also ask.
+    /// The model writes the routes `find_route` listed into its answer as a numbered list
+    /// after `run_route` has already acted, and the card then offered a choice (Get New Mail,
+    /// Mail Assistant Basics...) next to "Mail quit. Verified" for a request nobody had asked
+    /// to be answered. Whatever ran is reported; a list in that text is part of the report.
+    @MainActor
+    static func offered(by message: AIChatMessage) -> ChatClarification? {
+        guard message.role == .assistant, !message.isError, !message.ranAStep else { return nil }
+        return parse(message.content)
+    }
+
     static func parse(_ text: String) -> ChatClarification? {
         let lines = text.components(separatedBy: .newlines)
 

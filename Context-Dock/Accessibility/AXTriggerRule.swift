@@ -841,7 +841,7 @@ final class AXTriggerRuleEngine {
             }
 
         case .appleScript:
-            if let script = NSAppleScript(source: value) { script.executeAndReturnError(nil) }
+            if let script = NSAppleScript(source: value) { script.executeSerialized(error: nil) }
 
         case .jxa:
             Task.detached(priority: .userInitiated) {

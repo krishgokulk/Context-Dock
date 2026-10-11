@@ -30,7 +30,6 @@ __pycache__/
 # Node
 node_modules/
 package-lock.json
-AppIcon.icon/
 
 # Google Drive upload temp
 .tmp.driveupload/
@@ -52,3 +51,6 @@ Icon?
 # it with "resource fork, Finder information, or similar detritus not allowed". 4,645 of
 # them accumulated across the tree and broke both DerivedData trees.
 Icon?
+
+# Release DMGs live on GitHub Releases, never in git.
+*.dmg

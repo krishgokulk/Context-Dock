@@ -59,11 +59,78 @@ struct DropShelfPresentationTests {
         #expect(presentation.actionableItems(in: items, fallback: nil).isEmpty)
     }
 
-    @Test func anEmptyShelfShowsNothingUntilSomethingIsDragged() {
-        #expect(shelf(holding: 0).phase == .hidden)
+    // MARK: - The icon: collapsed, open, closed
+
+    /// The icon is always there; at rest it is only the icon.
+    @Test func theShelfRestsAsAPlainIcon() {
+        #expect(shelf(holding: 0).phase == .collapsed)
+        #expect(shelf(holding: 3).phase == .collapsed)
     }
 
-    @Test func aDragOverTheEdgeInvitesADrop() {
+    @Test func clickingTheIconOpensTheShelfAndClickingAgainClosesIt() {
+        let presentation = shelf(holding: 2)
+
+        presentation.toggle()
+        #expect(presentation.phase == .expanded)
+        #expect(presentation.phase.isCardShown)
+
+        presentation.toggle()
+        #expect(presentation.phase == .collapsed)
+        #expect(!presentation.phase.isCardShown)
+    }
+
+    /// With no pins and nothing held the icon is still there and still opens: the shelf is
+    /// not something that exists only once it has been used.
+    @Test func anEmptyShelfStillOpens() {
+        let presentation = shelf(holding: 0)
+
+        presentation.toggle()
+
+        #expect(presentation.phase == .expanded)
+    }
+
+    @Test func escapeClosesAnOpenShelf() {
+        let presentation = shelf(holding: 1)
+        presentation.toggle()
+
+        presentation.collapse()
+
+        #expect(presentation.phase == .collapsed)
+    }
+
+    @Test func collapsingAClosedShelfChangesNothing() {
+        let presentation = shelf(holding: 1)
+        var changes = 0
+        presentation.onPhaseChange = { _ in changes += 1 }
+
+        presentation.collapse()
+
+        #expect(presentation.phase == .collapsed)
+        #expect(changes == 0)
+    }
+
+    @Test func everyChangeOfPhaseIsReported() {
+        let presentation = shelf(holding: 1)
+        var seen: [DropShelfPhase] = []
+        presentation.onPhaseChange = { seen.append($0) }
+
+        presentation.toggle()
+        presentation.toggle()
+
+        #expect(seen == [.expanded, .collapsed])
+    }
+
+    @Test func theCountOnTheIconIsWhatTheShelfHolds() {
+        let presentation = shelf(holding: 3)
+        #expect(presentation.itemCount == 3)
+        #expect(DropShelfIcon.spokenCount(0) == "empty")
+        #expect(DropShelfIcon.spokenCount(1) == "1 item")
+        #expect(DropShelfIcon.spokenCount(3) == "3 items")
+    }
+
+    // MARK: - A drag over the shell
+
+    @Test func aDragSightedAnywhereInvitesADropOnTheIcon() {
         let presentation = shelf(holding: 0)
 
         presentation.dragEntered()
@@ -71,72 +138,69 @@ struct DropShelfPresentationTests {
         #expect(presentation.phase == .inviting)
     }
 
-    @Test func aDragThatLeavesWithoutDroppingHidesAnEmptyShelfAgain() {
-        let presentation = shelf(holding: 0)
-        presentation.dragEntered()
-
-        presentation.dragExited()
-
-        #expect(presentation.phase == .hidden)
-    }
-
-    @Test func aDragThatLeavesWithoutDroppingLeavesAHoldingShelfHolding() {
+    @Test func aDragThatLeavesWithoutDroppingPutsTheIconBackToRest() {
         let presentation = shelf(holding: 3)
         presentation.dragEntered()
 
         presentation.dragExited()
 
-        #expect(presentation.phase == .holding)
+        #expect(presentation.phase == .collapsed)
     }
 
-    @Test func droppingSomethingLeavesTheShelfHolding() {
-        let presentation = shelf(holding: 0)
+    @Test func aDragDoesNotCloseAShelfTheUserOpened() {
+        let presentation = shelf(holding: 3)
+        presentation.toggle()
+
         presentation.dragEntered()
-
-        presentation.itemCount = 1
-        presentation.dropCompleted()
-
-        #expect(presentation.phase == .holding)
-    }
-
-    @Test func hoveringAHoldingShelfOpensTheCard() {
-        let presentation = shelf(holding: 2)
-        presentation.itemCountChanged()
-
-        presentation.hoverBegan()
+        presentation.dragExited()
 
         #expect(presentation.phase == .expanded)
     }
 
-    @Test func leavingTheCardCollapsesItBackToThePill() {
-        let presentation = shelf(holding: 2)
-        presentation.itemCountChanged()
-        presentation.hoverBegan()
-
-        presentation.hoverEnded()
-
-        #expect(presentation.phase == .holding)
-    }
-
-    /// Hovering where the shelf would be, when it holds nothing, must not open an empty
-    /// card over the user's work.
-    @Test func hoveringAnEmptyShelfOpensNothing() {
+    @Test func aDragRestingOnTheIconOpensTheShelfLikeAnyDragTarget() {
         let presentation = shelf(holding: 0)
+        presentation.dragEntered()
 
-        presentation.hoverBegan()
+        presentation.iconDragEntered()
 
-        #expect(presentation.phase == .hidden)
+        #expect(presentation.phase == .expanded)
+        #expect(presentation.isDragOverIcon)
     }
 
-    @Test func removingTheLastItemHidesTheShelf() {
-        let presentation = shelf(holding: 1)
-        presentation.itemCountChanged()
-        presentation.hoverBegan()
+    @Test func aShelfTheDragOpenedGoesWhenTheDragLeavesWithoutDropping() {
+        let presentation = shelf(holding: 0)
+        presentation.dragEntered()
+        presentation.iconDragEntered()
 
-        presentation.itemCount = 0
-        presentation.itemCountChanged()
+        presentation.iconDragExited()
+        presentation.dragExited()
 
-        #expect(presentation.phase == .hidden)
+        #expect(presentation.phase == .collapsed)
+        #expect(!presentation.isDragOverIcon)
+    }
+
+    /// A drop on the icon leaves the shelf open, so the item is seen arriving.
+    @Test func droppingOnTheIconLeavesTheShelfOpenAndItStaysOpen() {
+        let presentation = shelf(holding: 0)
+        presentation.dragEntered()
+        presentation.iconDragEntered()
+
+        presentation.itemCount = 1
+        presentation.dropCompleted()
+        presentation.dragExited()
+
+        #expect(presentation.phase == .expanded)
+        #expect(!presentation.isDragOverIcon)
+        #expect(presentation.itemCount == 1)
+    }
+
+    @Test func droppingWhileOnlyInvitedReturnsTheIconToRest() {
+        let presentation = shelf(holding: 0)
+        presentation.dragEntered()
+
+        presentation.dropCompleted()
+
+        #expect(presentation.phase == .collapsed)
     }
 
     /// A drag is not a copy. While one is in flight the clipboard pill stands down so the
@@ -161,90 +225,38 @@ struct DropShelfPresentationTests {
     }
 }
 
-// MARK: - Standing down
+// MARK: - The drag-target rule
 
-@MainActor
-struct DropShelfAutoHideTests {
-    private func holdingShelf(_ count: Int = 2) -> DropShelfPresentation {
-        let presentation = DropShelfPresentation()
-        presentation.itemCount = count
-        presentation.itemCountChanged()
-        return presentation
+struct DropShelfDragRuleTests {
+    typealias R = DropShelfDragRule
+
+    @Test func theIconIsDrawnForTheDragItIsInvitingOrTargeted() {
+        #expect(R.highlight(phase: .collapsed, dragOverIcon: false) == .none)
+        #expect(R.highlight(phase: .inviting, dragOverIcon: false) == .invited)
+        #expect(R.highlight(phase: .inviting, dragOverIcon: true) == .target)
+        #expect(R.highlight(phase: .expanded, dragOverIcon: true) == .target)
+        #expect(R.highlight(phase: .expanded, dragOverIcon: false) == .none)
     }
 
-    /// The shelf keeps what it holds, but it does not squat in the corner forever.
-    @Test func settlingIntoHoldingArmsTheAutoHide() {
-        let presentation = holdingShelf()
-
-        #expect(presentation.phase == .holding)
-        #expect(presentation.isHideArmed)
+    @Test func aDragOnTheIconOpensItUnlessItIsOpenAlready() {
+        #expect(R.expandsOnHover(dragOverIcon: true, expanded: false))
+        #expect(!R.expandsOnHover(dragOverIcon: true, expanded: true))
+        #expect(!R.expandsOnHover(dragOverIcon: false, expanded: false))
     }
 
-    @Test func reachingForTheShelfCancelsTheAutoHide() {
-        let presentation = holdingShelf()
-
-        presentation.hoverBegan()
-
-        #expect(presentation.phase == .expanded)
-        #expect(!presentation.isHideArmed)
+    /// Only the icon, and the card once it is open, take a drop. A release anywhere else on
+    /// the shell does what it did before the shelf existed.
+    @Test func onlyTheIconAndTheOpenCardTakeADrop() {
+        #expect(R.acceptsDrop(overIcon: true, overCard: false, expanded: false))
+        #expect(R.acceptsDrop(overIcon: false, overCard: true, expanded: true))
+        #expect(!R.acceptsDrop(overIcon: false, overCard: true, expanded: false))
+        #expect(!R.acceptsDrop(overIcon: false, overCard: false, expanded: true))
     }
 
-    @Test func leavingTheCardRearmsTheAutoHide() {
-        let presentation = holdingShelf()
-        presentation.hoverBegan()
-
-        presentation.hoverEnded()
-
-        #expect(presentation.phase == .holding)
-        #expect(presentation.isHideArmed)
-    }
-
-    /// Hiding is only the pill going away. Nothing is dropped from the shelf.
-    @Test func hidingItselfDoesNotDiscardWhatItHolds() {
-        let presentation = holdingShelf(3)
-
-        presentation.autoHide()
-
-        #expect(presentation.phase == .hidden)
-        #expect(presentation.itemCount == 3)
-    }
-
-    /// Once hidden the items would be stranded, so the corner still answers the pointer.
-    @Test func movingIntoTheCornerBringsAHiddenShelfBack() {
-        let presentation = holdingShelf()
-        presentation.autoHide()
-
-        presentation.hoverBegan()
-
-        #expect(presentation.phase == .expanded)
-    }
-
-    @Test func aDragRevealsAHiddenShelfToCatchTheDrop() {
-        let presentation = holdingShelf()
-        presentation.autoHide()
-
-        presentation.dragEntered()
-
-        #expect(presentation.phase == .inviting)
-    }
-
-    @Test func aNewDropBringsTheHiddenPillBack() {
-        let presentation = holdingShelf()
-        presentation.autoHide()
-
-        presentation.itemCount += 1
-        presentation.itemCountChanged()
-
-        #expect(presentation.phase == .holding)
-    }
-
-    @Test func anEmptyShelfStaysHiddenAndArmsNothing() {
-        let presentation = DropShelfPresentation()
-        presentation.itemCount = 0
-
-        presentation.itemCountChanged()
-
-        #expect(presentation.phase == .hidden)
-        #expect(!presentation.isHideArmed)
+    @Test func aDraggedPinIsNotShelvedAsText() {
+        #expect(DropShelfDropRule.shelvableText(["dockpin:1234"]) == nil)
+        #expect(DropShelfDropRule.shelvableText(["note", "dockpin:1234"]) == "note")
+        #expect(DropShelfDropRule.shelvableText(["a", "b"]) == "a\nb")
+        #expect(DropShelfDropRule.shelvableText([]) == nil)
     }
 }

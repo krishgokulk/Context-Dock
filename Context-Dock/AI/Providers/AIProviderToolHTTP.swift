@@ -37,7 +37,10 @@ struct OpenAIToolResponse: Codable {
     struct Usage: Codable {
         let prompt_tokens: Int?
         let completion_tokens: Int?
+        /// The cached part of `prompt_tokens`, on endpoints that report it.
+        let prompt_tokens_details: PromptTokensDetails?
     }
+    struct PromptTokensDetails: Codable { let cached_tokens: Int? }
     struct Choice: Codable { let message: Message; let finish_reason: String? }
     struct Message: Codable { let role: String; let content: String?; let tool_calls: [ToolCall]? }
     struct ToolCall: Codable { let id: String; let type: String; let function: FunctionCall }

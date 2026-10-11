@@ -27,12 +27,14 @@ final class CornerDockKeyboardState: ObservableObject {
     func ownerChanged(
         clipboardArmed: Bool,
         selectionWantsKeyboard: Bool,
-        chatShowsInput: Bool
+        chatShowsInput: Bool,
+        pluginEditing: Bool = false
     ) {
         owner = CornerKeyboardOwner.owner(
             clipboardArmed: clipboardArmed,
             selectionWantsKeyboard: selectionWantsKeyboard,
-            chatShowsInput: chatShowsInput)
+            chatShowsInput: chatShowsInput,
+            pluginEditing: pluginEditing)
         focusRequestToken &+= 1
     }
 

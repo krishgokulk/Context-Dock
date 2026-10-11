@@ -729,7 +729,7 @@ final class CrossAppNLHandler {
     private func appleScript(_ src: String) -> Bool {
         guard let s = NSAppleScript(source: src) else { return false }
         var err: NSDictionary?
-        s.executeAndReturnError(&err)
+        s.executeSerialized(error: &err)
         return err == nil
     }
 }

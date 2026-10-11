@@ -120,6 +120,8 @@ extension LauncherView {
         if !frozenSelection.isEmpty {
             return isDismissedFinderSelection(frozenSelection) ? [] : frozenSelection
         }
+        // A corner build or run: the captured selection is the whole truth, never the live one.
+        if SelectionActions.isScopedToCapturedSelection { return [] }
 
         let liveSelection = canonicalExistingURLs(
             axContext.selectedFilePaths.map { URL(fileURLWithPath: $0) }
@@ -1545,9 +1547,9 @@ extension LauncherView {
                 end if
             end tell
             """
-        DispatchQueue.global(qos: .userInitiated).async {
+        AppleScriptQueue.shared.async {
             var err: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&err)
+            NSAppleScript(source: script)?.executeSerialized(error: &err)
         }
     }
 

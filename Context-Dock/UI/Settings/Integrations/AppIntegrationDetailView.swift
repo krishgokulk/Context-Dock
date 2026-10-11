@@ -147,6 +147,8 @@ struct AppIntegrationDetailView: View {
                 onRemove: { action in pendingRemoval = action })
         case .resources:
             AppIntegrationResourcesView(summary: summary)
+        case .agent:
+            AppIntegrationAgentView(summary: summary)
         case .access:
             AppIntegrationAccessView(summary: summary)
         }

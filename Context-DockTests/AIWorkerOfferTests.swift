@@ -16,7 +16,7 @@ struct AIWorkerOfferTests {
         executablePath: URL(fileURLWithPath: "/bin/codex"),
         domains: [.coding, .repository, .build, .test, .systemInspection])
 
-    private func task() -> AIWorkerTask? {
+    private func makeTask() -> AIWorkerTask? {
         AIWorkerTask.bounded(
             goal: "investigate why the build fails",
             scope: .app(bundleId: "com.microsoft.VSCode"),
@@ -25,7 +25,7 @@ struct AIWorkerOfferTests {
     }
 
     @Test func eachInstalledSpecialistIsOfferedByName() throws {
-        let task = try #require(task())
+        let task = try #require(makeTask())
         let choices = AIWorkerOffer.choices(for: task, workers: [claudeCode, codex])
 
         #expect(choices.map(\.title) == ["Ask Claude Code", "Ask Codex"])
@@ -34,7 +34,7 @@ struct AIWorkerOfferTests {
     /// The id has to say which worker, or picking one runs whatever the route resolver
     /// happens to match on the words instead.
     @Test func theChoiceIdentifiesTheWorkerItRuns() throws {
-        let task = try #require(task())
+        let task = try #require(makeTask())
         let choice = try #require(
             AIWorkerOffer.choices(for: task, workers: [codex]).first)
 
@@ -49,16 +49,66 @@ struct AIWorkerOfferTests {
     }
 
     @Test func nothingIsOfferedWhenNothingIsInstalled() throws {
-        let task = try #require(task())
+        let task = try #require(makeTask())
         #expect(AIWorkerOffer.choices(for: task, workers: []).isEmpty)
     }
 
     /// The card says what it will and will not do, in the user's words, before they pick.
     @Test func theOfferStatesItsBoundary() throws {
-        let task = try #require(task())
+        let task = try #require(makeTask())
         let sentence = AIWorkerOffer.explanation(for: task, workers: [claudeCode]).lowercased()
 
         #expect(sentence.contains("read"))
         #expect(sentence.contains("code"))
+    }
+
+    // MARK: - The rung's place in the ladder
+
+    /// A worker costs minutes and money; a linked route costs neither. The specialist rung is
+    /// only reached once nothing linked could carry the request out, and this is the test that
+    /// was missing while that ordering lived as a bare `sendChoices.isEmpty` at the call site —
+    /// deleting it would have started offering a specialist beside routes that already work,
+    /// and the suite would have stayed green.
+    @Test func aRequestSomethingLinkedCanDoNeverReachesASpecialist() throws {
+        let task = try #require(makeTask())
+
+        #expect(
+            AIWorkerOffer.shouldOffer(
+                hasLinkedRoute: true, task: task, workers: [claudeCode, codex]) == false)
+    }
+
+    @Test func nothingLinkedAndRealWorkReachesIt() throws {
+        let task = try #require(makeTask())
+
+        #expect(
+            AIWorkerOffer.shouldOffer(
+                hasLinkedRoute: false, task: task, workers: [claudeCode, codex]))
+    }
+
+    /// `AIWorkerTask.bounded` returns nil for a question, or for work outside every
+    /// specialist's domain. Either way there is nothing to delegate, and the rung is skipped
+    /// rather than offering a specialist that cannot help.
+    @Test func withoutABoundedTaskThereIsNothingToOffer() {
+        #expect(
+            AIWorkerOffer.shouldOffer(
+                hasLinkedRoute: false, task: nil, workers: [claudeCode, codex]) == false)
+    }
+
+    @Test func aSpecialistIsNotOfferedWhenNoneIsInstalled() throws {
+        let task = try #require(makeTask())
+
+        #expect(AIWorkerOffer.shouldOffer(hasLinkedRoute: false, task: task, workers: []) == false)
+    }
+
+    /// The ordering question is "could anything linked do this", not "did it work". A route
+    /// that exists and failed is still a route; falling through to a worker because a command
+    /// errored is a different decision and is not this one.
+    @Test func aRouteThatExistsOutranksASpecialistEvenForWorkTheSpecialistFits() throws {
+        let task = try #require(makeTask())
+
+        #expect(task.domains.contains(.build))
+        #expect(
+            AIWorkerOffer.shouldOffer(
+                hasLinkedRoute: true, task: task, workers: [codex]) == false)
     }
 }

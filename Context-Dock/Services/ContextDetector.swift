@@ -1064,6 +1064,11 @@ class ContextDetector {
     // MARK: - AppleScript Execution
 
     private func runAppleScript(_ script: String) -> String? {
+        // Never from the test host. The suite is offline, and on a CI runner nobody answers
+        // the Automation prompt, so each Apple Event to Finder waited out its 120 s timeout —
+        // on the main thread, stalling whichever test was running (and, at launch, XCTest's
+        // attach: "timed out while preparing to run tests").
+        if AppDelegate.isHostingTests { return nil }
         let execute = { () -> String? in
             autoreleasepool {
                 var error: NSDictionary?
@@ -1075,7 +1080,7 @@ class ContextDetector {
                     return nil
                 }
 
-                let output = scriptObject.executeAndReturnError(&error)
+                let output = scriptObject.executeSerialized(error: &error)
 
                 if let error = error {
                     #if DEBUG

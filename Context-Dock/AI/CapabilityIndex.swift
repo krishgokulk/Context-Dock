@@ -47,10 +47,48 @@ struct CapabilityRecord: Equatable {
     /// Whether running it changes something. The decision layer treats a wrong write as
     /// far more expensive than a wrong read.
     let isWrite: Bool
+    /// What running it costs the person watching.
+    let surface: Surface
+
+    /// Where a capability runs, and therefore what it costs.
+    ///
+    /// The index already ranks what DoraX *can* do. This is the axis it was missing: what
+    /// doing it costs the user. They are different questions — a menu item and a CLI may be
+    /// equally able to start something, and differ entirely in whether the screen is taken.
+    /// That difference is the user's to spend.
+    ///
+    /// Ordered cheapest first, and the order is load-bearing: `<` compares cost.
+    enum Surface: Int, Equatable, Comparable, CaseIterable {
+        /// Nothing visible happens. MCP tools, adapter actions, read-only CLI, Apple readers.
+        case headless = 0
+        /// The app comes forward. Menu commands, URL schemes, a CLI that launches something.
+        case opensApp = 1
+        /// DoraX drives the interface — AX press first, pixel click last. The most expensive
+        /// surface and the least verifiable, which is why it is last and why it is never
+        /// taken while something cheaper can do the same job.
+        case takesScreen = 2
+        /// Runs nothing. A skill, or a suggestion that the user could link something.
+        case advisory = 3
+
+        static func < (lhs: Surface, rhs: Surface) -> Bool { lhs.rawValue < rhs.rawValue }
+
+        /// What picking this costs, in the user's terms rather than the mechanism's. The
+        /// wording matches `ChatRoute.Kind.routeLabel`, which arrived at the same phrasing
+        /// for the same reason: "no window opens" is what people actually choose on.
+        var costLabel: String {
+            switch self {
+            case .headless: return "no window opens"
+            case .opensApp: return "opens the app"
+            case .takesScreen: return "DoraX drives the screen"
+            case .advisory: return "nothing runs"
+            }
+        }
+    }
 
     init(
         id: String, app: String = "", kind: Kind, title: String,
-        description: String = "", keywords: [String] = [], isWrite: Bool
+        description: String = "", keywords: [String] = [], isWrite: Bool,
+        surface: Surface = .headless
     ) {
         self.id = id
         self.app = app
@@ -59,6 +97,7 @@ struct CapabilityRecord: Equatable {
         self.description = description
         self.keywords = keywords
         self.isWrite = isWrite
+        self.surface = surface
     }
 }
 

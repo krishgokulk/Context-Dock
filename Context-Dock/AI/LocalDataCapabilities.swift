@@ -695,6 +695,10 @@ enum LocalDataCapabilities {
                 guard !docs.isEmpty else {
                     return .init(success: true, output: "No recent documents.")
                 }
+                // Rows as well as prose: the surface can then offer Preview, Open and Show in
+                // Finder instead of printing a path for the user to retype.
+                ChatResultRowCollector.shared.addFiles(
+                    docs.map(\.url), scope: request.chatScope)
                 return .init(
                     success: true,
                     output: docs.map { "- \($0.name) — \($0.url.path)" }
@@ -723,6 +727,9 @@ enum LocalDataCapabilities {
                 guard !results.isEmpty else {
                     return .init(success: true, output: "No indexed files match “\(query)”.")
                 }
+                ChatResultRowCollector.shared.addFiles(
+                    results.compactMap { $0.filePath.map(URL.init(fileURLWithPath:)) },
+                    scope: request.chatScope)
                 return .init(
                     success: true,
                     output: results.map { "- \($0.title) — \($0.subtitle)" }

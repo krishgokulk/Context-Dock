@@ -18,7 +18,9 @@ struct GlobalIntegrationDetailView: View {
             header
             Divider()
             Picker("Section", selection: $selectedTab) {
-                ForEach(IntegrationDetailTab.allCases) { tab in
+                // Every tab but Agent: a global capability belongs to no app, so it has no
+                // AGENT.md to write.
+                ForEach(IntegrationDetailTab.allCases.filter { $0 != .agent }) { tab in
                     Text(tab.title).tag(tab)
                 }
             }
@@ -69,6 +71,10 @@ struct GlobalIntegrationDetailView: View {
             resources
         case .access:
             access
+        // A global capability has no app to write a profile for; the tab is hidden for it
+        // rather than shown empty, and this case exists so the compiler keeps that true.
+        case .agent:
+            EmptyView()
         }
     }
 

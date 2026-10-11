@@ -156,7 +156,7 @@ final class AXActionResolver {
 
         await Task.detached(priority: .userInitiated) { () -> Void in
             var error: NSDictionary?
-            _ = NSAppleScript(source: script)?.executeAndReturnError(&error)
+            _ = NSAppleScript(source: script)?.executeSerialized(error: &error)
         }.value
     }
 }

@@ -22,6 +22,9 @@ enum AppChatPromptMetrics {
     /// Attached files, as chips with a thumbnail — taller than the old bare capsules, and
     /// shared with General so one attachment is the same object in both modes.
     static let attachmentRowHeight: CGFloat = 46
+    /// Files the user is about to send, as tiles the way the chat apps show them: the
+    /// picture itself for an image, a card for anything else. 60pt tile + 8pt above and below.
+    static let attachmentTileRowHeight: CGFloat = 76
     /// The conversation, with nothing in it yet: header, one exchange's worth of room, and
     /// the composer.
     static let chatHeight: CGFloat = 340
@@ -50,10 +53,179 @@ enum AppChatPromptMetrics {
     /// gap + hairline + gap between the running section and the pins.
     static let dockDividerSpan: CGFloat = 17
     static let dockHeight: CGFloat = 68
+    /// How long the dock takes to become the field, and the field the dock. One number for
+    /// the shell, both layers' crossings and the strip's own gather, so nothing in the
+    /// corner arrives at a different time from anything else.
+    static let dockMorphDuration: TimeInterval = 0.9
     /// The field, folded: a magnifier as the strip's first item, one icon slot wide.
     static var dockSearchStubSpan: CGFloat { dockIconSize + dockIconGap }
-    /// Wider than the field, never wider than the corner can hold.
+    /// The least room the row is ever given: wider than the field, and what a caller that
+    /// knows nothing about the screen gets. The corner passes the real budget — the screen
+    /// it is on, less the margins the window keeps — so the row grows with what is in it
+    /// the way the Dock does, rather than stopping at a card and a half and spilling into
+    /// `+N` with half the screen empty beside it.
     static var dockMaximumWidth: CGFloat { width * 1.6 }
+
+    /// What the strip may grow to on a screen of this width. The window already spans the
+    /// screen at every anchor, so the only thing that was holding the row in was this
+    /// number. Never below the minimum, so a tiny display still draws a usable row and
+    /// overflows the rest.
+    static func dockMaximumWidth(onScreenOf visibleWidth: CGFloat) -> CGFloat {
+        max(dockMaximumWidth, visibleWidth - 2 * cornerScreenMargin)
+    }
+
+    /// The margin `CornerDockController.position()` keeps between the shell and the edge
+    /// of the screen, named here so the two cannot drift apart.
+    static let cornerScreenMargin: CGFloat = 20
+
+    // MARK: The field's row of running apps
+
+    /// The app field's chip ("Safari"), in pill slots: `fieldMinimumWidth` is measured for
+    /// the Global field, which leads with a 22-point magnifier instead.
+    static let appFieldChromeSlots = 3
+
+    /// What the app field draws after its pill — "+" always, send once something is typed
+    /// — which the strip's pill must end before. Global's field has neither, so there the
+    /// pill ends at the strip's trailing region; in a Context Dock it sat over both buttons.
+    static func appFieldTrailingReserve(typed: Bool) -> CGFloat {
+        // "+" is a 22-point control, send and the Drop Shelf's 26-point circles, 10 of row
+        // spacing before each.
+        typed ? 104 : 68
+    }
+
+    /// How many icons the 372-point field was built to hold. Past this it grows.
+    static let matchIconBaseCount = 4
+    /// What one more icon costs the field: `ContextMatchDock` draws an 18-point icon with
+    /// 7 points of spacing before it.
+    static let matchPillIconSpan: CGFloat = 25
+    /// A dock icon drawn at the pill's 18 points.
+    static var pillIconScale: CGFloat { 18 / dockIconSize }
+
+    /// `ContextMatchDock`'s capsule, measured: 18-point icons 7 apart, a 24-point `+N`, and
+    /// 8 of padding each side. The Global field keeps this room and the strip's own icons
+    /// shrink into it, so both have to agree on the number.
+    /// The row spacing before the app bar's pill.
+    static let appBarPillSpacing: CGFloat = 10
+
+    /// The app bar's pill in a fitted field, or 0 where there is none. It fits its icons —
+    /// one pin is one icon's capsule, not an empty bar (owner 2026-10-05) — up to
+    /// `appBarFixedPillWidth`, past which the rest scroll inside it. The field itself is the
+    /// shell's one width either way (#189), so the pill growing never moves the field; it
+    /// only takes room from the text.
+    @MainActor
+    static func appBarPillWidth(for model: AppChatPromptModel) -> CGFloat {
+        guard model.showsTabBar,
+            !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
+        else { return 0 }
+        let icons = model.allRunningIcons
+        let pins = icons.filter { model.isAppPinIcon($0.id) }.count
+        return appBarPillWidth(
+            visibleIcons: icons.count, divider: pins > 0 && pins < icons.count)
+    }
+
+    /// The pill for this many icons: fitted to them, never wider than the cap.
+    static func appBarPillWidth(visibleIcons icons: Int, divider: Bool) -> CGFloat {
+        min(appBarPillWidth(icons: max(1, icons), divider: divider), appBarFixedPillWidth)
+    }
+
+    /// The app bar's widest capsule: room for `AppChatPromptModel.appBarVisibleIcons` icons
+    /// and the hairline between pins and tabs; the rest scroll sideways inside it (#189).
+    static var appBarFixedPillWidth: CGFloat {
+        appBarPillWidth(icons: AppChatPromptModel.appBarVisibleIcons, divider: true)
+    }
+
+    /// The field's running-apps capsule: `matchIconBaseCount` icons and the overflow arrow's
+    /// slot. Fixed (#189): the rest scroll inside it, and a launch or a quit never changes
+    /// the dock's width.
+    static var runningPillWidth: CGFloat { pillWidth(icons: matchIconBaseCount, overflow: true) }
+
+    /// The capsule for this many running apps: just as wide as they are while they fit
+    /// (owner 2026-10-06: three apps left an empty slot beside them), the fixed width with
+    /// its arrow once they scroll. The field's width never changes either way.
+    static func runningPillWidth(apps count: Int) -> CGFloat {
+        count > matchIconBaseCount
+            ? runningPillWidth : pillWidth(icons: max(1, count), overflow: false)
+    }
+
+    /// The app bar's icons: the size of the field's send button (owner 2026-09-26: the
+    /// 18-point pill icons read too small beside it).
+    static let appBarIconSize: CGFloat = 24
+    static let appBarIconGap: CGFloat = 8
+    static let appBarPillHeight: CGFloat = 34
+
+    /// The app bar's capsule, measured: its icons, the hairline between pins and tabs, the
+    /// gaps between them all, and 8 of padding each side.
+    static func appBarPillWidth(icons: Int, divider: Bool) -> CGFloat {
+        guard icons > 0 else { return 0 }
+        let items = icons + (divider ? 1 : 0)
+        return CGFloat(icons) * appBarIconSize + (divider ? 1 : 0)
+            + CGFloat(items - 1) * appBarIconGap + 16
+    }
+
+    /// The width a result card shares with its field: the shell's one width (#189), so the
+    /// card above never stands wider or narrower than the bar below, in any scope.
+    @MainActor
+    static func boardWidth(for model: AppChatPromptModel) -> CGFloat {
+        shellSize(for: model, phase: .prompt).width
+    }
+
+    /// The corner's size for this model in `phase`: the one reading the field draws and the
+    /// window hit-tests, so the two cannot drift apart. Before #189 the pill and the window
+    /// each kept a copy of this call, and the window's had lost the selection row.
+    @MainActor
+    static func shellSize(
+        for model: AppChatPromptModel, phase: AppChatPromptPhase,
+        clipboardVisible: Bool? = nil, feedbackVisible: Bool? = nil, hasApproval: Bool? = nil
+    ) -> CGSize {
+        // The strip's own composition, not the raw counts: an app that is pinned and
+        // running is one icon there, and a pin this build cannot resolve is none.
+        let tools = model.dockToolCount(
+            clipboardVisible: clipboardVisible
+                ?? ClipboardPanelController.shared.model.showsDockIcon,
+            feedbackVisible: feedbackVisible ?? (CornerActionFeedback.shared.glyph != nil))
+        let composition = DockStripPlan.make(
+            running: model.stripIcons, pins: model.stripPins, tools: tools).composition
+        return size(
+            for: phase,
+            suggestions: model.listRowCount,  // list rows live in AppChatListCard now
+            messages: model.messages.count,
+            hasApproval: hasApproval ?? (ApprovalCenter.shared.pending(for: .corner) != nil),
+            attachments: model.attachments.count,
+            hasSelectionRow: model.isShowingSelectionScope,
+            running: composition.unpinnedRunningCount,
+            pinnedApps: composition.pinnedAppCount,
+            pinned: composition.otherPins.count,
+            pinnedExtraWidth: composition.widgetExtraWidth,
+            tools: tools,
+            promptIcons: model.promptIconCount,
+            fieldHeight: fieldHeight(global: model.usesDockHeight),
+            fitsContent: model.fitsField,
+            maximumWidth: DockStripPlan.screenBudget,
+            appBarPillWidth: appBarPillWidth(for: model),
+            shellWidth: DockShellWidth.current,
+            fieldLines: model.fieldLines)
+    }
+
+    static func pillWidth(icons: Int, overflow: Bool) -> CGFloat {
+        let items = icons + (overflow ? 1 : 0)
+        guard items > 0 else { return 0 }
+        return CGFloat(icons) * 18 + (overflow ? 24 : 0) + CGFloat(items - 1) * 7 + 16
+    }
+
+    /// How wide the field is with `icons` running apps beside it. A "+N" is a number you
+    /// cannot click, so the field grows to hold the row instead of cutting it — up to the
+    /// screen's budget, past which the rest really does become "+N".
+    static func promptWidth(icons: Int, maximumWidth: CGFloat = dockMaximumWidth) -> CGFloat {
+        let extra = CGFloat(max(0, icons - matchIconBaseCount)) * matchPillIconSpan
+        return min(max(width, maximumWidth), width + extra)
+    }
+
+    /// The other side of the same arithmetic: how many icons fit before the field would
+    /// grow past its budget.
+    static func matchIconCapacity(maximumWidth: CGFloat = dockMaximumWidth) -> Int {
+        let room = max(0, maximumWidth - width)
+        return matchIconBaseCount + Int(room / matchPillIconSpan)
+    }
 
     struct DockLayout: Equatable {
         /// Running icons actually drawn; the rest are the `+N` pill.
@@ -62,7 +234,42 @@ enum AppChatPromptMetrics {
         /// Clipboard / selection affordances drawn after the pins.
         let tools: Int
         let width: CGFloat
+        /// The strip's inset at both ends. The magnifier and the pins sit on the edges.
+        var leadingInset: CGFloat = AppChatPromptMetrics.dockInset
+        /// Room the shell holds beyond what the row needs, for the field it opens into,
+        /// shared out as extra gap before each app. Kept as edge margin it pushed the
+        /// magnifier in from the corner; kept in one piece after the magnifier it read as a
+        /// hole. Spread over every gap it is a few points each.
+        var appSpread: CGFloat = 0
+        /// The pins and the corner's tools, from the last app to the trailing inset. This
+        /// region stays put when the field opens — only what is before it morphs.
+        var trailingRegion: CGFloat = 0
     }
+
+    /// The least text the field keeps room for beside its pills.
+    static let fieldTextMinimum: CGFloat = 120
+
+    /// What the open field needs before the strip's trailing region: the inset that puts
+    /// its magnifier where the strip's is, the magnifier, room for the placeholder, and a
+    /// capsule of `icons` small pills.
+    static func fieldMinimumWidth(icons: Int) -> CGFloat {
+        let chrome: CGFloat = fieldLeadingPadding(stripInset: dockInset) + 22 + 10
+            + fieldTextMinimum + 10 + dockInset
+        guard icons > 0 else { return chrome }
+        // 10 of spacing, then the capsule: 8 of padding each side, 7 between icons.
+        return chrome + 10 + 9 + CGFloat(icons) * matchPillIconSpan
+    }
+
+    /// Puts the field's 22-point magnifier on the centre of the strip's folded-field slot,
+    /// so the icon the pointer rested on is the one the field opens from.
+    static func fieldLeadingPadding(stripInset: CGFloat) -> CGFloat {
+        stripInset + dockIconSize / 2 - 11
+    }
+
+    /// Every open field is the Dock's input bar height, 56 (owner 2026-10-05: the Corner
+    /// stood taller than the Dock). Global's included: its strip keeps the dock's 68 at rest
+    /// and, while the field is up, centres its pins and shelf in the field's height.
+    static func fieldHeight(global: Bool) -> CGFloat { inputHeight }
 
     private static func runWidth(_ count: Int) -> CGFloat {
         guard count > 0 else { return 0 }
@@ -73,12 +280,41 @@ enum AppChatPromptMetrics {
     /// the running section is what gives way, keeping one slot for the `+N` pill.
     /// `tools` are the corner's own affordances — clipboard, selection — that sit in the
     /// field's row when it is up and join the strip when it is not.
-    static func dockLayout(running: Int, pinned: Int, tools: Int = 0) -> DockLayout {
-        let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) : 0
+    ///
+    /// `pinnedApps` are pinned *and* share the app region with the running ones, with no
+    /// divider between them, because an app is one icon whether it is pinned, running or
+    /// both. Like every other pin they are never dropped; `running` here counts only the
+    /// apps nobody pinned, and those are what give way. `pinned` is the rest of the pins —
+    /// commands, tools, files — which keep their own region after the divider.
+    ///
+    /// `pinnedExtraWidth` is what the pins region needs beyond one icon per pin: a pinned
+    /// plugin drawing as a bar widget is `slots` icons wide, and the shell has to be measured
+    /// for the tile that is drawn, not the icon that is not.
+    static func dockLayout(
+        running: Int, pinnedApps: Int = 0, pinned: Int, pinnedExtraWidth: CGFloat = 0,
+        tools: Int = 0, maximumWidth: CGFloat = dockMaximumWidth,
+        /// The field this strip opens into, by its pill count. Given, the strip and the
+        /// field are one width — the shell does not change size when the magnifier opens,
+        /// only what is drawn in it.
+        fieldIcons: Int? = nil,
+        /// The shell's one width (`DockShellWidth`, #189). Given, the row is cut to it —
+        /// what does not fit becomes `+N` — and drawn at its own width, compact: at rest the
+        /// dock is as wide as its icons, and only the field opens to the launcher's width
+        /// (owner 2026-10-05).
+        shellWidth: CGFloat? = nil
+    ) -> DockLayout {
+        let pinsWidth = pinned > 0 ? dockDividerSpan + runWidth(pinned) + pinnedExtraWidth : 0
         let toolsWidth = tools > 0 ? dockDividerSpan + runWidth(tools) : 0
-        let available = dockMaximumWidth - dockSearchStubSpan - 2 * dockInset - pinsWidth - toolsWidth
-        // How many running icons fit in what is left, at least one slot.
-        let capacity = max(1, Int((available + dockIconGap) / (dockIconSize + dockIconGap)))
+        // Pinned apps take their slots out of the same region, gap included, before the
+        // running ones are counted.
+        let pinnedAppsWidth = pinnedApps > 0
+            ? CGFloat(pinnedApps) * (dockIconSize + dockIconGap) : 0
+        let available = (shellWidth ?? maximumWidth) - dockSearchStubSpan - 2 * dockInset
+            - pinsWidth - toolsWidth - pinnedAppsWidth
+        // How many running icons fit in what is left. At least one slot unless pinned apps
+        // are already holding the region, in which case a strip of only pins is honest.
+        let capacity = max(
+            pinnedApps > 0 ? 0 : 1, Int((available + dockIconGap) / (dockIconSize + dockIconGap)))
         let shownRunning: Int
         let overflow: Int
         if running <= capacity {
@@ -89,10 +325,26 @@ enum AppChatPromptMetrics {
             overflow = running - shownRunning
         }
         let runningSlots = shownRunning + (overflow > 0 ? 1 : 0)
-        let width = dockSearchStubSpan + 2 * dockInset + runWidth(max(1, runningSlots))
-            + pinsWidth + toolsWidth
+        let natural = dockSearchStubSpan + 2 * dockInset
+            + runWidth(max(1, pinnedApps + runningSlots)) + pinsWidth + toolsWidth
+        if shellWidth != nil {
+            // Wider than the shell only when the pins alone overrun the screen: they are
+            // never dropped.
+            return DockLayout(
+                shownRunning: shownRunning, overflow: overflow, tools: tools, width: natural,
+                trailingRegion: pinsWidth + toolsWidth)
+        }
+        guard let fieldIcons else {
+            return DockLayout(
+                shownRunning: shownRunning, overflow: overflow, tools: tools, width: natural)
+        }
+        let trailingRegion = pinsWidth + toolsWidth
+        let width = max(
+            natural, min(fieldMinimumWidth(icons: fieldIcons) + trailingRegion, maximumWidth))
         return DockLayout(
-            shownRunning: shownRunning, overflow: overflow, tools: tools, width: width)
+            shownRunning: shownRunning, overflow: overflow, tools: tools, width: width,
+            appSpread: (width - natural) / CGFloat(max(1, pinnedApps + runningSlots)),
+            trailingRegion: trailingRegion)
     }
 
     /// What sits over the field — an approval waiting on a yes, attached files — is part
@@ -102,8 +354,8 @@ enum AppChatPromptMetrics {
         -> CGFloat
     {
         var result: CGFloat = 0
-        if hasApproval { result += ApprovalCard.height + 1 }
-        if attachments > 0 { result += attachmentRowHeight }
+        if hasApproval { result += ApprovalCard.reservedHeight(for: .dock) + 1 }
+        if attachments > 0 { result += attachmentTileRowHeight }
         if hasSelectionRow { result += attachmentRowHeight }
         return result
     }
@@ -116,23 +368,67 @@ enum AppChatPromptMetrics {
         attachments: Int = 0,
         hasSelectionRow: Bool = false,
         running: Int = 0,
+        pinnedApps: Int = 0,
         pinned: Int = 0,
-        tools: Int = 0
+        pinnedExtraWidth: CGFloat = 0,
+        tools: Int = 0,
+        /// Running apps drawn in the field's own pill, which the field grows to hold.
+        promptIcons: Int = 0,
+        /// The Global field's height — the strip's — or the composer's own.
+        fieldHeight: CGFloat = inputHeight,
+        /// The field has no strip to line up with (an app with nothing to show beside it):
+        /// the shell fits the field instead of the Global strip's width, which left glass
+        /// standing empty past the field's own end.
+        fitsContent: Bool = false,
+        /// The width the row was planned against. The shell and the row are two readings
+        /// of one number and must be given the same budget, or the row overflows the glass
+        /// it is drawn in and the leading magnifier is what gets clipped.
+        maximumWidth: CGFloat = dockMaximumWidth,
+        /// An app's bar beside "+" in a fitted field: the pill's own width, which the field
+        /// adds to its base rather than squeezing the chip and the text to make room. Kept
+        /// while typing too, so the field does not jump as the pill steps aside.
+        appBarPillWidth: CGFloat = 0,
+        /// The shell's one width (`DockShellWidth`, #189). Given, every phase but the mini
+        /// icon is drawn at it — Global's strip and field, an app's fitted field, the chat.
+        shellWidth: CGFloat? = nil,
+        /// How many lines the field's text takes (`DockFieldLines`): the field grows upward
+        /// for them, never sideways.
+        fieldLines: Int = 1
     ) -> CGSize {
         let sheet = sheetHeight(
             hasApproval: hasApproval, attachments: attachments, hasSelectionRow: hasSelectionRow)
         switch phase {
         case .hidden, .mini:
             return miniSize
-        case .dock:
+        // `where` binds to one pattern only: both are spelled out.
+        case .prompt where fitsContent, .suggesting where fitsContent:
+            let pill = appBarPillWidth > 0 ? appBarPillWidth + appBarPillSpacing : 0
             return CGSize(
-                width: dockLayout(running: running, pinned: pinned, tools: tools).width,
-                height: dockHeight)
-        case .prompt, .suggesting:
-            // The list is its own card above this one, so the field stays a field.
-            return CGSize(width: width, height: inputHeight + sheet)
+                width: shellWidth ?? (width + pill),
+                height: DockFieldLines.fieldHeight(base: fieldHeight, lines: fieldLines) + sheet)
+        case .dock, .prompt, .suggesting:
+            // One width for the strip and the field it opens into, so the magnifier opening
+            // is the only thing that moves: the wider of the row's own width and what the
+            // field needs for its pills.
+            // With the shell's width (#189): the dock at rest fits its icons, and the field
+            // opens to the launcher's width — never narrower than the row it opened from.
+            let row = dockLayout(
+                running: running, pinnedApps: pinnedApps, pinned: pinned,
+                pinnedExtraWidth: pinnedExtraWidth, tools: tools,
+                maximumWidth: maximumWidth, fieldIcons: promptIcons, shellWidth: shellWidth
+            ).width
+            let width = phase == .dock ? row : max(row, shellWidth ?? row)
+            return phase == .dock
+                ? CGSize(width: width, height: dockHeight)
+                : CGSize(
+                    width: width,
+                    height: DockFieldLines.fieldHeight(base: fieldHeight, lines: fieldLines)
+                        + sheet)
         case .chat:
-            return CGSize(width: width, height: chatHeight(messages: messages) + sheet)
+            return CGSize(
+                width: shellWidth ?? width,
+                height: chatHeight(messages: messages) + DockFieldLines.extraHeight(lines: fieldLines)
+                    + sheet)
         }
     }
 }
@@ -144,28 +440,80 @@ struct AppChatPromptPill: View {
     /// Watched, not asked once: the clipboard can arm while this field is already up, and
     /// the caret has to leave when it does.
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
+    @ObservedObject private var shelf = DropShelfController.shared.presentation
+    @ObservedObject private var shelfStore = DropShelfController.shared.store
     @ObservedObject private var selection = CornerDockController.shared.selection
+    @ObservedObject private var actionFeedback = CornerActionFeedback.shared
     @FocusState private var fieldFocused: Bool
     @State private var pointerInside = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
 
-    private var size: CGSize {
-        AppChatPromptMetrics.size(
-            for: model.phase,
-            suggestions: model.listRowCount,  // list rows live in AppChatListCard now
-            messages: model.messages.count,
-            hasApproval: approvals.pending(for: .corner) != nil,
-            attachments: model.attachments.count,
-            hasSelectionRow: model.isShowingSelectionScope,
-            running: model.stripIcons.count,
-            pinned: DockPinStore.shared.pins.count,
-            tools: model.dockToolCount(clipboardVisible: clipboard.phase.isVisible))
+    private var size: CGSize { size(for: model.phase) }
+
+    /// The strip the Global field opens from, for lining the two up: its inset puts the
+    /// field's magnifier on the strip's, and its trailing region is kept clear. Nil outside
+    /// Global and in chat, where the field is the composer and nothing is shared.
+    private var globalStrip: AppChatPromptMetrics.DockLayout? {
+        // A fitted field shares nothing with the strip: it is its own compact width.
+        guard model.usesDockShell, !model.fitsField, model.phase != .chat else { return nil }
+        return stripPlan.layout
+    }
+
+    private var stripPlan: DockStripPlan {
+        DockStripPlan.make(
+            running: model.stripIcons, pins: model.stripPins,
+            tools: stripToolCount, fieldIcons: model.promptIconCount)
+    }
+
+    private var stripToolCount: Int {
+        model.dockToolCount(
+            clipboardVisible: clipboard.showsDockIcon,
+            feedbackVisible: actionFeedback.glyph != nil)
+    }
+
+    private func size(for phase: AppChatPromptPhase) -> CGSize {
+        // The same reading the window hit-tests (`shellSize`), fed the states this view
+        // watches so a change to any of them redraws it.
+        AppChatPromptMetrics.shellSize(
+            for: model, phase: phase,
+            clipboardVisible: clipboard.showsDockIcon,
+            feedbackVisible: actionFeedback.glyph != nil,
+            hasApproval: approvals.pending(for: .corner) != nil)
+    }
+
+    /// ↑/↓ with no list to move through change layer, as the Dock's keys do — on an empty
+    /// field only, and never from inside a conversation.
+    private func layerKey(up: Bool) -> KeyPress.Result {
+        guard model.query.isEmpty, model.phase != .chat else { return .ignored }
+        return CornerDockController.shared.chatPresentation.handleLayerKey(up: up)
+            ? .handled : .ignored
+    }
+
+    /// ↑/↓ in the field. With a row highlighted, or something typed, they move through the
+    /// list. On an empty field with nothing highlighted the layer comes first — otherwise the
+    /// app scope's own action list, which ↑ used to open, caught ↑ and Global was
+    /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
+    /// until the Media Dock moves in) the list opens as before.
+    private func arrow(up: Bool) -> KeyPress.Result {
+        // A command's list on screen takes the arrows: the field keeps the keyboard for
+        // typing, so the list cannot hear them itself (owner 2026-10-08).
+        if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
+            return .handled
+        }
+        if AppChatPromptModel.layerKeyComesFirst(
+            query: model.query, hasFocusedRow: model.focusedRow != nil,
+            steppedInFromGlobal: model.returnsToGlobalScope),
+            layerKey(up: up) == .handled
+        {
+            return .handled
+        }
+        return model.moveMenuFocus(by: up ? -1 : 1) ? .handled : .ignored
     }
 
     var body: some View {
         Group {
-            if model.isGlobalScope {
+            if model.usesDockShell {
                 globalBody
             } else {
                 legacyBody
@@ -179,8 +527,29 @@ struct AppChatPromptPill: View {
         // decided has no change to react to, which is exactly how the clipboard ended up
         // armed and keyless.
         .onAppear { syncFocus() }
+        // The phase is now part of the answer to "may this field hold the caret", so it has
+        // to be asked again when the phase moves — expanding from the dock changes nothing
+        // about the keyboard owner.
+        .onChange(of: model.phase) { _, phase in
+            syncFocus()
+            // The app's card belongs to the open field; folding or starting a conversation
+            // puts it away.
+            if phase != .prompt, phase != .suggesting { model.isShowingScopeCard = false }
+        }
+        // Typing asks the field a question: the results take the board back.
+        .onChange(of: model.query) { _, query in
+            if !query.isEmpty { model.isShowingScopeCard = false }
+        }
         .onChange(of: keyboardState.owner) { _, _ in syncFocus() }
         .onChange(of: keyboardState.focusRequestToken) { _, _ in syncFocus() }
+        // Global → a scope swaps `globalBody` for `legacyBody`, and the field in the new
+        // branch is a new text field. `fieldFocused` was already true, so nothing gave it the
+        // caret: Finder opened with no caret and the next → went nowhere (2026-09-26). Let go
+        // and claim again, so the field that is on screen is the one that has it.
+        .onChange(of: model.usesDockShell) { _, _ in reclaimCaretAfterScopeChange() }
+        // The same for every app → walks into: Finder → Safari swaps the shell back, and an
+        // app after that keeps it, and each one opened without a caret until clicked.
+        .onChange(of: model.appBundleID) { _, _ in reclaimCaretAfterScopeChange() }
         // A panel minimised or restored changes the pills without anything being typed, so
         // the row has to be asked again rather than waiting for the next keystroke.
         .onReceive(NotificationCenter.default.publisher(for: .minimizedPanelsChanged)) { _ in
@@ -188,37 +557,174 @@ struct AppChatPromptPill: View {
         }
     }
 
-    /// Global Context: field and strip are two glass shapes in one container, so when the
-    /// field goes the container morphs it into the strip, and when the strip goes it
-    /// morphs back into the field. Reduced motion crossfades.
-    private var globalBody: some View {
-        GlassEffectContainer(spacing: 24) {
-            ZStack(alignment: .bottomTrailing) {
-                if model.phase.showsInput {
-                    inputStack
-                        .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-                        .glassEffectID("field", in: glassNamespace)
-                        .transition(reduceMotion ? .opacity : .identity)
-                }
-                if model.phase == .dock {
-                    CornerDockStrip(model: model)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .glassEffectID("dock", in: glassNamespace)
-                        .transition(reduceMotion ? .opacity : .identity)
-                }
-                if model.phase == .mini {
-                    miniContent
-                        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-                        .glassEffectID("field", in: glassNamespace)
-                }
-            }
+    /// Global Context: one glass shell whose frame and corner radius carry the whole
+    /// morph, with the field and the strip mounted inside it the whole time and crossing
+    /// over by opacity.
+    ///
+    /// This replaced two glass shapes swapped by `glassEffectID`, and the reason is not
+    /// taste. A layer that mounts and unmounts has to be given a transition to move at all,
+    /// and any transition that changes geometry on the layer holding the TextField and its
+    /// FocusState re-lays that subtree out every frame — SwiftUI's FocusBridge then rebuilds
+    /// the window's key view loop every frame and the app hangs on hover (every sample in
+    /// `updateDefaultKeyViewLoop`). Nothing here mounts during the morph and no inner width
+    /// changes: `inputStack` is laid out at its full width from the first frame and the
+    /// shell simply reveals more of it. Layout stays still; only the shell and opacity move.
+    /// This is the shape `legacyBody` has always used, for the same reason.
+    private var globalInputWidth: CGFloat {
+        // The field stands apart from its apps (Part B) — Global's, and an app bar's — so its
+        // text stack is laid out at the field's own width in every phase but a conversation —
+        // the dock's included, where it is invisible — and the morph still moves no inner
+        // width: the glass shrinks from the dock's width onto a stack that is already that wide.
+        if model.phase != .chat {
+            return CornerDockController.shared.splitFieldLayoutWidth
         }
-        .frame(width: size.width, height: size.height, alignment: .bottomTrailing)
-        .animation(
-            reduceMotion ? .easeOut(duration: 0.15) : .smooth(duration: 0.45),
-            value: model.phase)
+        // The shell's one width (#189), in every phase — the strip's, the field's and the
+        // conversation's alike.
+        return size(for: .prompt).width
+    }
+
+    /// Global's field keeps its leading edge, its apps standing beside it (Part B), so the
+    /// shell's stack is laid out from the leading edge — at rest the dock fills it exactly,
+    /// so the dock draws where it always has. Everything else keeps its own alignment.
+    private var globalStackAlignment: Alignment {
+        model.isGlobalScope ? .bottomLeading : shellAlignment
+    }
+
+    /// A conversation's composer shares its row with the apps (Part B, in chat).
+    private var splitsChatComposer: Bool {
+        CornerSplitShell.splitsChat(
+            phase: model.phase, showsLivePanel: model.showsLivePanel,
+            hasApps: !CornerSplitStrip.apps(for: model).isEmpty)
+    }
+
+    /// The shell is in two columns (Part B): the field draws as the left one, under the
+    /// results, and the apps stand beside it under the preview (`CornerSplitStrip`).
+    private var splitsShell: Bool { CornerDockController.shared.showsSplitShell }
+
+    /// The glass frame's width. Split, it narrows to the left column; the stack inside keeps
+    /// its full width (`globalInputWidth`, `legacyInputWidth`) and is only revealed less of,
+    /// exactly as the dock → field morph does — no inner width moves, so the field's focus
+    /// subtree is never re-laid out (the hang `globalBody` describes).
+    private var drawnWidth: CGFloat {
+        splitsShell ? CornerDockController.shared.splitWidths.field : size.width
+    }
+
+    /// Global's field and strip share their trailing edge: they are one width. An app bar's
+    /// compact field is not the bar's width, so the two share their *leading* edge instead:
+    /// the chip opens right where the bar's app icon rests, and the field grows away from it
+    /// (owner 2026-09-26: "resize the icon and add the name next to it").
+    private var shellAlignment: Alignment {
+        model.fitsField ? .bottomLeading : .bottomTrailing
+    }
+
+    private var globalBody: some View {
+        let showsInput = model.phase.showsInput
+        // Split, the apps and pins stand beside the field in their own piece (Part B): the
+        // strip under the field would only show through it — a pinned extension sat in the
+        // middle of the text (owner 2026-10-07).
+        let stripShown = model.phase == .dock
+            || ([.prompt, .suggesting].contains(model.phase) && !splitsShell)
+        return ZStack(alignment: globalStackAlignment) {
+            // Laid out at the width the field is given with its running-app row, not the
+            // 372-point base: the shell widens for each icon past four, and a base-width
+            // stack pinned to the trailing edge left that growth as blank glass before the
+            // magnifier while the placeholder truncated. Phase does not enter this number,
+            // so the morph still moves no inner width.
+            inputStack
+                .frame(width: globalInputWidth, alignment: .bottomLeading)
+                // A width change (a conversation starting, an app launching) lands at once:
+                // animated, it would re-lay out the focused field every frame.
+                .animation(nil, value: globalInputWidth)
+                .opacity(showsInput ? 1 : 0)
+                .allowsHitTesting(showsInput)
+                .animation(fieldFade, value: model.phase)
+
+            // Up while the dock or its field is: the strip fades its own apps and magnifier
+            // as they gather into the field, and keeps its pins and tools — still, and
+            // clickable — at the trailing end of both.
+            CornerDockStrip(model: model)
+                .opacity(stripShown ? 1 : 0)
+                .allowsHitTesting(stripShown)
+                .animation(stripFade, value: stripShown)
+
+            miniContent
+                .opacity(model.phase == .mini ? 1 : 0)
+                .allowsHitTesting(model.phase == .mini)
+                .animation(.easeInOut(duration: 0.2), value: model.phase)
+        }
+        .frame(
+            width: drawnWidth, height: size.height,
+            alignment: splitsShell ? .bottomLeading : globalStackAlignment)
+
+        // The shell's own shape carries the morph: a capsule at dock height, the field's
+        // 22-point card once it is open. Clipped to it so the wide layer never shows
+        // outside the glass while the frame is still narrow.
+        // At rest the dock's icons magnify out of the capsule (#232): the clip opens upward
+        // and the glass widens with the row, in one modifier that owns both.
+        .modifier(DockMagnifiedGlass(active: model.phase == .dock, radius: shellRadius))
+        // The dock glows in the result's colour; here the glass takes a stroke of it. Red
+        // for anything destructive, the acted-on app's own colour otherwise, the phase's
+        // when there is no app. Gone with the result.
+        .overlay {
+            RoundedRectangle(cornerRadius: shellRadius, style: .continuous)
+                .strokeBorder(feedbackTint ?? .clear, lineWidth: 1.5)
+                .opacity(feedbackTint == nil ? 0 : 0.85)
+                .allowsHitTesting(false)
+        }
+        .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
+        .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
+        .animation(shellMorph, value: model.phase)
+        .animation(shellMorph, value: drawnWidth)
         .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+    }
+
+    private var feedbackTint: Color? {
+        guard let result = actionFeedback.current else { return nil }
+        return ActionFeedbackTint.color(
+            for: result, appColor: actionFeedback.appIcon(for: result)?.dominantSwiftUIColor)
+    }
+
+    /// A capsule while it rests as a dock, a card once the field is open. Animated as one
+    /// number, so the corner never looks like two shapes changing at once.
+    private var shellRadius: CGFloat {
+        // The dock and its field are one bar of one height, so one capsule: a radius that
+        // changed with the phase is what made opening the field read as a different shape.
+        switch model.phase {
+        case .dock: return AppChatPromptMetrics.dockHeight / 2
+        // The open field is shorter than the resting dock: a capsule of its own height.
+        case .prompt, .suggesting: return AppChatPromptMetrics.fieldHeight(global: true) / 2
+        default: return 22
+        }
+    }
+
+    /// The whole morph, one curve. `dockMorphDuration` is the single number to turn when
+    /// this feels fast or slow.
+    private var shellMorph: Animation {
+        reduceMotion
+            ? .easeOut(duration: 0.15)
+            : .smooth(duration: AppChatPromptMetrics.dockMorphDuration)
+    }
+
+    /// The field arrives after the shell has started widening, so it is read as the shell
+    /// opening rather than a card fading in over a dock; it leaves at once, before the
+    /// shell narrows enough to slice it.
+    private var fieldFade: Animation {
+        guard !reduceMotion else { return .easeOut(duration: 0.15) }
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return model.phase.showsInput
+            ? .easeOut(duration: full * 0.5).delay(full * 0.34)
+            : .easeIn(duration: full * 0.22)
+    }
+
+    /// The mirror of `fieldFade`: the strip goes early on the way out and comes back late
+    /// on the way in, so the small pill of apps inside the field is the thing on screen in
+    /// the middle of the morph, and it is what appears to grow back into the dock.
+    private var stripFade: Animation {
+        guard !reduceMotion else { return .easeOut(duration: 0.15) }
+        let full = AppChatPromptMetrics.dockMorphDuration
+        return model.phase == .dock
+            ? .easeOut(duration: full * 0.42).delay(full * 0.42)
+            : .easeIn(duration: full * 0.3)
     }
 
     /// Everything that is not Global keeps the shell it had.
@@ -234,7 +740,8 @@ struct AppChatPromptPill: View {
     private var legacyBody: some View {
         ZStack(alignment: .bottomLeading) {
             inputStack
-                .frame(width: AppChatPromptMetrics.width, alignment: .bottomLeading)
+                .frame(width: legacyInputWidth, alignment: .bottomLeading)
+                .animation(nil, value: legacyInputWidth)
                 .opacity(model.phase.showsInput ? 1 : 0)
                 .allowsHitTesting(model.phase.showsInput)
                 .animation(.easeOut(duration: 0.11), value: model.phase)
@@ -244,23 +751,80 @@ struct AppChatPromptPill: View {
                 .allowsHitTesting(model.phase == .mini)
                 .animation(.easeIn(duration: 0.16).delay(0.06), value: model.phase)
         }
-        .frame(width: size.width, height: size.height, alignment: .bottomLeading)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(width: drawnWidth, height: size.height, alignment: .bottomLeading)
+        .animation(.smooth(duration: 0.22), value: drawnWidth)
+        .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                 .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
+                .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
     }
 
+    /// The field's width: the shell's one width (#189), a conversation's included. The
+    /// mini badge is the only thing narrower, and the field is faded out under it.
+    ///
+    /// Split, an app's field stands apart from its apps as Global's does (owner 2026-10-07),
+    /// so its stack is laid out at the field's own width and its trailing controls stay in
+    /// the glass. The width lands at once (`.animation(nil, …)` below), never over frames.
+    private var legacyInputWidth: CGFloat {
+        model.phase == .chat
+            ? size(for: .prompt).width : CornerDockController.shared.splitFieldLayoutWidth
+    }
+
+    /// A Context Dock's field is Global's capsule, the same bar at the same height; anything
+    /// with a sheet over it keeps the 22-point card.
+    private var legacyRadius: CGFloat {
+        model.usesDockHeight && [.prompt, .suggesting].contains(model.phase)
+            && size.height <= AppChatPromptMetrics.fieldHeight(global: true)
+            ? AppChatPromptMetrics.fieldHeight(global: true) / 2 : 22
+    }
+
+    /// What a click in the field does (`requestComposerFocus`), after the scope under the
+    /// field changed — only when the change came from the user's own keys in the Corner:
+    /// DoraX active and the Corner the key window.
+    ///
+    /// It asked only `keyboardState.isArmed` before, which stays true after the user clicks
+    /// away. The Corner follows the frontmost app, so clicking another app changed the scope,
+    /// this activated DoraX (`NSApp.activate(ignoringOtherApps:)`), and the app the user had
+    /// just clicked lost its keys every time — "while the dock is active I can't use the
+    /// frontmost app" (owner, 2026-09-27).
+    private func reclaimCaretAfterScopeChange() {
+        guard Self.scopeChangeCameFromTheCorner(
+            appIsActive: NSApp.isActive, keyWindowIsCorner: NSApp.keyWindow is CornerDockPanel,
+            armed: keyboardState.isArmed, showsInput: model.phase.showsInput)
+        else { return }
+        fieldFocused = false
+        DispatchQueue.main.async {
+            CornerDockController.shared.requestComposerFocus()
+            syncFocus()
+        }
+    }
+
+    /// Pure: whether a scope change may take the caret back — the Corner is where the user is.
+    nonisolated static func scopeChangeCameFromTheCorner(
+        appIsActive: Bool, keyWindowIsCorner: Bool, armed: Bool, showsInput: Bool
+    ) -> Bool {
+        appIsActive && keyWindowIsCorner && armed && showsInput
+    }
+
     private func syncFocus() {
-        fieldFocused = keyboardState.owner == .chat
+        // The field is mounted in every phase now, including while the corner rests as a
+        // dock — the morph needs it laid out and still. A mounted field must not be
+        // focusable when it is not the thing on screen, or the dock's own keys go into an
+        // invisible text field instead of bringing it back.
+        let focus = keyboardState.owner == .chat && model.phase.showsInput
+        let gaining = focus && !fieldFocused
+        fieldFocused = focus
+        // Focus selects the field's text, so the letter that brought the field back was
+        // selected and the next one replaced it ("sleep" → "leep"). Same fix as the Dock's.
+        if gaining { FieldCaret.collapseSelectionToEndAfterFocus() }
     }
 
     // MARK: - Input
@@ -272,15 +836,30 @@ struct AppChatPromptPill: View {
             if model.phase == .chat {
                 header
                 Divider().opacity(0.18)
-                transcript
-                Divider().opacity(0.18)
+                // The card splits like Claude's chat (#191): the conversation on the left,
+                // the app's panel on the right — progress, files, connectors. One HStack
+                // either way, so the transcript keeps its scroll when the panel is toggled.
+                HStack(spacing: 0) {
+                    transcript
+                        .frame(maxWidth: .infinity)
+                    if model.showsLivePanel {
+                        CornerLivePanel(
+                            appName: model.appName, appBundleID: model.appBundleID,
+                            appIcon: appIcon, messages: model.messages,
+                            isAnswering: model.isAnswering, liveSteps: model.liveSteps)
+                            .frame(width: CornerLivePanelLayout.panelWidth(card: DockShellWidth.current))
+                            .padding(.vertical, 8)
+                            .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    }
+                }
+                .animation(.smooth(duration: 0.22), value: model.showsLivePanel)
             }
             // A turn asked from here can need a yes, and that question belongs directly
             // over the field — the same place the `/` picker and the command list appear —
             // rather than inside a transcript the user can scroll away from.
             if let request = approvals.pending(for: .corner) {
                 ApprovalCard(request: request)
-                    .frame(height: ApprovalCard.height)
+                    .frame(height: ApprovalCard.height(for: request))
                 Divider().opacity(0.18)
             }
             if !model.pendingChoices.isEmpty {
@@ -295,9 +874,45 @@ struct AppChatPromptPill: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
             if !model.attachments.isEmpty { attachmentRow }
-            inputRow
+            // In a conversation with the app's panel open, the composer stands under the
+            // transcript and the pinned and running apps under the panel — the split the
+            // field gets over a result board (Part B), inside the chat card. One HStack in
+            // every phase with the composer first, so the TextField keeps its identity.
+            HStack(alignment: .bottom, spacing: 8) {
+                inputRow
+                    // In a conversation the field is a rounded composer inset in the card, the
+                    // way Claude's sits under its chat (owner 2026-10-05), rather than a row
+                    // ruled off the bottom. Modifiers, not a second branch: the TextField keeps
+                    // its identity, and with it focus, as the phase changes.
+                    .background {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(Color.primary.opacity(0.07))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .strokeBorder(Color.white.opacity(0.1), lineWidth: 1))
+                            .opacity(model.phase == .chat ? 1 : 0)
+                    }
+                if splitsChatComposer {
+                    CornerSplitStrip(
+                        model: model,
+                        width: CornerSplitShell.chatStripWidth(card: DockShellWidth.current),
+                        inset: true)
+                        .transition(.opacity)
+                }
+            }
+            // The apps take the composer's height rather than setting their own, so the
+            // card's measured height is unchanged by the split.
+            .fixedSize(horizontal: false, vertical: splitsChatComposer)
+            // The composer's width changes once, not over frames: animating the width of the
+            // row that holds the focused TextField is the per-frame re-layout that hung the app.
+            .animation(nil, value: splitsChatComposer)
+            .padding(.horizontal, model.phase == .chat ? 10 : 0)
+            .padding(.top, model.phase == .chat ? 6 : 0)
+            .padding(.bottom, model.phase == .chat ? 10 : 0)
         }
-        .frame(width: AppChatPromptMetrics.width, alignment: .topLeading)
+        // Fills what the body gives it: 372 points in the legacy shell, the field's
+        // widened prompt width in Global.
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .animation(.easeOut(duration: 0.16), value: model.isShowingSelectionScope)
         .animation(.easeOut(duration: 0.16), value: model.selectionContent)
     }
@@ -361,6 +976,20 @@ struct AppChatPromptPill: View {
 
             Spacer(minLength: 6)
 
+            // The chat sheet is put away by the field's chip ⌄ now; the header keeps the
+            // panel toggle beside it (owner 2026-10-10).
+
+            // The app's panel beside the conversation, shown or hidden (#191) — Claude's
+            // sidebar toggle, in the same place.
+            if !model.isGlobalScope {
+                Button { model.livePanelOpen.toggle() } label: {
+                    headerGlyph("sidebar.right", tinted: model.livePanelOpen)
+                }
+                .buttonStyle(.plain)
+                .help(model.livePanelOpen ? "Hide the panel" : "Show progress, files and connectors")
+                .accessibilityLabel(model.livePanelOpen ? "Hide the panel" : "Show the panel")
+            }
+
             // Stop lives in the composer, which is drawn in every phase this header is —
             // one job, one button, rather than two of them 300 points apart.
             Button { model.openInDock() } label: {
@@ -396,27 +1025,42 @@ struct AppChatPromptPill: View {
 
     private var inputRow: some View {
         HStack(spacing: 10) {
-            if model.appBundleID.isEmpty {
+            if model.isClipboardScope {
+                clipboardBackChip
+            } else if model.appBundleID.isEmpty {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 15, weight: .medium))
+                    // The strip's own size in Global: the field opens on the icon the
+                    // pointer rested on, and a smaller one there read as a swap.
+                    .font(.system(size: model.isGlobalScope ? 20 : 15, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 22)
             } else if model.isGlobalScope {
                 globalLeadingChip
-            } else if model.returnsToGlobalScope {
+            } else if model.returnsToGlobalScope, !model.isAppStepIn {
+                // A tool or a command keeps its way back; an app is its own Context Dock,
+                // with the ⚙ card (← and Backspace still go back to Global).
                 scopeChipWithExit
             } else {
                 appChip
             }
 
             ZStack(alignment: .leading) {
-                if model.query.isEmpty {
+                if model.isClipboardScope {
+                    if clipboard.query.isEmpty {
+                        Text("Type to filter entries…")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                            .lineLimit(1)
+                    }
+                } else if model.query.isEmpty {
                     placeholder
                 }
                 // What Tab would complete to, greyed behind the caret. Drawn in the field's
                 // own metrics with the typed part transparent, so the ghost lines up with
                 // the text instead of floating near it.
-                if !model.globalGhostCompletion.isEmpty {
+                if !model.isClipboardScope, !model.globalGhostCompletion.isEmpty,
+                    model.fieldLines == 1
+                {
                     HStack(spacing: 0) {
                         Text(model.query).foregroundStyle(.clear)
                         Text(model.globalGhostCompletion)
@@ -427,17 +1071,42 @@ struct AppChatPromptPill: View {
                     .lineLimit(1)
                     .allowsHitTesting(false)
                 }
-                TextField("", text: $model.query)
+                // Wraps and grows upward to three lines, then scrolls inside (#189): the
+                // field's width is the shell's and never changes for what is typed.
+                TextField("", text: fieldText, axis: .vertical)
                     .textFieldStyle(.plain)
+                    .lineLimit(1...DockFieldLines.maximum)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        let lines = DockFieldLines.lines(measuredTextHeight: height)
+                        if model.fieldLines != lines { model.fieldLines = lines }
+                    }
+                    // Where the field is, for the swipe monitor: a swipe switches surfaces
+                    // only over the text, never over the pill beside it (owner 2026-09-26).
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                        model.inputFrame = $0
+                    }
                     .font(.system(size: 14, weight: .medium))
                     .focused($fieldFocused)
                     .onChange(of: model.query) { _, _ in model.queryChanged() }
                     .onSubmit {
-                        // A chosen row runs — a command or an adapter action. On a window
-                        // snapshot with nothing typed, Return switches to that app, because
-                        // that is what the switcher is for. Anything else is a question.
+                        // The panel's key monitor already acted on this Return.
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return }
+                        // The clipboard board's Return pastes; it never asks.
+                        if model.isClipboardScope {
+                            ClipboardPanelController.shared.pasteMany(
+                                clipboard.actionableEntries())
+                            return
+                        }
+                        // A chosen row runs — a command or an adapter action. On an app
+                        // stepped into from Global with nothing typed, Return brings that app
+                        // forward. Anything else is a question.
                         if model.runFocusedRow() { return }
                         if model.activateSnapshotApp() { return }
+                        // A command's list runs its chosen row, as Return does in the
+                        // list's own window.
+                        if model.scopedCommand != nil, ScopedListKeyBridge.shared.run?() == true {
+                            return
+                        }
                         // A panel on screen is what the field is talking to.
                         if model.showsExtensionPanel {
                             model.askPanelAssistant()
@@ -450,37 +1119,63 @@ struct AppChatPromptPill: View {
                             return
                         }
                         if model.isSearchField {
-                            if let first = model.rows.first { model.run(first) }
+                            // The top row, the one the leading icon previews (C3).
+                            model.runReturnRow(runsTopRow: true)
                             return
                         }
+                        // Finder's Ask AI row, and every app's composer: the question.
                         model.submit()
                     }
                     .onKeyPress(.space) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // Only once the user has arrowed into the list; with the caret in
                         // the field, a space is a space.
-                        model.previewFocusedRow() ? .handled : .ignored
+                        return model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // The row the arrows landed on first; the top match only when the
                         // user has not chosen one.
                         if model.enterFocusedRow() { return .handled }
                         return model.acceptGlobalTopMatch() ? .handled : .ignored
                     }
                     .onKeyPress(.downArrow) {
-                        model.moveMenuFocus(by: 1) ? .handled : .ignored
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope {
+                            clipboard.moveEntry(1)
+                            return .handled
+                        }
+                        return arrow(up: false)
                     }
                     .onKeyPress(.upArrow) {
-                        model.moveMenuFocus(by: -1) ? .handled : .ignored
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope {
+                            clipboard.moveEntry(-1)
+                            return .handled
+                        }
+                        return arrow(up: true)
                     }
                     .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // A letter of the clipboard filter, never a way out of the scope.
+                        if model.isClipboardScope { return .ignored }
                         // Backspace on an empty field leaves the scope — the dock's way out,
                         // and the one most people reach for before they find the "−". Both
                         // delete keys, because `.delete` alone did not match the backspace
                         // this field actually receives.
-                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
-                        return .ignored
+                        // The Dock's ladder: folder, selection, app chat, scope (B3, B4, E4).
+                        return model.applyEmptyBackspace() ? .handled : .ignored
                     }
                     .onKeyPress(.escape) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        if model.isClipboardScope {
+                            ClipboardPanelController.shared.closeBoard()
+                            return .handled
+                        }
                         // Unwind, then leave. Dismissing mid-answer threw away a turn the
                         // user was waiting on and a question they had half-written, for
                         // one press of the key that usually means "step back".
@@ -498,18 +1193,24 @@ struct AppChatPromptPill: View {
                         return .handled
                     }
                     .onKeyPress(.leftArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // Left out of a scope entered from Global goes back to Global,
                         // before the walk between scopes is considered at all.
-                        if model.query.isEmpty, model.leaveScopeForGlobal() { return .handled }
+                        if model.query.isEmpty, model.stepBackThroughRunningApps() { return .handled }
                         return CornerDockController.shared.chatPresentation
                             .handleLeftArrow(draft: model.query) ? .handled : .ignored
                     }
                     .onKeyPress(.rightArrow) {
+                        if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
+                        // The clipboard filter's caret, not the scope's.
+                        if model.isClipboardScope { return .ignored }
                         // A chosen row is what the user is pointing at, so → steps into it
-                        // before anything else. Otherwise it takes the ghost completion, and
-                        // on an empty field it steps into an app; failing all of that it
-                        // walks back through the scopes.
-                        if model.enterFocusedRow() { return .handled }
+                        // before anything else — steps in, never runs (D4). Otherwise it takes
+                        // the ghost completion, and on an empty field it steps into an app;
+                        // failing all of that it leaves General Chat (CornerNavigation).
+                        if model.stepIntoFocusedRow() { return .handled }
                         if model.acceptGhostCompletion() { return .handled }
                         if model.scopeIntoFirstRunningApp() { return .handled }
                         return CornerDockController.shared.chatPresentation
@@ -517,7 +1218,14 @@ struct AppChatPromptPill: View {
                     }
                     .onKeyPress(keys: ["p"]) { press in
                         guard press.modifiers.contains(.command) else { return .ignored }
-                        model.togglePin()
+                        // A chosen row pins; with none, the shell's keep-open.
+                        if !model.pinChosenRow() { model.togglePin() }
+                        return .handled
+                    }
+                    // Settings from the field, as every board's foot says (owner 2026-10-07).
+                    .onKeyPress(keys: [","]) { press in
+                        guard press.modifiers.contains(.command) else { return .ignored }
+                        AppDelegate.shared?.showSettings()
                         return .handled
                     }
                     .onKeyPress(keys: ["k"]) { press in
@@ -529,6 +1237,8 @@ struct AppChatPromptPill: View {
                         CornerDockController.shared.requestComposerFocus()
                     })
             }
+            // The field takes its room before the spacer that puts the match icon at the end.
+            .layoutPriority(1)
 
             // The dock's own match pills, mounted rather than imitated: the apps that
             // answer what is typed, with "+N" for the rest. Same view, same icons, same
@@ -541,37 +1251,74 @@ struct AppChatPromptPill: View {
             // matched, and two answers to one question is the clutter the dock avoids. An
             // untyped field is not that case — there the pills are the only thing offering
             // anywhere to go, so they stay through a scope change.
-            if model.isSearchField,
+            // Safari's tabs stay while a question is typed (owner 2026-09-25); the running
+            // apps step aside, as the Dock's do.
+            // Typing hides them in every scope, tabs and pins included (owner 2026-09-26:
+            // while typing the field is compact — attach, send, pin).
+            // Split, the apps stand beside the field instead (Part B) — drawn there, not twice.
+            if model.showsFieldPills, !model.isClipboardScope, !splitsShell,
                 model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
             {
-                ContextMatchDock(
-                    phase: .idle,
-                    icons: model.globalMatchIcons,
-                    overflowCount: model.globalOverflowCount,
-                    isSearching: false,
-                    onSelect: { icon in model.openGlobalMatchIcon(icon) })
-                    .transition(.opacity)
-                    // Resting the pointer on the small pills asks for the big ones: the
-                    // field folds into the dock at once rather than waiting out the dwell.
-                    .onHover { inside in if inside { model.foldToDock() } }
+                if model.showsTabBar {
+                    // An app's bar is drawn after "+", below — pins sit next to it.
+                    EmptyView()
+                } else if model.usesDockShell {
+                    // The apps stand beside the field in their own piece, or are the resting
+                    // dock itself: a small copy in here only flashed over the field as it
+                    // folded (owner 2026-10-08: "running apps disturb the search input field
+                    // while the mouse hovers").
+                    EmptyView()
+                } else {
+                    // The same fixed-width scroller as Global's (#189).
+                    ContextMatchDock(
+                        phase: .idle,
+                        icons: model.allRunningIcons,
+                        overflowCount: 0,
+                        isSearching: false,
+                        focusedID: model.focusedPill?.id,
+                        fixedWidth: AppChatPromptMetrics.runningPillWidth(
+                            apps: model.allRunningIcons.count),
+                        onSelect: { icon in model.openGlobalMatchIcon(icon) })
+                        // Opacity only, for the same reason as the field above: this pill is
+                        // a sibling of the TextField inside the focused subtree, and a
+                        // geometry transition here moves the field's own layout while focus
+                        // is claimed.
+                        .transition(.opacity)
+                        // Resting the pointer on the small pills asks for the big ones: the
+                        // field folds into the dock at once rather than waiting out the dwell.
+                        .onHover { inside in
+                            if inside, model.hoverMayFold { model.foldToDock() }
+                        }
+                }
                 // Beside the running-app capsule, not inside it: the clipboard used to
                 // lead that list as one of its icons, which put a permanent member in a
                 // row meant to be "what's running" and made a stale old copy look as
                 // current as a fresh one. Same transient signal as the composer's own.
-                if clipboard.phase.isVisible {
+                // In Global the strip's own clipboard icon stays on screen in its trailing
+                // region, so the field does not draw a second one beside it.
+                // A composer draws its one clipboard icon at the end, next to the pin (owner
+                // 2026-09-26: two showed); only a search field keeps it here.
+                if clipboard.showsDockIcon, model.isSearchField, !model.isGlobalScope {
                     clipboardTrailingButton
                 }
             }
-
             // The dock shows this in Global Context too, independent of whether the
             // running-apps row has anything in it — a selection is worth carrying into a
             // question whether or not the field is also offering somewhere else to go.
             // This lived only in the composer's own branch below, so Global Context and
             // the scopes reached from it never had a way to see or reach the selection at
             // all, whatever the frontmost app's AX tree actually reported.
-            if model.isSearchField, model.selection != nil {
+            if model.isSearchField, model.selection != nil, !model.isGlobalScope {
                 selectionScopeButton
+            }
+
+            // What the last action came to, beside the field for a few seconds — the
+            // dock's inline result, carried here so a result reaches the surface the user
+            // is on. Same transient lifetime as the clipboard's own icon.
+            if let result = actionFeedback.glyph, !model.isGlobalScope {
+                ActionFeedbackGlyph(feedback: result)
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
             }
 
             // What Return does, shown rather than left to the row below to explain: the
@@ -582,6 +1329,9 @@ struct AppChatPromptPill: View {
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                 let icon = model.leadingResultIcon
             {
+                // At the field's end, not against the last typed letter (owner 2026-10-08:
+                // "while typing show app icons at the end of the search input pill").
+                Spacer(minLength: 8)
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
@@ -601,6 +1351,36 @@ struct AppChatPromptPill: View {
             // composers, and the dock carries none of this there — so neither does this.
             if !model.isSearchField {
                 attachMenu
+                // The pin right after "+", in every app (owner 2026-09-28): it sat at the far
+                // end, past the app's bar, and appeared and vanished with the pointer. Beside
+                // "+" it is always there, so nothing after it shifts when it would have come
+                // and gone. A conversation's header carries its own.
+                if model.phase != .chat {
+                    surfaceControls
+                        .transition(.opacity)
+                }
+                // The conversation its ⌄ put away, one click back.
+                if model.isConversationHidden, model.phase != .chat,
+                    model.isAnswering || !model.messages.isEmpty
+                {
+                    Button { model.showConversation() } label: {
+                        controlGlyph("chevron.up")
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show the conversation")
+                    .accessibilityLabel("Show the conversation")
+                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                }
+                // An app's bar right after "+" (owner 2026-09-26: "show pinned next to +"):
+                // its pins, then its tabs, scrolling inside the pill. Gone while typing.
+                // Not while the apps stand beside the field or the composer: the same pins
+                // would show twice (owner 2026-10-07).
+                if model.showsTabBar, !isTyping, !splitsShell, !splitsChatComposer,
+                    !model.globalMatchIcons.isEmpty || model.globalOverflowCount > 0
+                {
+                    AppBarPill(model: model)
+                        .transition(.opacity)
+                }
                 // Gated on `entries.isEmpty` this stayed forever after the first copy of
                 // the session — not what the dock does. The dock's own trailing button
                 // reads a transient flag a fresh copy sets and a timer clears a few
@@ -608,7 +1388,9 @@ struct AppChatPromptPill: View {
                 // signal, already driving the ambient clipboard pill's own collapse-then-
                 // vanish, so reading it here says "a copy just happened" rather than
                 // "a clipboard exists somewhere," and needs no timer of its own.
-                if clipboard.phase.isVisible {
+                // Split, the apps' piece beside the field carries the clipboard: drawn here
+                // too it showed twice.
+                if clipboard.showsDockIcon, !splitsShell {
                     clipboardTrailingButton
                 }
                 // Only when there is something to open: an icon that does nothing on a
@@ -616,6 +1398,16 @@ struct AppChatPromptPill: View {
                 if model.selection != nil {
                     selectionScopeButton
                 }
+            }
+
+            // The Drop Shelf, last of the field's icons in every scope while it holds something
+            // or a drag is in flight: Global's is the strip's, drawn over this end of the
+            // field, so the field adds none there.
+            // In an app's scope the shelf ends the field — the input pill — split or not; the
+            // apps' piece beside it leaves it out (owner 2026-10-08: "the drop shelf shows on
+            // both pills; put it at the end of the send pill").
+            if !model.isGlobalScope, model.showsShelf {
+                shelfControl
             }
 
             if model.isAnswering {
@@ -660,18 +1452,48 @@ struct AppChatPromptPill: View {
             // Expand and pin stay with the pointer while this row is the whole surface;
             // once a conversation exists the header carries them, and drawing them twice
             // six points apart is two buttons for one job.
-            if pointerInside, model.phase != .chat, !model.isGlobalScope {
+            // Not in the dock shell: its trailing end is the strip's, as in Global.
+            // The field carries pin, never expand (owner 2026-09-26): while typing in every
+            // Context Dock, the dock shell's included, and under the pointer otherwise. A
+            // conversation's header keeps its own expand.
+            // A field with "+" draws the pin beside it (above); only a search field — no
+            // "+" — keeps it here at the end, under the pointer.
+            if model.isSearchField, pointerInside, model.phase != .chat, model.fitsField {
                 surfaceControls
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
             }
+            // Room for the strip's pins and tools, which stay on screen over this end of
+            // the field: the strip draws them, still and clickable, in both phases.
+            // Split, the strip stands beside the field, not over its end: kept clear there it
+            // pushed the match icon back against the text (owner 2026-10-08: "show the result
+            // icon at the end of the search input field").
+            if let strip = globalStrip, !splitsShell {
+                Color.clear
+                    .frame(width: max(0, strip.trailingRegion + strip.leadingInset - 10))
+                    .allowsHitTesting(false)
+            }
         }
-        .padding(.horizontal, 14)
-        .frame(height: AppChatPromptMetrics.inputHeight)
+        .padding(.leading, globalStrip.map {
+            AppChatPromptMetrics.fieldLeadingPadding(stripInset: $0.leadingInset) } ?? 14)
+        .padding(.trailing, globalStrip == nil || splitsShell ? 14 : 0)
+        // Taller for a wrapped prompt, from the bottom edge up (#189).
+        .frame(height: DockFieldLines.fieldHeight(
+            base: AppChatPromptMetrics.fieldHeight(global: model.usesDockHeight),
+            lines: model.fieldLines))
         .animation(.easeOut(duration: 0.14), value: pointerInside)
         .animation(.easeOut(duration: 0.12), value: model.isAnswering)
         .animation(.easeOut(duration: 0.12), value: model.query.isEmpty)
         .animation(.easeOut(duration: 0.16), value: model.selection)
         .animation(.easeOut(duration: 0.16), value: model.isShowingSelectionScope)
+    }
+
+    /// The Drop Shelf's icon at the end of the field's controls — click opens the shelf above
+    /// the field, a drag over it drops onto it.
+    private var shelfControl: some View {
+        DropShelfIcon(
+            presentation: shelf, store: shelfStore, style: .control,
+            isKeyboardFocused: model.isShelfFocused)
+            .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
     /// Opens the frontmost app's selection as its own corner card — the same surface the
@@ -680,16 +1502,15 @@ struct AppChatPromptPill: View {
     /// off the screen instead of picking a file.
     private var selectionScopeButton: some View {
         Button {
-            // In place, not a second card: this session already knows what is selected
-            // and already carries it on whatever question gets asked here, so opening the
-            // separate Selection Scope card on top of an already-open chat stacked one
-            // surface on another for something this one could just show itself.
-            model.toggleSelectionScope()
+            // The Selection card, the same one the dock's selection icon opens (owner
+            // 2026-09-26): attaching the text to this field instead left the user with a
+            // chip and none of the selection's actions. Closing it comes back here.
+            CornerDockController.shared.showSelectionScopeFromDock()
         } label: {
-            controlGlyph("text.cursor", tinted: model.isShowingSelectionScope)
+            controlGlyph("text.cursor")
         }
         .buttonStyle(.plain)
-        .help(model.isShowingSelectionScope ? "Back to \(model.appName)" : "Show the current selection")
+        .help("Show the current selection")
         .transition(.opacity.combined(with: .scale(scale: 0.85)))
     }
 
@@ -715,6 +1536,11 @@ struct AppChatPromptPill: View {
             Button("Take Screenshot") { capture(interactive: false) }
             Button("Capture Area") { capture(interactive: true) }
             Button("Capture Text") { captureText() }
+            // Finder: the folder its front window shows, the Dock's "add this folder" (D7).
+            if model.isFinderScope {
+                Divider()
+                Button("Attach Front Finder Folder") { model.attachFrontFinderFolder() }
+            }
         } label: {
             controlGlyph("plus")
         }
@@ -750,40 +1576,33 @@ struct AppChatPromptPill: View {
         .help(model.globalTopMatch.map { "Tab to open \($0.title)" } ?? "Search everything")
     }
 
-    /// The scope chip with a way out of it — the "−" the dock's scope chip carries. Only
-    /// for a scope entered from Global: the frontmost app's own scope is not something the
-    /// user stepped into, so there is nothing to step back from.
-    private var scopeChipWithExit: some View {
-        HStack(spacing: 6) {
-            if let icon = appIcon {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: 16, height: 16)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-            }
-            Text(model.appName)
-                .font(.system(size: 12.5, weight: .semibold))
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
+    /// What the field edits: the question, or — while the clipboard board is open — the
+    /// clipboard's filter. The question is kept as it was, for Back.
+    private var fieldText: Binding<String> {
+        guard model.isClipboardScope else { return $model.query }
+        return Binding(
+            get: { clipboard.query },
+            set: { clipboard.setBoardQuery($0) })
+    }
 
-            Button { model.leaveScopeForGlobal() } label: {
-                Image(systemName: "minus")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16, height: 16)
-                    .background(Color.primary.opacity(0.12), in: Circle())
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Back to Global Context")
+    /// Raycast's back button, leading the field while the clipboard board is open.
+    private var clipboardBackChip: some View {
+        ScopeBackChip(title: "Clipboard", icon: nil, help: "Back (Esc)") {
+            ClipboardPanelController.shared.closeBoard()
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 5)
-        .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.09), in: Capsule())
-        // The scope's name is the subject of everything else in this row, so it keeps its
-        // width and the placeholder gives way — truncating it to "F" said nothing at all.
-        .layoutPriority(1)
+        .accessibilityLabel("Back from the clipboard")
+    }
+
+    /// A tool, a command or a CLI stepped into from Global: the same back chip the clipboard
+    /// leads with, so every scope entered from Global is left the same way (owner 2026-10-08:
+    /// "global commands, CLI scope etc. with back arrows, perfect navigation"). It used to
+    /// carry the dock's small "−" after the name instead. The frontmost app's own scope is
+    /// not something the user stepped into, so it has none.
+    private var scopeChipWithExit: some View {
+        ScopeBackChip(title: model.appName, icon: appIcon, help: "Back to Global Context (Esc)") {
+            model.leaveScopeForGlobal()
+        }
+        .accessibilityLabel("Back from \(model.appName) to Global Context")
     }
 
     private var appChip: some View {
@@ -793,19 +1612,75 @@ struct AppChatPromptPill: View {
                     .resizable()
                     .frame(width: 16, height: 16)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    // Opening an app bar, the bar's own app icon flies here and becomes this
+                    // one: hidden until it lands, then taking over in the same spot, so the
+                    // eye sees one icon, not a second copy fading in beside a moving one
+                    // (owner 2026-09-26).
+                    .opacity(chipIconShown ? 1 : 0)
+                    .animation(chipIconHandover, value: chipIconShown)
             }
             Text(model.appName)
                 .font(.system(size: 12.5, weight: .semibold))
                 .lineLimit(1)
+            // The app's settings card lives in its chip (owner 2026-09-28, layout C). Open, the
+            // gear turns into the arrow that puts it away (owner 2026-10-07). In a
+            // conversation the ⌄ puts the chat sheet away — the header's toggle has the panel
+            // (owner 2026-10-10).
+            Image(systemName: model.phase == .chat || chipIsOpen ? "chevron.down" : "gearshape")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .background(Color.primary.opacity(0.09), in: Capsule())
+        .background(
+            Color.primary.opacity(chipIsOpen ? 0.16 : 0.09), in: Capsule())
+        .contentShape(Capsule())
+        // Not a popover hanging off the chip (owner 2026-10-07): the app's card opens in the
+        // result board over the field, and in a conversation it is the chat's own side panel.
+        .onTapGesture {
+            if model.phase == .chat {
+                model.hideConversation()
+            } else {
+                model.isShowingScopeCard.toggle()
+            }
+        }
+        .help(model.phase == .chat
+            ? "Hide the conversation" : "What DoraX can do in \(model.appName)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(model.phase == .chat
+            ? "Hide the conversation" : "\(model.appName) settings")
+    }
+
+    /// The app's card is open over the field. In a conversation the chip hides the chat
+    /// instead, and the panel belongs to the header's toggle.
+    private var chipIsOpen: Bool {
+        model.phase != .chat && model.isShowingScopeCard
+    }
+
+    private var chipIconShown: Bool { model.phase != .dock }
+
+    private var chipIconHandover: Animation {
+        let full = AppChatPromptMetrics.dockMorphDuration
+        guard model.showsTabBar, model.usesDockShell, !reduceMotion else {
+            return .easeOut(duration: 0.1)
+        }
+        return chipIconShown
+            ? .linear(duration: 0.06).delay(full * 0.32)
+            : .linear(duration: 0.04)
     }
 
     @ViewBuilder
     private var placeholder: some View {
-        if model.phase == .suggesting {
+        if let running = actionFeedback.progressTitle {
+            // What is happening, where the prompt would be — the dock says it in its own
+            // field the same way. It leaves when the app is there and the placeholder comes
+            // back, which is the whole of the announcement.
+            Text(running)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.secondary.opacity(0.6))
+                .lineLimit(1)
+                .transition(.opacity)
+        } else if model.phase == .suggesting {
             HStack(spacing: 6) {
                 Text(AppChatListCard.placeholder(for: model))
                     .foregroundStyle(.secondary.opacity(0.85))
@@ -822,26 +1697,67 @@ struct AppChatPromptPill: View {
         }
     }
 
-    /// What acts on the surface rather than on the question: where it opens, and whether it
-    /// stays. Attach and send are in the field itself, because they are part of asking.
+    /// What acts on the surface rather than on the question: whether it stays. Attach and
+    /// send are in the field itself, because they are part of asking.
+    private var isTyping: Bool {
+        !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var surfaceControls: some View {
         HStack(spacing: 8) {
-            Button {
-                model.openInDock()
-            } label: {
-                controlGlyph("arrow.up.left.and.arrow.down.right")
+            // While typing, with a result to pin: the pin takes that result's picture and
+            // pins it to this app — tinted once it is pinned (owner 2026-09-26). With no
+            // match it is the ordinary "keep open" pin below.
+            if isTyping, let row = model.pinnableResult {
+                let pinned = model.isPinnedToApp(row)
+                Button {
+                    model.toggleAppPin(row)
+                } label: {
+                    resultPinGlyph(row, pinned: pinned)
+                }
+                .buttonStyle(.plain)
+                .help(pinned
+                    ? "Unpin \(row.title) from \(model.appName)"
+                    : "Pin \(row.title) to \(model.appName)")
+                .accessibilityLabel(pinned ? "Unpin \(row.title)" : "Pin \(row.title)")
+            } else {
+                keepOpenPin
             }
-            .buttonStyle(.plain)
-            .help("Open this conversation in the dock")
-
-            Button {
-                model.togglePin()
-            } label: {
-                controlGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
-            }
-            .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin" : "Keep this open")
         }
+    }
+
+    /// The matching result's own picture, nothing added: a filled accent circle behind it
+    /// says it is pinned (owner 2026-09-26: "just the menu icon is fine").
+    private func resultPinGlyph(_ row: AppChatRow, pinned: Bool) -> some View {
+        let art = model.resultPinArt(row)
+        return Group {
+            if let image = art.image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 16, height: 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            } else {
+                Image(systemName: art.symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(pinned ? Color.white : Color.secondary)
+            }
+        }
+        .frame(width: 26, height: 26)
+        .background(
+            pinned ? Color.accentColor.opacity(0.85) : Color.white.opacity(0.08), in: Circle())
+        .contentShape(Circle())
+        .animation(.easeOut(duration: 0.15), value: pinned)
+    }
+
+    private var keepOpenPin: some View {
+        Button {
+            model.togglePin()
+        } label: {
+            controlGlyph(model.isPinned ? "pin.fill" : "pin", tinted: model.isPinned)
+        }
+        .buttonStyle(.plain)
+        .help(model.isPinned ? "Unpin" : "Keep this open")
     }
 
     private func controlGlyph(_ symbol: String, tinted: Bool = false) -> some View {
@@ -877,14 +1793,14 @@ struct AppChatPromptPill: View {
 
     private var attachmentRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 ForEach(model.attachments, id: \.self) { url in
-                    ChatAttachmentChip(url: url) { model.detach(url) }
+                    ChatAttachmentChip(url: url, style: .composerTile) { model.detach(url) }
                 }
             }
             .padding(.horizontal, 14)
         }
-        .frame(height: AppChatPromptMetrics.attachmentRowHeight)
+        .frame(height: AppChatPromptMetrics.attachmentTileRowHeight)
     }
 
     /// What is selected, as a chip — a real file reuses the exact same attachment chip an
@@ -955,49 +1871,10 @@ struct AppChatPromptPill: View {
     /// render here exactly as they do in the dock. Reimplementing it would have been the
     /// same drift this surface was built to avoid.
     private var transcript: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(Array(model.messages.enumerated()), id: \.element.id) {
-                        index, message in
-                        AIChatMessageView(
-                            message: message,
-                            isStreaming: model.isAnswering && index == model.messages.count - 1,
-                            assistantAvatarImage: appIcon,
-                            liveSteps: model.isAnswering && index == model.messages.count - 1
-                                ? model.liveSteps : []
-                        )
-                        .id(message.id)
-                    }
-                    // The dock draws its activity timeline over exactly this data; the
-                    // corner drew a bare spinner over it. A spinner is the app declining
-                    // to say what it is doing while it holds the user's question.
-                    if model.isAnswering && model.messages.last?.role == .user {
-                        LiveAgentProgressView(steps: waitingSteps)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-            }
-            .onChange(of: model.messages.count) { _, _ in
-                guard let last = model.messages.last else { return }
-                withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    /// What to show between sending and the first token.
-    ///
-    /// The steps are the truth when there are any. Before the first one arrives there is
-    /// still something honest to say — which app the question went to — and saying it beats
-    /// a spinner, which tells the user only that the app is busy with something.
-    private var waitingSteps: [String] {
-        let steps = model.liveSteps.filter {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        guard steps.isEmpty else { return steps }
-        return ["Reading \(model.appName.isEmpty ? "this app" : model.appName)…"]
+        CornerTranscript(
+            messages: model.messages, isAnswering: model.isAnswering,
+            liveSteps: model.liveSteps, appName: model.appName,
+            appBundleID: model.appBundleID, appIcon: appIcon)
     }
 
     // MARK: - Shrunken
@@ -1026,5 +1903,45 @@ struct AppChatPromptPill: View {
                 withBundleIdentifier: model.appBundleID)
         else { return nil }
         return NSWorkspace.shared.icon(forFile: url.path)
+    }
+}
+
+/// The field's leading "← Name" chip for a scope entered from Global: the whole chip is the
+/// way back. One look for the clipboard, a command, a tool and a CLI.
+private struct ScopeBackChip: View {
+    let title: String
+    let icon: NSImage?
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left")
+                    .font(.system(size: 11, weight: .bold))
+                    .frame(width: 22, height: 22)
+                    .background(Color.primary.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
+                if let icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 16, height: 16)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
+                // The scope's name is the subject of everything else in this row, so it keeps
+                // its width and the placeholder gives way.
+                Text(title)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .padding(.leading, 4)
+            .padding(.trailing, 9)
+            .padding(.vertical, 3)
+            .background(Color.primary.opacity(0.09), in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .layoutPriority(1)
     }
 }

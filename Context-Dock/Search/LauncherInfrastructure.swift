@@ -172,7 +172,7 @@ class ShortcutsLinkQuery {
 
         var error: NSDictionary?
         if let scriptObject = NSAppleScript(source: script) {
-            let output = scriptObject.executeAndReturnError(&error)
+            let output = scriptObject.executeSerialized(error: &error)
 
             if let error = error {
                 #if DEBUG

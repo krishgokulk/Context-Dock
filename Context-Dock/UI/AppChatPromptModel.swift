@@ -55,6 +55,26 @@ enum AppChatPromptPhase: Equatable {
     var showsInput: Bool { self == .prompt || self == .suggesting || self == .chat }
 }
 
+/// Whether the pointer resting on the field's pills may fold the field into the big bar.
+///
+/// Only when the pointer chose it. Typing from the resting bar opens the field and gathers
+/// the bar's icons into the pill — under a pointer that has not moved — and the first letter
+/// is still on its way into the field, so the "only an empty field folds" rule passed and the
+/// field collapsed mid-word (owner 2026-09-27).
+enum DockHoverFoldGate {
+    /// The field's own opening morph, plus a beat.
+    static let afterOpening: TimeInterval = AppChatPromptMetrics.dockMorphDuration + 0.2
+    /// Someone typing is not reaching for the bar.
+    static let afterTyping: TimeInterval = 1.2
+
+    static func allows(now: Date, openedAt: Date?, typedAt: Date?, textPending: Bool) -> Bool {
+        if textPending { return false }
+        if let openedAt, now.timeIntervalSince(openedAt) < afterOpening { return false }
+        if let typedAt, now.timeIntervalSince(typedAt) < afterTyping { return false }
+        return true
+    }
+}
+
 @MainActor
 final class AppChatPromptModel: ObservableObject {
     /// How long an untouched prompt waits. Matches the clipboard card: nothing in this
@@ -79,16 +99,45 @@ final class AppChatPromptModel: ObservableObject {
     /// dragged out of the Dock while its app runs, it comes back next launch.
     @Published var hiddenRunningBundleIDs: Set<String> = []
 
-    /// The app whose icon the pointer is over in the strip, for the window row.
-    @Published var hoveredStripBundleID: String? {
+    /// What the pointer is over in the strip, for the card above it. An app answers with
+    /// its windows; a pinned file, folder or command answers with what it is.
+    @Published var hoveredStripTarget: DockHoverTarget? {
         didSet { scheduleWindowRowUpdate() }
     }
-    /// Which app the window row is showing, once the pointer has rested long enough. The
-    /// strip sets `hoveredStripBundleID` on every icon; this follows it after 250 ms and
-    /// lets go 150 ms after the pointer has left both the icon and the row.
-    @Published private(set) var windowRowBundleID: String?
+    /// What that card is showing, once the pointer has rested long enough. The strip sets
+    /// `hoveredStripTarget` on every icon; this follows it after 250 ms and lets go 150 ms
+    /// after the pointer has left both the icon and the card.
+    @Published private(set) var dockPreviewTarget: DockHoverTarget? {
+        didSet {
+            // Expanded belongs to the card that was expanded; the next one opens at its
+            // own size.
+            if dockPreviewTarget != oldValue { pinPreviewExpanded = false }
+        }
+    }
+    /// A pin card the user pinned open. The pointer moving over other icons, or away, no
+    /// longer puts it away; unpinning hands the slot back to the hover.
+    @Published private(set) var pinnedPreviewPinID: UUID?
+    /// The pin card grown by its expand control (`DockPinPreviewMetrics.folderExpanded`).
+    @Published private(set) var pinPreviewExpanded = false
     private var windowRowTask: Task<Void, Never>?
     private var pointerInWindowRow = false
+
+    /// The app whose windows the row is showing, if that is what is up.
+    var windowRowBundleID: String? {
+        if case .app(let bundleID) = dockPreviewTarget { return bundleID }
+        return nil
+    }
+
+    /// The pin whose card is up, if that is what is up.
+    var previewPinID: UUID? {
+        if case .pin(let id) = dockPreviewTarget { return id }
+        return nil
+    }
+
+    /// A pinned plugin whose panel is open above its tile — a tap in the widget asked for it.
+    /// Takes the same slot as the hover cards and wins over them while it is up: a card the
+    /// user opened is not put away by the pointer passing over the next icon.
+    @Published var pluginCardPinID: UUID?
 
     @Published private(set) var phase: AppChatPromptPhase = .hidden
     @Published var query = ""
@@ -107,6 +156,9 @@ final class AppChatPromptModel: ObservableObject {
     /// had typed a question — the list is an offer, and taking it should be something you
     /// do, not something that happens because you did not avoid it.
     @Published var focusedMenuIndex: Int?
+    /// Which of the field's pills Tab and ←/→ have highlighted, or nil while the caret is
+    /// the field's. An index into `globalMatchIcons`. See `DockKeyRules.pillRow`.
+    @Published var focusedPillIndex: Int?
     /// Every command the app offers, read once per app rather than per keystroke.
     var allMenuItems: [AXMenuItem] = []
     /// What this app's adapter declares it can do — curated, unlike the menus.
@@ -128,16 +180,107 @@ final class AppChatPromptModel: ObservableObject {
     @Published private(set) var globalTopMatch: GlobalContextTopMatch?
     @Published private(set) var globalMatchIcons: [MatchDockIcon] = []
     @Published private(set) var globalOverflowCount = 0
+    /// What the field widens for: its running-app pills. The pins are not in the field —
+    /// they are the strip's trailing region, which stays on screen while the field is up.
+    /// The icons the field holds beside it: Safari's tab pills in a Safari scope, else the
+    /// running apps. What the field's width is sized for.
+    /// The icons the field keeps room for. In a Safari scope the field leads with the app's
+    /// chip rather than the magnifier, and that chip is counted as pill slots too.
+    var promptIconCount: Int {
+        globalMatchIcons.count + (showsTabBar ? AppChatPromptMetrics.appFieldChromeSlots : 0)
+    }
+    /// The tabs behind the Safari scope's icons, by icon id.
+    var tabsByIconID: [String: SafariTab] = [:]
+    /// The app's pins behind its bar's leading icons, by icon id.
+    var appPinsByIconID: [String: DockPin] = [:]
+    /// How many lines the field's text takes, one to three (`DockFieldLines`, #189). Read
+    /// by the shell's size, so the field grows upward and the window hit-tests the same.
+    @Published var fieldLines = 1
+    /// The Context Dock's panel beside the conversation (#191): open until the header's
+    /// toggle closes it, and kept that way across turns and apps.
+    @Published var livePanelOpen = true
+    /// The text field's frame in the corner's hosting view (top-left origin). Not published:
+    /// only the swipe monitor reads it, and a redraw per layout pass would be for nothing.
+    var inputFrame: CGRect = .zero
+
+    /// The app's own bar: a Safari scope's open tabs take the running apps' place in the
+    /// Global shell — the strip of big icons at rest, the small pill in the field (owner
+    /// 2026-09-25: "exactly like Global"). Any other app's Context Dock gets the same bar
+    /// once it has pins (task 4b): the bar is the app's own things, and those are its pins.
+    var showsTabBar: Bool {
+        guard !isGlobalScope else { return false }
+        if BrowserTabList.listsTabs(bundleID: appBundleID) { return true }
+        // Every app's Context Dock has the bar, and rests and folds as Global does: its
+        // pinned actions when it has some, the running apps when it has none (owner
+        // 2026-10-08, replacing 2026-09-26's "an app without pins keeps its plain field").
+        // Finder walking a folder is not a dock; otherwise Finder — in front or stepped into
+        // from Global — is its own Context Dock and rests like any app's (owner 2026-10-09).
+        return isAppContextDock && !isFinderFileSearch
+    }
+    /// The pins the strip shows: Global's, never an app bar's — that bar is the app's own
+    /// things, and its own pins are the leading icons of the bar itself (`tabStripIcons`).
+    var stripPins: [DockPin] { showsTabBar ? [] : dockPins.pins }
+    /// The Global shell — resting as the big dock and opening back into the field. Global
+    /// Context's, and an app bar's (owner 2026-09-26): idle, an app folds into a big bar of
+    /// its pins and tabs the way Global folds into its running apps.
+    var usesDockShell: Bool { isGlobalScope || showsTabBar }
+    /// The field is fitted to its own content rather than to the strip's width. Every app
+    /// scope, the app bar's included: open, it is the compact field (owner 2026-09-26:
+    /// "stay compact" — the field used to take the big bar's width and looked large one
+    /// moment and small the next). Only Global's field shares its strip's width.
+    var fitsField: Bool { !isGlobalScope }
+    /// How many of the app bar's icons the field makes room for; the rest scroll sideways
+    /// inside the pill rather than widening the field or becoming +N.
+    static let appBarVisibleIcons = 5
+    /// The frontmost app's own chat — its Context Dock, Finder's included — rather than
+    /// Global, a CLI tool or an extension's panel.
+    var isAppContextDock: Bool {
+        !isGlobalScope && !appBundleID.isEmpty && !isCLIScope
+            && scopedExtension == nil && scopedCommand == nil && scopedPlugin == nil
+    }
+    /// Global's height: Global Context and every app's Context Dock are one bar (owner
+    /// 2026-09-25: "why is the Context Dock smaller than Global Context?").
+    var usesDockHeight: Bool { isGlobalScope || isAppContextDock }
+    /// The field carries the small pill of the strip's icons.
+    var showsFieldPills: Bool { isSearchField || showsTabBar }
+    /// Every running app, uncut — what the strip draws from. `globalMatchIcons` is this
+    /// list trimmed to what fits beside the field.
+    @Published private(set) var allRunningIcons: [MatchDockIcon] = []
     /// This scope was entered from Global, so leaving it goes back there rather than to the
     /// frontmost app.
     @Published var returnsToGlobalScope = false
+    /// The clipboard history the board shows. The shared one; a test hands in its own.
+    lazy var clipboardBoard: ClipboardPanelModel = ClipboardPanelController.shared.model
+    /// The field is filtering the clipboard, whose board stands over it — an overlay on
+    /// whatever scope is underneath, which is left untouched for Back to return to.
+    var isClipboardScope: Bool { clipboardBoard.isBoardOpen }
     /// Guards async Finder results against the keystroke that overtook them.
     var finderSearchGeneration = 0
+    /// The folder Finder's front window shows — the Desktop when no window is open — read
+    /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
+    var finderFrontFolder: URL?
+    var finderFolderReadAt: Date = .distantPast
+    /// Where the front folder is read from. A test swaps it; the app asks Finder.
+    var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
+    /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
+    var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
+        GlobalSearchService.shared.document(withID: $0)
+    }
+    /// Where a plugin's manifest is found. A test swaps it.
+    var pluginManifestLookup: (String) -> PluginManifest? = {
+        PluginRegistry.shared.plugin(id: $0)?.manifest
+    }
+    /// The folders → has stepped into in the Finder scope, outermost first. Empty while the
+    /// scope is a search. Backspace on an empty field climbs back out one at a time (C11, B3).
+    @Published var finderBrowseStack: [URL] = []
     /// The Global Extension this scope is showing, drawn in the board above the field.
     @Published var scopedExtension: UserGlobalExtension?
     /// The Global Command this scope is showing — Quick Note, Currency Converter, the rest
     /// of Settings → Integrations → Global → Commands.
     @Published var scopedCommand: SystemCommand?
+    /// The plugin this scope is showing, its panel drawn in the board above the field — from
+    /// Global search, as a strip pin's card already was (owner 2026-09-28, inventory D6).
+    @Published var scopedPlugin: PluginManifest?
     /// What the panel's assistant has been asked and has answered, while this scope is up.
     @Published var panelConversation: [ChatMessage] = []
     @Published var isAskingPanel = false
@@ -154,8 +297,33 @@ final class AppChatPromptModel: ObservableObject {
     /// Whether the corner chat starts pinned. A toggle that reset itself every relaunch was
     /// not a preference — it was a button that occasionally worked, so pressing it wrote the
     /// choice down rather than only holding it in memory for as long as this object exists.
-    @Published private(set) var isPinned = UserDefaults.standard.bool(
+    @Published private(set) var isPinned = AppChatPromptModel.pinStore.bool(
         forKey: AppChatPromptModel.pinnedDefaultsKey)
+    /// The app's settings card is open in the result board (the chip opens it, owner
+    /// 2026-10-07). The user is reading it, so the idle clock stops while it is open and
+    /// starts again when it closes.
+    @Published var isShowingScopeCard = false {
+        didSet {
+            guard isShowingScopeCard != oldValue else { return }
+            if isShowingScopeCard { cancel() } else { touch() }
+        }
+    }
+
+    /// Where the pin preference lives. The app's own defaults — except under the test
+    /// suite, which runs inside a copy of this app and so shares its domain: a developer
+    /// who had pinned their own corner made every model the suite built start pinned, and
+    /// a pinned model ignores `standDown`. Half a dozen tests across three files read
+    /// "expected .mini, got .prompt" for weeks and were filed as an idle-timer flake. The
+    /// test script names a separate suite in `CONTEXT_DOCK_DEFAULTS_SUITE`; nothing else
+    /// sets it, so the app never sees it.
+    static let pinStore: UserDefaults = {
+        if let suite = ProcessInfo.processInfo.environment["CONTEXT_DOCK_DEFAULTS_SUITE"],
+            let store = UserDefaults(suiteName: suite)
+        {
+            return store
+        }
+        return .standard
+    }()
 
     /// A question is out and its answer has not arrived. The transcript legitimately goes
     /// empty in between, so the card holds rather than reading that as "nothing here".
@@ -169,11 +337,44 @@ final class AppChatPromptModel: ObservableObject {
     private(set) var isStandDownArmed = false
     private(set) var isPointerInside = false
     private var hasPresentedConversation = false
-    /// The user has already done something here — asked, or run a command. What the app can
-    /// do is an opening offer, not a thing to re-present after every action.
-    var hasActed = false
     private let conversation: AppChatConversation
     let globalResultSource: GlobalContextResultSource
+    /// Safari's open tabs, as the shared tab manager last read them. Tests replace it.
+    var tabSource: () -> [SafariTab] = {
+        // A quit Safari has no tabs, whatever the cache last held. Otherwise the last list
+        // read, however old: a 45-second limit turned it into no tabs at all, and the bar
+        // opened with its pins and nothing else (owner 2026-09-26). Opening and folding the
+        // bar ask for a fresh read, which replaces it a moment later.
+        NSRunningApplication.runningApplications(withBundleIdentifier: BrowserTabList.safariBundleID)
+            .isEmpty ? [] : SafariTabManager.shared.cachedTabs(maxAge: .infinity)
+    }
+    /// The page Safari is showing, which leads the pills. Tests replace it.
+    var currentTabURL: () -> String? = { SafariTabManager.shared.lastSelectedTab()?.url }
+    /// Shows a tab in Safari. Tests replace it so they never script the user's Safari.
+    var switchTab: (SafariTab) -> Void = { SafariTabManager.shared.switchTo($0) }
+    /// Where pins live. Tests hand in their own so they never touch the user's pins.
+    var dockPins: DockPinStore = .shared
+    /// Loads a page in the app a pinned tab belongs to, when that tab is no longer open.
+    /// Tests replace it.
+    var openPage: (URL, String) -> Void = { url, bundleID in
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { NSWorkspace.shared.open(url); return }
+        NSWorkspace.shared.open(
+            [url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+    /// The consent gate a pinned menu command passes before it runs — the same one every
+    /// menu click the AI makes goes through. Tests replace it.
+    var askMenuConsent: ([String], String, String) async -> Bool = { path, bundleID, name in
+        await AppAdapterManager.shared.ensureMenuConsent(
+            path: path, targetBundleId: bundleID, appName: name)
+    }
+    /// Runs a menu path in this scope's app once consent is settled. Tests replace it.
+    var performMenuPath: (([String]) -> Void)? = nil
+    /// Reads Safari's tabs again, then calls back. Tests replace it so they never script
+    /// the user's Safari.
+    var refreshTabCache: (@escaping @MainActor () -> Void) -> Void = { done in
+        SafariTabManager.shared.refreshCachedTabsIfNeeded { _ in done() }
+    }
     private var standDownTask: Task<Void, Never>?
     private var conversationObservation: AnyCancellable?
     private var messagesObservation: AnyCancellable?
@@ -181,6 +382,19 @@ final class AppChatPromptModel: ObservableObject {
     private var globalResultsObservation: AnyCancellable?
     private var runningAppsObservation: AnyCancellable?
     private var clipboardPillObservation: AnyCancellable?
+    private var shelfObservation: AnyCancellable?
+
+    /// Whether the Drop Shelf's icon is in the row (`DropShelfVisibility`), read from the one
+    /// shelf. A seam, so a test decides without driving the process-wide store.
+    var shelfVisible: @MainActor () -> Bool = {
+        DropShelfVisibility.shows(
+            itemCount: DropShelfStore.shared.items.count,
+            phase: DropShelfController.shared.presentation.phase)
+    }
+
+    /// The row's shelf, as the field, the strip and the keys read it.
+    var showsShelf: Bool { shelfVisible() }
+    private var pinPillObservation: AnyCancellable?
     /// Guards against the reconfirming read below feeding straight back into the sink
     /// that triggered it — `refreshSelectionForCurrentScope` publishes through the same
     /// reader this observation reads, so calling it from inside the sink without this
@@ -271,19 +485,44 @@ final class AppChatPromptModel: ObservableObject {
         // Same staleness, one copy away: the clipboard pill leads this row precisely
         // because copying is the thing that just happened, but nothing here noticed a
         // copy until the next keystroke recomputed the row anyway.
+        pinPillObservation = DockPinStore.shared.$pins
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                self.updateGlobalTyping(for: self.query)
+            }
         clipboardPillObservation = ClipboardPanelController.shared.model.$entries
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.updateGlobalTyping(for: self.query)
             }
+        // The shelf comes and goes with what it holds and with a drag (owner 2026-10-06):
+        // the row, and the shell measured from it, follow.
+        shelfObservation = Publishers.Merge(
+            DropShelfStore.shared.$items.map { _ in () },
+            DropShelfController.shared.presentation.$phase.map { _ in () }
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     /// Set by `AppChatMenuBrowsing` as the user types in Global Context.
-    func setGlobalTyping(top: GlobalContextTopMatch?, icons: [MatchDockIcon], overflow: Int) {
+    ///
+    /// Takes the running apps whole and cuts them here, because the two surfaces that draw
+    /// them do not want the same number. Beside a 372-point field four icons fit and the
+    /// rest are `+N`; the strip is a dock as wide as the screen, and cutting to four before
+    /// it ever saw the list is why it stopped growing at four apps however much room stood
+    /// empty beside it. `DockStripPlan` does the strip's own cutting, against the width it
+    /// actually has.
+    func setGlobalTyping(
+        top: GlobalContextTopMatch?, running: [MatchDockIcon],
+        fieldCapacity: Int = AppChatPromptMetrics.matchIconBaseCount
+    ) {
         globalTopMatch = top
-        globalMatchIcons = icons
-        globalOverflowCount = overflow
+        allRunningIcons = running
+        globalMatchIcons = Array(running.prefix(max(1, fieldCapacity)))
+        globalOverflowCount = max(running.count - globalMatchIcons.count, 0)
     }
 
     /// Point the surface at a scope. The scope's identity stays `private(set)` — only the
@@ -303,6 +542,10 @@ final class AppChatPromptModel: ObservableObject {
             query = drafts[incoming] ?? ""
             // The answer being waited for belonged to the scope being left.
             stopAwaitingAnswer()
+            // So did a conversation put away by its ⌄.
+            isConversationHidden = false
+            // A folder walk belongs to the Finder scope it was taken in.
+            finderBrowseStack = []
         }
         appName = name
         appBundleID = bundleID
@@ -326,6 +569,9 @@ final class AppChatPromptModel: ObservableObject {
         suggestions: [AppChatSuggestion] = [],
         summary: String = ""
     ) {
+        // The app in front's own Context Dock, not one stepped into from Global: a flag left
+        // from an earlier step-in swallowed every sideways swipe here (owner 2026-10-09).
+        returnsToGlobalScope = false
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         isShowingSelectionScope = false
@@ -417,10 +663,21 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
-    /// Opens on suggestions when there are any, because a blank field asks the user to
-    /// guess what the app can do.
+    /// The field, alone. It used to open on the app's suggestions whenever there were any,
+    /// on the theory that a blank field asks the user to guess what the app can do — and
+    /// what that produced was a sheet of 224 rows over a field nobody had typed into, gone
+    /// again two seconds later. The owner asked not to see it (2026-09-16). The list is
+    /// still there: ↓ opens it (`moveMenuFocus`), the same door the dock's own results
+    /// sheet has, and the capability summary under the field still says what is in scope.
     private var restingInputPhase: AppChatPromptPhase {
         let typed = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        // Inside a folder the listing is what the step went to fetch, typed filter or not.
+        if isFinderScope, !finderBrowseStack.isEmpty { return rows.isEmpty ? .prompt : .suggesting }
+        // "/" opens its list of apps by itself; Return takes the first (owner 2026-10-10).
+        if slashAppFilter != nil { return rows.isEmpty ? .prompt : .suggesting }
+        // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
+        // arrows choose a file or command (owner 2026-10-09).
+        if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
         // Typed: the field alone, same as the dock. Typing never pops the sheet open by
         // itself, and it closes right back down if a down-arrow peek was open when the next
         // character landed — the arrow key is the only door in.
@@ -429,13 +686,30 @@ final class AppChatPromptModel: ObservableObject {
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
         // A scope stepped into from Global shows only what it found. With nothing found the
-        // field rests alone rather than opening an empty board.
+        // field rests alone rather than opening an empty board. An *app* stepped into from
+        // Global never reaches this line — it answers with its window snapshot above — so
+        // what this governs is Finder and a CLI tool, where the rows are the thing the step
+        // went to fetch: the search results, the tool's subcommands.
+        // An app stepped into from Global rests as its own Context Dock: the field alone, ↓
+        // opens its actions (owner 2026-10-07: "don't show the launch sheet").
+        if isAppStepIn { return .prompt }
         if returnsToGlobalScope { return rows.isEmpty ? .prompt : .suggesting }
-        if hasActed { return .prompt }
-        // Attaching a file is composing a question about it. Offering the app's opening
-        // menu on top of that answers something the user has already stopped asking.
+        // Attaching a file is composing a question about it. A list open over that is
+        // answering something the user has already stopped asking.
         if !attachments.isEmpty { return .prompt }
-        return (rows.isEmpty && suggestions.isEmpty) ? .prompt : .suggesting
+        // A list the user arrowed open stays open while they are still standing in it —
+        // this is also asked when a live menu read lands, and that must not close what was
+        // just opened. The focused row is what "still in it" means, and it is why the rule
+        // reads it rather than the phase alone: a list opened to pick "Library" out of what
+        // was typed stayed open after the row ran, and `rows` had meanwhile been rebuilt
+        // for the now-empty field — so what stood over that field was every action the app
+        // has, 174 of them, which is the sheet the owner asked not to see wearing a
+        // different coat. Taking a row or asking a question lets go of the focus, and the
+        // list goes with it.
+        if phase == .suggesting, focusedMenuIndex != nil, !rows.isEmpty { return .suggesting }
+        // Nothing else opens the list by itself: not a scope-in, not a cleared field, not
+        // a detached file, not the pointer coming back to the badge. Only the arrows.
+        return .prompt
     }
 
     // MARK: - Controls
@@ -465,7 +739,7 @@ final class AppChatPromptModel: ObservableObject {
         // Only here, not wherever this session happens to reset the in-memory flag (idling
         // out, dismissing): a toggle is the user stating a preference, an idle timeout is
         // not them changing their mind about it.
-        UserDefaults.standard.set(isPinned, forKey: Self.pinnedDefaultsKey)
+        Self.pinStore.set(isPinned, forKey: Self.pinnedDefaultsKey)
         if isPinned {
             cancel()
         } else {
@@ -488,6 +762,51 @@ final class AppChatPromptModel: ObservableObject {
     /// The turn belongs to the dock's pipeline, so this asks for the same reason clearing
     /// does — and a request that arrives after the turn already finished is simply ignored
     /// on the other side.
+    /// Backspace on an empty field in the app chat (E4): the conversation is kept — it is the
+    /// dock's, and it is there next time — the chat steps aside, and the field is the app's
+    /// menu search again. A turn still running is stopped first, as the Dock's key does.
+    @discardableResult
+    func leaveChatForMenus() -> Bool {
+        guard phase == .chat, query.isEmpty else { return false }
+        cancelTurn()
+        stopAwaitingAnswer()
+        hasPresentedConversation = false
+        focusedMenuIndex = nil
+        set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    /// The chat sheet put away by its ⌄ (owner 2026-10-08: "show a down arrow to hide the
+    /// chat sheet"): the conversation is kept, a turn keeps running, and the field's ⌃
+    /// brings it back (`showConversation`).
+    @Published private(set) var isConversationHidden = false
+
+    @discardableResult
+    func hideConversation() -> Bool {
+        guard phase == .chat else { return false }
+        stopAwaitingAnswer()
+        hasPresentedConversation = false
+        focusedMenuIndex = nil
+        isConversationHidden = true
+        set(restingInputPhase)
+        touch()
+        return true
+    }
+
+    @discardableResult
+    func showConversation() -> Bool {
+        guard isConversationHidden, phase.showsInput, phase != .chat,
+            isAnswering || !messages.isEmpty
+        else { return false }
+        isConversationHidden = false
+        isShowingScopeCard = false
+        hasPresentedConversation = true
+        set(.chat)
+        touch()
+        return true
+    }
+
     func cancelTurn() {
         guard isAnswering else { return }
         NotificationCenter.default.post(name: .appChatPromptCancel, object: nil)
@@ -504,7 +823,6 @@ final class AppChatPromptModel: ObservableObject {
         query = ""
         attachments = []
         hasPresentedConversation = false
-        hasActed = false
         stopAwaitingAnswer()
         set(restingInputPhase)
         touch()
@@ -527,6 +845,9 @@ final class AppChatPromptModel: ObservableObject {
     /// It also puts the suggestion list away — a typed question is not a browse — and
     /// brings it back if the field is cleared again.
     func queryChanged() {
+        lastTypedAt = Date()
+        // Typing is the caret's: the pills leave the field while anything is typed.
+        focusedPillIndex = nil
         guard phase.isVisible else { return }
         updateMenuMatches()
         syncListPhase()
@@ -536,7 +857,10 @@ final class AppChatPromptModel: ObservableObject {
     /// The pill's height comes from its phase, so the phase has to follow the list — which
     /// can also arrive *after* typing, when the live menu read lands.
     func syncListPhase() {
-        guard phase.isVisible, phase != .chat else { return }
+        // Not from the dock: a list refresh — the menu read landing after a tab switch —
+        // opened the field under a click on the big bar (owner 2026-09-26: it opens on
+        // hover, not on a click). The dock opens by hover, typing or the magnifier only.
+        guard phase.isVisible, phase != .chat, phase != .dock else { return }
         set(restingInputPhase)
     }
 
@@ -596,7 +920,8 @@ final class AppChatPromptModel: ObservableObject {
     /// Any interaction puts the clock back, unless the surface is pinned.
     func touch() {
         // A dock has no clock to put back.
-        guard !isPinned, !isAnswering, phase.isVisible, phase != .dock else { return }
+        guard !isPinned, !isAnswering, !isShowingScopeCard, phase.isVisible, phase != .dock
+        else { return }
         armForIdle()
     }
 
@@ -630,6 +955,9 @@ final class AppChatPromptModel: ObservableObject {
         // an app stepped into from Global — clicking away from any of them used to swap the
         // field to whatever came forward, losing the place the user had picked.
         guard !isGlobalScope, !returnsToGlobalScope else { return }
+        // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
+        // on the app it was pinned in, whatever comes forward after.
+        guard !isPinned else { return }
         query = ""
         attachments = []
         appName = name
@@ -655,7 +983,8 @@ final class AppChatPromptModel: ObservableObject {
     /// than a generic dot, so the corner still says which app it is about, and it keeps
     /// any half-written question for whoever comes back for it.
     func standDown() {
-        guard !isPinned, !isPointerInside, !isAnswering else { return }
+        // The clipboard board is a deliberate ask, held until Back or a paste.
+        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope else { return }
         switch phase {
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
@@ -664,6 +993,11 @@ final class AppChatPromptModel: ObservableObject {
             // an offer nobody asked to see again.
             set(.prompt)
             armForIdle()
+        case .prompt where !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            // Words in the field are the user mid-question, not an abandoned surface: it
+            // stays open until they send, clear it, or dismiss it (owner 2026-09-27: "don't
+            // hide if input is in the field"). It used to shrink to the app's icon here.
+            break
         case .prompt where canRestAsDock:
             // The dock has no timer of its own: it stays until Esc, a click outside, or a
             // Space switch, the way the Dock does.
@@ -680,14 +1014,14 @@ final class AppChatPromptModel: ObservableObject {
 
     /// An empty Global field with the setting on is the only thing that rests as a dock.
     var canRestAsDock: Bool {
-        isGlobalScope
+        usesDockShell
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && autoShrinkEnabled()
     }
 
     /// The strip's running section: the dock's own running pills, minus the removed ones.
     var stripIcons: [MatchDockIcon] {
-        globalMatchIcons.filter { icon in
+        allRunningIcons.filter { icon in
             guard let bundleID = icon.bundleID else { return true }
             return !hiddenRunningBundleIDs.contains(bundleID)
         }
@@ -697,10 +1031,22 @@ final class AppChatPromptModel: ObservableObject {
         hiddenRunningBundleIDs.insert(bundleID)
     }
 
-    /// The corner's own affordances that join the strip: the clipboard when a copy just
-    /// happened, the selection when there is one. Same rules as the field's own row.
-    func dockToolCount(clipboardVisible: Bool) -> Int {
-        (clipboardVisible ? 1 : 0) + (selection != nil ? 1 : 0)
+    /// The tools at the strip's end, in the order they are drawn, shelf last. The corner's
+    /// own affordances — the clipboard when a copy just happened, the selection when there is
+    /// one, the result of an action for a few seconds after it ran — and then the Drop Shelf,
+    /// while it holds something or a drag is in flight (`DropShelfVisibility`).
+    func dockTools(clipboardVisible: Bool, feedbackVisible: Bool = false) -> [DockToolKind] {
+        // An app bar is the app's own things (owner 2026-09-25) — plus, at its end after the
+        // pins and tabs, a copy's clipboard icon for its few seconds and the selection icon
+        // while something is selected (owner 2026-09-26). No action results.
+        DockTools.row(
+            showsTabBar: showsTabBar, clipboard: clipboardVisible, selection: selection != nil,
+            feedback: feedbackVisible, shelf: showsShelf)
+    }
+
+    /// How many of those there are, which the strip's width is measured for.
+    func dockToolCount(clipboardVisible: Bool, feedbackVisible: Bool = false) -> Int {
+        dockTools(clipboardVisible: clipboardVisible, feedbackVisible: feedbackVisible).count
     }
 
     /// The first printable character brings the field back and lands in it. Anything the
@@ -710,11 +1056,49 @@ final class AppChatPromptModel: ObservableObject {
         guard phase == .dock else { return false }
         set(.prompt)
         if let text, !text.isEmpty {
-            query = text
+            // A draft the pointer folded away is kept (`restAsDockNow(keepsDraft:)`): the
+            // key carries on from it rather than replacing it.
+            query += text
             queryChanged()
         }
         armForIdle()
         return true
+    }
+
+    /// Puts the plugin card away however it came up. A tapped-open card is closed by
+    /// forgetting the tap; a hover-opened one by letting go of the hover, so it stays away
+    /// until the pointer leaves the icon and comes back — the pointer is still on the icon
+    /// that opened it, and a card that came straight back would read as the × misfiring.
+    func dismissPluginCard() {
+        pluginCardPinID = nil
+        windowRowTask?.cancel()
+        dockPreviewTarget = nil
+    }
+
+    func togglePinPreviewPinned(_ id: UUID) {
+        pinnedPreviewPinID = pinnedPreviewPinID == id ? nil : id
+        if pinnedPreviewPinID == nil { scheduleWindowRowUpdate() }
+    }
+
+    func togglePinPreviewExpanded() {
+        pinPreviewExpanded.toggle()
+    }
+
+    /// What the card slot shows: a pinned card wins over whatever the pointer is on.
+    nonisolated static func previewTarget(
+        hovered: DockHoverTarget?, pinnedPin: UUID?
+    ) -> DockHoverTarget? {
+        if let pinnedPin { return .pin(id: pinnedPin) }
+        return hovered
+    }
+
+    /// Puts away the card above the strip — windows, pin preview — and leaves the strip up.
+    /// An app quit from its window row takes the row with it; the dock stays where it was.
+    func dismissDockPreview() {
+        windowRowTask?.cancel()
+        hoveredStripTarget = nil
+        dockPreviewTarget = nil
+        pointerInWindowRow = false
     }
 
     func windowRowHovered(_ inside: Bool) {
@@ -724,20 +1108,91 @@ final class AppChatPromptModel: ObservableObject {
 
     private func scheduleWindowRowUpdate() {
         windowRowTask?.cancel()
-        let target = hoveredStripBundleID
+        let target = hoveredStripTarget
         let delay: TimeInterval = target == nil ? 0.15 : 0.25
+        // The app's windows are captured during the dwell, so the card opens on them.
+        let snapshots = AppWindowSnapshotService.shared
+        if case .app(let bundleID) = target { snapshots.refreshWindows(bundleID: bundleID) }
         windowRowTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             if target == nil, self.pointerInWindowRow { return }
-            self.windowRowBundleID = target
+            if case .app(let bundleID) = target {
+                // Never an empty card (owner 2026-10-08: "No windows" over a pinned web app):
+                // wait out the capture, briefly, and open only on windows to show — or on
+                // the Screen Recording ask, which is worth a card.
+                var waited = 0
+                while snapshots.isCapturingWindows(for: bundleID), waited < 12 {
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    waited += 1
+                }
+                guard !Task.isCancelled else { return }
+                if !Self.windowCardHasContent(
+                    windows: snapshots.windowSnapshots(for: bundleID).count,
+                    capturing: snapshots.isCapturingWindows(for: bundleID),
+                    denied: snapshots.isDenied)
+                {
+                    self.dockPreviewTarget = Self.previewTarget(
+                        hovered: nil, pinnedPin: self.pinnedPreviewPinID)
+                    return
+                }
+            }
+            self.dockPreviewTarget = Self.previewTarget(
+                hovered: target, pinnedPin: self.pinnedPreviewPinID)
         }
+    }
+
+    /// Pure: whether an app's windows card has anything to show — windows, the capture still
+    /// running, or the Screen Recording ask. "No windows" alone is not a card.
+    nonisolated static func windowCardHasContent(windows: Int, capturing: Bool, denied: Bool)
+        -> Bool
+    {
+        windows > 0 || capturing || denied
     }
 
     /// ← on an empty Global field folds it now rather than waiting out the dwell.
     @discardableResult
     func foldToDock() -> Bool {
         guard phase == .prompt, canRestAsDock, !isPinned, !isAnswering else { return false }
+        cancel()
+        set(.dock)
+        return true
+    }
+
+    /// Straight to the dock, whatever "fold on its own" says: auto-hide's edge summons the
+    /// resting strip, the way the macOS Dock shows its icons — typing is what opens the field.
+    /// `keepsDraft`: the pointer resting on the apps asked for the dock, typed text or not
+    /// (owner 2026-10-08: "nothing happens while split"); the draft stays for the field's
+    /// return. Everything else still refuses a typed field.
+    @discardableResult
+    func restAsDockNow(keepsDraft: Bool = false) -> Bool {
+        guard usesDockShell, !isAnswering,
+            keepsDraft || query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
+        cancel()
+        set(.dock)
+        return true
+    }
+
+    /// The pointer rested on an app bar's pill: show the big bar of its pins and tabs at
+    /// once (owner 2026-09-26), as resting on Global's small pill does. Asked for by hand,
+    /// so "keep open" does not refuse it — that setting is about not folding on its own.
+    /// When the field last opened out of the bar, and when it was last typed in — what
+    /// `DockHoverFoldGate` asks before a hover folds it.
+    private var fieldOpenedAt: Date?
+    private var lastTypedAt: Date?
+
+    var hoverMayFold: Bool {
+        DockHoverFoldGate.allows(
+            now: Date(), openedAt: fieldOpenedAt, typedAt: lastTypedAt,
+            textPending: FieldCaret.isWaitingForFocus)
+    }
+
+    @discardableResult
+    func expandAppBar() -> Bool {
+        guard showsTabBar, usesDockShell, phase == .prompt, !isAnswering,
+            query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return false }
         cancel()
         set(.dock)
         return true
@@ -767,15 +1222,15 @@ final class AppChatPromptModel: ObservableObject {
     func dismiss() {
         cancel()
         windowRowTask?.cancel()
-        windowRowBundleID = nil
-        hoveredStripBundleID = nil
+        dockPreviewTarget = nil
+        hoveredStripTarget = nil
+        pluginCardPinID = nil
         query = ""
         suggestions = []
         capabilitySummary = ""
         attachments = []
         isPinned = false
         hasPresentedConversation = false
-        hasActed = false
         stopAwaitingAnswer()
         set(.hidden)
     }
@@ -790,11 +1245,13 @@ final class AppChatPromptModel: ObservableObject {
         guard !question.isEmpty, !isAnswering else { return false }
         Self.handOff(
             app: appName, bundleID: appBundleID, query: question, attachments: attachments)
+        // The question was asked from the list, not into it.
+        focusedMenuIndex = nil
         query = ""
         attachments = []
         hasPresentedConversation = true
-        hasActed = true
         awaitingAnswer = true
+        isConversationHidden = false
         armAnswerWatchdog()
         set(.chat)
         touch()
@@ -808,7 +1265,6 @@ final class AppChatPromptModel: ObservableObject {
     /// see the dock clear the session for the new scope, and step straight back to a field.
     func expectAnswer() {
         hasPresentedConversation = true
-        hasActed = true
         awaitingAnswer = true
         armAnswerWatchdog()
         set(.chat)
@@ -863,9 +1319,25 @@ final class AppChatPromptModel: ObservableObject {
         isStandDownArmed = false
     }
 
-    func set(_ next: AppChatPromptPhase) {
+    func set(
+        _ next: AppChatPromptPhase, caller: String = #function, file: String = #fileID,
+        line: Int = #line
+    ) {
         guard phase != next else { return }
+        if phase == .dock, next.showsInput { fieldOpenedAt = Date() }
+        // Which code moved the field, for the turn log (owner 2026-10-08: the field came
+        // back after resting on the apps folded it, and nothing on screen said what did).
+        DoraXTurnLog.record("corner.phase \(phase) → \(next) by \(caller) \(file):\(line)")
         phase = next
+        // The clipboard board stands over the field; the field going takes it along.
+        if !next.showsInput, clipboardBoard.isBoardOpen { clipboardBoard.closeBoard() }
+        // A highlight on the field's pills does not outlive the field.
+        if !next.showsInput || next == .chat { focusedPillIndex = nil }
+        // A plugin's card belongs to the strip; leaving the dock takes it down with it.
+        if next != .dock { pluginCardPinID = nil }
+        // The bar opening or folding shows the tabs: read them again so what it shows is
+        // current. The tab manager throttles this to one read every two seconds.
+        if showsTabBar, next == .dock || next == .prompt { refreshTabs() }
         onPhaseChange?(next)
     }
 }

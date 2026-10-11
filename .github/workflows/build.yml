@@ -1,20 +1,24 @@
-name: Build
+name: CI
 
-# Catch compile breaks before they land on main (e.g. a missing `import Combine`
-# that the cloud toolchain doesn't flag but a stricter local one does).
+# The merge gate for main (docs/master/00-ENGINEERING-OPERATING-MODEL.md §2.8): every PR must
+# build and pass the whole offline suite before it can merge. scripts/test.sh builds the app
+# and the test bundle, so one job covers both.
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: macos-latest
+  test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -24,18 +28,40 @@ jobs:
           sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
 
+      - name: Keep compiling after the first error
+        # Otherwise a failing run names one file, and every other broken file waits for the
+        # next run.
+        run: defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
+
       - name: Install Metal toolchain
         # The project ships .metal shaders; the runner's Xcode doesn't bundle the
         # Metal toolchain by default ("cannot execute tool 'metal'").
         run: xcodebuild -downloadComponent MetalToolchain || true
 
-      - name: Build (Debug, unsigned)
+      - name: Test (Debug, ad-hoc signed)
+        # No Apple Development certificate on the runner: sign ad-hoc so the test host can
+        # launch on Apple Silicon, with no team and no provisioning. One test host only: a
+        # parallel clone is a second copy of the app contending for its port and store, and on
+        # the runner it timed out while preparing (1889 passed, the clone counted as 1 failed).
         run: |
-          xcodebuild \
-            -project Context-Dock.xcodeproj \
-            -scheme Context-Dock \
-            -configuration Debug \
-            -derivedDataPath .build/CIDerivedData \
+          ./scripts/test.sh \
             -skipPackagePluginValidation \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+            -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 300 \
+            CODE_SIGN_IDENTITY=- \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM= \
+            PROVISIONING_PROFILE_SPECIFIER=
+
+      - name: Upload test log
+        # Also on cancel: a hung run is exactly the one whose log says where it hung.
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log
+          path: |
+            .build/XcodeTestDerivedData/last-test-run.log
+            .build/XcodeTestDerivedData/Logs/Test/*.xcresult
+          if-no-files-found: ignore

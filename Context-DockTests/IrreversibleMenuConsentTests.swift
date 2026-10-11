@@ -72,4 +72,69 @@ struct IrreversibleMenuConsentTests {
                 "\(path.joined(separator: " ▸ ")) is harmless but would prompt")
         }
     }
+
+    /// Destructive words count only as whole words. The list used to be a substring check,
+    /// so "Closed" read as "Close": reopening a window prompted like closing one.
+    @Test func destructiveWordsMatchWholeWordsOnly() {
+        let gated: [[String]] = [
+            ["File", "Close Tab"],
+            ["File", "Close…"],
+            ["Apple", "Log Out Gokula…"],
+            ["Account", "Sign Out"],
+        ]
+        for path in gated {
+            #expect(store.isDestructive(path: path), "\(path.joined(separator: " ▸ ")) is not gated")
+        }
+        let ungated: [[String]] = [
+            ["History", "Reopen Last Closed Window"],
+            ["History", "Reopen Last Closed Tab"],
+            ["History", "Recently Closed", "Apple"],
+            ["View", "Show Deleted Items"],
+        ]
+        for path in ungated {
+            #expect(
+                !store.isDestructive(path: path),
+                "\(path.joined(separator: " ▸ ")) is harmless but would prompt")
+        }
+    }
+
+    /// A word that is neither an exact destructive word nor its plain past form ("Closed",
+    /// "Deleted") is not something the list can call safe, so it stays gated.
+    @Test func anUnsureFormOfADestructiveWordStaysGated() {
+        let paths: [[String]] = [
+            ["File", "Closing Tabs"],
+            ["Edit", "Resetting Defaults"],
+            ["File", "Deletes Selection"],
+        ]
+        for path in paths {
+            #expect(store.isDestructive(path: path), "\(path.joined(separator: " ▸ ")) is not gated")
+        }
+    }
+
+    /// "Forward" in a browser's History menu (or Finder's Go menu) moves through pages; it
+    /// sends nothing. Anywhere else, or with no menu to say which it is, it stays outbound.
+    @Test func historyForwardIsNavigationNotSending() {
+        #expect(!store.isDestructive(path: ["History", "Forward"]))
+        #expect(!store.isDestructive(path: ["Go", "Forward"]))
+        #expect(store.isDestructive(path: ["Message", "Forward"]))
+        #expect(store.isDestructive(path: ["Forward"]))
+        #expect(store.isDestructive(path: ["History", "Forward", "Page"]))
+        #expect(store.isDestructive(path: ["History", "Share"]))
+    }
+
+    /// Results drop a menu route that destroys something unless the request asked for that.
+    /// "Recently Closed" read as "close", so reopening a closed page never showed up.
+    @Test func recentlyClosedPagesShowInResults() {
+        let route = ChatRoute(
+            id: "menu:safari:recently-closed", kind: .menuCommand, title: "Apple",
+            payload: "History > Recently Closed > Apple",
+            appName: "Safari", bundleId: "com.apple.Safari", isReadOnly: false)
+        #expect(ActionReadiness.isOfferable(route, query: "reopen the apple page"))
+
+        let close = ChatRoute(
+            id: "menu:safari:close-tab", kind: .menuCommand, title: "Close Tab",
+            payload: "File > Close Tab",
+            appName: "Safari", bundleId: "com.apple.Safari", isReadOnly: false)
+        #expect(!ActionReadiness.isOfferable(close, query: "show me the apple page"))
+    }
 }

@@ -13,7 +13,7 @@ final class AIContextBuilder {
         prompt += "\nRequest mode: \(request.mode.rawValue)"
         prompt += "\n" + behaviorRule(for: request)
         if let live = request.liveContext {
-            prompt += "\n\n" + liveContextBlock(live, query: request.text)
+            prompt += "\n\n" + liveContextBlock(live, query: request.text, permissions: .current)
         }
         if request.source == .globalContext || request.includesWorkflowCapabilities {
             prompt += "\n\n" + AppWorkflowToolCatalog.shared.generalChatPromptBlock(
@@ -125,7 +125,10 @@ final class AIContextBuilder {
         return parts.joined(separator: " | ")
     }
 
-    private func liveContextBlock(_ context: AIContextSnapshot, query: String) -> String {
+    /// `permissions` is injected so a test never asks the OS which grants this process has.
+    func liveContextBlock(
+        _ context: AIContextSnapshot, query: String, permissions: ReadabilityPermissions
+    ) -> String {
         var lines = ["Shared context snapshot:", "- App: \(context.appName) (\(context.bundleID))"]
         if let title = context.windowTitle, !title.isEmpty { lines.append("- Window: \(title)") }
         if let text = context.selectedText, !text.isEmpty {
@@ -196,6 +199,19 @@ final class AIContextBuilder {
         if !context.registeredCapabilities.isEmpty {
             lines.append("- Registered capabilities:\n\(context.registeredCapabilities.prefix(80).map { "  - \($0)" }.joined(separator: "\n"))")
         }
+        // What was and was not readable, stated outright. The window title above is one line
+        // of fact; a model handed only a title reasons from the user's word ("page") and
+        // offers to re-read something that would read the same.
+        let pageCharacters = context.browserContext?.cleanMarkdown?
+            .trimmingCharacters(in: .whitespacesAndNewlines).count ?? 0
+        let facts = ReadabilityFacts(
+            appName: context.appName,
+            bundleId: context.bundleID,
+            windowTitle: context.windowTitle,
+            axTextCharacterCount: context.selectedTextCharacterCount + pageCharacters,
+            missingPermissions: permissions.missing)
+        lines.append("")
+        lines.append(facts.block())
         return lines.joined(separator: "\n")
     }
 

@@ -34,7 +34,8 @@ final class WebContextEngine {
     func context(for axContext: AXContext) -> WebPageContextSnapshot? {
         guard AXWebReader.shared.isBrowser(bundleId: axContext.bundleId) else { return nil }
         guard let rawURL = axContext.currentURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !rawURL.isEmpty
+              !rawURL.isEmpty,
+              SensitivePageGuard.allows(rawURL)
         else { return nil }
 
         if let safari = SafariBrowserBridge.shared.currentContext(),
@@ -109,6 +110,7 @@ final class WebContextEngine {
                     pid: app.processIdentifier,
                     bundleId: bundleId
                   ),
+                  SensitivePageGuard.allows(rawURL),
                   let normalized = normalizedURL(rawURL),
                   seen.insert(normalized).inserted
             else { continue }
