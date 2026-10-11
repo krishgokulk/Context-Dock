@@ -46,6 +46,9 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-11 | #232 Corner dock magnification: continuous, unclipped, macOS-Dock smooth; search, clipboard, selection, shelf and feedback icons magnify too; owner hand-tested ("234 passed") | #234 |
+| 2026-10-11 | Clipboard board: ⌘↩ with several clips opens a paste-target picker; a mix of images with text or files pastes the images, not row labels; multi-clip drag to Finder; owner hand-tested ("237 passed"). The #232 session merged it itself — planners merge, builders never | #237 |
+| 2026-10-11 | Recovered from backup: MCP servers match bundle ids case-insensitively (Safari chats see `safari-mcp`); an app's name doing its ordinary job ("console", "notes") no longer offers that app; owner hand-tested ("231 passed"). Follow-ups: #233, #235 | #231 |
 | 2026-10-10 | Build log goes to `.build/build-debug.log`; `dev-run.sh`/`build-debug.sh` print only `build: OK` or the errors (agent tokens per build); owner hand-tested | #226 |
 | 2026-10-10 | #195 P1: the Mail search shortcut claims only an exact "search/find …" command and answers headless through `mail.search` (Mail's window untouched); the owner's "from" sentence goes to the model; panel no longer says "Answered without running anything" after a step; owner hand-tested | #209 |
 | 2026-10-10 | UI/UX: "/" jumps to any app's scope from Global or a Context Dock (owner's Corner lane) | #222 |
