@@ -178,6 +178,9 @@ final class DoraXMCPServer: ObservableObject {
         var turnKey: String? = nil
         /// `X-DoraX-Turn-Id`: which live turn of DoraX's own CLI this call belongs to.
         var turnID: String? = nil
+        /// `X-DoraX-Nested`: the CLI turn was launched by an attended `dorax_ask` (see
+        /// `insideAttendedAsk`).
+        var nested = false
         let body: Data
     }
 
@@ -190,6 +193,7 @@ final class DoraXMCPServer: ObservableObject {
         var authorization: String?
         var turnKey: String?
         var turnID: String?
+        var nested = false
         for line in head.components(separatedBy: "\r\n").dropFirst() {
             let parts = line.split(separator: ":", maxSplits: 1).map {
                 $0.trimmingCharacters(in: .whitespaces)
@@ -200,12 +204,13 @@ final class DoraXMCPServer: ObservableObject {
             case "authorization": authorization = parts[1]
             case attendedHeader.lowercased(): turnKey = parts[1]
             case turnIDHeader.lowercased(): turnID = parts[1]
+            case nestedHeader.lowercased(): nested = parts[1] == "1"
             default: break
             }
         }
         guard body.count >= contentLength else { return nil }
         return Request(
-            authorization: authorization, turnKey: turnKey, turnID: turnID,
+            authorization: authorization, turnKey: turnKey, turnID: turnID, nested: nested,
             body: Data(body.prefix(contentLength)))
     }
 
@@ -274,7 +279,8 @@ final class DoraXMCPServer: ObservableObject {
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             lastRequest = name
             let text = await callTool(
-                named: name, arguments: arguments, attended: attended, turn: turn)
+                named: name, arguments: arguments, attended: attended, turn: turn,
+                nested: request.nested)
             result = ["content": [["type": "text", "text": text]]]
 
         default:
@@ -299,6 +305,26 @@ final class DoraXMCPServer: ObservableObject {
     /// CLI turn (`AgentToolRegistry.beginTurn`) and written into that turn's own MCP config, so
     /// two CLI turns at once never share what they have read.
     static let turnIDHeader = "X-DoraX-Turn-Id"
+
+    /// Marks the MCP config of a CLI turn that an attended `dorax_ask` launched. That nested
+    /// turn runs on the chat's provider — the Claude Code CLI again — and was handed
+    /// `dorax_ask` again, so each level started another CLI until the timeouts stacked up
+    /// (six asks, minutes and a pile of tokens for one Mail question). A nested turn keeps
+    /// every other DoraX tool; only its `dorax_ask` is refused (`askRefusal`).
+    static let nestedHeader = "X-DoraX-Nested"
+
+    /// Set while an attended `dorax_ask` runs its DoraX turn. The CLI that turn launches writes
+    /// its config inside this task, so `writeCLIConfig` sees it and adds `nestedHeader`; the
+    /// CLI's own HTTP calls arrive on other tasks, which is why the mark travels as a header.
+    @TaskLocal static var insideAttendedAsk = false
+
+    /// The refusal a nested turn's `dorax_ask` gets at once, or nil when it may run.
+    static func askRefusal(nested: Bool) -> String? {
+        guard nested else { return nil }
+        return "dorax_ask is not available here: this turn is already DoraX answering an "
+            + "earlier dorax_ask, and asking again would only start another copy of the same "
+            + "turn. Use the other dorax tools directly, or answer with what you have."
+    }
 
     /// Minted per app launch and only ever written into the config DoraX hands its own CLI.
     /// The bearer token says a caller may talk to this server; this says the user is at the
@@ -327,6 +353,7 @@ final class DoraXMCPServer: ObservableObject {
     /// at once do not overwrite each other's) and a header carrying the turn's id; the caller
     /// deletes it when the turn ends.
     static func writeCLIConfig(turn: AgentTurnToken? = nil) -> URL? {
+        let nested = insideAttendedAsk
         guard let directory = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Context-Dock")
@@ -335,12 +362,16 @@ final class DoraXMCPServer: ObservableObject {
             at: directory, withIntermediateDirectories: true)
 
         let url = directory.appendingPathComponent(
-            turn.map { "claude-mcp-config-\($0.id.uuidString).json" } ?? "claude-mcp-config.json")
+            // A nested turn may share its parent's turn record; its own file keeps the parent's
+            // config from being rewritten with the nested mark.
+            turn.map { "claude-mcp-config-\($0.id.uuidString)\(nested ? "-nested" : "").json" }
+                ?? "claude-mcp-config\(nested ? "-nested" : "").json")
         var headers: [String: String] = [
             "Authorization": "Bearer \(token)",
             attendedHeader: attendedTurnKey,
         ]
         if let turn { headers[turnIDHeader] = turn.id.uuidString }
+        if nested { headers[nestedHeader] = "1" }
         let config: [String: Any] = [
             "mcpServers": [
                 serverName: [
@@ -635,7 +666,7 @@ final class DoraXMCPServer: ObservableObject {
                     onStatus: { step in collected.append(step) })
             }
             if attended {
-                answer = try await send()
+                answer = try await Self.$insideAttendedAsk.withValue(true) { try await send() }
             } else {
                 let run = try await AICapabilityApprovalCenter.withUnattendedRun(send)
                 answer = run.result
@@ -694,7 +725,8 @@ final class DoraXMCPServer: ObservableObject {
     }
 
     private func callTool(
-        named name: String, arguments: [String: Any], attended: Bool, turn: AgentTurnToken? = nil
+        named name: String, arguments: [String: Any], attended: Bool, turn: AgentTurnToken? = nil,
+        nested: Bool = false
     ) async -> String {
         let registry = AgentToolRegistry.shared
         // What the CLI turn has now read, for the outbound gate. These tools hand over the
@@ -752,6 +784,7 @@ final class DoraXMCPServer: ObservableObject {
             let query = (arguments["query"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !query.isEmpty else { return "dorax_ask needs a query." }
+            if let refusal = Self.askRefusal(nested: nested) { return refusal }
             return await runTurn(
                 query: query,
                 app: (arguments["app"] as? String)?
