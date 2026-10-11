@@ -427,10 +427,27 @@ enum AppScopedChatService {
         // names Safari and says "a note" — singular, and not an app name at all — so reading
         // only the names offered Safari, reading only the subjects offered Notes, and the
         // cross-app planner needs both in scope before it will look at the request.
-        var candidates =
-            GeneralAIActionResolver.shared.namedInstalledApps(in: query)
-            + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query))
-            + subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
+        // An app name that is also an ordinary word needs a cue before it counts as a request
+        // to reach that app.
+        //
+        // Apple named its apps after nouns people use all day: Console, Notes, Messages, Music,
+        // Photos, Pages, Preview, Home, Books, Weather, Code. "read the console output of this
+        // page" offered to enable Console.app; "browser_console_messages" offered Messages. The
+        // cue is how a person actually points at an app — *in* Notes, *to* Notes, *using*
+        // Safari, or naming it first — and it costs nothing for the requests that do mean it.
+        let named =
+            (GeneralAIActionResolver.shared.namedInstalledApps(in: query)
+                + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query)))
+            .filter { namesAppDeliberately(query: query, appName: $0.name) }
+        // Subject markers — "tab" means Safari, "reminder" means Reminders — are a General Chat
+        // heuristic, and they belong there. Inside an app chat the same words usually mean what
+        // they say: "the photos on this page" is images in Safari, not Photos.app, and
+        // `browser_console_messages` is a tool name, not Messages. An app chat therefore only
+        // offers another app when the sentence points at it.
+        var candidates = named
+        if scopeBundleID == nil {
+            candidates += subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
+        }
 
         // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
         // "read the latest message and do what it says" as a question for Messages sent the
@@ -483,6 +500,39 @@ enum AppScopedChatService {
         let q = query.lowercased()
         return ["imessage", "sms", "text message", "messages app", "in messages",
                 "to messages", "from messages", "open messages"].contains(where: q.contains)
+    }
+
+    /// Whether the sentence points at this app, rather than merely containing its name.
+    ///
+    /// Two shapes count, and both are how people actually name an app: a cue word in front of
+    /// it ("in Notes", "to Notes", "using Safari", "open Code"), or the app named first ("Notes:
+    /// add a line"). Everything else is the word doing its ordinary job — "the console output",
+    /// "my music", "these photos" — and reaching into an app on the strength of that is how a
+    /// Safari question about a page's console offered to open Console.app.
+    static func namesAppDeliberately(query: String, appName: String) -> Bool {
+        let lowered = query.lowercased()
+        let name = appName.lowercased()
+        guard !name.isEmpty else { return false }
+        // A multi-word name is never an accident: nobody writes "visual studio code" by chance.
+        guard !name.contains(" ") else { return true }
+
+        let words = lowered
+            .split { !$0.isLetter && !$0.isNumber && $0 != "." }
+            .map(String.init)
+        guard let index = words.firstIndex(where: { $0 == name || $0 == name + "'s" }) else {
+            // The name appears only as part of a longer token — `browser_console_messages`
+            // splits on `_`, so this is the "not even a word here" case.
+            return false
+        }
+        if index == 0 { return true }
+        let cues: Set<String> = [
+            "in", "to", "from", "into", "with", "using", "via", "on", "inside", "open",
+            "launch", "through", "my",
+        ]
+        if cues.contains(words[index - 1]) { return true }
+        // "the Notes app", "in the Notes app"
+        if index + 1 < words.count, words[index + 1] == "app" { return true }
+        return false
     }
 
     /// Whether a candidate app *is* the app this chat is already about.
@@ -545,8 +595,25 @@ enum AppScopedChatService {
             (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
             (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
         ]
+        // Whole words, not substrings.
+        //
+        // `browser_console_messages` — the name of a Safari MCP tool — contains "message", so a
+        // question naming that tool offered to enable Messages instead of answering. The same
+        // lesson the app-name matcher already learned: a word inside another word is not that
+        // word, and an identifier is full of them.
+        let words = Set(
+            lowered
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init))
+        func mentions(_ marker: String) -> Bool {
+            let parts = marker.split(separator: " ").map(String.init)
+            // A multi-word marker ("talk to", "task list") still matches as a phrase.
+            guard parts.count == 1 else { return lowered.contains(marker) }
+            return words.contains(marker) || words.contains(marker + "s")
+        }
+
         var found: [(bundleId: String, name: String)] = []
-        for subject in subjects where subject.markers.contains(where: lowered.contains) {
+        for subject in subjects where subject.markers.contains(where: mentions) {
             // Only apps that are actually here. Offering to enable something not installed
             // is a dead end dressed as an option.
             guard NSWorkspace.shared.urlForApplication(

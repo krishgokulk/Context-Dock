@@ -22,12 +22,15 @@ struct MultiItemDragSource: NSViewRepresentable {
     var onClick: () -> Void
     /// Called as the session begins, so the copy monitor can stand down.
     var onDragBegan: () -> Void = {}
+    /// Called when the session ends, dropped or not.
+    var onDragEnded: () -> Void = {}
 
     func makeNSView(context: Context) -> DragHandleView {
         let view = DragHandleView()
         view.urls = urls
         view.onClick = onClick
         view.onDragBegan = onDragBegan
+        view.onDragEnded = onDragEnded
         return view
     }
 
@@ -35,6 +38,7 @@ struct MultiItemDragSource: NSViewRepresentable {
         view.urls = urls
         view.onClick = onClick
         view.onDragBegan = onDragBegan
+        view.onDragEnded = onDragEnded
     }
 
     final class DragHandleView: NSView, NSDraggingSource {
@@ -79,6 +83,15 @@ struct MultiItemDragSource: NSViewRepresentable {
             // Never travelled, so it was a click on the row underneath.
             if mouseDownPoint != nil { onClick() }
             mouseDownPoint = nil
+        }
+
+        var onDragEnded: () -> Void = {}
+
+        func draggingSession(
+            _ session: NSDraggingSession, endedAt screenPoint: NSPoint,
+            operation: NSDragOperation
+        ) {
+            onDragEnded()
         }
 
         func draggingSession(

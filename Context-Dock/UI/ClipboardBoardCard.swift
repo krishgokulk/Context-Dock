@@ -275,6 +275,17 @@ struct ClipboardBoardCard: View {
             footer
         }
         .frame(width: size.width, height: size.height, alignment: .top)
+        .overlay(alignment: .bottomTrailing) {
+            if let picker = model.targetPicker {
+                ClipboardTargetPickerView(picker: picker) {
+                    ClipboardPanelController.shared.chooseTarget($0)
+                }
+                .padding(.trailing, 14)
+                .padding(.bottom, ClipboardBoardMetrics.footerHeight + 6)
+                .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: model.targetPicker != nil)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -291,6 +302,24 @@ struct ClipboardBoardCard: View {
 
     private var hairline: some View {
         Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+    }
+
+    /// A press on a row that did not become a drag: focus it; ⌘ and ⇧ pick; a double-click
+    /// pastes.
+    private func click(_ row: ClipboardBoardSection.Row) {
+        model.focusedEntryIndex = row.index
+        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+            ClipboardPanelController.shared.pasteMany(
+                model.actionableEntries(fallback: row.entry))
+            return
+        }
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) || flags.contains(.shift) {
+            model.selectEntry(
+                row.entry, extend: flags.contains(.shift), toggle: flags.contains(.command))
+        } else {
+            model.clearSelection()
+        }
     }
 
     // MARK: Header
@@ -379,21 +408,21 @@ struct ClipboardBoardCard: View {
                                 )
                                 .id(row.entry.id)
                                 .contentShape(Rectangle())
-                                .onTapGesture(count: 2) {
-                                    model.focusedEntryIndex = row.index
-                                    ClipboardPanelController.shared.pasteMany(
-                                        model.actionableEntries(fallback: row.entry))
-                                }
-                                .onTapGesture {
-                                    model.focusedEntryIndex = row.index
-                                    let flags = NSEvent.modifierFlags
-                                    if flags.contains(.command) || flags.contains(.shift) {
-                                        model.selectEntry(
-                                            row.entry, extend: flags.contains(.shift),
-                                            toggle: flags.contains(.command))
-                                    } else {
-                                        model.clearSelection()
-                                    }
+                                // Press-and-drag takes the row — or the whole selection — out as
+                                // files; a press that never travelled is the click it was. While
+                                // it flies the Drop Shelf's icon joins the strip beside the
+                                // clipboard's, as it does for a drag from any other app.
+                                .overlay {
+                                    MultiItemDragSource(
+                                        urls: {
+                                            let dragged = model.isSelected(row.entry)
+                                                ? model.actionableEntries() : [row.entry]
+                                            ClipboardPanelController.shared.beginDrag(dragged)
+                                            return ClipboardScopeService.fileURLs(for: dragged)
+                                        },
+                                        onClick: { click(row) },
+                                        onDragBegan: { DropShelfController.shared.dragEntered() },
+                                        onDragEnded: { DropShelfController.shared.dragEnded() })
                                 }
                                 .contextMenu { rowMenu(row.entry) }
                             }
@@ -462,8 +491,12 @@ struct ClipboardBoardCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             footerAction("Paste to \(ClipboardPanelController.shared.returnAppName)", keys: ["↩"])
-            divider
-            footerAction("Copy", keys: ["⌘", "↩"], dimmed: true)
+            // One clip: Return is the whole story. Several picked: Return still pastes them to
+            // the app in front, and ⌘Return asks where else they should go.
+            if model.selectedIDs.count > 1 {
+                divider
+                footerAction("Paste to…", keys: ["⌘", "↩"], dimmed: true)
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: ClipboardBoardMetrics.footerHeight)

@@ -81,30 +81,31 @@ struct AppChatPromptTests {
         #expect(resting.phase == .dock)
     }
 
-    /// A half-written question survives the shrink; it is the thing worth keeping.
-    @Test func shrinkingKeepsAnUnfinishedQuestion() {
+    /// A half-written question keeps the field open: idling never shrinks it to the icon
+    /// or folds it into the dock out from under the words (owner 2026-09-27).
+    @Test func aFieldWithTextStaysOpenWhenIdle() {
         let model = AppChatPromptModel()
-        model.summon(app: "Safari")
+        model.summon(app: "Claude", bundleID: "com.anthropic.claudefordesktop")
         model.query = "half a question"
         model.queryChanged()
 
         model.standDown()
-
-        #expect(model.phase == .mini)
-        #expect(model.query == "half a question")
-    }
-
-    @Test func reachingForTheIconGivesTheQuestionBack() {
-        let model = AppChatPromptModel()
-        model.summon(app: "Safari")
-        model.query = "half a question"
-        model.queryChanged()
         model.standDown()
-
-        model.hoverBegan()
 
         #expect(model.phase == .prompt)
         #expect(model.query == "half a question")
+    }
+
+    /// Safari's scope rests as a dock of its tabs — and still not with words in the field.
+    @Test func aDockScopedFieldWithTextDoesNotFold() {
+        let model = AppChatPromptModel()
+        model.summon(app: "Safari")
+        model.query = "half a question"
+        model.queryChanged()
+
+        model.standDown()
+
+        #expect(model.phase == .prompt)
     }
 
     /// A list the user arrowed open is the first thing to go when they look away — the

@@ -55,6 +55,26 @@ enum AppChatPromptPhase: Equatable {
     var showsInput: Bool { self == .prompt || self == .suggesting || self == .chat }
 }
 
+/// Whether the pointer resting on the field's pills may fold the field into the big bar.
+///
+/// Only when the pointer chose it. Typing from the resting bar opens the field and gathers
+/// the bar's icons into the pill — under a pointer that has not moved — and the first letter
+/// is still on its way into the field, so the "only an empty field folds" rule passed and the
+/// field collapsed mid-word (owner 2026-09-27).
+enum DockHoverFoldGate {
+    /// The field's own opening morph, plus a beat.
+    static let afterOpening: TimeInterval = AppChatPromptMetrics.dockMorphDuration + 0.2
+    /// Someone typing is not reaching for the bar.
+    static let afterTyping: TimeInterval = 1.2
+
+    static func allows(now: Date, openedAt: Date?, typedAt: Date?, textPending: Bool) -> Bool {
+        if textPending { return false }
+        if let openedAt, now.timeIntervalSince(openedAt) < afterOpening { return false }
+        if let typedAt, now.timeIntervalSince(typedAt) < afterTyping { return false }
+        return true
+    }
+}
+
 @MainActor
 final class AppChatPromptModel: ObservableObject {
     /// How long an untouched prompt waits. Matches the clipboard card: nothing in this
@@ -825,6 +845,7 @@ final class AppChatPromptModel: ObservableObject {
     /// It also puts the suggestion list away — a typed question is not a browse — and
     /// brings it back if the field is cleared again.
     func queryChanged() {
+        lastTypedAt = Date()
         // Typing is the caret's: the pills leave the field while anything is typed.
         focusedPillIndex = nil
         guard phase.isVisible else { return }
@@ -972,6 +993,11 @@ final class AppChatPromptModel: ObservableObject {
             // an offer nobody asked to see again.
             set(.prompt)
             armForIdle()
+        case .prompt where !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            // Words in the field are the user mid-question, not an abandoned surface: it
+            // stays open until they send, clear it, or dismiss it (owner 2026-09-27: "don't
+            // hide if input is in the field"). It used to shrink to the app's icon here.
+            break
         case .prompt where canRestAsDock:
             // The dock has no timer of its own: it stays until Esc, a click outside, or a
             // Space switch, the way the Dock does.
@@ -1151,6 +1177,17 @@ final class AppChatPromptModel: ObservableObject {
     /// The pointer rested on an app bar's pill: show the big bar of its pins and tabs at
     /// once (owner 2026-09-26), as resting on Global's small pill does. Asked for by hand,
     /// so "keep open" does not refuse it — that setting is about not folding on its own.
+    /// When the field last opened out of the bar, and when it was last typed in — what
+    /// `DockHoverFoldGate` asks before a hover folds it.
+    private var fieldOpenedAt: Date?
+    private var lastTypedAt: Date?
+
+    var hoverMayFold: Bool {
+        DockHoverFoldGate.allows(
+            now: Date(), openedAt: fieldOpenedAt, typedAt: lastTypedAt,
+            textPending: FieldCaret.isWaitingForFocus)
+    }
+
     @discardableResult
     func expandAppBar() -> Bool {
         guard showsTabBar, usesDockShell, phase == .prompt, !isAnswering,
@@ -1287,6 +1324,7 @@ final class AppChatPromptModel: ObservableObject {
         line: Int = #line
     ) {
         guard phase != next else { return }
+        if phase == .dock, next.showsInput { fieldOpenedAt = Date() }
         // Which code moved the field, for the turn log (owner 2026-10-08: the field came
         // back after resting on the apps folded it, and nothing on screen said what did).
         DoraXTurnLog.record("corner.phase \(phase) → \(next) by \(caller) \(file):\(line)")
