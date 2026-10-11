@@ -10,11 +10,15 @@
 
 ## In progress
 
-Coordinator: cloud planner (`/planner`), branch `claude/jev-popularity-comparison-t530yd` — since 2026-09-30. The Mac Desktop session is the **builder** (`/loop /builder`); it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
+Coordinator: Desktop app (Mac), `/planner` session — since 2026-10-11 19:10 UTC (owner: "takeover"). The previous cloud planner (2026-09-30 → 2026-10-10) was closed to cut token use. The Mac `/loop /builder` session is the **builder**; it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
 
-Owner rules (2026-09-30): one task at a time; merge only on the owner's words "merge <n>"; **no `ship it` while the Hand-check queue has entries.**
+Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
-**#147 Drop Shelf icon** (`ready`), then **#165 E1b** (`ready`, owner said "E1b yes" 2026-10-04), then **#151 E3**. Hand-check pause limit is 1 required check (#168).
+**State (2026-10-11):**
+- Done today: #232 (#234), #231, #237. #147 Drop Shelf is long merged (#174).
+- **#228** `ready` (fix is PR #230: retarget from `main` to `general-chat-agent`, fix the failing `build`). **#239** `ready`: make #230, #210, #194, #78, #124 mergeable into the head, in that order.
+- **#238** Edge reveal: draft, CI green, owner hand check, owner merges. **#224**, **#210**, **#194**: CI green, behind head, merge without hand check.
+- Next after #228/#239: **#196** P2, then #197 P3. #225 test-isolation fix queued.
 
 ## Next, in order (GitHub issues)
 
