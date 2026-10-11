@@ -608,7 +608,11 @@ final class CornerDockController: NSObject {
     private func summonFromEdge() {
         cancelPendingAutoHide()
         pointerVisitedDock = true
-        if !(chatPresentation.isVisible && prompt.phase == .dock) {
+        // The edge always brings the app in front's Context Dock, as ⌘. and ⌘⌘ do — also when
+        // auto-hide slid it away in Global (owner 2026-10-11). Global is a ⌘ tap, ⌫ or swipe.
+        if !(chatPresentation.isVisible && chatPresentation.mode == .frontmostApp
+            && prompt.phase == .dock)
+        {
             edgeSummonKeepsKeys = true
             if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
                 chatPresentation.showFrontmostApp(target: target)
