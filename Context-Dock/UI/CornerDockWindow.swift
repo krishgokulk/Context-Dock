@@ -1601,6 +1601,18 @@ final class CornerDockController: NSObject {
 
     private func applyClipboardBoardKey(_ key: ClipboardBoardKey) {
         let controller = ClipboardPanelController.shared
+        // The target picker owns the keys while it is up: arrows walk it, Return chooses,
+        // Esc puts it away and leaves the board as it was.
+        if clipboardModel.targetPicker != nil {
+            switch key {
+            case .move(let step, _): clipboardModel.targetPicker?.move(step)
+            case .paste, .copy:
+                if let target = clipboardModel.targetPicker?.chosen { controller.chooseTarget(target) }
+            case .back, .clearFilter: clipboardModel.targetPicker = nil
+            default: break
+            }
+            return
+        }
         switch key {
         case .back:
             controller.closeBoard()
@@ -1613,6 +1625,11 @@ final class CornerDockController: NSObject {
         case .copy:
             let entries = clipboardModel.actionableEntries()
             guard !entries.isEmpty else { return }
+            // Several picked: where should they go? One: it is copied, as before.
+            if entries.count > 1, !clipboardModel.selectedIDs.isEmpty {
+                controller.openTargetPicker(entries)
+                return
+            }
             controller.copy(entries)
             controller.finishBoard()
         case .delete:

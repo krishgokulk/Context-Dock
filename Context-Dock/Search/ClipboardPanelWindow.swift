@@ -192,11 +192,27 @@ final class ClipboardPanelController: NSObject {
         }
     }
 
-    func pasteMany(_ entries: [LauncherView.ClipboardEntry]) {
+    /// ⌘↩ with several clips picked: ask where they go — the app the user came from first,
+    /// then the other running apps.
+    func openTargetPicker(_ entries: [LauncherView.ClipboardEntry]) {
+        let front = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
+        let targets = ClipboardPasteTarget.running(frontPID: front?.processIdentifier)
+        guard !targets.isEmpty else { return pasteMany(entries) }
+        model.targetPicker = ClipboardTargetPicker(entries: entries, targets: targets)
+    }
+
+    func chooseTarget(_ target: ClipboardPasteTarget) {
+        guard let picker = model.targetPicker else { return }
+        model.targetPicker = nil
+        pasteMany(
+            picker.entries, to: NSRunningApplication(processIdentifier: target.pid))
+    }
+
+    func pasteMany(_ entries: [LauncherView.ClipboardEntry], to override: NSRunningApplication? = nil) {
         guard let first = entries.first else { return }
         guard entries.count > 1 else { return paste(first) }
         ClipboardScopeService.writeToPasteboard(entries)
-        let target = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
+        let target = override ?? (didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication)
         model.dismiss()
         finishBoard()
         target?.activate()
@@ -302,6 +318,8 @@ final class ClipboardPanelModel: ObservableObject {
     /// view because the card and the panel both act on it.
     @Published private(set) var isPreviewPinned = false
     @Published private(set) var selectedIDs: Set<UUID> = []
+    /// ⌘↩ with several clips picked: the apps they can go to, until one is chosen.
+    @Published var targetPicker: ClipboardTargetPicker?
     private var pickOrder: [UUID] = []
     /// Where a ⇧-click measures from.
     private var selectionAnchor: UUID?
