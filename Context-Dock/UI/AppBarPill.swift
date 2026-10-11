@@ -43,7 +43,9 @@ struct AppBarPill: View {
                 .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.7))
         .clipShape(Capsule(style: .continuous))
         // Resting on the pill asks for the big bar of the same icons, as Global's does.
-        .onHover { inside in if inside { model.expandAppBar() } }
+        // Not when the pill arrived under a still pointer — the field opening from a typed
+        // letter gathers the bar into this pill right where the pointer rests.
+        .onHover { inside in if inside, model.hoverMayFold { model.expandAppBar() } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(model.appName) pins and tabs")
     }

@@ -20,6 +20,53 @@ import CoreGraphics
 import ScreenCaptureKit
 import Contacts
 
+// MARK: - The outbound gate for one on-device turn (E1c)
+
+/// FoundationModels calls these tools itself, not through the registry's `dispatch`, so the
+/// outbound gate never saw them: an Apple Intelligence turn that read a hostile email could run
+/// a shell command or start a message with nothing asked. Each outbound tool asks the gate
+/// here, with the turn's taint, and each private read is recorded against the same turn —
+/// the decision and the card are the registry's own, as on every other provider.
+struct OnDeviceTurnGate: Sendable {
+    let turn: AgentTurnToken
+
+    /// Opens the turn's record: what the user typed, the prompt it starts with, and whether the
+    /// scoped app's own content (a mailbox, a thread) is already in front of the model.
+    static func begin(
+        message: String, systemPrompt: String, bundleId: String,
+        registry: AgentToolRegistry = .shared
+    ) -> OnDeviceTurnGate {
+        OnDeviceTurnGate(turn: registry.beginTurn(
+            userText: TurnUserText.current ?? [message],
+            promptBlocks: [systemPrompt, message],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: bundleId),
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(bundleID: bundleId)))
+    }
+
+    func end(registry: AgentToolRegistry = .shared) { registry.endTurn(turn) }
+
+    /// nil when the call may go ahead; otherwise what to tell the model instead. Nothing ran.
+    /// `toolName` and `arguments` are in the registry's vocabulary (`run_command`, ...).
+    func check(
+        toolName: String, arguments: [String: String], registry: AgentToolRegistry = .shared
+    ) async -> String? {
+        guard let target = OutboundGate.target(
+            toolName: toolName, arguments: arguments, lookups: registry.outboundLookups)
+        else { return nil }
+        return await registry.gateOutbound(
+            target: target,
+            what: AgentToolRegistry.outboundDescription(name: toolName, arguments: arguments),
+            turn: turn, chatScope: nil)?.output
+    }
+
+    /// A read of the user's data finished. `untrusted`: other people wrote it (mail,
+    /// messages, notes, whatever is on screen).
+    func noteRead(untrusted: Bool, registry: AgentToolRegistry = .shared) {
+        registry.taint.notePrivateRead(turn)
+        if untrusted { registry.taint.noteUntrusted(turn) }
+    }
+}
+
 // MARK: - AdapterActionTool
 
 /// Captures the command results produced inside one Foundation Models tool session.
@@ -62,8 +109,12 @@ struct AdapterActionTool: Tool {
     private let action: AdapterAction
     private let bundleId: String
     private let axContext: AXContext
+    private let gate: OnDeviceTurnGate?
 
-    init(action: AdapterAction, bundleId: String, axContext: AXContext) {
+    init(
+        action: AdapterAction, bundleId: String, axContext: AXContext,
+        gate: OnDeviceTurnGate? = nil
+    ) {
         // Tool names must be identifier-safe (alphanumeric + underscore)
         self.name = action.id
             .replacingOccurrences(of: ".", with: "_")
@@ -73,6 +124,7 @@ struct AdapterActionTool: Tool {
         self.action = action
         self.bundleId = bundleId
         self.axContext = axContext
+        self.gate = gate
     }
 
     // No parameters — adapter actions are fully self-contained.
@@ -81,6 +133,11 @@ struct AdapterActionTool: Tool {
     struct Arguments {}
 
     func call(arguments: Arguments) async throws -> String {
+        if let held = await gate?.check(
+            toolName: "run_adapter_action", arguments: ["action_id": action.id])
+        {
+            return "❌ \(action.name) did not run: \(held)"
+        }
         let (success, output) = await AppAdapterManager.shared.execute(
             action,
             context: axContext,
@@ -104,14 +161,17 @@ struct ShellCommandTool: Tool {
 
     private let recorder: OnDeviceToolRunRecorder?
     private let allowedExecutable: String?
+    private let gate: OnDeviceTurnGate?
 
     fileprivate init(
         axContext: AXContext,
         recorder: OnDeviceToolRunRecorder? = nil,
-        allowedExecutable: String? = nil
+        allowedExecutable: String? = nil,
+        gate: OnDeviceTurnGate? = nil
     ) {
         self.recorder = recorder
         self.allowedExecutable = allowedExecutable
+        self.gate = gate
     }
 
     @Generable
@@ -127,6 +187,9 @@ struct ShellCommandTool: Tool {
             !Self.isCommand(command, forExecutable: allowedExecutable)
         {
             return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
+        }
+        if let held = await gate?.check(toolName: "run_command", arguments: ["command": command]) {
+            return "❌ Did not run: \(held)"
         }
 
         let (success, output, _) = await TerminalCommandExecutor.shared.run(
@@ -162,9 +225,11 @@ struct SpawnWorkerTool: Tool {
     let description = "Launch a long-running or interactive terminal command in the current live terminal and return a worker ID immediately."
 
     private let allowedExecutable: String?
+    private let gate: OnDeviceTurnGate?
 
-    init(allowedExecutable: String? = nil) {
+    init(allowedExecutable: String? = nil, gate: OnDeviceTurnGate? = nil) {
         self.allowedExecutable = allowedExecutable
+        self.gate = gate
     }
 
     @Generable
@@ -190,6 +255,9 @@ struct SpawnWorkerTool: Tool {
             return "❌ This scope may only run \(allowedExecutable) commands. Do not substitute another CLI."
         }
 
+        if let held = await gate?.check(toolName: "spawn_worker", arguments: ["command": command]) {
+            return "❌ Did not start: \(held)"
+        }
         let purpose = arguments.purpose.trimmingCharacters(in: .whitespacesAndNewlines)
         let workerID = await TerminalCommandExecutor.shared.spawnWorker(
             command: command,
@@ -536,10 +604,12 @@ struct ExecuteAppMenuPathTool: Tool {
 
     private let bundleId: String
     private let appName: String
+    private let gate: OnDeviceTurnGate?
 
-    init(bundleId: String, appName: String) {
+    init(bundleId: String, appName: String, gate: OnDeviceTurnGate? = nil) {
         self.bundleId = bundleId
         self.appName = appName
+        self.gate = gate
     }
 
     @Generable
@@ -553,6 +623,11 @@ struct ExecuteAppMenuPathTool: Tool {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         guard !trimmedPath.isEmpty else { return "❌ No app menu path provided." }
+        if let held = await gate?.check(
+            toolName: "run_menu_command", arguments: ["path": trimmedPath.joined(separator: " > ")])
+        {
+            return "❌ Did not run: \(held)"
+        }
 
         guard let targetApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == bundleId && !$0.isTerminated
@@ -691,6 +766,7 @@ struct SearchMailTool: Tool {
 
 @available(macOS 26.0, *)
 struct GetMailMailboxSnapshotTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "get_mail_mailbox_snapshot"
     let description = "Read a recent snapshot of the currently selected mailbox in Mail. Supports sender, subject, unread, and today/yesterday filters."
 
@@ -721,7 +797,8 @@ struct GetMailMailboxSnapshotTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await MainActor.run {
+        gate?.noteRead(untrusted: true)
+        return await MainActor.run {
             MailAutomation.mailboxSnapshot(
                 senderContains: arguments.senderContains,
                 subjectContains: arguments.subjectContains,
@@ -735,6 +812,7 @@ struct GetMailMailboxSnapshotTool: Tool {
 
 @available(macOS 26.0, *)
 struct ResolveMetadataTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "resolve_metadata"
     let description = "Resolve a fuzzy person, organization, sender, or event reference into metadata from Contacts, Mail, or Calendar. Use this when the user mentions a name but not the exact email address, phone number, or event details."
 
@@ -757,7 +835,8 @@ struct ResolveMetadataTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await MetadataResolver.resolveJSONString(
+        gate?.noteRead(untrusted: true)
+        return await MetadataResolver.resolveJSONString(
             query: arguments.query,
             domain: arguments.domain,
             maxResults: arguments.maxResults
@@ -769,6 +848,7 @@ struct ResolveMetadataTool: Tool {
 
 @available(macOS 26.0, *)
 struct SearchMessagesTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "search_messages"
     let description = "Search local Messages read-only without opening or controlling the Messages app."
 
@@ -781,6 +861,7 @@ struct SearchMessagesTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: true)
         guard let rows = MessagesChatDBReader.search(arguments.query) else {
             return "Messages could not be read. Grant Context-Dock Full Disk Access in System Settings > Privacy & Security > Full Disk Access. No UI was opened."
         }
@@ -793,6 +874,7 @@ struct SearchMessagesTool: Tool {
 
 @available(macOS 26.0, *)
 struct GetMessagesConversationSnapshotTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "get_messages_conversations"
     let description = "List recent Messages conversations. Optionally filter by contact name or handle."
 
@@ -811,6 +893,7 @@ struct GetMessagesConversationSnapshotTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
+        gate?.noteRead(untrusted: true)
         let rows = MessagesChatDBReader.recent(
             limit: arguments.limit,
             contact: arguments.contactFilter
@@ -837,6 +920,7 @@ struct GetMessagesConversationSnapshotTool: Tool {
 
 @available(macOS 26.0, *)
 struct ComposeMessageTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "compose_message"
     let description = "Open a Messages compose window for a recipient. Does NOT send automatically — the user reviews and sends."
 
@@ -855,7 +939,13 @@ struct ComposeMessageTool: Tool {
     }
 
     func call(arguments: Arguments) async throws -> String {
-        await MessagesAutomation.composeMessage(to: arguments.recipient, body: arguments.body)
+        if let held = await gate?.check(
+            toolName: "compose_message", arguments: ["recipient": arguments.recipient])
+        {
+            return "❌ No message was started: \(held)"
+        }
+        return await MessagesAutomation.composeMessage(
+            to: arguments.recipient, body: arguments.body)
     }
 }
 
@@ -870,13 +960,18 @@ struct CLIAdapterTool: Tool {
     let description: String
     private let cliCommand: String
     private let recorder: OnDeviceToolRunRecorder?
+    private let gate: OnDeviceTurnGate?
 
-    fileprivate init(action: AdapterAction, recorder: OnDeviceToolRunRecorder? = nil) {
+    fileprivate init(
+        action: AdapterAction, recorder: OnDeviceToolRunRecorder? = nil,
+        gate: OnDeviceTurnGate? = nil
+    ) {
         let raw = (action.cliToolCommand ?? action.name)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedCmd = raw.isEmpty ? action.name : raw
         self.cliCommand = resolvedCmd
         self.recorder = recorder
+        self.gate = gate
         let safeName = resolvedCmd
             .replacingOccurrences(of: "-", with: "_")
             .replacingOccurrences(of: " ", with: "_")
@@ -903,6 +998,9 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
+        if let held = await gate?.check(toolName: "run_command", arguments: ["command": fullCommand]) {
+            return "❌ \(cliCommand) did not run: \(held)"
+        }
         let (success, output, _) = await TerminalCommandExecutor.shared.run(
             fullCommand,
             purpose: "\(cliCommand) CLI"
@@ -921,6 +1019,7 @@ struct CLIAdapterTool: Tool {
 /// Extracts text from an image file using Vision OCR.
 @available(macOS 26.0, *)
 struct OCRTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "read_text_from_image"
     let description = "Extract all text from an image file using on-device OCR. Use when the user shares a screenshot, photo, or document image and wants the text read out."
 
@@ -948,6 +1047,7 @@ struct OCRTool: Tool {
 
         let lines = (request.results ?? [])
             .compactMap { $0.topCandidates(1).first?.string }
+        gate?.noteRead(untrusted: true)
         return lines.isEmpty ? "No text found in the image." : lines.joined(separator: "\n")
     }
 }
@@ -960,6 +1060,7 @@ struct OCRTool: Tool {
 /// Captures the current screen and returns OCR-extracted text from it.
 @available(macOS 26.0, *)
 struct ScreenCaptureTool: Tool {
+    var gate: OnDeviceTurnGate? = nil
     let name = "capture_screen_text"
     let description = "Take a screenshot of the current screen and extract all visible text using OCR. Use when the user asks what is on screen, to read a UI element, or to analyze visible content."
 
@@ -987,6 +1088,7 @@ struct ScreenCaptureTool: Tool {
 
         let lines = (request.results ?? [])
             .compactMap { $0.topCandidates(1).first?.string }
+        gate?.noteRead(untrusted: true)
         guard !lines.isEmpty else { return "No text visible on screen." }
         return "Screen text:\n" + lines.joined(separator: "\n")
     }
@@ -1072,14 +1174,16 @@ final class OnDeviceToolSession {
     private func tools(
         for bundleId: String,
         axContext: AXContext,
-        recorder: OnDeviceToolRunRecorder? = nil
+        recorder: OnDeviceToolRunRecorder? = nil,
+        gate: OnDeviceTurnGate
     ) -> [any Tool] {
         // For cli:// adapter scopes, only expose shell tool — no app menu / AX tools needed.
         if let cliCmd = cliAdapterCommand(for: bundleId) {
             return [
                 ShellCommandTool(
-                    axContext: axContext, recorder: recorder, allowedExecutable: cliCmd),
-                SpawnWorkerTool(allowedExecutable: cliCmd),
+                    axContext: axContext, recorder: recorder, allowedExecutable: cliCmd,
+                    gate: gate),
+                SpawnWorkerTool(allowedExecutable: cliCmd, gate: gate),
             ]
         }
 
@@ -1109,35 +1213,36 @@ final class OnDeviceToolSession {
             ),
             ExecuteAppMenuPathTool(
                 bundleId: bundleId,
-                appName: resolvedAppName
+                appName: resolvedAppName,
+                gate: gate
             ),
-            ResolveMetadataTool(),
-            ShellCommandTool(axContext: axContext, recorder: recorder),
-            SpawnWorkerTool(),
+            ResolveMetadataTool(gate: gate),
+            ShellCommandTool(axContext: axContext, recorder: recorder, gate: gate),
+            SpawnWorkerTool(gate: gate),
             SendKeysTool(),
             // Vision tools
-            OCRTool(),
-            ScreenCaptureTool(),
+            OCRTool(gate: gate),
+            ScreenCaptureTool(gate: gate),
             // EventKit — available in all app contexts and global chat
-            GetCalendarEventsTool(),
+            GetCalendarEventsTool(gate: gate),
             AddCalendarEventTool(),
-            GetRemindersTool(),
+            GetRemindersTool(gate: gate),
             AddReminderTool(),
-            SearchContactsTool(),
-            SearchPhotosTool(),
-            SearchNotesTool(),
+            SearchContactsTool(gate: gate),
+            SearchPhotosTool(gate: gate),
+            SearchNotesTool(gate: gate),
             CreateNoteTool(),
         ]
 
         if bundleId == "com.apple.mail" {
             baseTools.append(SearchMailTool())
-            baseTools.append(GetMailMailboxSnapshotTool())
+            baseTools.append(GetMailMailboxSnapshotTool(gate: gate))
         }
 
         if bundleId == "com.apple.MobileSMS" {
-            baseTools.append(SearchMessagesTool())
-            baseTools.append(GetMessagesConversationSnapshotTool())
-            baseTools.append(ComposeMessageTool())
+            baseTools.append(SearchMessagesTool(gate: gate))
+            baseTools.append(GetMessagesConversationSnapshotTool(gate: gate))
+            baseTools.append(ComposeMessageTool(gate: gate))
         }
 
         let adapterActions = AppAdapterManager.shared.actions(for: bundleId)
@@ -1145,9 +1250,10 @@ final class OnDeviceToolSession {
             // CLI tool actions get a parameterized tool so the model can pass subcommands/flags.
             // All other action types use the self-contained AdapterActionTool.
             if action.type == .cliTool {
-                return CLIAdapterTool(action: action, recorder: recorder) as any Tool
+                return CLIAdapterTool(action: action, recorder: recorder, gate: gate) as any Tool
             }
-            return AdapterActionTool(action: action, bundleId: bundleId, axContext: axContext) as any Tool
+            return AdapterActionTool(
+                action: action, bundleId: bundleId, axContext: axContext, gate: gate) as any Tool
         }
         adapterTools.append(ListAdaptersTool(bundleId: bundleId))
 
@@ -1206,8 +1312,12 @@ final class OnDeviceToolSession {
 
         // Regular tool-based response: adapter actions + shell + discovery
         let recorder = OnDeviceToolRunRecorder()
+        // E1c: one registry turn, so the outbound tools ask the gate with what this turn read.
+        let gate = OnDeviceTurnGate.begin(
+            message: message, systemPrompt: fullPrompt, bundleId: bundleId)
+        defer { gate.end() }
         let session = LanguageModelSession(
-            tools: tools(for: bundleId, axContext: axContext, recorder: recorder),
+            tools: tools(for: bundleId, axContext: axContext, recorder: recorder, gate: gate),
             instructions: fullPrompt
         )
         let response = try await session.respond(to: message)
@@ -1261,8 +1371,14 @@ final class OnDeviceToolSession {
                 // Natural requests such as "draft a reply" or "what did they say?" do not
                 // necessarily contain command verbs, but still require live app/MCP data.
                 let recorder = OnDeviceToolRunRecorder()
+                // E1c: one registry turn, so the outbound tools ask the gate with what this
+                // turn read.
+                let gate = OnDeviceTurnGate.begin(
+                    message: message, systemPrompt: fullPrompt, bundleId: bundleId)
+                defer { gate.end() }
                 let session = LanguageModelSession(
-                    tools: self.tools(for: bundleId, axContext: axContext, recorder: recorder),
+                    tools: self.tools(
+                        for: bundleId, axContext: axContext, recorder: recorder, gate: gate),
                     instructions: fullPrompt
                 )
 

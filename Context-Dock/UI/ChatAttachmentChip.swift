@@ -12,9 +12,25 @@
 import AppKit
 import QuickLookThumbnailing
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ChatAttachmentChip: View {
+    /// How the attachment is drawn.
+    ///
+    /// `.compact` is the one-line chip the selection row uses, where it sits beside a text
+    /// chip of the same shape. `.tile` is how the chat apps show a file you are about to
+    /// send, or just sent: an image is the picture itself, and anything else is a small card
+    /// with its icon, name and kind — the remove button rides on the corner, not in the row.
+    enum Style: Equatable {
+        case compact
+        case tile(side: CGFloat)
+
+        static let composerTile = Style.tile(side: 60)
+        static let messageTile = Style.tile(side: 84)
+    }
+
     let url: URL
+    var style: Style = .compact
     var onRemove: (() -> Void)?
 
     @State private var thumbnail: NSImage?
@@ -48,7 +64,31 @@ struct ChatAttachmentChip: View {
         return ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 
+    private var isImage: Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        return type.conforms(to: .image)
+    }
+
+    private var thumbnailSide: CGFloat {
+        switch style {
+        case .compact: return 28
+        case .tile(let side): return side
+        }
+    }
+
     var body: some View {
+        Group {
+            switch style {
+            case .compact: compactBody
+            case .tile(let side): tileBody(side: side)
+            }
+        }
+        .onHover { isHovered = $0 }
+        .help(url.lastPathComponent)
+        .task(id: url) { await loadThumbnail() }
+    }
+
+    private var compactBody: some View {
         HStack(spacing: 8) {
             preview
                 .frame(width: 28, height: 28)
@@ -90,9 +130,61 @@ struct ChatAttachmentChip: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
         )
-        .onHover { isHovered = $0 }
-        .help(url.lastPathComponent)
-        .task(id: url) { await loadThumbnail() }
+    }
+
+    /// An image is the picture, square-cropped; anything else is a card as tall as an
+    /// image tile so a row of mixed attachments keeps one baseline.
+    private func tileBody(side: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return Group {
+            if isImage {
+                preview
+                    .frame(width: side, height: side)
+                    .background(Color.primary.opacity(0.06))
+            } else {
+                HStack(spacing: 8) {
+                    preview
+                        .frame(width: side * 0.5, height: side * 0.5)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(displayName)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                        Text(kindLabel)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: 120, alignment: .leading)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: side)
+                .background(Color.primary.opacity(isHovered ? 0.12 : 0.08))
+            }
+        }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(Color.white.opacity(0.12), lineWidth: 1))
+        .overlay(alignment: .topTrailing) {
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 18, height: 18)
+                        .background(Color.black.opacity(0.72), in: Circle())
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.25), lineWidth: 0.5))
+                }
+                .buttonStyle(.plain)
+                .padding(4)
+                // Shown on hover, as in the chat apps — a permanent ✕ over every picture
+                // covers the corner of the thing the user is checking before they send.
+                .opacity(isHovered ? 1 : 0)
+                .help("Remove attachment")
+                .accessibilityLabel("Remove \(url.lastPathComponent)")
+            }
+        }
+        .contentShape(shape)
     }
 
     @ViewBuilder
@@ -115,9 +207,10 @@ struct ChatAttachmentChip: View {
     /// image itself — rather than the generic icon for its type.
     private func loadThumbnail() async {
         let scale = NSScreen.main?.backingScaleFactor ?? 2
+        let side = thumbnailSide * 2
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
-            size: CGSize(width: 56, height: 56),
+            size: CGSize(width: side, height: side),
             scale: scale,
             representationTypes: .thumbnail)
         guard

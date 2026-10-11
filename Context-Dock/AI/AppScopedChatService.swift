@@ -427,10 +427,27 @@ enum AppScopedChatService {
         // names Safari and says "a note" — singular, and not an app name at all — so reading
         // only the names offered Safari, reading only the subjects offered Notes, and the
         // cross-app planner needs both in scope before it will look at the request.
-        var candidates =
-            GeneralAIActionResolver.shared.namedInstalledApps(in: query)
-            + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query))
-            + subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
+        // An app name that is also an ordinary word needs a cue before it counts as a request
+        // to reach that app.
+        //
+        // Apple named its apps after nouns people use all day: Console, Notes, Messages, Music,
+        // Photos, Pages, Preview, Home, Books, Weather, Code. "read the console output of this
+        // page" offered to enable Console.app; "browser_console_messages" offered Messages. The
+        // cue is how a person actually points at an app — *in* Notes, *to* Notes, *using*
+        // Safari, or naming it first — and it costs nothing for the requests that do mean it.
+        let named =
+            (GeneralAIActionResolver.shared.namedInstalledApps(in: query)
+                + GeneralAIActionResolver.shared.namedInstalledApps(in: pluralised(query)))
+            .filter { namesAppDeliberately(query: query, appName: $0.name) }
+        // Subject markers — "tab" means Safari, "reminder" means Reminders — are a General Chat
+        // heuristic, and they belong there. Inside an app chat the same words usually mean what
+        // they say: "the photos on this page" is images in Safari, not Photos.app, and
+        // `browser_console_messages` is a tool name, not Messages. An app chat therefore only
+        // offers another app when the sentence points at it.
+        var candidates = named
+        if scopeBundleID == nil {
+            candidates += subjectApps(in: query).map { (name: $0.name, bundleId: $0.bundleId) }
+        }
 
         // In a Mail chat "message", "text" and "selected text" are about the mail. Reading
         // "read the latest message and do what it says" as a question for Messages sent the
@@ -483,6 +500,39 @@ enum AppScopedChatService {
         let q = query.lowercased()
         return ["imessage", "sms", "text message", "messages app", "in messages",
                 "to messages", "from messages", "open messages"].contains(where: q.contains)
+    }
+
+    /// Whether the sentence points at this app, rather than merely containing its name.
+    ///
+    /// Two shapes count, and both are how people actually name an app: a cue word in front of
+    /// it ("in Notes", "to Notes", "using Safari", "open Code"), or the app named first ("Notes:
+    /// add a line"). Everything else is the word doing its ordinary job — "the console output",
+    /// "my music", "these photos" — and reaching into an app on the strength of that is how a
+    /// Safari question about a page's console offered to open Console.app.
+    static func namesAppDeliberately(query: String, appName: String) -> Bool {
+        let lowered = query.lowercased()
+        let name = appName.lowercased()
+        guard !name.isEmpty else { return false }
+        // A multi-word name is never an accident: nobody writes "visual studio code" by chance.
+        guard !name.contains(" ") else { return true }
+
+        let words = lowered
+            .split { !$0.isLetter && !$0.isNumber && $0 != "." }
+            .map(String.init)
+        guard let index = words.firstIndex(where: { $0 == name || $0 == name + "'s" }) else {
+            // The name appears only as part of a longer token — `browser_console_messages`
+            // splits on `_`, so this is the "not even a word here" case.
+            return false
+        }
+        if index == 0 { return true }
+        let cues: Set<String> = [
+            "in", "to", "from", "into", "with", "using", "via", "on", "inside", "open",
+            "launch", "through", "my",
+        ]
+        if cues.contains(words[index - 1]) { return true }
+        // "the Notes app", "in the Notes app"
+        if index + 1 < words.count, words[index + 1] == "app" { return true }
+        return false
     }
 
     /// Whether a candidate app *is* the app this chat is already about.
@@ -545,8 +595,25 @@ enum AppScopedChatService {
             (["browsing", "history", "bookmark", "tab"], "com.apple.Safari", "Safari"),
             (["photo", "picture", "screenshot library"], "com.apple.Photos", "Photos"),
         ]
+        // Whole words, not substrings.
+        //
+        // `browser_console_messages` — the name of a Safari MCP tool — contains "message", so a
+        // question naming that tool offered to enable Messages instead of answering. The same
+        // lesson the app-name matcher already learned: a word inside another word is not that
+        // word, and an identifier is full of them.
+        let words = Set(
+            lowered
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init))
+        func mentions(_ marker: String) -> Bool {
+            let parts = marker.split(separator: " ").map(String.init)
+            // A multi-word marker ("talk to", "task list") still matches as a phrase.
+            guard parts.count == 1 else { return lowered.contains(marker) }
+            return words.contains(marker) || words.contains(marker + "s")
+        }
+
         var found: [(bundleId: String, name: String)] = []
-        for subject in subjects where subject.markers.contains(where: lowered.contains) {
+        for subject in subjects where subject.markers.contains(where: mentions) {
             // Only apps that are actually here. Offering to enable something not installed
             // is a dead end dressed as an option.
             guard NSWorkspace.shared.urlForApplication(
@@ -694,6 +761,24 @@ enum AppScopedChatService {
         let conversationScope = Self.conversationScope(
             routingBundleId: routingBundleId, appName: appName)
 
+        // One registry turn for the whole loop (E1c). The capabilities DoraX runs between
+        // passes are gated and recorded against it, and a Claude Code pass joins it rather than
+        // starting a record that has forgotten the mail it was just handed.
+        let registry = AgentToolRegistry.shared
+        let chat = ClaudeCodeChat.scope
+        let earlier = ClaudeCodeCLIService.sessionTaint(chat)
+        let turn = registry.beginTurn(
+            userText: TurnUserText.resolve(history: history, message: query),
+            promptBlocks: [systemPrompt, query],
+            startsPrivate: OutboundGate.isPrivateDataApp(bundleID: routingBundleId)
+                || earlier.readPrivateData,
+            startsUntrusted: OutboundGate.isThirdPartyContentApp(bundleID: routingBundleId)
+                || earlier.readUntrustedContent)
+        defer {
+            ClaudeCodeCLIService.noteRead(registry.taint.taint(for: turn), in: chat)
+            registry.endTurn(turn)
+        }
+
         let toolsBlock = await withTimeout(
             seconds: 8, fallback: "", label: "scoped tool-less capability block"
         ) {
@@ -715,24 +800,26 @@ enum AppScopedChatService {
 
         for _ in 0..<4 {
             onStatus?(toolChips.isEmpty ? "Thinking…" : "Reading tool result…")
-            let raw = try await AIProviderService.shared.sendMessage(
-                loopQuery,
-                context: context,
-                provider: provider,
-                apiKey: apiKey,
-                conversationHistory: loopHistory,
-                additionalContextPrompt: promptWithTools,
-                attachments: attachments.map(AIAttachment.inferred(from:)),
-                // This surface supplies its own capability catalogue; letting the provider
-                // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
-                // nothing here executes, and the directive ends up printed at the user.
-                surfaceScoped: true,
-                // A CLI provider's own steps belong in the same live list DoraX fills for
-                // its own work, rather than in a transcript nobody has open.
-                onStatus: onStatus.map { report in { step in
-                    Task { @MainActor in report(step) }
-                } }
-            )
+            let raw = try await ClaudeCodeChat.$turn.withValue(turn) {
+                try await AIProviderService.shared.sendMessage(
+                    loopQuery,
+                    context: context,
+                    provider: provider,
+                    apiKey: apiKey,
+                    conversationHistory: loopHistory,
+                    additionalContextPrompt: promptWithTools,
+                    attachments: attachments.map(AIAttachment.inferred(from:)),
+                    // This surface supplies its own capability catalogue; letting the provider
+                    // also match a CLI package teaches a [TERMINAL_COMMAND: …] protocol that
+                    // nothing here executes, and the directive ends up printed at the user.
+                    surfaceScoped: true,
+                    // A CLI provider's own steps belong in the same live list DoraX fills for
+                    // its own work, rather than in a transcript nobody has open.
+                    onStatus: onStatus.map { report in { step in
+                        Task { @MainActor in report(step) }
+                    } }
+                )
+            }
 
             // Say what is about to happen before it happens. The directive is already in the
             // answer text; reading it here costs nothing and is the difference between a live
@@ -740,7 +827,8 @@ enum AppScopedChatService {
             if let announced = AITypedInvocationResolver.invocation(from: raw) {
                 onStatus?(Self.runningLabel(for: announced))
             }
-            let call = await GeneralChatCapabilityHub.shared.execute(raw, scope: conversationScope)
+            let call = await GeneralChatCapabilityHub.shared.execute(
+                raw, scope: conversationScope, turn: turn, chatScope: chat)
             guard call.handled else {
                 var text = ChatAnswerSanitizer.clean(raw)
                 // The last rung, offered by DoraX rather than asked for by the model. Three
@@ -784,16 +872,18 @@ enum AppScopedChatService {
         // Loop budget exhausted — one final forced plain answer, same as General Chat's own
         // exhaustion path.
         onStatus?("Writing answer…")
-        let finalRaw = try await AIProviderService.shared.sendMessage(
-            loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
-            context: context,
-            provider: provider,
-            apiKey: apiKey,
-            conversationHistory: loopHistory,
-            additionalContextPrompt: promptWithTools,
-            attachments: attachments.map(AIAttachment.inferred(from:)),
-            surfaceScoped: true
-        )
+        let finalRaw = try await ClaudeCodeChat.$turn.withValue(turn) {
+            try await AIProviderService.shared.sendMessage(
+                loopQuery + "\n\nAnswer in plain language now. Do NOT call any more tools.",
+                context: context,
+                provider: provider,
+                apiKey: apiKey,
+                conversationHistory: loopHistory,
+                additionalContextPrompt: promptWithTools,
+                attachments: attachments.map(AIAttachment.inferred(from:)),
+                surfaceScoped: true
+            )
+        }
         return Answer(text: ChatAnswerSanitizer.clean(finalRaw), toolChips: toolChips)
     }
 
@@ -1165,12 +1255,20 @@ enum AppScopedChatService {
     ) async throws -> Answer {
         // One record per turn in the turn log, when it is on: the prompt's sections, every
         // provider pass, and the checks that fired, whichever route the turn takes below.
+        //
+        // The chat and what its user typed are bound for the turn, so the Claude Code CLI knows
+        // whether it may hold its own network and shell (E1c), and the outbound gate knows which
+        // addresses the user typed rather than the follow-up prompts DoraX composes.
         try await TurnRecorder.run(provider: AppSettings.shared.selectedAIProvider.rawValue) {
-            try await sendUntraced(
-                scope: scope, appName: appName, query: query, history: history,
-                attachments: attachments, extraAppNames: extraAppNames,
-                finderSelection: finderSelection, skillOverride: skillOverride,
-                onStream: onStream, onStatus: onStatus)
+            try await ClaudeCodeChat.$scope.withValue(scope) {
+                try await TurnUserText.bind(history: history, query: query) {
+                    try await sendUntraced(
+                        scope: scope, appName: appName, query: query, history: history,
+                        attachments: attachments, extraAppNames: extraAppNames,
+                        finderSelection: finderSelection, skillOverride: skillOverride,
+                        onStream: onStream, onStatus: onStatus)
+                }
+            }
         }
     }
 

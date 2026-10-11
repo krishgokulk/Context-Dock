@@ -143,6 +143,23 @@ struct DockShellWidthTests {
         #expect(M.runningPillWidth == M.pillWidth(icons: M.matchIconBaseCount, overflow: true))
     }
 
+    @Test("The running-apps pill fits its apps, up to the fixed width, past which they scroll")
+    func theRunningPillFitsItsApps() {
+        let cap = M.matchIconBaseCount
+        var previous: CGFloat = 0
+        for apps in 1...cap {
+            let width = M.runningPillWidth(apps: apps)
+            #expect(width > previous)
+            #expect(width < M.runningPillWidth)
+            previous = width
+        }
+        // Three apps take three apps' room, not four and an arrow.
+        #expect(M.runningPillWidth(apps: 3) == M.pillWidth(icons: 3, overflow: false))
+        for apps in (cap + 1)...(cap + 10) {
+            #expect(M.runningPillWidth(apps: apps) == M.runningPillWidth)
+        }
+    }
+
     @Test("An app's bar pill fits its icons, up to the cap, past which they scroll")
     func theAppBarPillFitsItsIcons() {
         let one = M.appBarPillWidth(visibleIcons: 1, divider: false)

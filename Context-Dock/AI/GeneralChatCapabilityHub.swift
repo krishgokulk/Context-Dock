@@ -617,7 +617,15 @@ final class GeneralChatCapabilityHub {
     /// Dispatch a tool command the model emitted through the tool loop.
     /// Returns handled=false when the command is not an app tool call (caller falls back
     /// to the terminal bridge or treats the text as the final answer).
-    func execute(_ command: String, scope: AIConversationScope) async -> ToolCallResult {
+    ///
+    /// `turn`: the registry turn of the loop calling this (the tool-less scoped loop, E1c). With
+    /// one, an outbound capability goes through the outbound gate with that turn's taint, and
+    /// what each call read is recorded against it. Without one, the capability runs as before:
+    /// a caller with no turn record has nothing the gate could judge it by.
+    func execute(
+        _ command: String, scope: AIConversationScope, turn: AgentTurnToken? = nil,
+        chatScope: GeneralChatScope? = nil
+    ) async -> ToolCallResult {
         guard let invocation = AITypedInvocationResolver.invocation(from: command) else {
             return ToolCallResult(handled: false, success: false, output: "", label: "")
         }
@@ -650,8 +658,25 @@ final class GeneralChatCapabilityHub {
                         output: error.localizedDescription,
                         label: "\(tool) blocked")
                 }
+                let registry = AgentToolRegistry.shared
+                if let turn,
+                    let target = OutboundGate.capabilityTarget(
+                        id: tool, input: input, lookups: registry.outboundLookups),
+                    let stopped = await registry.gateOutbound(
+                        target: target, what: "run_capability: \(tool)", turn: turn,
+                        chatScope: chatScope)
+                {
+                    return ToolCallResult(
+                        handled: true, success: false, output: stopped.output,
+                        label: stopped.deniedByUser ? "\(tool) declined" : "\(tool) held back")
+                }
                 let result = await AIExecutionEngine.shared.executeUnifiedWithApproval(
                     plan, context: .none)
+                if let turn {
+                    registry.taint.record(
+                        toolName: "run_capability", arguments: ["capability_id": tool],
+                        output: result.output, succeeded: result.success, turn: turn)
+                }
                 return ToolCallResult(
                     handled: true,
                     success: result.success,
@@ -693,6 +718,11 @@ final class GeneralChatCapabilityHub {
             do {
                 let result = try await MCPRuntime.shared.callProviderReadOnlyTool(
                     bundleId: bundleId, server: server, tool: tool, arguments: arguments)
+                if let turn {
+                    AgentToolRegistry.shared.taint.record(
+                        toolName: "run_mcp_tool", arguments: [:], output: result,
+                        succeeded: true, turn: turn)
+                }
                 return ToolCallResult(handled: true, success: true, output: result, label: label)
             } catch {
                 return ToolCallResult(

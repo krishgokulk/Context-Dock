@@ -118,3 +118,22 @@ struct DropShelfIcon: View {
         }
     }
 }
+
+/// The Dock's shelf slot: the icon while the shelf holds something, a drag is in flight, or
+/// its card is open (`DropShelfVisibility`), nothing otherwise — the Corner's rule, so the
+/// two shells' rows end the same way.
+struct DockShelfSlot: View {
+    @ObservedObject var presentation: DropShelfPresentation
+    @ObservedObject private var store = DropShelfController.shared.store
+    /// A drag in flight is announced on the Corner's presentation, which the drag brings up.
+    @ObservedObject private var corner = DropShelfController.shared.presentation
+
+    var body: some View {
+        if DropShelfVisibility.shows(itemCount: store.items.count, phase: presentation.phase)
+            || corner.phase == .inviting
+        {
+            DropShelfIcon(presentation: presentation, store: store, style: .dock)
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+        }
+    }
+}

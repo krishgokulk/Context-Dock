@@ -204,6 +204,8 @@ struct CornerDockKeyRulesTests {
     @Test("←/→ walk the pills and wrap back to the field (C9)")
     func arrowsWalkThePills() {
         let model = emptyWithPills()
+        // A shelf holding something: the row ends with it.
+        model.shelfVisible = { true }
         #expect(model.applyPillRowKey(.tab))
         #expect(model.applyPillRowKey(.right))
         #expect(model.focusedPill?.id == "b")
@@ -216,6 +218,19 @@ struct CornerDockKeyRulesTests {
         #expect(model.focusedPillIndex == nil)
         #expect(model.applyPillRowKey(.tab))
         #expect(model.applyPillRowKey(.left))
+        #expect(model.focusedPillIndex == nil)
+    }
+
+    @Test("An empty shelf is not a pill: past the last app is the field")
+    func anEmptyShelfIsSkipped() {
+        let model = emptyWithPills()
+        model.shelfVisible = { false }
+        #expect(model.applyPillRowKey(.tab))
+        #expect(model.applyPillRowKey(.right))
+        #expect(model.applyPillRowKey(.right))
+        #expect(model.focusedPill?.id == "c")
+        #expect(model.applyPillRowKey(.right))
+        #expect(!model.isShelfFocused)
         #expect(model.focusedPillIndex == nil)
     }
 
@@ -261,6 +276,16 @@ struct DockKeyRulesListTests {
         #expect(R.listArrow(down: true, focused: 2, count: 3) == 0)
         #expect(R.listArrow(down: false, focused: 0, count: 3) == 2)
         #expect(R.listArrow(down: true, focused: nil, count: 0) == nil)
+    }
+
+    @Test("Under Finder's Ask AI row the arrows walk through that row — nil — and back")
+    func arrowsWalkThroughTheAskRow() {
+        #expect(R.listArrowUnderAskRow(down: true, focused: nil, count: 3) == 0)
+        #expect(R.listArrowUnderAskRow(down: true, focused: 0, count: 3) == 1)
+        #expect(R.listArrowUnderAskRow(down: false, focused: 0, count: 3) == nil)
+        #expect(R.listArrowUnderAskRow(down: true, focused: 2, count: 3) == nil)
+        #expect(R.listArrowUnderAskRow(down: false, focused: nil, count: 3) == 2)
+        #expect(R.listArrowUnderAskRow(down: true, focused: nil, count: 0) == nil)
     }
 
     @Test("↩ runs the highlighted row, else a search field's top row (C3)")
@@ -497,12 +522,12 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(AppChatPromptModel.isFolder(URL(fileURLWithPath: "/System/Applications")))
     }
 
-    @Test("⌘R re-reads an app's menus; Global Context and Finder's file search have none (C12)")
+    @Test("⌘R re-reads an app's menus; not Global Context, nor Finder stepped into (C12)")
     func refreshIsForAnAppScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summonGlobalContext()
         #expect(!model.refreshLiveMenus())
-        // Finder stepped into from Global is a file search: no menus of its own.
+        // Finder stepped into from Global is not in front: its live menus are not read.
         model.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
         #expect(!model.refreshLiveMenus())
         // An app that is not running: the scope accepts ⌘R, and the read finds nothing to

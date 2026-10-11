@@ -26,6 +26,8 @@ enum AppChatRow: Identifiable {
     case file(URL)
     /// A subcommand this CLI tool takes, offered inside its scope.
     case cliSuggestion(String)
+    /// An app to jump to, from a "/" in Global or a Context Dock — running or not.
+    case app(ChatAppEntry)
 
     var id: String {
         switch self {
@@ -35,6 +37,7 @@ enum AppChatRow: Identifiable {
         case .dock(let pill): return "dock:" + pill.id
         case .file(let url): return "file:" + url.path
         case .cliSuggestion(let word): return "cli:" + word
+        case .app(let entry): return "app:" + entry.id
         }
     }
 
@@ -46,6 +49,7 @@ enum AppChatRow: Identifiable {
         case .dock(let pill): return pill.name
         case .file(let url): return url.lastPathComponent
         case .cliSuggestion(let word): return word
+        case .app(let entry): return entry.name
         }
     }
 

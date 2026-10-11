@@ -127,7 +127,7 @@ struct CornerRemainingScopesTests {
 @MainActor
 struct CornerFinderMenusAndLayoutsTests {
 
-    @Test("Finder in front lists its menus; from Global, or inside a folder, it searches files")
+    @Test("Finder lists its menus in front and from Global; inside a folder, that folder")
     func finderModes() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Finder", bundleID: "com.apple.finder")
@@ -140,7 +140,31 @@ struct CornerFinderMenusAndLayoutsTests {
         let scoped = AppChatPromptModel(conversation: AppChatConversation())
         scoped.summonGlobalContext()
         scoped.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
-        #expect(scoped.isFinderFileSearch)
+        #expect(!scoped.isFinderFileSearch)
+        #expect(scoped.finderSkipsLiveMenus)
+        #expect(!model.finderSkipsLiveMenus)
+    }
+
+    @Test("A walked folder shows its path from the disk down; a pill goes back to that folder")
+    func finderPathPills() throws {
+        #expect(AppChatPromptModel.pathTrail(URL(fileURLWithPath: "/Users/me/Downloads")).map(\.path)
+            == ["/", "/Users", "/Users/me", "/Users/me/Downloads"])
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inner = root.appendingPathComponent("inner", isDirectory: true)
+        try FileManager.default.createDirectory(at: inner, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        #expect(model.finderPathTrail.isEmpty)
+        model.finderBrowseStack = [root, inner]
+        #expect(model.finderPathTrail.last?.standardizedFileURL.path == inner.standardizedFileURL.path)
+        model.openFinderPathPill(root)
+        #expect(model.finderBrowseStack.count == 1)
+        model.openFinderPathPill(URL(fileURLWithPath: "/"))
+        #expect(model.finderBrowseStack.map(\.path) == ["/"])
     }
 
     @Test("The Dock's window layouts lead the app's rows while typing")

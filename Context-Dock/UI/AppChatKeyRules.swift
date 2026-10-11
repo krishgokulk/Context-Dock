@@ -12,21 +12,21 @@ extension AppChatPromptModel {
     /// The field's pills as the pill rule sees them: on screen only while nothing is typed
     /// (the same test the field draws them by), and never inside a conversation.
     var pillRowIsAvailable: Bool {
-        // The Drop Shelf is the row's last pill and is always there, so the row exists even
-        // when no app is running.
+        // The Drop Shelf, when it shows, is the row's last pill, so the row can exist with
+        // no app running.
         phase.showsInput && phase != .chat && showsFieldPills
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// The row's destinations as the key rule walks them: the field's app pills, then the
     /// Drop Shelf — one past the last pill.
-    var pillRowCount: Int { globalMatchIcons.count + 1 }
+    var pillRowCount: Int { globalMatchIcons.count + (showsShelf ? 1 : 0) }
 
     /// The pill index the Drop Shelf holds in the row.
     var shelfPillIndex: Int { globalMatchIcons.count }
 
     /// Tab and ←/→ have the highlight on the Drop Shelf's icon.
-    var isShelfFocused: Bool { focusedPillIndex == shelfPillIndex }
+    var isShelfFocused: Bool { showsShelf && focusedPillIndex == shelfPillIndex }
 
     /// The pill Tab and ←/→ have highlighted — the id the strip and the field draw it by.
     var focusedPill: MatchDockIcon? {

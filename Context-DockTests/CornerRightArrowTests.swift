@@ -77,4 +77,11 @@ struct CornerRightArrowTests {
         #expect(!AppChatPromptModel.layerKeyComesFirst(query: "", hasFocusedRow: true))
         #expect(!AppChatPromptModel.layerKeyComesFirst(query: "saf", hasFocusedRow: false))
     }
+
+    /// Inside a scope stepped into from Global — Listening Ports, a CLI, an app — ↓ walks its
+    /// list rather than swapping it for the Context Dock (owner 2026-10-08).
+    @Test func aSteppedInScopeKeepsItsArrowsForItsList() {
+        #expect(!AppChatPromptModel.layerKeyComesFirst(
+            query: "", hasFocusedRow: false, steppedInFromGlobal: true))
+    }
 }
