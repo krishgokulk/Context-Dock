@@ -304,6 +304,24 @@ struct ClipboardBoardCard: View {
         Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
     }
 
+    /// A press on a row that did not become a drag: focus it; ⌘ and ⇧ pick; a double-click
+    /// pastes.
+    private func click(_ row: ClipboardBoardSection.Row) {
+        model.focusedEntryIndex = row.index
+        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+            ClipboardPanelController.shared.pasteMany(
+                model.actionableEntries(fallback: row.entry))
+            return
+        }
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) || flags.contains(.shift) {
+            model.selectEntry(
+                row.entry, extend: flags.contains(.shift), toggle: flags.contains(.command))
+        } else {
+            model.clearSelection()
+        }
+    }
+
     // MARK: Header
 
     private var header: some View {
@@ -390,21 +408,21 @@ struct ClipboardBoardCard: View {
                                 )
                                 .id(row.entry.id)
                                 .contentShape(Rectangle())
-                                .onTapGesture(count: 2) {
-                                    model.focusedEntryIndex = row.index
-                                    ClipboardPanelController.shared.pasteMany(
-                                        model.actionableEntries(fallback: row.entry))
-                                }
-                                .onTapGesture {
-                                    model.focusedEntryIndex = row.index
-                                    let flags = NSEvent.modifierFlags
-                                    if flags.contains(.command) || flags.contains(.shift) {
-                                        model.selectEntry(
-                                            row.entry, extend: flags.contains(.shift),
-                                            toggle: flags.contains(.command))
-                                    } else {
-                                        model.clearSelection()
-                                    }
+                                // Press-and-drag takes the row — or the whole selection — out as
+                                // files; a press that never travelled is the click it was. While
+                                // it flies the Drop Shelf's icon joins the strip beside the
+                                // clipboard's, as it does for a drag from any other app.
+                                .overlay {
+                                    MultiItemDragSource(
+                                        urls: {
+                                            let dragged = model.isSelected(row.entry)
+                                                ? model.actionableEntries() : [row.entry]
+                                            ClipboardPanelController.shared.beginDrag(dragged)
+                                            return ClipboardScopeService.fileURLs(for: dragged)
+                                        },
+                                        onClick: { click(row) },
+                                        onDragBegan: { DropShelfController.shared.dragEntered() },
+                                        onDragEnded: { DropShelfController.shared.dragEnded() })
                                 }
                                 .contextMenu { rowMenu(row.entry) }
                             }

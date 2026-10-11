@@ -260,6 +260,8 @@ final class DropShelfController: NSObject {
     }
 
     func dragExitedStrip() { scheduleDragEnd() }
+    /// A drag that began in our own window (the clipboard board) has ended.
+    func dragEnded() { scheduleDragEnd() }
     func dragExitedPill() { scheduleDragEnd() }
 
     private func scheduleDragEnd() {
