@@ -317,7 +317,21 @@ private struct AppPreview: View {
                 title: name,
                 subtitle: running == nil ? "Not running" : "Running",
                 status: running == nil ? Color.secondary.opacity(0.5) : .green)
-            // Running: what it is doing — its window — before anything about the bundle.
+            PanelDivider()
+            PanelSection(title: "Actions")
+            if running != nil {
+                PanelRow(symbol: "return", value: "Bring forward", trailing: "↩")
+                PanelRow(symbol: "arrow.right", value: "Step into its Context Dock", trailing: "→")
+                PanelRow(symbol: "xmark", value: "Quit \(name)", trailing: "⌘⌫")
+            } else {
+                PanelRow(symbol: "return", value: "Open", trailing: "↩")
+                PanelRow(symbol: "arrow.right", value: "Open in its Context Dock", trailing: "→")
+                if let appURL, let file = AppResultActions.finderFile(openableBy: appURL) {
+                    PanelRow(
+                        symbol: "doc", value: "Open \(file.lastPathComponent)", trailing: "⇧↩")
+                }
+            }
+            // What it is doing — its window — under the keys, which must never scroll away.
             if running != nil {
                 if let image = snapshots.snapshot(for: bundleID) {
                     Image(nsImage: image)
@@ -325,7 +339,7 @@ private struct AppPreview: View {
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: 150)
                         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                        .padding(.top, 10)
+                        .padding(.top, 12)
                 } else if snapshots.isDenied {
                     Text("Allow Screen Recording to see its window.")
                         .font(.system(size: 11))
@@ -345,20 +359,6 @@ private struct AppPreview: View {
             }
             if let appURL {
                 PanelRow(label: "Where", value: boardPanelPath(appURL.deletingLastPathComponent()))
-            }
-            PanelDivider()
-            PanelSection(title: "Actions")
-            if running != nil {
-                PanelRow(symbol: "return", value: "Bring forward", trailing: "↩")
-                PanelRow(symbol: "arrow.right", value: "Step into its Context Dock", trailing: "→")
-                PanelRow(symbol: "xmark", value: "Quit \(name)", trailing: "⌘⌫")
-            } else {
-                PanelRow(symbol: "return", value: "Open", trailing: "↩")
-                PanelRow(symbol: "arrow.right", value: "Open in its Context Dock", trailing: "→")
-                if let appURL, let file = AppResultActions.finderFile(openableBy: appURL) {
-                    PanelRow(
-                        symbol: "doc", value: "Open \(file.lastPathComponent)", trailing: "⇧↩")
-                }
             }
         }
         .onAppear { if running != nil { snapshots.refresh(bundleID: bundleID) } }
