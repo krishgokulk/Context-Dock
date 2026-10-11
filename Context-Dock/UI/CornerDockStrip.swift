@@ -214,37 +214,40 @@ struct CornerDockStrip: View {
             // it, widens it back.
             // The field, folded: the magnifier in Global, the app's own icon in its Context
             // Dock — what the field says it is about when it opens.
-            foldedField { expandField() }
-                .scaleEffect(condensing ? 1.12 : 1)
-                // An app bar's icon flies into the field's app chip and shrinks to its size,
-                // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
-                .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
-                .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
-                // A fixed-length curve, not a spring: it has to have landed exactly when the
-                // chip's icon takes over, or the hand-off shows as a jump.
-                .animation(
-                    .timingCurve(0.3, 0, 0.2, 1,
-                        duration: AppChatPromptMetrics.dockMorphDuration * 0.3),
-                    value: gathered)
-                .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
-                // The hairline between the field, folded, and the apps — the same one the
-                // pins get. Drawn over room that is already there, so it costs no width, and
-                // centred between what the eye sees — the 20-point glyph, not its 48-point
-                // slot — and Finder. It belongs to the magnifier and leaves with it.
-                .overlay(alignment: .center) {
-                    let glyphEdge: CGFloat = 10
-                    let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.18))
-                        .frame(width: 1, height: M.dockIconSize * 0.7)
-                        .offset(x: (glyphEdge + appEdge) / 2)
-                        .allowsHitTesting(false)
-                }
-                // The field's own magnifier opens on this exact spot; this one hands over.
-                // An app bar's icon hands over only once it has landed on the chip.
-                .opacity(isDock ? 1 : 0)
-                .animation(gathersIntoAppBar ? appIconHandover : movingFade, value: isDock)
-                .allowsHitTesting(isDock)
+            DockMagnifiedSlot(id: "search") { magnify in
+                foldedField { expandField() }
+                    .scaleEffect(magnify)
+                    .scaleEffect(condensing ? 1.12 : 1)
+                    // An app bar's icon flies into the field's app chip and shrinks to its size,
+                    // while the tabs and pins fly into the pill — one motion (owner 2026-09-26).
+                    .scaleEffect(gathersIntoAppBar && gathered ? 16 / 24 : 1)
+                    .offset(x: gathersIntoAppBar && gathered ? appChipOffset(plan: self.plan) : 0)
+                    // A fixed-length curve, not a spring: it has to have landed exactly when the
+                    // chip's icon takes over, or the hand-off shows as a jump.
+                    .animation(
+                        .timingCurve(0.3, 0, 0.2, 1,
+                            duration: AppChatPromptMetrics.dockMorphDuration * 0.3),
+                        value: gathered)
+                    .onHover { inside in inside ? beginHoverExpand() : cancelHoverExpand() }
+                    // The hairline between the field, folded, and the apps — the same one the
+                    // pins get. Drawn over room that is already there, so it costs no width, and
+                    // centred between what the eye sees — the 20-point glyph, not its 48-point
+                    // slot — and Finder. It belongs to the magnifier and leaves with it.
+                    .overlay(alignment: .center) {
+                        let glyphEdge: CGFloat = 10
+                        let appEdge = M.dockIconSize / 2 + M.dockIconGap + self.plan.layout.appSpread
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.18))
+                            .frame(width: 1, height: M.dockIconSize * 0.7)
+                            .offset(x: (glyphEdge + appEdge) / 2)
+                            .allowsHitTesting(false)
+                    }
+                    // The field's own magnifier opens on this exact spot; this one hands over.
+                    // An app bar's icon hands over only once it has landed on the chip.
+                    .opacity(isDock ? 1 : 0)
+                    .animation(gathersIntoAppBar ? appIconHandover : movingFade, value: isDock)
+                    .allowsHitTesting(isDock)
+            }
             // One region for apps: the pinned ones first, in the order the user placed
             // them, then whatever else is running.
             let plan = self.plan
@@ -342,7 +345,12 @@ struct CornerDockStrip: View {
                 // (`dockToolCount`): drawing more than it counts would overrun its width.
                 // The Drop Shelf is the last of them in every scope, pinned or not.
                 ForEach(toolKinds, id: \.self) { kind in
-                    toolView(kind)
+                    // Magnified like the icons beside them: the slot is the row's, the
+                    // glyph inside it grows.
+                    DockMagnifiedSlot(id: "tool.\(kind)") { magnify in
+                        toolView(kind).scaleEffect(magnify)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
                 }
             }
         }
