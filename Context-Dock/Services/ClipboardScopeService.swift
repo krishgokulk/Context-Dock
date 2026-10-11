@@ -102,6 +102,10 @@ enum ClipboardScopeService {
         /// Anything mixed: the text a document would want, with file URLs appended as extra
         /// items for targets that understand them.
         case textWithFiles(text: String, files: [URL])
+        /// Pictures among other clips: each clip goes as its own pasteboard item, in the order
+        /// picked — the picture as an image, a file as a file URL, text as a string. Joining
+        /// them into one string is how "paste" delivered only words when images were picked.
+        case mixed
         case empty
     }
 
@@ -122,6 +126,7 @@ enum ClipboardScopeService {
         if imageCount > 0, imageCount == entries.count { return .images(count: imageCount) }
         if text.isEmpty, fileURLs.isEmpty, imageCount > 0 { return .images(count: imageCount) }
         if text.isEmpty && fileURLs.isEmpty { return .empty }
+        if imageCount > 0 { return .mixed }
         return .textWithFiles(text: text, files: fileURLs)
     }
 
@@ -153,6 +158,25 @@ enum ClipboardScopeService {
         case .images:
             let images = entries.compactMap { imageData(for: $0).flatMap(NSImage.init(data:)) }
             if !images.isEmpty { pasteboard.writeObjects(images) }
+
+        case .mixed:
+            var items: [NSPasteboardWriting] = []
+            for entry in entries {
+                if let image = imageData(for: entry).flatMap(NSImage.init(data:)) {
+                    items.append(image)
+                } else if !entry.filePaths.isEmpty {
+                    for path in entry.filePaths {
+                        let item = NSPasteboardItem()
+                        item.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
+                        items.append(item)
+                    }
+                } else if !entry.text.isEmpty {
+                    let item = NSPasteboardItem()
+                    item.setString(entry.text, forType: .string)
+                    items.append(item)
+                }
+            }
+            if !items.isEmpty { pasteboard.writeObjects(items) }
 
         case .textWithFiles(let text, let files):
             var items: [NSPasteboardItem] = []

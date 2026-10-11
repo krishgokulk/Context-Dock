@@ -99,6 +99,19 @@ struct ClipboardScopeServiceTests {
                     files: [URL(fileURLWithPath: "/tmp/one.png")]))
     }
 
+    /// Pictures picked with words or files used to be flattened into one string — the paste
+    /// into the front app arrived as text and the images were gone.
+    @Test func picturesAmongOtherClipsAreNotFlattenedToText() throws {  // payload only: the writer would clobber the real pasteboard
+        let png = try #require(NSImage(size: NSSize(width: 4, height: 4), flipped: false) { rect in
+            NSColor.red.setFill(); rect.fill(); return true
+        }.tiffRepresentation)
+        var picture = entry("Image")
+        picture.imageData = png
+        let selection = [entry("some words"), picture]
+
+        #expect(ClipboardScopeService.payload(for: selection) == .mixed)
+    }
+
     @Test func nothingSelectedIsNothingToPaste() {
         #expect(ClipboardScopeService.payload(for: []) == .empty)
     }
