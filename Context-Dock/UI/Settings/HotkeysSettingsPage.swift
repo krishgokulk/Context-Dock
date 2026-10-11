@@ -16,7 +16,7 @@ struct HotkeysSettingsPage: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Double-press Command")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Tap Command twice from anywhere to open Global Context in the corner.")
+                            Text("Tap Command twice from anywhere to open the app in front's Context Dock in the corner.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
