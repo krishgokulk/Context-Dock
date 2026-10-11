@@ -1984,6 +1984,8 @@ extension LauncherView {
         let currentCount = pb.changeCount
         guard currentCount != lastCheckedPasteboardCount else { return }
         lastCheckedPasteboardCount = currentCount
+        // The board's own paste or copy: already a clip, not a new one.
+        if currentCount == ClipboardScopeService.ownWriteChangeCount { return }
 
         if let suppressed = suppressClipboardImportUntilChangeCount {
             if currentCount <= suppressed {

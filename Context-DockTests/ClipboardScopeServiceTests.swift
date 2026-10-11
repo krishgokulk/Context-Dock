@@ -107,6 +107,8 @@ struct ClipboardScopeServiceTests {
         }.tiffRepresentation)
         var picture = entry("Image")
         picture.imageData = png
+        // A screenshot of this very board: its OCR text must never become the pasted text.
+        picture.ocrText = "Clipboard History 51 All Types Today"
         let selection = [entry("some words"), picture]
 
         #expect(ClipboardScopeService.payload(for: selection) == .mixed)

@@ -133,6 +133,10 @@ enum ClipboardScopeService {
     /// Writes the selection, and reports the change count it left behind so the always-on
     /// monitor can decline to re-import what we just wrote — a clip re-entering its own
     /// history churns the list, and the image blob behind it, for nothing.
+    /// The change count of our own last write. The always-on monitor skips it: a paste from
+    /// the board is not a copy the user made, and re-importing it adds a duplicate clip.
+    nonisolated(unsafe) static private(set) var ownWriteChangeCount = -1
+
     @discardableResult
     static func writeToPasteboard(_ entries: [Entry]) -> Int {
         let pasteboard = NSPasteboard.general
@@ -193,6 +197,7 @@ enum ClipboardScopeService {
             if !items.isEmpty { pasteboard.writeObjects(items) }
         }
 
+        ownWriteChangeCount = pasteboard.changeCount
         return pasteboard.changeCount
     }
 
