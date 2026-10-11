@@ -167,6 +167,7 @@ struct DockMagnifiedGlass: ViewModifier {
             // sideways while the dock is at rest and closes the instant it is not.
             .mask {
                 RoundedRectangle(cornerRadius: radius, style: .continuous)
+                    .padding(.horizontal, -e)
                     .overlay(alignment: .top) {
                         Rectangle()
                             .frame(height: room)
