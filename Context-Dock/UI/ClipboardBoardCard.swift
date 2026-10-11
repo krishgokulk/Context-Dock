@@ -473,10 +473,12 @@ struct ClipboardBoardCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             footerAction("Paste to \(ClipboardPanelController.shared.returnAppName)", keys: ["↩"])
-            divider
-            // Several picked, ⌘↩ asks where they go instead of copying.
-            footerAction(
-                model.selectedIDs.count > 1 ? "Paste to…" : "Copy", keys: ["⌘", "↩"], dimmed: true)
+            // One clip: Return is the whole story. Several picked: Return still pastes them to
+            // the app in front, and ⌘Return asks where else they should go.
+            if model.selectedIDs.count > 1 {
+                divider
+                footerAction("Paste to…", keys: ["⌘", "↩"], dimmed: true)
+            }
         }
         .padding(.horizontal, 14)
         .frame(height: ClipboardBoardMetrics.footerHeight)
