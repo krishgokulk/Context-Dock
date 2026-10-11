@@ -133,6 +133,17 @@ enum ClipboardScopeService {
     /// Writes the selection, and reports the change count it left behind so the always-on
     /// monitor can decline to re-import what we just wrote — a clip re-entering its own
     /// history churns the list, and the image blob behind it, for nothing.
+    /// What goes in each paste. Pictures go one paste at a time, in the order picked: a chat
+    /// box or editor reads the first item on the pasteboard and drops the rest, so several
+    /// images written together arrived as one. Files and text go as one paste.
+    static func pasteBatches(for entries: [Entry]) -> [[Entry]] {
+        guard entries.count > 1 else { return entries.isEmpty ? [] : [entries] }
+        switch payload(for: entries) {
+        case .images, .mixed: return entries.map { [$0] }
+        default: return [entries]
+        }
+    }
+
     /// The change count of our own last write. The always-on monitor skips it: a paste from
     /// the board is not a copy the user made, and re-importing it adds a duplicate clip.
     nonisolated(unsafe) static private(set) var ownWriteChangeCount = -1

@@ -544,7 +544,9 @@ extension LauncherView {
 
     func pasteClipboardEntriesToFrontmost(_ entries: [ClipboardEntry]) {
         guard !entries.isEmpty else { return }
-        writeClipboardEntriesToPasteboard(entries)
+        let batches = ClipboardScopeService.pasteBatches(for: entries)
+        // The first paste's clips go on now; any later ones follow it, one per paste.
+        writeClipboardEntriesToPasteboard(batches[0])
 
         let targetApp = AppDelegate.shared?.previousFrontmostApp
         let targetPID = targetApp?.processIdentifier ?? 0
@@ -565,6 +567,12 @@ extension LauncherView {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
                 postPasteShortcut(to: targetPID)
+                for (i, batch) in batches.enumerated().dropFirst() {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35 * Double(i)) {
+                        writeClipboardEntriesToPasteboard(batch)
+                        postPasteShortcut(to: targetPID)
+                    }
+                }
             }
         }
     }

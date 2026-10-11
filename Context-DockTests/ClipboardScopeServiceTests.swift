@@ -114,6 +114,19 @@ struct ClipboardScopeServiceTests {
         #expect(ClipboardScopeService.payload(for: selection) == .mixed)
     }
 
+    /// A target that reads one item per paste would keep only the first of several pictures.
+    @Test func picturesPasteOneAtATimeAndTextOrFilesTogether() throws {
+        let png = try #require(NSImage(size: NSSize(width: 4, height: 4), flipped: false) { rect in
+            NSColor.red.setFill(); rect.fill(); return true
+        }.tiffRepresentation)
+        var a = entry("Image"); a.imageData = png
+        var b = entry("Image"); b.imageData = png
+        #expect(ClipboardScopeService.pasteBatches(for: [a, b]).map(\.count) == [1, 1])
+        #expect(ClipboardScopeService.pasteBatches(for: [a, entry("words")]).map(\.count) == [1, 1])
+        #expect(ClipboardScopeService.pasteBatches(for: [entry("x"), entry("y")]).map(\.count) == [2])
+        #expect(ClipboardScopeService.pasteBatches(for: []).isEmpty)
+    }
+
     @Test func nothingSelectedIsNothingToPaste() {
         #expect(ClipboardScopeService.payload(for: []) == .empty)
     }

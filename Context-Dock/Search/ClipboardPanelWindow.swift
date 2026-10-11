@@ -211,14 +211,20 @@ final class ClipboardPanelController: NSObject {
     func pasteMany(_ entries: [LauncherView.ClipboardEntry], to override: NSRunningApplication? = nil) {
         guard let first = entries.first else { return }
         guard entries.count > 1 else { return paste(first) }
-        ClipboardScopeService.writeToPasteboard(entries)
         let target = override ?? (didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication)
+        let batches = ClipboardScopeService.pasteBatches(for: entries)
         model.dismiss()
         finishBoard()
         target?.activate()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
-            guard let pid = target?.processIdentifier else { return }
-            ClipboardScopeService.postPasteShortcut(to: pid)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            for batch in batches {
+                guard let pid = target?.processIdentifier else { return }
+                ClipboardScopeService.writeToPasteboard(batch)
+                ClipboardScopeService.postPasteShortcut(to: pid)
+                // Long enough for the target to read the pasteboard before it is replaced.
+                try? await Task.sleep(nanoseconds: 350_000_000)
+            }
         }
     }
 
