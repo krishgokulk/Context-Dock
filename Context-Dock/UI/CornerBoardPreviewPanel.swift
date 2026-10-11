@@ -302,10 +302,14 @@ private struct FolderListing: View {
 private struct AppPreview: View {
     let bundleID: String
     let name: String
+    @ObservedObject private var snapshots = AppWindowSnapshotService.shared
+    /// Redraws on launch and quit, so ⌘⌫ turns the card into the closed app's at once.
+    @State private var launchState = 0
 
     var body: some View {
+        let _ = launchState
         let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
+        let running = AppResultActions.runningApp(bundleID)
         let bundle = appURL.flatMap { Bundle(url: $0) }
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
@@ -313,6 +317,22 @@ private struct AppPreview: View {
                 title: name,
                 subtitle: running == nil ? "Not running" : "Running",
                 status: running == nil ? Color.secondary.opacity(0.5) : .green)
+            // Running: what it is doing — its window — before anything about the bundle.
+            if running != nil {
+                if let image = snapshots.snapshot(for: bundleID) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: 150)
+                        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .padding(.top, 10)
+                } else if snapshots.isDenied {
+                    Text("Allow Screen Recording to see its window.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 8)
+                }
+            }
             PanelDivider()
             PanelSection(title: "Details")
             if let version = bundle?.object(forInfoDictionaryKey: "CFBundleShortVersionString")
@@ -320,17 +340,36 @@ private struct AppPreview: View {
             {
                 PanelRow(label: "Version", value: version)
             }
+            if running == nil, let appURL, let lastOpened = AppResultActions.lastOpened(appURL) {
+                PanelRow(label: "Opened", value: lastOpened)
+            }
             if let appURL {
                 PanelRow(label: "Where", value: boardPanelPath(appURL.deletingLastPathComponent()))
             }
             PanelDivider()
             PanelSection(title: "Actions")
-            PanelRow(
-                symbol: "return", value: running == nil ? "Open" : "Bring forward", trailing: "↩")
             if running != nil {
+                PanelRow(symbol: "return", value: "Bring forward", trailing: "↩")
                 PanelRow(symbol: "arrow.right", value: "Step into its Context Dock", trailing: "→")
+                PanelRow(symbol: "xmark", value: "Quit \(name)", trailing: "⌘⌫")
+            } else {
+                PanelRow(symbol: "return", value: "Open", trailing: "↩")
+                PanelRow(symbol: "arrow.right", value: "Open in its Context Dock", trailing: "→")
+                if let appURL, let file = AppResultActions.finderFile(openableBy: appURL) {
+                    PanelRow(
+                        symbol: "doc", value: "Open \(file.lastPathComponent)", trailing: "⇧↩")
+                }
             }
         }
+        .onAppear { if running != nil { snapshots.refresh(bundleID: bundleID) } }
+        .onReceive(
+            NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.didTerminateApplicationNotification)
+        ) { _ in launchState += 1 }
+        .onReceive(
+            NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.didLaunchApplicationNotification)
+        ) { _ in launchState += 1 }
     }
 }
 

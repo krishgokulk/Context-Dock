@@ -1412,6 +1412,8 @@ extension AppChatPromptModel {
             }
             if let app = Self.appToStepInto(doc) {
                 focusedMenuIndex = nil
+                // A closed app is launched into its Context Dock, not scoped while closed.
+                AppResultActions.launchQuietly(app.bundleID)
                 scopeIntoApp(name: app.name, bundleID: app.bundleID)
                 return true
             }

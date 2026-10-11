@@ -1377,6 +1377,20 @@ final class CornerDockController: NSObject {
         pendingCommandSwitch?.cancel()
         pendingCommandSwitch = nil
 
+        // The app row's card keys (owner 2026-10-11): ⌘⌫ quits a running app, ⇧↩ hands a
+        // closed one the Finder selection. Plain ⌫ stays the field's (rule C6).
+        if let panel, event.window === panel, chatPresentation.isVisible,
+            prompt.phase.showsInput
+        {
+            let mods = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if event.keyCode == 51, mods == .command, prompt.quitFocusedApp() { return nil }
+            if event.keyCode == 36 || event.keyCode == 76, mods == .shift,
+                prompt.openFinderFileWithFocusedApp()
+            {
+                return nil
+            }
+        }
+
         // Backspace on the selection card's empty field leaves it — the way out of a
         // scope everywhere else in the corner, and the way back to the dock it replaced.
         if event.keyCode == 51,
