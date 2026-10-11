@@ -1979,6 +1979,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // From Global or General, straight to the app's Context Dock — not a toggle that
         // would put a visible corner away instead.
         activateAppChatPrompt(toggles: false)
+        // Already that app's resting dock, slid away by auto-hide: showing it again changed
+        // nothing, so it stayed hidden (owner 2026-10-11). Open the field, as a fresh ⌘⌘ does.
+        CornerDockController.shared.prompt.expandFromDock(seeding: nil)
         CornerDockController.shared.armKeyboard()
     }
 
