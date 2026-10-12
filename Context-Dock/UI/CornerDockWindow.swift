@@ -146,6 +146,7 @@ final class CornerDockController: NSObject {
 
     private func ensurePanel() {
         guard panel == nil else { return }
+        prompt.onStepIntoFile = { [weak self] url in self?.showSelection(forFile: url) ?? false }
         let p = CornerDockPanel(
             contentRect: NSRect(
                 origin: .zero, size: CornerDockLayout.panelSize(for: anchor)),
@@ -759,7 +760,9 @@ final class CornerDockController: NSObject {
                     outcome: selection.showsOutcome,
                     folderPreview: selection.showsFolderPreview,
                     sendConfirm: selection.pendingSend != nil) : nil,
-            list: showsClipboardBoard
+            list: selection.coversChat
+                ? nil
+                : showsClipboardBoard
                 ? ClipboardBoardMetrics.size
                 : showsScopeBoard
                 ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
@@ -777,7 +780,7 @@ final class CornerDockController: NSObject {
                                 : (showsPluginCard
                                     ? pluginCardPin.map { CornerPluginCardMetrics.size(for: $0.manifest) }
                                     : nil))))),
-            prompt: chatPresentation.isVisible ? promptSize : nil,
+            prompt: chatPresentation.isVisible && !selection.coversChat ? promptSize : nil,
             listAnchorOffset: hoverCardAnchorOffset,
             anchor: anchor, panelWidth: panel?.frame.width)
     }
@@ -801,7 +804,25 @@ final class CornerDockController: NSObject {
         chatPresentation.dismiss()
     }
 
+    /// → on a file row: that file's Selection card takes the list's and field's place.
+    func showSelection(forFile url: URL) -> Bool {
+        let context = AXContext(
+            appName: "Finder", bundleId: "com.apple.finder", pid: 0,
+            selectedFilePaths: [url.path])
+        guard selection.summon(from: context) else { return false }
+        selection.coversChat = true
+        refresh()
+        return true
+    }
+
     private func selectionPhaseDidChange(_ visible: Bool) {
+        // Back from a file's card: the list and field it covered, query and row intact.
+        if !visible, selection.coversChat {
+            selection.coversChat = false
+            refresh()
+            requestComposerFocus()
+            return
+        }
         guard !visible, dockStoodAsideForSelection else { return }
         dockStoodAsideForSelection = false
         let back = modeBeforeSelection
@@ -1377,6 +1398,20 @@ final class CornerDockController: NSObject {
         pendingCommandSwitch?.cancel()
         pendingCommandSwitch = nil
 
+        // The app row's card keys (owner 2026-10-11): ⌘⌫ quits a running app, ⇧↩ hands a
+        // closed one the Finder selection. Plain ⌫ stays the field's (rule C6).
+        if let panel, event.window === panel, chatPresentation.isVisible,
+            prompt.phase.showsInput
+        {
+            let mods = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if event.keyCode == 51, mods == .command, prompt.quitFocusedApp() { return nil }
+            if event.keyCode == 36 || event.keyCode == 76, mods == .shift,
+                prompt.openFinderFileWithFocusedApp()
+            {
+                return nil
+            }
+        }
+
         // Backspace on the selection card's empty field leaves it — the way out of a
         // scope everywhere else in the corner, and the way back to the dock it replaced.
         if event.keyCode == 51,
@@ -1405,6 +1440,9 @@ final class CornerDockController: NSObject {
             selection.escapePressed()
             return nil
         }
+
+        // A file's card covers the field: its own field has every other key.
+        if selection.coversChat { return event }
 
         // Esc puts an open shelf away — the same key that closes every other card here.
         if event.keyCode == 53,
@@ -1889,6 +1927,7 @@ struct CornerDockSurface: View {
     @ObservedObject private var prompt = CornerDockController.shared.prompt
     @ObservedObject private var chatPresentation = CornerDockController.shared.chatPresentation
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var selectionModel = CornerDockController.shared.selection
 
     /// The same answer `CornerDockLayout.slots` is given, so what is drawn sits exactly
     /// where the shell hit-tests it.
@@ -1937,7 +1976,9 @@ struct CornerDockSurface: View {
             SelectionScopeCard(model: CornerDockController.shared.selection)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
-        if chatPresentation.isVisible, chatPresentation.mode != .general {
+        if chatPresentation.isVisible, !selectionModel.coversChat,
+            chatPresentation.mode != .general
+        {
             if CornerDockController.shared.showsClipboardBoard {
                 // The clipboard, as Raycast lays it out: clips beside the chosen one.
                 ClipboardBoardCard(model: clipboardModel, prompt: prompt)
@@ -1985,7 +2026,7 @@ struct CornerDockSurface: View {
     /// built one put up. That teardown is what used to flicker.
     @ViewBuilder
     private var chatSurface: some View {
-        if chatPresentation.isVisible {
+        if chatPresentation.isVisible, !selectionModel.coversChat {
             if chatPresentation.mode == .general {
                 if chatPresentation.generalPhase == .mini {
                     CornerGeneralChatMini().transition(.opacity)
