@@ -404,6 +404,8 @@ final class AppChatPromptModel: ObservableObject {
     private var drafts: [String: String] = [:]
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
+    /// → on a file row: the corner opens that file's Selection card. Returns whether it did.
+    var onStepIntoFile: ((URL) -> Bool)?
     /// A Global Context row acted on an app, and that app appears to have taken the front a
     /// moment later — args are (name, bundleID). The corner reads this as "follow me there",
     /// not as an incidental background switch to ignore.

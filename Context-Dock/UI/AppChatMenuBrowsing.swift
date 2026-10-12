@@ -1417,10 +1417,15 @@ extension AppChatPromptModel {
                 scopeIntoApp(name: app.name, bundleID: app.bundleID)
                 return true
             }
+            if let path = doc.filePath, !path.isEmpty, !path.hasSuffix(".app") {
+                return onStepIntoFile?(URL(fileURLWithPath: path)) ?? false
+            }
             return false
-        case .file:
-            // A folder in the Finder scope is stepped into, as the Dock's → does (C11).
-            return enterFocusedFolder()
+        case .file(let url):
+            // A folder in the Finder scope is stepped into, as the Dock's → does (C11); any
+            // other file opens its Selection card (owner 2026-10-11).
+            if enterFocusedFolder() { return true }
+            return onStepIntoFile?(url) ?? false
         case .dock(let pill):
             // A Dock row for a command, extension or tool: into it, like its `.global` twin.
             if let doc = Self.scopeDocument(for: pill, lookup: searchDocumentLookup, manifest: pluginManifestLookup) {
