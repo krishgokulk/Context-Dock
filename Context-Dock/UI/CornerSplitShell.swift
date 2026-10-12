@@ -433,9 +433,12 @@ struct CornerSplitStrip: View {
 /// rounded field inside the chat card.
 private struct StripChrome: ViewModifier {
     let inset: Bool
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     func body(content: Content) -> some View {
-        if inset {
+        if sharesOneCard {
+            content
+        } else if inset {
             content
                 .background {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)

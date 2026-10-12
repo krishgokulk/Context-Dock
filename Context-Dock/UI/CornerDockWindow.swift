@@ -771,6 +771,13 @@ final class CornerDockController: NSObject {
         if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
             return
         }
+        // Centred, the field and its sheet are one card: the gap between them and the card's
+        // margin answer the pointer too, or a click there fell through to the app beneath.
+        if chatPresentation.isCentred, let field = slots.prompt {
+            rects.append(
+                (slots.list.map { field.union($0) } ?? field)
+                    .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset))
+        }
         hostView.interactiveRects = rects
         if !rects.isEmpty { lastShownContentRect = shownContentRect }
         syncMouseTransparency()
@@ -2198,9 +2205,13 @@ struct CornerDockSurface: View {
                 // The open shelf stands over the field with the other boards — never beside
                 // it, where it read as a second container next to the shell.
                 if centred {
-                    // The bottom stack turned over: what the slots mirror.
-                    chatSurface
-                    chatBoards
+                    // The bottom stack turned over: what the slots mirror — and one card
+                    // around the field and its sheet, as Spotlight is one panel.
+                    VStack(alignment: .center, spacing: CornerDockLayout.gap) {
+                        chatSurface
+                        chatBoards
+                    }
+                    .modifier(CornerCombinedCard(active: true))
                     shelfCard
                 } else {
                     shelfCard

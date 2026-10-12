@@ -158,11 +158,22 @@ struct DockMagnifiedGlass: ViewModifier {
     let active: Bool
     let radius: CGFloat
     private let magnifier = DockMagnifier.shared
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
+    @ViewBuilder
     func body(content: Content) -> some View {
+        // Inside the centred card: the card is the glass (`CornerCombinedCard`).
+        if sharesOneCard {
+            content
+        } else {
+            glass(content)
+        }
+    }
+
+    private func glass(_ content: Content) -> some View {
         let e = active ? magnifier.layout.extra / 2 : 0
         let room = active ? DockMagnification.headroom : 0
-        content
+        return content
             // Icons draw above the capsule, as the Dock's do: the clip opens upward and a little
             // sideways while the dock is at rest and closes the instant it is not.
             .mask {
