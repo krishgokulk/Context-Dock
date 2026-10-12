@@ -271,7 +271,6 @@ struct ClipboardBoardCard: View {
                     .padding(.trailing, 8)
             }
             .frame(maxHeight: .infinity)
-            hairline
             footer
         }
         .frame(width: size.width, height: size.height, alignment: .top)
@@ -287,17 +286,7 @@ struct ClipboardBoardCard: View {
         }
         .animation(.easeOut(duration: 0.12), value: model.targetPicker != nil)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        }
+        .modifier(BoardGlass())
     }
 
     private var hairline: some View {
@@ -537,8 +526,9 @@ struct ClipboardBoardCard: View {
         .help(source.name)
     }
 
+    /// Floating key pills, as the result board's foot draws them (owner 2026-10-12).
     private func footerAction(_ title: String, keys: [String], dimmed: Bool = false) -> some View {
-        BoardFooter.action(title, keys: keys, dimmed: dimmed)
+        BoardFooter.pill { BoardFooter.action(title, keys: keys, dimmed: dimmed) }
     }
 }
 

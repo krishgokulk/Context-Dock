@@ -178,6 +178,14 @@ final class CornerDockController: NSObject {
 
         panel = p
         hostView = host
+        // A text field selects all its text when its window becomes key again, so coming back to
+        // the corner (⌘⌘, a click, the keys handed back) showed the typed words selected and
+        // the next key replaced them. The caret goes to the end instead, as on first focus.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: p, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { FieldCaret.collapseSelectionToEndAfterFocus() }
+        }
         position()
 
         // One shell, two independent surfaces: it follows both and shows itself whenever
@@ -350,9 +358,28 @@ final class CornerDockController: NSObject {
                 self.requestComposerFocus()
             }
         }.store(in: &sinks)
-        chatPresentation.$isVisible.sink { [weak self] _ in
-            Task { @MainActor in self?.refresh() }
+        chatPresentation.$isVisible.sink { [weak self] visible in
+            Task { @MainActor in
+                guard let self else { return }
+                // Closed from the centre: the next opening is the bottom dock's again.
+                if !visible, self.chatPresentation.isCentred {
+                    self.chatPresentation.isCentred = false
+                    self.prompt.staysOpenWhenIdle = false
+                    self.position()
+                }
+                self.refresh()
+            }
         }.store(in: &sinks)
+        // Centred, it behaves like Spotlight: clicking into another app puts it away.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.chatPresentation.isCentred, self.chatPresentation.isVisible
+                else { return }
+                self.chatPresentation.dismiss()
+            }
+        }
         // Moving the shell is a placement change, not just a redraw: the window itself has
         // to travel to the other edge. Any settings change re-places it, which is cheap —
         // `position` writes the same origin when nothing moved.
@@ -420,7 +447,41 @@ final class CornerDockController: NSObject {
     /// user can move it while the surface is up, and the window and the cards inside it
     /// have to agree on the answer in the same frame.
     var anchor: CornerDockAnchor {
-        CornerDockAnchor(rawValue: AppSettings.shared.cornerDockAnchorRaw) ?? .right
+        if chatPresentation.isCentred { return .center }
+        return CornerDockAnchor(rawValue: AppSettings.shared.cornerDockAnchorRaw) ?? .right
+    }
+
+    /// ⌥⌥: the app in front's Context Dock in the middle of the display, like Spotlight — the same shell, field
+    /// on top, its boards opening downward. Closed by Esc, ⌥⌥, or clicking another app.
+    func showCentred() {
+        ensurePanel()
+        cancelPendingAutoHide()
+        chatPresentation.isCentred = true
+        prompt.staysOpenWhenIdle = true
+        setAutoHidden(false)
+        position()
+        // The app in front's Context Dock, as the old launcher opened (owner 2026-10-12);
+        // Global when there is no app to scope to. A ⌘ tap or ⌫ walks to Global from there.
+        if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+            chatPresentation.showFrontmostApp(target: target)
+        } else {
+            chatPresentation.showGlobalContext()
+        }
+        armKeyboard()
+        refresh()
+    }
+
+    /// A board — the result sheet, a card — is up under the field. Centred, only then are the
+    /// field and the sheet one card; a bare field keeps the Corner's own Liquid Glass (owner
+    /// 2026-10-12: the empty centred bar looked heavy, the sheet looked right).
+    var showsBoardUnderField: Bool { bottomSlots().list != nil }
+
+    /// Centred, the shell is the bottom layout turned over: the same stack, top-down, so
+    /// every slot is the bottom-anchored one mirrored in the panel's height.
+    private func mirroredIfCentred(_ rect: CGRect?) -> CGRect? {
+        guard chatPresentation.isCentred, let rect, let height = panel?.frame.height
+        else { return rect }
+        return CGRect(x: rect.minX, y: height - rect.maxY, width: rect.width, height: rect.height)
     }
 
     private func position() {
@@ -450,7 +511,13 @@ final class CornerDockController: NSObject {
         case .left: x = visible.minX + margin - pad
         case .center: x = visible.minX + margin - pad
         }
-        shownPanelOrigin = NSPoint(x: x, y: visible.minY + margin - pad)
+        // Centred, the field's top edge sits about two thirds up the screen, where Spotlight's
+        // does, and the panel hangs below it.
+        let y =
+            chatPresentation.isCentred
+            ? visible.minY + visible.height * 0.66 + pad - size.height
+            : visible.minY + margin - pad
+        shownPanelOrigin = NSPoint(x: x, y: y)
         dockScreenFrame = screen?.frame ?? visible
         panel.setFrameOrigin(isAutoHidden ? hiddenPanelOrigin : shownPanelOrigin)
     }
@@ -723,6 +790,13 @@ final class CornerDockController: NSObject {
         if rects == hostView.interactiveRects, panel.isVisible == !rects.isEmpty {
             return
         }
+        // Centred, the field and its sheet are one card: the gap between them and the card's
+        // margin answer the pointer too, or a click there fell through to the app beneath.
+        if chatPresentation.isCentred, let field = slots.prompt {
+            rects.append(
+                (slots.list.map { field.union($0) } ?? field)
+                    .insetBy(dx: -CornerCombinedCard.inset, dy: -CornerCombinedCard.inset))
+        }
         hostView.interactiveRects = rects
         if !rects.isEmpty { lastShownContentRect = shownContentRect }
         syncMouseTransparency()
@@ -743,6 +817,20 @@ final class CornerDockController: NSObject {
     /// Sizes come from each surface's own phase; the placement comes from the shared
     /// layout, so what is drawn and what is hit-tested cannot drift apart.
     private func currentSlots()
+        -> (
+            shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
+            list: CGRect?, prompt: CGRect?
+        )
+    {
+        let s = bottomSlots()
+        return (
+            mirroredIfCentred(s.shelf), mirroredIfCentred(s.preview),
+            mirroredIfCentred(s.clipboard), mirroredIfCentred(s.selection),
+            mirroredIfCentred(s.list), mirroredIfCentred(s.prompt)
+        )
+    }
+
+    private func bottomSlots()
         -> (
             shelf: CGRect?, preview: CGRect?, clipboard: CGRect?, selection: CGRect?,
             list: CGRect?, prompt: CGRect?
@@ -802,6 +890,18 @@ final class CornerDockController: NSObject {
         dockStoodAsideForSelection = true
         modeBeforeSelection = opener
         chatPresentation.dismiss()
+    }
+
+    /// Services "Open with…": the files or text, as their Selection card in the centred
+    /// Corner — where the old launcher used to open (owner 2026-10-12).
+    func showCentredSelection(files: [URL], text: String?) {
+        showCentred()
+        let context = AXContext(
+            appName: "Finder", bundleId: files.isEmpty ? "" : "com.apple.finder", pid: 0,
+            selectedText: text, selectedFilePaths: files.map(\.path))
+        guard selection.summon(from: context) else { return }
+        selection.coversChat = true
+        refresh()
     }
 
     /// → on a file row: that file's Selection card takes the list's and field's place.
@@ -912,8 +1012,13 @@ final class CornerDockController: NSObject {
         // The app's card stands over the shell's right half, its trailing edge on the shell's
         // (owner 2026-10-08), where the result sheet's own right half is.
         if showsScopeBoard {
-            return AppScopeBoardMetrics.anchorOffset(
-                shell: AppChatPromptMetrics.boardWidth(for: prompt))
+            let shell = AppChatPromptMetrics.boardWidth(for: prompt)
+            // Centred, the card takes the sheet's left half, where the result list stands
+            // (owner 2026-10-12); at the bottom it keeps the right half (2026-10-08).
+            if chatPresentation.isCentred {
+                return AppScopeBoardMetrics.size(shell: shell).width / 2
+            }
+            return AppScopeBoardMetrics.anchorOffset(shell: shell)
         }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
@@ -1933,8 +2038,14 @@ struct CornerDockSurface: View {
     /// The same answer `CornerDockLayout.slots` is given, so what is drawn sits exactly
     /// where the shell hit-tests it.
     private var anchor: CornerDockAnchor {
-        CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
+        if chatPresentation.isCentred { return .center }
+        return CornerDockAnchor(rawValue: settings.cornerDockAnchorRaw) ?? .right
     }
+
+    /// Centred (⌥⌥), the row is drawn top-down: the field first, its boards under it.
+    private var centred: Bool { chatPresentation.isCentred }
+    private var rowEdge: Alignment { centred ? .top : .bottom }
+    private var rowVertical: VerticalAlignment { centred ? .top : .bottom }
 
     /// The composer and Global Context both carry their own "you just copied something"
     /// icon now — next to "+" in one, next to the running-app capsule in the other — the
@@ -2078,14 +2189,14 @@ struct CornerDockSurface: View {
         // Drawn the way `CornerDockLayout.slots` hit-tests it: the shelf and the field as a
         // centred row, the clipboard on its own at the right-hand corner — the same spot the
         // right anchor gives it, so a copy lands where the hand already knows to look.
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: rowEdge) {
             centredRowContent
-            HStack(alignment: .bottom, spacing: 0) {
+            HStack(alignment: rowVertical, spacing: 0) {
                 Spacer(minLength: 0)
                 clipboardStack
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: rowEdge)
         .padding(CornerDockLayout.pad)
         .animation(.spring(response: 0.34, dampingFraction: 0.84), value: shelf.phase.isCardShown)
         .animation(
@@ -2114,7 +2225,7 @@ struct CornerDockSurface: View {
     }
 
     private var centredRowContent: some View {
-        HStack(alignment: .bottom, spacing: CornerDockLayout.gap) {
+        HStack(alignment: rowVertical, spacing: CornerDockLayout.gap) {
             // Pinned to the composer's own width, not whatever it happens to be showing:
             // the mini badge collapses to 52pt and Global Context's list is 372pt, and
             // this row centers itself on the sum of its children's widths. Without this,
@@ -2129,16 +2240,31 @@ struct CornerDockSurface: View {
                 // it belongs to the field and not to one icon.
                 // The open shelf stands over the field with the other boards — never beside
                 // it, where it read as a second container next to the shell.
-                shelfCard
-                chatBoards
-                    .offset(x: CornerDockController.shared.hoverCardDrawOffset)
-                    .animation(
-                        .smooth(duration: 0.22),
-                        value: CornerDockController.shared.hoverCardDrawOffset)
-                chatSurface
+                if centred {
+                    // The bottom stack turned over: what the slots mirror — and one card
+                    // around the field and its sheet, as Spotlight is one panel.
+                    VStack(alignment: .center, spacing: CornerDockLayout.gap) {
+                        chatSurface
+                        // Drawn where the slots hit-test it, as at the bottom.
+                        chatBoards
+                            .offset(x: CornerDockController.shared.hoverCardDrawOffset)
+                    }
+                    .modifier(
+                        CornerCombinedCard(
+                            active: CornerDockController.shared.showsBoardUnderField))
+                    shelfCard
+                } else {
+                    shelfCard
+                    chatBoards
+                        .offset(x: CornerDockController.shared.hoverCardDrawOffset)
+                        .animation(
+                            .smooth(duration: 0.22),
+                            value: CornerDockController.shared.hoverCardDrawOffset)
+                    chatSurface
+                }
             }
             // The shell's one width (#189): every surface in it is drawn at this.
-            .frame(width: DockShellWidth.current, alignment: .bottom)
+            .frame(width: DockShellWidth.current, alignment: rowEdge)
         }
     }
 

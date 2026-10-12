@@ -93,6 +93,7 @@ private struct MenuRowIcon: View {
 /// The commands matching what is typed, or — before anything is typed — what the app can do.
 struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     /// The board: the list, and the highlighted row's preview beside it in the same card
     /// (#191) — the same number the window reserves.
@@ -222,6 +223,11 @@ struct AppChatListCard: View {
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
+            // Inside the centred card the card is the glass; a hairline marks the sheet.
+            if sharesOneCard {
+                Rectangle().fill(Color.white.opacity(0.10)).frame(height: 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            } else {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color.clear)
                 .background(GlassBackground(cornerRadius: 22, isDark: true))
@@ -231,6 +237,7 @@ struct AppChatListCard: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+            }
         }
         .onHover { _ in model.touch() }
     }

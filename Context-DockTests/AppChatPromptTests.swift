@@ -81,6 +81,56 @@ struct AppChatPromptTests {
         #expect(resting.phase == .dock)
     }
 
+    /// Results for what is typed stay up while it is typed, as Spotlight's do (owner
+    /// 2026-10-12): an idle timer closed the list mid-word.
+    @Test func anOpenListWithTextStaysOpenWhenIdle() {
+        let model = AppChatPromptModel()
+        model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+        #expect(model.moveMenuFocus(by: 1))
+        model.query = "ne"
+        #expect(model.phase == .suggesting)
+
+        model.standDown()
+
+        #expect(model.phase == .suggesting)
+    }
+
+    /// Once the sheet is open, typing keeps it open and its rows follow; clearing the field
+    /// closes it (owner 2026-10-12).
+    @Test func anOpenSheetStaysOpenWhileTypingAndClosesWhenCleared() {
+        let model = AppChatPromptModel()
+        model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        model.rows = [.action(
+            AdapterAction(
+                id: "new-window", name: "New Window", icon: "bolt.fill",
+                description: "", triggers: [], type: .menubar))]
+        #expect(model.moveMenuFocus(by: 1))
+        #expect(model.phase == .suggesting)
+
+        model.query = "n"
+        model.queryChanged()
+        model.query = "ne"
+        model.queryChanged()
+        #expect(model.phase == .suggesting)
+
+        model.query = ""
+        model.queryChanged()
+        #expect(model.phase == .prompt)
+    }
+
+    /// Typing alone still never pops the sheet open: ↓ is the door in.
+    @Test func typingDoesNotOpenAClosedSheet() {
+        let model = AppChatPromptModel()
+        model.summon(app: "TextEdit", bundleID: "com.apple.TextEdit")
+        model.query = "ne"
+        model.queryChanged()
+        #expect(model.phase == .prompt)
+    }
+
     /// A half-written question keeps the field open: idling never shrinks it to the icon
     /// or folds it into the dock out from under the words (owner 2026-09-27).
     @Test func aFieldWithTextStaysOpenWhenIdle() {

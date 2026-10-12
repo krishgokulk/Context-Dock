@@ -680,10 +680,10 @@ final class AppChatPromptModel: ObservableObject {
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
-        // Typed: the field alone, same as the dock. Typing never pops the sheet open by
-        // itself, and it closes right back down if a down-arrow peek was open when the next
-        // character landed — the arrow key is the only door in.
-        if typed { return .prompt }
+        // Typed: typing never pops the sheet open by itself — ↓ is the door in — but once it
+        // is open it stays open while anything is typed, its rows following each keystroke,
+        // as Spotlight's do (owner 2026-10-12). Clearing the field closes it (`queryChanged`).
+        if typed { return phase == .suggesting ? .suggesting : .prompt }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
@@ -848,6 +848,11 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         lastTypedAt = Date()
+        // Text → empty: the user cleared what they were looking for, so the sheet goes with
+        // it. Letting go of the highlighted row is what lets the resting phase close it.
+        let typedNow = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hadTypedQuery, !typedNow { focusedMenuIndex = nil }
+        hadTypedQuery = typedNow
         // Typing is the caret's: the pills leave the field while anything is typed.
         focusedPillIndex = nil
         guard phase.isVisible else { return }
@@ -986,8 +991,14 @@ final class AppChatPromptModel: ObservableObject {
     /// any half-written question for whoever comes back for it.
     func standDown() {
         // The clipboard board is a deliberate ask, held until Back or a paste.
-        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope else { return }
+        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope, !staysOpenWhenIdle
+        else { return }
         switch phase {
+        case .suggesting where !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            // Results for what is typed stay up while it is typed, as Spotlight's do: idling
+            // closed them mid-word, and the field rebuilt under the caret and selected the
+            // text (owner 2026-10-12). Emptying the field or Esc still closes them.
+            break
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
             // for it; this offer is the same kind of thing, so idling closes it back to
@@ -1015,8 +1026,12 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// An empty Global field with the setting on is the only thing that rests as a dock.
+    /// Centred like Spotlight: the field stays a field — no folding into a strip, no idle
+    /// shrink — until it is closed.
+    var staysOpenWhenIdle = false
+
     var canRestAsDock: Bool {
-        usesDockShell
+        !staysOpenWhenIdle && usesDockShell
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && autoShrinkEnabled()
     }
@@ -1183,6 +1198,9 @@ final class AppChatPromptModel: ObservableObject {
     /// `DockHoverFoldGate` asks before a hover folds it.
     private var fieldOpenedAt: Date?
     private var lastTypedAt: Date?
+    /// Whether the field held text at the last keystroke, to tell clearing it from an empty
+    /// field that was arrowed open.
+    private var hadTypedQuery = false
 
     var hoverMayFold: Bool {
         DockHoverFoldGate.allows(

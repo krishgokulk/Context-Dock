@@ -448,6 +448,7 @@ struct AppChatPromptPill: View {
     @State private var pointerInside = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     private var size: CGSize { size(for: model.phase) }
 
@@ -532,6 +533,9 @@ struct AppChatPromptPill: View {
         // about the keyboard owner.
         .onChange(of: model.phase) { _, phase in
             syncFocus()
+            // ↓ opening the list moves the phase and can hand the field focus again, which
+            // selects its text — the typed "mes" came up selected (owner 2026-10-12).
+            if phase.showsInput { FieldCaret.collapseSelectionToEndAfterFocus() }
             // The app's card belongs to the open field; folding or starting a conversation
             // puts it away.
             if phase != .prompt, phase != .suggesting { model.isShowingScopeCard = false }
@@ -755,6 +759,8 @@ struct AppChatPromptPill: View {
         .animation(.smooth(duration: 0.22), value: drawnWidth)
         .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
+            // Inside the centred card the card is the glass.
+            if !sharesOneCard {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                 .fill(Color.clear)
                 .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
@@ -764,6 +770,7 @@ struct AppChatPromptPill: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+            }
         }
     }
 
