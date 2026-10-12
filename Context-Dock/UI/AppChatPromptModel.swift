@@ -989,6 +989,11 @@ final class AppChatPromptModel: ObservableObject {
         guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope, !staysOpenWhenIdle
         else { return }
         switch phase {
+        case .suggesting where !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            // Results for what is typed stay up while it is typed, as Spotlight's do: idling
+            // closed them mid-word, and the field rebuilt under the caret and selected the
+            // text (owner 2026-10-12). Emptying the field or Esc still closes them.
+            break
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
             // for it; this offer is the same kind of thing, so idling closes it back to
