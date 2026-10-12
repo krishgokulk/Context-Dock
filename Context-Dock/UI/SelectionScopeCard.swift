@@ -94,17 +94,7 @@ struct SelectionScopeCard: View {
             height: cardSize.height,
             alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        }
+        .modifier(BoardGlass())
         .onHover { inside in model.pointerChanged(inside: inside) }
         .onAppear { fieldFocused = keyboardState.owner == .selection }
         .onChange(of: keyboardState.owner) { _, owner in fieldFocused = owner == .selection }

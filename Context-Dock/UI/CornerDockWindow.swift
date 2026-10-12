@@ -178,6 +178,14 @@ final class CornerDockController: NSObject {
 
         panel = p
         hostView = host
+        // A text field selects all its text when its window becomes key again, so coming back to
+        // the corner (⌘⌘, a click, the keys handed back) showed the typed words selected and
+        // the next key replaced them. The caret goes to the end instead, as on first focus.
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: p, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { FieldCaret.collapseSelectionToEndAfterFocus() }
+        }
         position()
 
         // One shell, two independent surfaces: it follows both and shows itself whenever
@@ -986,8 +994,13 @@ final class CornerDockController: NSObject {
         // The app's card stands over the shell's right half, its trailing edge on the shell's
         // (owner 2026-10-08), where the result sheet's own right half is.
         if showsScopeBoard {
-            return AppScopeBoardMetrics.anchorOffset(
-                shell: AppChatPromptMetrics.boardWidth(for: prompt))
+            let shell = AppChatPromptMetrics.boardWidth(for: prompt)
+            // Centred, the card takes the sheet's left half, where the result list stands
+            // (owner 2026-10-12); at the bottom it keeps the right half (2026-10-08).
+            if chatPresentation.isCentred {
+                return AppScopeBoardMetrics.size(shell: shell).width / 2
+            }
+            return AppScopeBoardMetrics.anchorOffset(shell: shell)
         }
         let target: DockHoverTarget?
         if showsPluginCard, let card = pluginCardPin {
@@ -2214,7 +2227,9 @@ struct CornerDockSurface: View {
                     // around the field and its sheet, as Spotlight is one panel.
                     VStack(alignment: .center, spacing: CornerDockLayout.gap) {
                         chatSurface
+                        // Drawn where the slots hit-test it, as at the bottom.
                         chatBoards
+                            .offset(x: CornerDockController.shared.hoverCardDrawOffset)
                     }
                     .modifier(
                         CornerCombinedCard(
