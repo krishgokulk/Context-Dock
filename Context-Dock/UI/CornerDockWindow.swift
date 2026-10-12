@@ -892,6 +892,18 @@ final class CornerDockController: NSObject {
         chatPresentation.dismiss()
     }
 
+    /// Services "Open with…": the files or text, as their Selection card in the centred
+    /// Corner — where the old launcher used to open (owner 2026-10-12).
+    func showCentredSelection(files: [URL], text: String?) {
+        showCentred()
+        let context = AXContext(
+            appName: "Finder", bundleId: files.isEmpty ? "" : "com.apple.finder", pid: 0,
+            selectedText: text, selectedFilePaths: files.map(\.path))
+        guard selection.summon(from: context) else { return }
+        selection.coversChat = true
+        refresh()
+    }
+
     /// → on a file row: that file's Selection card takes the list's and field's place.
     func showSelection(forFile url: URL) -> Bool {
         let context = AXContext(

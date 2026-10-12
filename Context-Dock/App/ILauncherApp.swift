@@ -945,16 +945,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         #if DEBUG
         print("🔧 [AppDelegate] Received servicesOpenWithFiles notification")
         #endif
-        // Show launcher - the ContentView will handle the context
-        showLauncher()
+        // The files' Selection card in the centred Corner, not the old launcher (owner
+        // 2026-10-12: the old UI must not show any more).
+        let urls = notification.userInfo?["urls"] as? [URL] ?? []
+        CornerDockController.shared.showCentredSelection(files: urls, text: nil)
     }
 
     @objc func handleServicesOpenWithText(_ notification: Notification) {
         #if DEBUG
         print("🔧 [AppDelegate] Received servicesOpenWithText notification")
         #endif
-        // Show launcher - the ContentView will handle the context
-        showLauncher()
+        let text = notification.userInfo?["text"] as? String
+        CornerDockController.shared.showCentredSelection(files: [], text: text)
     }
 
     @objc func handleWindowWillClose(_ notification: Notification) {
@@ -1045,7 +1047,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func handleShowWindowRequest() {
-        DispatchQueue.main.async { self.showLauncher() }
+        DispatchQueue.main.async { CornerDockController.shared.showCentred() }
     }
 
     @objc func handleMenuBarIconVisibilityChanged() {
@@ -1142,7 +1144,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func showLauncherFromMenu() {
-        showLauncher()
+        CornerDockController.shared.showCentred()
     }
 
     /// Menu items land here. Choosing "General Chat" from a menu means bring it up — never
@@ -2370,29 +2372,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self else { return }
             guard self.settings.singleCommandTogglesContextScope else { return }
             DispatchQueue.main.async {
-                if self.launcherWindow == nil {
-                    self.setupLauncherWindow()
-                }
-                guard let window = self.launcherWindow else { return }
-                if let currentApp = self.menuBarOwningUserFacingApplication() {
-                    self.recordFrontmostApp(currentApp)
-                }
-                if !window.isVisible {
-                    self.isDockContextMode = true
-                    self.showLauncher()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                        NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.16) {
-                        NotificationCenter.default.post(name: .focusSearchField, object: nil)
-                    }
-                    return
-                }
-                window.alphaValue = 1.0
-                window.orderFrontRegardless()
-                window.makeKeyAndOrderFront(nil)
-                self.launcherWindow?.makeKey()
-                NotificationCenter.default.post(name: .commandKeyToggleContextScope, object: nil)
+                // The centred Corner, not the old launcher (owner 2026-10-12). While it is up,
+                // its own ⌘ tap switches the scope (`handleCommandTap`), so only open it here.
+                guard !CornerDockController.shared.chatPresentation.isVisible else { return }
+                self.toggleCentredCorner()
             }
         }
 
@@ -2473,29 +2456,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "activateContextDock — \(Thread.callStackSymbols.dropFirst().prefix(6).joined(separator: " | "))")
         }
         guard settings.enableLayer2 else { return }  // Layer 2 disabled — hotkey does nothing
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        DispatchQueue.main.async {
-            if let window = self.launcherWindow, window.isVisible {
-                if self.isDockContextMode {
-                    // Already in dock context → close (toggle off)
-                    self.isDockContextMode = false
-                    self.hideLauncher()
-                } else {
-                    // Visible at L1 → switch to dock context instantly (no window hide/show)
-                    self.isDockContextMode = true
-                    NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                }
-            } else {
-                // Hidden → open directly in dock context mode
-                self.isDockContextMode = true
-                self.showLauncher()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    NotificationCenter.default.post(name: .activateContextDock, object: nil)
-                }
-            }
-        }
+        // The app's Context Dock is the centred Corner now, not the old launcher (owner
+        // 2026-10-12) — the Context Dock hotkey and Safari's toolbar button alike.
+        toggleCentredCorner()
     }
 
     func activateDropShelf() {
@@ -2772,26 +2735,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func toggleLauncher() {
-        let now = Date().timeIntervalSinceReferenceDate
-        guard now - lastHotkeyFiredAt > 0.15 else { return }
-        lastHotkeyFiredAt = now
-        DispatchQueue.main.async {
-            if let window = self.launcherWindow {
-                if window.isVisible {
-                    // L1 has been removed; the main launcher hotkey now toggles L2 visibility.
-                    self.isDockContextMode = false
-                    self.hideLauncher(force: true)
-                } else {
-                    // Hidden → always open at L2.
-                    self.isDockContextMode = true
-                    self.showLauncher()
-                }
-            } else {
-                self.setupLauncherWindow()
-                self.isDockContextMode = true
-                self.showLauncher()
-            }
-        }
+        // The launcher is the centred Corner now (owner 2026-10-12): the recorded launcher
+        // hotkey opens it, as ⌥⌥ does. The old window stays reachable only through the smart
+        // scopes still waiting for a Corner home (Notifications D9, Quick Note D11).
+        toggleCentredCorner()
     }
 
     /// Watches where the pointer is so the launcher can stand aside.
