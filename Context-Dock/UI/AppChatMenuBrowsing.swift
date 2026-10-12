@@ -196,8 +196,16 @@ extension AppChatPromptModel {
         // above them all, and is what Return takes until the arrows choose a row.
         if isFinderScope, !isFinderFileSearch {
             let folderRows = finderFrontFolderRows(matching: typed)
-            rows.insert(contentsOf: folderRows, at: 0)
-            appendFinderDiskMatches(for: folderRows.isEmpty ? typed : "")
+            if finderShowsDesktopOnly {
+                // Desktop only — no Finder window: the user's files and folders, the
+                // Desktop's first and then the disk's, never Finder's menu commands (owner
+                // 2026-10-12: "Downloads, Finder > Go" in a file search).
+                rows = folderRows
+                appendFinderDiskMatches(for: typed)
+            } else {
+                rows.insert(contentsOf: folderRows, at: 0)
+                appendFinderDiskMatches(for: folderRows.isEmpty ? typed : "")
+            }
         }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
@@ -939,6 +947,15 @@ extension AppChatPromptModel {
 
     /// The front Finder folder's entries for Finder's Context Dock. The folder is read again
     /// when the last read is a few seconds old; the rows land with the next refresh.
+    /// Finder is showing the Desktop alone: its front folder is the Desktop, which is what
+    /// `FinderFrontFolder` reads when no Finder window is open.
+    var finderShowsDesktopOnly: Bool {
+        guard let folder = finderFrontFolder else { return false }
+        let desktop = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop", isDirectory: true)
+        return folder.standardizedFileURL.path == desktop.standardizedFileURL.path
+    }
+
     func finderFrontFolderRows(matching typed: String) -> [AppChatRow] {
         if Date().timeIntervalSince(finderFolderReadAt) > 2 {
             finderFolderReadAt = Date()
