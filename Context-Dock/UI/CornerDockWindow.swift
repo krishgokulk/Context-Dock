@@ -451,7 +451,7 @@ final class CornerDockController: NSObject {
         return CornerDockAnchor(rawValue: AppSettings.shared.cornerDockAnchorRaw) ?? .right
     }
 
-    /// ⌥⌥: Global Context in the middle of the display, like Spotlight — the same shell, field
+    /// ⌥⌥: the app in front's Context Dock in the middle of the display, like Spotlight — the same shell, field
     /// on top, its boards opening downward. Closed by Esc, ⌥⌥, or clicking another app.
     func showCentred() {
         ensurePanel()
@@ -460,7 +460,13 @@ final class CornerDockController: NSObject {
         prompt.staysOpenWhenIdle = true
         setAutoHidden(false)
         position()
-        chatPresentation.showGlobalContext()
+        // The app in front's Context Dock, as the old launcher opened (owner 2026-10-12);
+        // Global when there is no app to scope to. A ⌘ tap or ⌫ walks to Global from there.
+        if let target = AppDelegate.shared?.frontmostChatTarget(), !target.bundleID.isEmpty {
+            chatPresentation.showFrontmostApp(target: target)
+        } else {
+            chatPresentation.showGlobalContext()
+        }
         armKeyboard()
         refresh()
     }
