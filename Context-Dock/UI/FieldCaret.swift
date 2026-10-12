@@ -19,18 +19,6 @@ enum FieldCaret {
         return NSRange(location: textLength, length: 0)
     }
 
-    /// `collapseSelectionToEndAfterFocus`, tried again over the next few tenths of a second: a field rebuilt by a phase
-    /// change (the first letter opening Finder's list) takes focus a layout pass or two
-    /// later, and selected its text after a single early collapse had already run — so the
-    /// next letter replaced the first (owner 2026-10-12).
-    static func collapseSelectionToEndSoon() {
-        for delay in [0.0, 0.08, 0.2, 0.35] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                collapseSelectionToEndAfterFocus()
-            }
-        }
-    }
-
     /// After SwiftUI's focus pass has run — two main-queue turns — collapse whatever the
     /// focused field selected to a caret at its end. `window` nil means the key window at
     /// that moment.

@@ -535,7 +535,7 @@ struct AppChatPromptPill: View {
             syncFocus()
             // ↓ opening the list moves the phase and can hand the field focus again, which
             // selects its text — the typed "mes" came up selected (owner 2026-10-12).
-            if phase.showsInput { FieldCaret.collapseSelectionToEndSoon() }
+            if phase.showsInput { FieldCaret.collapseSelectionToEndAfterFocus() }
             // The app's card belongs to the open field; folding or starting a conversation
             // puts it away.
             if phase != .prompt, phase != .suggesting { model.isShowingScopeCard = false }
