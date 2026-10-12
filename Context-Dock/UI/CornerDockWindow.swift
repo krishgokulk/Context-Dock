@@ -1017,7 +1017,8 @@ final class CornerDockController: NSObject {
             apps: CornerSplitStrip.apps(for: prompt).count,
             pins: CornerSplitStrip.pins(for: prompt).count,
             tools: CornerSplitStrip.toolCount(for: prompt),
-            widgetExtra: CornerSplitStrip.composition(for: prompt).widgetExtraWidth)
+            widgetExtra: CornerSplitStrip.composition(for: prompt).widgetExtraWidth
+                + CornerSplitStrip.feedbackWidth(for: prompt))
     }
 
     /// The width the field's text stack is laid out at.
