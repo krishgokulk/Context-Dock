@@ -31,11 +31,14 @@ struct ActionFeedbackGlyph: View {
                     .frame(width: size * 0.7, height: size * 0.7)
                 // The phase, badged on the app rather than replacing it: "Code, quit" reads
                 // as one fact.
+                // The dock's own glass, whatever the result: a quit reads the same from the
+                // strip, the window row or ⌘⌫ (owner 2026-10-12: "with our dock tint").
                 Image(systemName: badgeSymbol)
                     .font(.system(size: size * 0.26, weight: .bold))
                     .foregroundStyle(.white)
                     .frame(width: size * 0.36, height: size * 0.36)
-                    .background(tint, in: Circle())
+                    .background(.ultraThinMaterial, in: Circle())
+                    .background(Color.black.opacity(0.45), in: Circle())
                     .overlay(Circle().strokeBorder(Color.white.opacity(0.7), lineWidth: 1))
                     .offset(x: size * 0.06, y: size * 0.06)
             } else {

@@ -63,7 +63,7 @@ extension AppChatPromptModel {
     func quitFocusedApp() -> Bool {
         guard let app = focusedAppRow, let running = AppResultActions.runningApp(app.bundleID)
         else { return false }
-        running.terminate()
+        DockActionFeedback.appQuit(app.name, bundleID: app.bundleID, succeeded: running.terminate())
         return true
     }
 
