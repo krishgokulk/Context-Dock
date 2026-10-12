@@ -986,7 +986,8 @@ final class AppChatPromptModel: ObservableObject {
     /// any half-written question for whoever comes back for it.
     func standDown() {
         // The clipboard board is a deliberate ask, held until Back or a paste.
-        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope else { return }
+        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope, !staysOpenWhenIdle
+        else { return }
         switch phase {
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
@@ -1015,8 +1016,12 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// An empty Global field with the setting on is the only thing that rests as a dock.
+    /// Centred like Spotlight: the field stays a field — no folding into a strip, no idle
+    /// shrink — until it is closed.
+    var staysOpenWhenIdle = false
+
     var canRestAsDock: Bool {
-        usesDockShell
+        !staysOpenWhenIdle && usesDockShell
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && autoShrinkEnabled()
     }

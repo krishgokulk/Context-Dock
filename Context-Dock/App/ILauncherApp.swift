@@ -1966,6 +1966,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// ⌥⌥ again while it is up puts it away, as the other scope hotkeys do.
+    func toggleCentredCorner() {
+        guard settings.enableLayer2 else { return }
+        let now = Date().timeIntervalSinceReferenceDate
+        guard now - lastHotkeyFiredAt > 0.15 else { return }
+        lastHotkeyFiredAt = now
+        let presentation = CornerDockController.shared.chatPresentation
+        if presentation.isVisible, presentation.isCentred {
+            presentation.dismiss()
+            return
+        }
+        CornerDockController.shared.showCentred()
+    }
+
     /// ⌘⌘: the app in front's Context Dock. Pressed again while that is up (and not slid away
     /// by auto-hide), it puts the corner away, as the other scope hotkeys do.
     func activateContextDockFromDoubleCommand() {
@@ -2206,7 +2220,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.option),
                 hasOtherModifiers: !flags.intersection([.command, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleOptionLaunch {
-                DispatchQueue.main.async { self.toggleLauncher() }
+                // ⌥⌥: the Corner's Global Context in the middle of the display, like
+                // Spotlight — the Corner's own UI, not the old launcher (owner 2026-10-12).
+                DispatchQueue.main.async { self.toggleCentredCorner() }
             }
         }
 
