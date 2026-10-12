@@ -680,10 +680,10 @@ final class AppChatPromptModel: ObservableObject {
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
-        // Typed: the field alone, same as the dock. Typing never pops the sheet open by
-        // itself, and it closes right back down if a down-arrow peek was open when the next
-        // character landed — the arrow key is the only door in.
-        if typed { return .prompt }
+        // Typed: typing never pops the sheet open by itself — ↓ is the door in — but once it
+        // is open it stays open while anything is typed, its rows following each keystroke,
+        // as Spotlight's do (owner 2026-10-12). Clearing the field closes it (`queryChanged`).
+        if typed { return phase == .suggesting ? .suggesting : .prompt }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
@@ -848,6 +848,11 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         lastTypedAt = Date()
+        // Text → empty: the user cleared what they were looking for, so the sheet goes with
+        // it. Letting go of the highlighted row is what lets the resting phase close it.
+        let typedNow = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hadTypedQuery, !typedNow { focusedMenuIndex = nil }
+        hadTypedQuery = typedNow
         // Typing is the caret's: the pills leave the field while anything is typed.
         focusedPillIndex = nil
         guard phase.isVisible else { return }
@@ -1193,6 +1198,9 @@ final class AppChatPromptModel: ObservableObject {
     /// `DockHoverFoldGate` asks before a hover folds it.
     private var fieldOpenedAt: Date?
     private var lastTypedAt: Date?
+    /// Whether the field held text at the last keystroke, to tell clearing it from an empty
+    /// field that was arrowed open.
+    private var hadTypedQuery = false
 
     var hoverMayFold: Bool {
         DockHoverFoldGate.allows(

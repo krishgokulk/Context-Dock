@@ -63,7 +63,9 @@ extension AppChatPromptModel {
         case .collapseKeepingQuery:
             focusedMenuIndex = nil
             // Back to the field's resting shape for what is typed — the list closes in
-            // Global, a Finder search keeps its results — and the query stays.
+            // Global, a Finder search keeps its results — and the query stays. Esc is an
+            // explicit close, so an open sheet does not hold itself open for the text.
+            if phase == .suggesting { set(.prompt) }
             syncListPhase()
             touch()
             return true
