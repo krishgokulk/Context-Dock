@@ -2206,7 +2206,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isDown: flags.contains(.option),
                 hasOtherModifiers: !flags.intersection([.command, .control, .shift, .function]).isEmpty,
                 time: event.timestamp), self.settings.useDoubleOptionLaunch {
-                DispatchQueue.main.async { self.toggleLauncher() }
+                // ⌥⌥ opens the Corner's Global Context — one shell for everything, the same
+                // UI as ⌘⌘ rather than the old launcher window (owner 2026-10-12).
+                DispatchQueue.main.async { self.activateGlobalContextScope() }
             }
         }
 

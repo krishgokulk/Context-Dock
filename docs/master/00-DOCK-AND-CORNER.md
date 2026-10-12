@@ -162,6 +162,9 @@ When every Dock job has a Corner home:
 1. **What does ⌥⌥ open?** Options: the Corner centred (one shell for everything), General Chat in
    the Corner, or keep the Dock as a "big view" of the same state. `[owner decision]`
    **Until then (owner 2026-09-25):** ⌥⌥ opens the Dock, ⌘⌘ opens the Corner — fixed, no setting.
+   **Decided (owner 2026-10-12):** the Corner centred, one shell for everything — ⌥⌥ opens the
+   Corner's Global Context, ⌘⌘ the app in front's Context Dock. The recorded custom launcher
+   hotkey still opens the old Dock until its remaining jobs (item 2) have a Corner home.
 2. **Retire `LauncherView`'s Dock paths** — the frontmost-app plan already schedules this for its
    job (Phase 3). This is also the biggest cleanup in the codebase plan (39 `LauncherView+*` files).
 3. **Rename "Corner"?** With Centre as an option it is really "the bottom dock". Users see neither
