@@ -251,6 +251,14 @@ struct AppChatListCard: View {
                     Text("Tab").font(.system(size: 11.5, weight: .semibold))
                 }
             }
+            // A running app's row: quit it, a key pill like pin and settings (owner 2026-10-11).
+            if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
+                BoardFooter.pill {
+                    BoardFooter.button("xmark", keys: ["⌘", "⌫"], help: "Quit \(app.name) (⌘⌫)") {
+                        _ = model.quitFocusedApp()
+                    }
+                }
+            }
             BoardFooter.pill {
                 BoardFooter.button(
                     model.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],

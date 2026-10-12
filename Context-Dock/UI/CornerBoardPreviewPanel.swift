@@ -322,7 +322,6 @@ private struct AppPreview: View {
             if running != nil {
                 PanelRow(symbol: "return", value: "Bring forward", trailing: "↩")
                 PanelRow(symbol: "arrow.right", value: "Step into its Context Dock", trailing: "→")
-                PanelRow(symbol: "xmark", value: "Quit \(name)", trailing: "⌘⌫")
             } else {
                 PanelRow(symbol: "return", value: "Open", trailing: "↩")
                 PanelRow(symbol: "arrow.right", value: "Open in its Context Dock", trailing: "→")
