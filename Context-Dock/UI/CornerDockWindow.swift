@@ -457,6 +457,11 @@ final class CornerDockController: NSObject {
         refresh()
     }
 
+    /// A board — the result sheet, a card — is up under the field. Centred, only then are the
+    /// field and the sheet one card; a bare field keeps the Corner's own Liquid Glass (owner
+    /// 2026-10-12: the empty centred bar looked heavy, the sheet looked right).
+    var showsBoardUnderField: Bool { bottomSlots().list != nil }
+
     /// Centred, the shell is the bottom layout turned over: the same stack, top-down, so
     /// every slot is the bottom-anchored one mirrored in the panel's height.
     private func mirroredIfCentred(_ rect: CGRect?) -> CGRect? {
@@ -2211,7 +2216,9 @@ struct CornerDockSurface: View {
                         chatSurface
                         chatBoards
                     }
-                    .modifier(CornerCombinedCard(active: true))
+                    .modifier(
+                        CornerCombinedCard(
+                            active: CornerDockController.shared.showsBoardUnderField))
                     shelfCard
                 } else {
                     shelfCard
