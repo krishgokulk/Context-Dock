@@ -448,6 +448,7 @@ struct AppChatPromptPill: View {
     @State private var pointerInside = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     private var size: CGSize { size(for: model.phase) }
 
@@ -755,6 +756,8 @@ struct AppChatPromptPill: View {
         .animation(.smooth(duration: 0.22), value: drawnWidth)
         .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
+            // Inside the centred card the card is the glass.
+            if !sharesOneCard {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                 .fill(Color.clear)
                 .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
@@ -764,6 +767,7 @@ struct AppChatPromptPill: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+            }
         }
     }
 
