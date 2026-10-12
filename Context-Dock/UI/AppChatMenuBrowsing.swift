@@ -937,10 +937,6 @@ extension AppChatPromptModel {
 
     // MARK: Finder in front (owner 2026-10-08)
 
-    /// How many of the front folder's entries lead Finder's list while something is typed;
-    /// empty, the whole folder is the list.
-    static let finderFrontFolderTypedLimit = 8
-
     /// The front Finder folder's entries for Finder's Context Dock. The folder is read again
     /// when the last read is a few seconds old; the rows land with the next refresh.
     func finderFrontFolderRows(matching typed: String) -> [AppChatRow] {
@@ -957,11 +953,11 @@ extension AppChatPromptModel {
             }
         }
         guard let folder = finderFrontFolder else { return [] }
-        let entries = Self.folderListing(folder, matching: typed)
-        let limited = typed.isEmpty
-            ? Array(entries.prefix(Self.folderListingLimit))
-            : Array(entries.prefix(Self.finderFrontFolderTypedLimit))
-        return limited.map(AppChatRow.file)
+        // Every match in the front folder — the Desktop included — not the first eight: a
+        // cap cut most of the Desktop's files and folders from a one-letter search (owner
+        // 2026-10-12).
+        return Self.folderListing(folder, matching: typed)
+            .prefix(Self.folderListingLimit).map(AppChatRow.file)
     }
 
     // MARK: Finder folders (C11, B3)

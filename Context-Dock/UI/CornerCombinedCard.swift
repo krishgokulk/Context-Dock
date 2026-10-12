@@ -24,24 +24,25 @@ struct CornerCombinedCard: ViewModifier {
     static let radius: CGFloat = 28
     static let inset: CGFloat = 6
 
+    // One view structure whether or not the card is up — only values change. An if/else
+    // here made SwiftUI build a new text field the moment the first letter brought the sheet
+    // up, and a new field selects its text, so the next key replaced the first (owner
+    // 2026-10-12).
     func body(content: Content) -> some View {
-        if active {
-            content
-                .environment(\.sharesOneCard, true)
-                .padding(Self.inset)
-                .background {
-                    RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                        .fill(Color.clear)
-                        .background(GlassBackground(cornerRadius: Self.radius, isDark: true))
-                        .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.34), radius: 24, y: 12)
-                }
-        } else {
-            content
-        }
+        content
+            .environment(\.sharesOneCard, active)
+            .padding(active ? Self.inset : 0)
+            .background {
+                RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                    .fill(Color.clear)
+                    .background(GlassBackground(cornerRadius: Self.radius, isDark: true))
+                    .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.34), radius: 24, y: 12)
+                    .opacity(active ? 1 : 0)
+            }
     }
 }
 

@@ -370,6 +370,26 @@ final class CornerDockController: NSObject {
                 self.refresh()
             }
         }.store(in: &sinks)
+        // The scoped app quit: the dock follows the app that is in front now, as the old
+        // launcher did, rather than keep a scope with nothing behind it (owner 2026-10-12).
+        // Quitting from the corner leaves Context-Dock active, so no activation arrives to
+        // move it on its own.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let quit = (note.userInfo?[NSWorkspace.applicationUserInfoKey]
+                as? NSRunningApplication)?.bundleIdentifier
+            MainActor.assumeIsolated {
+                guard let self, let quit, self.chatPresentation.isVisible,
+                    self.chatPresentation.mode == .frontmostApp, self.prompt.appBundleID == quit
+                else { return }
+                // A beat for the system to settle on who is in front now.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    guard let self, self.prompt.appBundleID == quit else { return }
+                    self.followFrontmostApp(after: quit)
+                }
+            }
+        }
         // Centred, it behaves like Spotlight: clicking into another app puts it away.
         NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
@@ -449,6 +469,33 @@ final class CornerDockController: NSObject {
     var anchor: CornerDockAnchor {
         if chatPresentation.isCentred { return .center }
         return CornerDockAnchor(rawValue: AppSettings.shared.cornerDockAnchorRaw) ?? .right
+    }
+
+    /// Move the app scope to whichever app is in front now — the frontmost-app update's own
+    /// path, so a resting dock stays resting and an open field stays open. Global when no app
+    /// is left in front.
+    private func followFrontmostApp(after quit: String) {
+        // The remembered app can be the one that just quit; the system's frontmost is the
+        // next answer, unless that is Context-Dock itself.
+        var name = "", bundleID = ""
+        if let target = AppDelegate.shared?.frontmostChatTarget(), target.bundleID != quit {
+            (name, bundleID) = (target.name, target.bundleID)
+        } else if let front = NSWorkspace.shared.frontmostApplication,
+            let id = front.bundleIdentifier, id != quit, id != Bundle.main.bundleIdentifier
+        {
+            (name, bundleID) = (front.localizedName ?? id, id)
+        }
+        guard !bundleID.isEmpty else {
+            chatPresentation.showGlobalContext()
+            return
+        }
+        let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first { !$0.isTerminated }
+        prompt.frontmostAppDidChange(
+            app: name, bundleID: bundleID,
+            suggestions: AppChatSuggestionProvider.suggestions(for: app),
+            summary: AppChatSuggestionProvider.summary(for: app))
+        prompt.loadMenuItems()
     }
 
     /// ⌥⌥: the app in front's Context Dock in the middle of the display, like Spotlight — the same shell, field

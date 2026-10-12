@@ -1133,12 +1133,14 @@ struct AppChatPromptPill: View {
                         // Finder's Ask AI row, and every app's composer: the question.
                         model.submit()
                     }
-                    .onKeyPress(.space) {
+                    // Space is always a space: the result sheet stays open while typing, so a
+                    // row is nearly always highlighted, and Space opened Quick Look mid-word
+                    // (owner 2026-10-12). Quick Look is ⌘Y, as in Spotlight.
+                    .onKeyPress(keys: ["y"]) { press in
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
-                        // The clipboard filter's caret, not the scope's.
-                        if model.isClipboardScope { return .ignored }
-                        // Only once the user has arrowed into the list; with the caret in
-                        // the field, a space is a space.
+                        guard press.modifiers == .command, !model.isClipboardScope else {
+                            return .ignored
+                        }
                         return model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
