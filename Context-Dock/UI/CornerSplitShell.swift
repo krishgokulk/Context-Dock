@@ -133,6 +133,7 @@ struct CornerSplitStrip: View {
     @ObservedObject private var clipboard = ClipboardPanelController.shared.model
     @ObservedObject private var shelf = DropShelfController.shared.presentation
     @ObservedObject private var shelfStore = DropShelfController.shared.store
+    @ObservedObject private var actionFeedback = CornerActionFeedback.shared
 
     /// The resting dock's own icon size, so an icon is the same size in the dock and beside
     /// the field (owner 2026-10-08: "stay the same size, bigger, in both").
@@ -173,6 +174,14 @@ struct CornerSplitStrip: View {
     static func toolCount(for model: AppChatPromptModel) -> Int {
         let tools = tools(for: model)
         return (tools.clipboard ? 1 : 0) + (tools.shelf ? 1 : 0)
+    }
+
+    /// The last action's result at the end, at an app icon's size like the resting dock's,
+    /// so it is measured apart from the smaller tools: its icon, a gap, and the hairline
+    /// before it when no other tool drew one.
+    static func feedbackWidth(for model: AppChatPromptModel) -> CGFloat {
+        guard CornerActionFeedback.shared.glyph != nil else { return 0 }
+        return iconSize + (toolCount(for: model) > 0 ? spacing : spacing * 2 + 1)
     }
 
     /// The resting strip's own composition, so an app is in the same place in both.
@@ -244,7 +253,7 @@ struct CornerSplitStrip: View {
                         Rectangle()
                     }
                 }
-                if tools.clipboard || tools.shelf { hairline }
+                if tools.clipboard || tools.shelf || actionFeedback.glyph != nil { hairline }
             }
             if tools.clipboard {
                 toolButton("doc.on.clipboard", title: "Clipboard", tinted: clipboard.isBoardOpen) {
@@ -257,9 +266,16 @@ struct CornerSplitStrip: View {
                     .frame(width: Self.toolSize, height: Self.toolSize)
                     .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
+            // What the last action came to — a quit, an open — at the end of the dock, as on
+            // the resting strip, rather than beside the field (owner 2026-10-12).
+            if let result = actionFeedback.glyph {
+                ActionFeedbackGlyph(feedback: result, size: icon)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
         }
         .animation(.smooth(duration: 0.2), value: tools.clipboard)
         .animation(.smooth(duration: 0.2), value: tools.shelf)
+        .animation(.smooth(duration: 0.2), value: actionFeedback.glyph?.id)
         .padding(.horizontal, Self.horizontalPadding)
         .frame(width: width, height: height)
         .frame(maxHeight: inset ? .infinity : nil)
@@ -299,6 +315,7 @@ struct CornerSplitStrip: View {
         let needed = Self.contentWidth(
             apps: composition.apps.count, pins: composition.otherPins.count,
             tools: (tools.clipboard ? 1 : 0) + (tools.shelf ? 1 : 0))
+            + Self.feedbackWidth(for: model)
             + max(composition.widgetExtraWidth, 0)
         return needed > width + 0.5
     }

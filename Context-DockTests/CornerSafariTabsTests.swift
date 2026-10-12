@@ -82,12 +82,12 @@ struct CornerSafariTabsTests {
         let model = scope()
         model.shelfVisible = { true }
         #expect(model.stripPins.isEmpty)
-        // Only the clipboard (for a copy's few seconds) and the selection (while there is
-        // one) join it, then the Drop Shelf, which every row ends with; never an action
-        // result.
+        // The clipboard (for a copy's few seconds), the selection (while there is one) and
+        // the last action's result (owner 2026-10-12: a quit shows on every bar) join it,
+        // then the Drop Shelf, which every row ends with.
         let selected = model.selection != nil ? 1 : 0
-        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 1 + selected + 1)
-        #expect(model.dockToolCount(clipboardVisible: false, feedbackVisible: true) == selected + 1)
+        #expect(model.dockToolCount(clipboardVisible: true, feedbackVisible: true) == 1 + selected + 1 + 1)
+        #expect(model.dockToolCount(clipboardVisible: false, feedbackVisible: true) == selected + 1 + 1)
         let chrome = scope(bundleID: "com.google.Chrome", name: "Google Chrome")
         #expect(chrome.stripPins.count == chrome.dockPins.pins.count)
     }

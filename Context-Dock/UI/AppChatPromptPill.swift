@@ -1313,13 +1313,6 @@ struct AppChatPromptPill: View {
                 selectionScopeButton
             }
 
-            // What the last action came to, beside the field for a few seconds — the
-            // dock's inline result, carried here so a result reaches the surface the user
-            // is on. Same transient lifetime as the clipboard's own icon.
-            if let result = actionFeedback.glyph, !model.isGlobalScope {
-                ActionFeedbackGlyph(feedback: result)
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-            }
 
             // What Return does, shown rather than left to the row below to explain: the
             // dock puts this same icon in its own search field once there is a match for

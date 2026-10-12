@@ -51,6 +51,14 @@ struct ActionFeedbackGlyph: View {
             }
         }
         .frame(width: size, height: size)
+        // The dock's result tint, washed behind the icon so it reads at a glance, not only in
+        // the badge (owner 2026-10-12: "no dock tint shows"). Red for a quit, wherever it ran.
+        .background(
+            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                .fill(tint.opacity(0.24))
+                .overlay(
+                    RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                        .strokeBorder(tint.opacity(0.45), lineWidth: 1)))
         .contentShape(Rectangle())
         .help(feedback.title)
         .accessibilityLabel(feedback.title)
