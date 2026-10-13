@@ -13,6 +13,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 extension AppChatPromptModel {
 
@@ -196,8 +197,16 @@ extension AppChatPromptModel {
         // above them all, and is what Return takes until the arrows choose a row.
         if isFinderScope, !isFinderFileSearch {
             let folderRows = finderFrontFolderRows(matching: typed)
-            rows.insert(contentsOf: folderRows, at: 0)
-            appendFinderDiskMatches(for: folderRows.isEmpty ? typed : "")
+            if finderShowsDesktopOnly {
+                // Desktop only — no Finder window: the user's files and folders, the
+                // Desktop's first and then the disk's, never Finder's menu commands (owner
+                // 2026-10-12: "Downloads, Finder > Go" in a file search).
+                rows = folderRows
+                appendFinderDiskMatches(for: typed)
+            } else {
+                rows.insert(contentsOf: folderRows, at: 0)
+                appendFinderDiskMatches(for: folderRows.isEmpty ? typed : "")
+            }
         }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
@@ -939,6 +948,15 @@ extension AppChatPromptModel {
 
     /// The front Finder folder's entries for Finder's Context Dock. The folder is read again
     /// when the last read is a few seconds old; the rows land with the next refresh.
+    /// Finder is showing the Desktop alone: its front folder is the Desktop, which is what
+    /// `FinderFrontFolder` reads when no Finder window is open.
+    var finderShowsDesktopOnly: Bool {
+        guard let folder = finderFrontFolder else { return false }
+        let desktop = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop", isDirectory: true)
+        return folder.standardizedFileURL.path == desktop.standardizedFileURL.path
+    }
+
     func finderFrontFolderRows(matching typed: String) -> [AppChatRow] {
         if Date().timeIntervalSince(finderFolderReadAt) > 2 {
             finderFolderReadAt = Date()
@@ -1720,9 +1738,15 @@ extension AppChatPromptModel {
                 refocusDockInput: {}))
 
         // Running a command is using the surface: the opening list of what the app can do
-        // does not come back afterwards.
-        query = ""
-        updateMenuMatches()
+        // does not come back afterwards. A quit closes the sheet at once, not with a fade:
+        // the app going away mid-fade left the sheet half-drawn until it had quit (owner
+        // 2026-10-13).
+        var close = Transaction()
+        close.disablesAnimations = MenuExecutionCoordinator.isQuitMenuPath(item.path)
+        withTransaction(close) {
+            query = ""
+            updateMenuMatches()
+        }
         touch()
     }
 }
