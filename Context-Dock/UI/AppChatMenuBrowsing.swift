@@ -13,6 +13,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 extension AppChatPromptModel {
 
@@ -1737,9 +1738,15 @@ extension AppChatPromptModel {
                 refocusDockInput: {}))
 
         // Running a command is using the surface: the opening list of what the app can do
-        // does not come back afterwards.
-        query = ""
-        updateMenuMatches()
+        // does not come back afterwards. A quit closes the sheet at once, not with a fade:
+        // the app going away mid-fade left the sheet half-drawn until it had quit (owner
+        // 2026-10-13).
+        var close = Transaction()
+        close.disablesAnimations = MenuExecutionCoordinator.isQuitMenuPath(item.path)
+        withTransaction(close) {
+            query = ""
+            updateMenuMatches()
+        }
         touch()
     }
 }

@@ -526,7 +526,7 @@ final class MenuExecutionCoordinator {
         return false
     }
 
-    private static func isQuitMenuPath(_ path: [String]) -> Bool {
+    static func isQuitMenuPath(_ path: [String]) -> Bool {
         guard let last = path.last else { return false }
         let normalized = normalizedMenuText(last)
         return (normalized == "quit" || normalized.hasPrefix("quit "))
