@@ -191,6 +191,16 @@ struct AppChatListCard: View {
                                 .id(row.id)
                             }
                         }
+                        // The highlight jumps, as Raycast's does: the card's crossfade for the
+                        // preview caught the rows too, and at the list's end — nothing left to
+                        // scroll — two rows sat half-highlighted (owner 2026-10-14).
+                        .transaction { $0.animation = nil }
+                    }
+                    // ↑ opens the list already on its last row: no change to follow then,
+                    // so the list goes to it as it appears.
+                    .onAppear {
+                        guard let row = model.focusedRow else { return }
+                        DispatchQueue.main.async { proxy.scrollTo(row.id) }
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
                         // The top row's section header comes into view with it.
