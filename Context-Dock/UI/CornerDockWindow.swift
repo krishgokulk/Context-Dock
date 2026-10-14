@@ -380,8 +380,10 @@ final class CornerDockController: NSObject {
             let quit = (note.userInfo?[NSWorkspace.applicationUserInfoKey]
                 as? NSRunningApplication)?.bundleIdentifier
             MainActor.assumeIsolated {
-                guard let self, let quit, self.chatPresentation.isVisible,
-                    self.chatPresentation.mode == .frontmostApp, self.prompt.appBundleID == quit
+                guard let self, let quit, self.chatPresentation.isVisible else { return }
+                // Stepped into from Global: back to Global, where the user came from.
+                if self.prompt.scopedAppQuit(quit) { return }
+                guard self.chatPresentation.mode == .frontmostApp, self.prompt.appBundleID == quit
                 else { return }
                 // A beat for the system to settle on who is in front now.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
