@@ -419,18 +419,14 @@ struct NotificationsBoardCard: View {
             if case .notification = focused {
                 BoardFooter.pill { BoardFooter.action("Open", keys: ["↩"]) }
             }
-            BoardFooter.pill {
-                BoardFooter.button("checkmark.circle", keys: [], help: "Mark All Read") {
-                    manager.markAllRead()
-                }
+            // Words, not bare icons: a ✓ and a bin alone did not say what they do (owner
+            // 2026-10-14). Shown only while there is something for them to act on.
+            if manager.unreadCount > 0 {
+                labelledPill("Mark All Read", symbol: "checkmark.circle") { manager.markAllRead() }
             }
-            .disabled(manager.unreadCount == 0)
-            BoardFooter.pill {
-                BoardFooter.button("trash", keys: [], help: "Clear All") {
-                    manager.clearAll()
-                }
+            if !manager.notifications.isEmpty {
+                labelledPill("Clear All", symbol: "trash") { manager.clearAll() }
             }
-            .disabled(manager.notifications.isEmpty)
             BoardFooter.pill {
                 BoardFooter.button("xmark", keys: ["⌫"], help: "Back to Global Context (⌫)") {
                     prompt.leaveScopeForGlobal()
@@ -439,6 +435,27 @@ struct NotificationsBoardCard: View {
         }
         .padding(.horizontal, 14)
         .frame(height: NotificationsBoardMetrics.footerHeight)
+    }
+}
+
+private func labelledPill(
+    _ title: String, symbol: String, action: @escaping () -> Void
+) -> some View {
+    BoardFooter.pill {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(title)
     }
 }
 

@@ -587,6 +587,15 @@ final class SystemCommandsRegistry {
             description: "DoraX notifications and AI provider usage"
         ),
         SystemCommand(
+            name: "Clipboard History",
+            icon: "doc.on.clipboard",
+            keywords: ["clipboard", "clip", "clips", "copied", "paste", "pasteboard", "history", "provider:clipboard"],
+            scriptType: "applescript",
+            // Enter opens the clipboard's board, as its hotkey does; there is no single action.
+            script: #"return"#,
+            description: "Search and paste what you copied"
+        ),
+        SystemCommand(
             name: "Keep Awake",
             icon: "cup.and.saucer.fill",
             keywords: ["caffeine", "caffeinate", "keep awake", "stay awake", "awake", "insomnia", "nosleep", "no sleep"],

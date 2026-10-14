@@ -1583,7 +1583,14 @@ extension AppChatPromptModel {
                     $0.id == id
                 })
             {
-                scopeIntoCommand(command)
+                // Clipboard History is the clipboard's own board, the one its hotkey opens —
+                // not a command panel (owner 2026-10-14: find the clipboard in Global).
+                if command.provider == "clipboard" {
+                    query = ""
+                    ClipboardPanelController.shared.show()
+                } else {
+                    scopeIntoCommand(command)
+                }
             }
         case .global(let doc) where isUserExtensionAction(doc.action):
             // Stepping into the extension, in this field's board.

@@ -19,6 +19,9 @@ struct NotificationsBoardTests {
         let note = SystemCommandsRegistry.defaults.first { $0.name == "Quick Note" }
         #expect(note?.provider == "notepad")
         #expect(note?.isNotificationsBoard == false)
+        // The clipboard is findable in Global too, as a command that opens its board.
+        let clipboard = SystemCommandsRegistry.defaults.first { $0.name == "Clipboard History" }
+        #expect(clipboard?.provider == "clipboard")
     }
 
     @Test func notificationsLeadAndTheFieldFiltersBoth() {
