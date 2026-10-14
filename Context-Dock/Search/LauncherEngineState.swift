@@ -148,5 +148,14 @@ final class LauncherEngineState: ObservableObject {
     @Published var isHoveringNowPlayingIcon: Bool = false  // Hover over Now Playing icon
     @Published var showMediaHoverDock: Bool = false  // Popover-style media dock on hover
 
+    // The view models the launcher used to own as `@StateObject`s (#257 E2): one copy, shared
+    // by the window's view and the windowless engine (`DockEngine`).
+    let selectionModel = SelectionObserverModel()
+    let launcherViewModel = LauncherViewModel()
+    let globalContextViewModel = GlobalContextViewModel()
+    let finderContext = FinderContextViewModel()
+    let contextDockViewModel = ContextDockViewModel()
+    let aiChatViewModel = AIChatViewModel()
+
     private init() {}
 }
