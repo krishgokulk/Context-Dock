@@ -554,18 +554,18 @@ extension LauncherView {
     }
 
     var lastCheckedPasteboardCount: Int {
-        get { globalContextViewModel.lastCheckedPasteboardCount }
-        nonmutating set { globalContextViewModel.lastCheckedPasteboardCount = newValue }
+        get { ClipboardHistoryEngine.shared.lastCheckedPasteboardCount }
+        nonmutating set { ClipboardHistoryEngine.shared.lastCheckedPasteboardCount = newValue }
     }
 
     var suppressClipboardImportUntilChangeCount: Int? {
-        get { globalContextViewModel.suppressClipboardImportUntilChangeCount }
-        nonmutating set { globalContextViewModel.suppressClipboardImportUntilChangeCount = newValue }
+        get { ClipboardHistoryEngine.shared.suppressImportUntilChangeCount }
+        nonmutating set { ClipboardHistoryEngine.shared.suppressImportUntilChangeCount = newValue }
     }
 
     var clipboardHistory: [ClipboardEntry] {
-        get { globalContextViewModel.clipboardHistory }
-        nonmutating set { globalContextViewModel.clipboardHistory = newValue }
+        get { ClipboardHistoryEngine.shared.history }
+        nonmutating set { ClipboardHistoryEngine.shared.history = newValue }
     }
 
     var showClipboardHistory: Bool {
@@ -585,24 +585,9 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.clipboardHistoryExpanded = newValue }
     }
 
-    var clipboardExpiryTimer: Timer? {
-        get { globalContextViewModel.clipboardExpiryTimer }
-        nonmutating set { globalContextViewModel.clipboardExpiryTimer = newValue }
-    }
-
-    var clipboardMonitorTimer: Timer? {
-        get { globalContextViewModel.clipboardMonitorTimer }
-        nonmutating set { globalContextViewModel.clipboardMonitorTimer = newValue }
-    }
-
     var clipboardIndicatorHideTask: Task<Void, Never>? {
         get { globalContextViewModel.clipboardIndicatorHideTask }
         nonmutating set { globalContextViewModel.clipboardIndicatorHideTask = newValue }
-    }
-
-    var clipboardSaveTask: Task<Void, Never>? {
-        get { globalContextViewModel.clipboardSaveTask }
-        nonmutating set { globalContextViewModel.clipboardSaveTask = newValue }
     }
 
     var clipboardSelectionOrder: [UUID] {

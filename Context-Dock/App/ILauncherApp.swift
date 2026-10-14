@@ -680,6 +680,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // the singleton is created, and the extension can fire before any UI does.
         _ = SafariBrowserBridge.shared
 
+        // The clipboard history records every copy from launch, whatever is on screen. Not
+        // in the test host: it would write the developer's own history file.
+        if !Self.isHostingTests { ClipboardHistoryEngine.shared.start() }
+
         // Create the launcher window
         setupLauncherWindow()
 
