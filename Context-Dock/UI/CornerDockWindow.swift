@@ -903,7 +903,8 @@ final class CornerDockController: NSObject {
                 ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
-                    ?? ExtensionScopeMetrics.size)
+                    ?? (prompt.scopedCommand?.hasOwnCornerBoard == true
+                        ? ClipboardBoardMetrics.size : ExtensionScopeMetrics.size))
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
@@ -1628,6 +1629,17 @@ final class CornerDockController: NSObject {
             return nil
         }
 
+        // ⌘N in Quick Note: a new note, as in the Dock's editor. (With the editor's caret the
+        // monitor stood aside above, and the board's own button takes the shortcut.)
+        if let panel, event.window === panel, showsExtensionPanel,
+            prompt.scopedCommand?.isQuickNoteBoard == true,
+            event.keyCode == 45,
+            event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command
+        {
+            QuickNoteBoardModel.shared.newNote()
+            return nil
+        }
+
         // Esc puts the app's card away and leaves the field as it was.
         if let panel, event.window === panel, showsScopeBoard, event.keyCode == 53 {
             prompt.isShowingScopeCard = false
@@ -2153,6 +2165,18 @@ struct CornerDockSurface: View {
                     pin: nil, manifest: plugin, model: prompt,
                     onClose: { _ = prompt.leaveScopeForGlobal() })
                     .id(plugin.id)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isNotificationsBoard == true
+            {
+                // Notifications (D9): the clipboard's kind of board, list beside the chosen row.
+                NotificationsBoardCard(prompt: prompt)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isQuickNoteBoard == true
+            {
+                // Quick Note (D11): the notes beside the open note's editor; the field asks.
+                QuickNoteBoardCard(prompt: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(

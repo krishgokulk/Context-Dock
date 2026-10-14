@@ -1709,20 +1709,9 @@ extension LauncherView {
             notepadFrontmostLabel = nil
             return
         }
-        let ctx = AXContextReader.shared.current
-        let appName = ctx.appName.isEmpty
-            ? (AppDelegate.shared?.previousFrontmostApp?.localizedName ?? "Frontmost app")
-            : ctx.appName
-        var parts: [String] = ["Frontmost app: \(appName)"]
-        if let title = ctx.windowTitle, !title.isEmpty { parts.append("Window: \(title)") }
-        if let url = ctx.currentURL, !url.isEmpty { parts.append("URL: \(url)") }
-        if let selection = ctx.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !selection.isEmpty
-        {
-            parts.append("Selected text:\n\(selection)")
-        }
-        notepadFrontmostContext = parts.joined(separator: "\n")
-        notepadFrontmostLabel = appName
+        let frontmost = QuickNoteAI.frontmostContext()
+        notepadFrontmostContext = frontmost.context
+        notepadFrontmostLabel = frontmost.label
     }
 
     /// Open the file picker and append the chosen images/files to the Quick Note
@@ -1767,21 +1756,9 @@ extension LauncherView {
             notepadSelectedNoteID = targetID
         }
 
-        // With only attachments and no text, ask the model to write from them.
-        var request = trimmed.isEmpty
-            ? "Write a note from the attached image(s), file(s), or captured text."
-            : trimmed
-        if !capturedText.isEmpty {
-            request += "\n\nCaptured screen text:\n\(capturedText)"
-        }
-        // Fold in the attached frontmost-window context, if any, then clear it.
-        let aiQuery: String
-        if let context = notepadFrontmostContext {
-            aiQuery =
-                "Context from the user's frontmost window:\n\(context)\n\n---\n\nRequest: \(request)"
-        } else {
-            aiQuery = request
-        }
+        let aiQuery = QuickNoteAI.request(
+            prompt: trimmed, capturedText: capturedText,
+            frontmostContext: notepadFrontmostContext)
         notepadFrontmostContext = nil
         notepadFrontmostLabel = nil
         notepadCapturedText = nil
@@ -1799,24 +1776,7 @@ extension LauncherView {
                 reply = "⚠️ AI error: \(error.localizedDescription)"
             }
             await MainActor.run {
-                let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Writing the note is the point of this action, but an error or a refusal
-                // is the assistant talking about itself — and once it is in `text` it is a
-                // note, mirrored into memory and returned later as something the user
-                // wrote. "I can't see or access your current Safari page" came back in a
-                // listing of their own saved notes that way.
-                //
-                // The sidecar is where that belongs: QuickNote keeps `chatMessages`
-                // separate from `text` precisely so an AI answer cannot pollute the note.
-                guard AssistantNoteReply.isNoteContent(body) else {
-                    store?.appendChatMessage(
-                        ChatMessage(role: .assistant, content: body), for: targetID)
-                    self.notepadAIGenerating = false
-                    return
-                }
-                let existing = store?.notes.first(where: { $0.id == targetID })?.text ?? ""
-                let joined = existing.isEmpty ? body : existing + "\n\n" + body
-                store?.updateText(joined, for: targetID)
+                store?.insertAssistantReply(reply, into: targetID)
                 self.notepadAIGenerating = false
             }
         }

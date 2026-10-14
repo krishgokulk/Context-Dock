@@ -163,10 +163,6 @@ extension LauncherView {
                 setupSwipeGestureMonitor()  // swipe up/down for layer switching
                 setupDockPillKeyMonitor()  // Left/Right/Enter for dock pill navigation
                 setupCmdHoldMonitor()  // Cmd held 1.5s → shortcut sheet
-                loadPersistedClipboardHistory()
-                lastCheckedPasteboardCount = NSPasteboard.general.changeCount
-                startClipboardExpiryTimer()
-                startClipboardMonitorTimer()
                 // The Drop Shelf's edge strip does not exist until this runs, so nothing
                 // it does can affect the system before the app is up.
                 DropShelfController.shared.activate()
@@ -200,12 +196,6 @@ extension LauncherView {
                 stopObservingAppSwitches()
                 // Cancel collapse timer when window closes
                 collapseTimer?.cancel()
-                clipboardExpiryTimer?.invalidate()
-                clipboardExpiryTimer = nil
-                clipboardMonitorTimer?.invalidate()
-                clipboardMonitorTimer = nil
-                // Never lose the tail of a debounced history write on teardown.
-                flushClipboardHistoryToDisk()
                 queryChangeTask?.cancel()
                 queryChangeTask = nil
                 globalAppMatchTask?.cancel()
@@ -878,16 +868,8 @@ extension LauncherView {
                 note in
                 handleAppChatPromptPickAction(note)
             }
-            .onReceive(
-                NotificationCenter.default.publisher(for: .clipboardEntriesRemovalRequested)
-            ) { note in
-                handleClipboardEntriesRemovalRequest(note)
-            }
             .onReceive(NotificationCenter.default.publisher(for: .activateClipboardScope)) { _ in
                 openClipboardFromNotification()
-            }
-            .onReceive(ClipboardIngestBus.shared.captures) { payload in
-                handleClipboardCapture(payload)
             }
             .onReceive(NotificationCenter.default.publisher(for: .activateSelectionScope)) { _ in
                 activateSelectionScopeFromHotkey()
@@ -1740,7 +1722,7 @@ extension LauncherView {
 
         refreshFrontmostMenuStructureIfNeeded(for: app)
         refreshCachedFinderCurrentDirectory(for: app.bundleIdentifier ?? "")
-        checkClipboardForGlobalContext()
+        ClipboardHistoryEngine.shared.checkPasteboard()
         autoReturnFromGlobalContextIfNeeded()
         // A file selected in Finder WHILE the dock is open must surface the trailing
         // selection button live — the lightweight AX poll below never reads selection.
@@ -1913,25 +1895,6 @@ extension LauncherView {
 
     /// The corner asked to drop clips. It reads the same history this writes, and the image
     /// blobs live beside that file, so removal happens here where both are owned.
-    func handleClipboardEntriesRemovalRequest(_ note: Notification) {
-        guard let raw = note.userInfo?["ids"] as? [String] else { return }
-        let ids = Set(raw.compactMap(UUID.init(uuidString:)))
-        guard !ids.isEmpty else { return }
-
-        let doomed = clipboardHistory.filter { ids.contains($0.id) }
-        guard !doomed.isEmpty else { return }
-        clipboardHistory.removeAll { ids.contains($0.id) }
-        ClipboardImageStore.delete(fileNames: doomed.compactMap(\.imageFileName))
-        for id in ids {
-            selectedClipboardEntryIDs.remove(id)
-            expandedClipboardEntryIDs.remove(id)
-        }
-        clipboardSelectionOrder.removeAll { ids.contains($0) }
-        savePersistedClipboardHistory()
-        syncVisibleClipboardStateAfterPrune()
-        refreshCompactScopeResults(resetSelection: false)
-    }
-
     /// The corner asked to start over. It shows the dock's conversation rather than one of
     /// its own, so the dock is what empties it.
     func handleAppChatPromptNewChat() {
@@ -1979,204 +1942,36 @@ extension LauncherView {
         refreshLiveSelectionIntoDockContext()
     }
 
-    func checkClipboardForGlobalContext() {
-        let pb = NSPasteboard.general
-        let currentCount = pb.changeCount
-        guard currentCount != lastCheckedPasteboardCount else { return }
-        lastCheckedPasteboardCount = currentCount
-        // The board's own paste or copy: already a clip, not a new one.
-        if currentCount == ClipboardScopeService.ownWriteChangeCount { return }
-
-        if let suppressed = suppressClipboardImportUntilChangeCount {
-            if currentCount <= suppressed {
-                if currentCount == suppressed {
-                    suppressClipboardImportUntilChangeCount = nil
-                }
-                return
-            }
-            suppressClipboardImportUntilChangeCount = nil
-        }
-
-        // Password managers and other privacy-aware apps flag their clips; an
-        // always-on history must never record those.
-        guard !isConcealedPasteboard(pb) else { return }
-
-        pruneExpiredClipboardEntries()
-
-        _ = importCurrentPasteboardToClipboardHistory()
-    }
-
-    /// Honours the community `org.nspasteboard.*` markers (1Password, Bitwarden,
-    /// KeePassXC, …) plus Apple's own concealed type.
-    func isConcealedPasteboard(_ pb: NSPasteboard) -> Bool {
-        let markers: Set<String> = [
-            "org.nspasteboard.ConcealedType",
-            "org.nspasteboard.TransientType",
-            "org.nspasteboard.AutoGeneratedType",
-            "com.agilebits.onepassword",
-            "de.petermaurer.TransientPasteboardType",
-        ]
-        let types = (pb.types ?? []).map(\.rawValue)
-        return types.contains { markers.contains($0) }
-    }
-
-    /// Clip produced by the app itself (Capture Text / Capture Area / Screenshot).
-    /// Arrives with the real source app and the changeCount of its own pasteboard
-    /// write, so the poll below never re-imports it as an anonymous clip.
-    func handleClipboardCapture(_ payload: ClipboardCapturePayload) {
-        lastCheckedPasteboardCount = payload.pasteboardChangeCount
-        let source = (name: payload.sourceAppName, bundleId: payload.sourceBundleId)
-        switch payload.content {
-        case .text(let text):
-            addClipboardEntry(
-                text: text, filePaths: [], source: source,
-                isScreenCapture: payload.isScreenCapture)
-        case .image(let data, let savedFilePath):
-            addClipboardEntry(
-                text: "",
-                // The saved screenshot path rides along so Quick Look and drag-out use
-                // the real file instead of a temp copy; the clip still renders as an image.
-                filePaths: savedFilePath.map { [$0] } ?? [],
-                imageData: data,
-                source: source,
-                isScreenCapture: payload.isScreenCapture)
-        }
-    }
-
+    // The history is `ClipboardHistoryEngine`'s now (#247 4a); these keep the old
+    // launcher's call sites compiling until it is deleted.
     @discardableResult
     func importCurrentPasteboardToClipboardHistory() -> Bool {
-        let pb = NSPasteboard.general
-
-        if let fileURLs = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] {
-            let paths =
-                fileURLs
-                .filter { $0.isFileURL }
-                .map(\.path)
-                .filter { !$0.isEmpty }
-            if !paths.isEmpty {
-                addClipboardEntry(text: paths.joined(separator: "\n"), filePaths: paths)
-                return true
-            }
-        }
-
-        if let image = NSImage(pasteboard: pb),
-            let tiffData = image.tiffRepresentation
-        {
-            // Empty text — the entry IS the image (preview shows "Image", OCR fills ocrText).
-            // A placeholder string here used to get pasted instead of the actual image.
-            // Re-encode to PNG immediately: pasteboard TIFF is several times larger, and
-            // this is the form that goes to disk, to Vision and back onto the pasteboard.
-            addClipboardEntry(
-                text: "", filePaths: [],
-                imageData: ClipboardImageStore.pngData(from: tiffData) ?? tiffData)
-            return true
-        }
-
-        guard pb.pasteboardItems?.first?.types.contains(.string) == true,
-            let text = pb.string(forType: .string)
-        else { return false }
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 3 else { return false }
-
-        addClipboardEntry(text: trimmed, filePaths: [])
-        return true
+        ClipboardHistoryEngine.shared.importCurrentPasteboard()
     }
 
     func addClipboardEntry(
-        text: String,
-        filePaths: [String],
-        imageData: Data? = nil,
-        source: (name: String, bundleId: String)? = nil,
-        isScreenCapture: Bool = false
+        text: String, filePaths: [String], imageData: Data? = nil,
+        source: (name: String, bundleId: String)? = nil, isScreenCapture: Bool = false
     ) {
-        let sourceApp = source ?? clipboardSourceApp()
-        let hash = clipboardContentHash(text: text, filePaths: filePaths, imageData: imageData)
-        let entry = ClipboardEntry(
-            text: text,
-            timestamp: Date(),
-            filePaths: filePaths,
-            imageData: imageData,
-            sourceAppName: sourceApp.name,
-            sourceBundleId: sourceApp.bundleId,
-            isScreenCapture: isScreenCapture,
-            contentHash: hash
-        )
-
-        let removed = clipboardHistory.filter { $0.contentHash == hash }
-        clipboardHistory.removeAll { $0.contentHash == hash }
-        ClipboardImageStore.delete(fileNames: removed.compactMap(\.imageFileName))
-        clipboardHistory.insert(entry, at: 0)
-        if let imageData {
-            persistClipboardImageBlob(entryID: entry.id, data: imageData)
-            scheduleClipboardOCR(for: entry.id, imageData: imageData)
-        }
-        trimClipboardHistoryToLimits()
-        savePersistedClipboardHistory()
-
-        globalClipboardText = text
-
-        // The ambient clipboard pill is a system-wide surface, so it is told about every
-        // copy — including the ones that land while the dock is hidden, which is most of
-        // them. It orders itself in without activating us.
-        ClipboardPanelController.shared.didCopy(entry)
-
-        // Everything below is dock chrome. The monitor runs even while the launcher is
-        // hidden, so a background copy must cost a store + a disk write — no animations,
-        // no pill rebuilds, no window resize for a window nobody is looking at.
-        guard AppDelegate.shared?.launcherWindow?.isVisible == true else { return }
-
-        if searchState.activeSmartQueryKey == "clipboard" {
-            refreshCompactScopeResults(resetSelection: false)
-        }
-        if activeSelection == nil && frozenSelectionText == nil && liveDockSelectionPreviewText == nil {
-            withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-                showGlobalClipboardPill = true
-            }
-        }
-        clipboardHistoryExpanded = false
-        scheduleClipboardIndicatorAutoHide()
-        // Rebuild clipboard scope rows immediately when scope is open.
-        let rebuildQuery =
-            searchState.activeSmartQueryKey == "clipboard"
-            ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            : lastPillQuery
-        scheduleDockPillRebuild(query: rebuildQuery, delayNanoseconds: 0, refreshContext: false)
+        ClipboardHistoryEngine.shared.add(
+            text: text, filePaths: filePaths, imageData: imageData, source: source,
+            isScreenCapture: isScreenCapture)
     }
 
-    /// Identity of a clip's *content*, independent of when or where it was copied.
-    func clipboardContentHash(text: String, filePaths: [String], imageData: Data?) -> String {
-        if let imageData {
-            return "image:" + SHA256.hash(data: imageData).prefix(8)
-                .map { String(format: "%02x", $0) }.joined()
-        }
-        if !filePaths.isEmpty { return "files:" + filePaths.joined(separator: "\n") }
-        return "text:" + text
-    }
-
-    /// Writes the clip's bytes to the sidecar store off the main thread, then records the
-    /// file name so a later launch (or a memory-trimmed entry) can find them again.
-    func persistClipboardImageBlob(entryID: UUID, data: Data) {
-        let fileName = "\(entryID.uuidString).png"
-        Task.detached(priority: .utility) {
-            guard ClipboardImageStore.write(data, fileName: fileName) else { return }
-            await MainActor.run {
-                guard let index = clipboardHistory.firstIndex(where: { $0.id == entryID }) else {
-                    // Entry was trimmed while we were writing — don't leave the blob behind.
-                    ClipboardImageStore.delete(fileNames: [fileName])
-                    return
-                }
-                clipboardHistory[index].imageFileName = fileName
-                savePersistedClipboardHistory()
-            }
-        }
-    }
-
-    /// Full image bytes for a clip: in memory for recent clips, off the sidecar store for
-    /// everything the history reloaded from disk.
     func clipboardImageData(for entry: ClipboardEntry) -> Data? {
-        if let data = entry.imageData { return data }
-        guard let fileName = entry.imageFileName else { return nil }
-        return ClipboardImageStore.read(fileName: fileName)
+        ClipboardHistoryEngine.imageData(for: entry)
+    }
+
+    func savePersistedClipboardHistory() { ClipboardHistoryEngine.shared.save() }
+
+    func trimClipboardHistoryToLimits(save: Bool = true) {
+        ClipboardHistoryEngine.shared.trimToLimits(save: save)
+        syncVisibleClipboardStateAfterPrune()
+    }
+
+    func pruneExpiredClipboardEntries() {
+        ClipboardHistoryEngine.shared.pruneExpired()
+        syncVisibleClipboardStateAfterPrune()
     }
 
     func scheduleClipboardIndicatorAutoHide() {
@@ -2193,176 +1988,6 @@ extension LauncherView {
         requestWindowSizeUpdate(reason: .panelChanged)
     }
 
-    func clipboardSourceApp() -> (name: String, bundleId: String) {
-        let app =
-            AppDelegate.shared?.previousFrontmostApp
-            ?? NSWorkspace.shared.frontmostApplication
-        return (app?.localizedName ?? "", app?.bundleIdentifier ?? "")
-    }
-
-    func clipboardRetentionInterval() -> TimeInterval {
-        TimeInterval(max(1, settings.clipboardHistoryRetentionHours)) * 3600
-    }
-
-    var clipboardHistoryStoreURL: URL {
-        let base =
-            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(
-                "Library/Application Support")
-        return
-            base
-            .appendingPathComponent("Context-Dock", isDirectory: true)
-            .appendingPathComponent("clipboard-history.json")
-    }
-
-    func loadPersistedClipboardHistory() {
-        let url = clipboardHistoryStoreURL
-        guard FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url),
-            let entries = try? JSONDecoder().decode([ClipboardEntry].self, from: data)
-        else {
-            syncVisibleClipboardStateAfterPrune()
-            return
-        }
-        var loaded = entries.sorted { $0.timestamp > $1.timestamp }
-        // Backfill for histories written before content hashes / sidecar blobs existed.
-        for index in loaded.indices {
-            if loaded[index].contentHash.isEmpty {
-                loaded[index].contentHash = clipboardContentHash(
-                    text: loaded[index].text,
-                    filePaths: loaded[index].filePaths,
-                    imageData: loaded[index].imageData)
-            }
-        }
-        clipboardHistory = loaded
-        // Legacy entries still carry inline image bytes — move them to the sidecar store
-        // once, then the JSON stays small forever.
-        for entry in loaded where entry.imageFileName == nil && entry.imageData != nil {
-            persistClipboardImageBlob(entryID: entry.id, data: entry.imageData!)
-        }
-        trimClipboardHistoryToLimits(save: false)
-        syncVisibleClipboardStateAfterPrune()
-        savePersistedClipboardHistory()
-    }
-
-    /// Debounced: a burst of copies (or a run of OCR completions) coalesces into one
-    /// encode + one atomic write instead of one per change.
-    func savePersistedClipboardHistory() {
-        clipboardSaveTask?.cancel()
-        clipboardSaveTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 600_000_000)
-            guard !Task.isCancelled else { return }
-            flushClipboardHistoryToDisk()
-        }
-    }
-
-    func flushClipboardHistoryToDisk() {
-        clipboardSaveTask?.cancel()
-        clipboardSaveTask = nil
-        let entries = clipboardHistory
-        let url = clipboardHistoryStoreURL
-        let liveBlobs = Set(entries.compactMap(\.imageFileName))
-        Task.detached(priority: .utility) {
-            do {
-                try FileManager.default.createDirectory(
-                    at: url.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                let data = try JSONEncoder().encode(entries)
-                try data.write(to: url, options: .atomic)
-            } catch {}
-            ClipboardImageStore.pruneOrphans(keeping: liveBlobs)
-        }
-    }
-
-    func scheduleClipboardOCR(for entryID: UUID, imageData: Data?) {
-        guard let imageData else { return }
-
-        Task.detached(priority: .utility) {
-            // One image at a time: a burst of screenshots used to start a Vision request
-            // per clip and peg every core while the user was still typing.
-            await ClipboardOCRQueue.shared.run {
-                guard let nsImage = NSImage(data: imageData),
-                    let cgImage = nsImage.cgImage(
-                        forProposedRect: nil, context: nil, hints: nil)
-                else { return }
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                do {
-                    try handler.perform([request])
-                    let text = (request.results ?? [])
-                        .compactMap { $0.topCandidates(1).first?.string }
-                        .joined(separator: "\n")
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !text.isEmpty else { return }
-                    await MainActor.run {
-                        updateClipboardOCR(entryID: entryID, text: text)
-                    }
-                } catch {
-                    // OCR is best-effort; clipboard row still works without recognized text.
-                }
-            }
-        }
-    }
-
-    func updateClipboardOCR(entryID: UUID, text: String) {
-        guard let index = clipboardHistory.firstIndex(where: { $0.id == entryID }) else { return }
-        clipboardHistory[index].ocrText = text
-        savePersistedClipboardHistory()
-        if searchState.activeSmartQueryKey == "clipboard" {
-            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
-        }
-    }
-
-    func trimClipboardHistoryToLimits(save: Bool = true) {
-        let before = clipboardHistory.map(\.id)
-        pruneExpiredClipboardEntries(updateVisibleState: false, save: false)
-        let limit = settings.clipboardHistoryLimit
-        if clipboardHistory.count > limit {
-            let dropped = clipboardHistory.suffix(from: limit)
-            ClipboardImageStore.delete(fileNames: dropped.compactMap(\.imageFileName))
-            clipboardHistory = Array(clipboardHistory.prefix(limit))
-        }
-        releaseColdClipboardImageMemory()
-        syncVisibleClipboardStateAfterPrune()
-        if save && before != clipboardHistory.map(\.id) {
-            savePersistedClipboardHistory()
-        }
-    }
-
-    /// Only the newest few image clips keep their bytes resident; older ones fall back to
-    /// the sidecar blob (rows already render from the thumbnail cache). Without this a
-    /// 50-clip screenshot history sat permanently in RAM.
-    func releaseColdClipboardImageMemory(keepingNewest keep: Int = 4) {
-        var seenImages = 0
-        for index in clipboardHistory.indices where clipboardHistory[index].imageData != nil {
-            seenImages += 1
-            guard seenImages > keep, clipboardHistory[index].imageFileName != nil else { continue }
-            clipboardHistory[index].imageData = nil
-        }
-    }
-
-    func pruneExpiredClipboardEntries(updateVisibleState: Bool = true, save: Bool = true) {
-        let cutoff = Date().addingTimeInterval(-clipboardRetentionInterval())
-        let before = clipboardHistory.count
-        let expired = clipboardHistory.filter { $0.timestamp < cutoff }
-        guard !expired.isEmpty else {
-            if updateVisibleState { syncVisibleClipboardStateAfterPrune() }
-            return
-        }
-        ClipboardImageStore.delete(fileNames: expired.compactMap(\.imageFileName))
-        clipboardHistory.removeAll { $0.timestamp < cutoff }
-        if updateVisibleState {
-            syncVisibleClipboardStateAfterPrune()
-        }
-        if save && clipboardHistory.count != before {
-            savePersistedClipboardHistory()
-        }
-    }
-
     func syncVisibleClipboardStateAfterPrune() {
         if let first = clipboardHistory.first {
             globalClipboardText = first.text
@@ -2372,27 +1997,6 @@ extension LauncherView {
             showClipboardHistory = false
             clipboardHistoryExpanded = false
         }
-    }
-
-    func startClipboardExpiryTimer() {
-        clipboardExpiryTimer?.invalidate()
-        clipboardExpiryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) {
-            [self] _ in
-            self.pruneExpiredClipboardEntries()
-        }
-    }
-
-    /// The clipboard history is only trustworthy if it records every copy — not just the
-    /// one that happened to be on the pasteboard when the dock was last opened. Reading
-    /// `changeCount` is a couple of microseconds, so this polls whether or not any
-    /// Context-Dock surface is on screen; the expensive work is gated behind it.
-    func startClipboardMonitorTimer() {
-        clipboardMonitorTimer?.invalidate()
-        clipboardMonitorTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) {
-            [self] _ in
-            self.checkClipboardForGlobalContext()
-        }
-        clipboardMonitorTimer?.tolerance = 0.1
     }
 
     /// Auto-returns to Context Dock when the selection that triggered global context is gone.

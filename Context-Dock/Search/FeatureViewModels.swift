@@ -113,9 +113,6 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var isHoveringFrontmostContextChip = false
     @Published var clipboardText = ""
     @Published var showClipboardPill = false
-    @Published var lastCheckedPasteboardCount = -1
-    @Published var suppressClipboardImportUntilChangeCount: Int?
-    @Published var clipboardHistory: [LauncherView.ClipboardEntry] = []
     @Published var showClipboardHistory = false
     @Published var clipboardHistoryExpanded = false
     @Published var clipboardDropTargetVisible = false
@@ -152,13 +149,7 @@ final class GlobalContextViewModel: ObservableObject {
     var expandWhenFastMatchesResolve = false
     var autoExpandTask: Task<Void, Never>?
     var idleCollapseTask: Task<Void, Never>?
-    var clipboardExpiryTimer: Timer?
-    /// Always-on pasteboard poll: the clipboard scope must record every copy, not just
-    /// the one that happened to be current when the dock was last opened.
-    var clipboardMonitorTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
-    /// Debounces history writes — a burst of copies used to trigger one full encode each.
-    var clipboardSaveTask: Task<Void, Never>?
     /// Selection order for multi-clip paste (a Set alone loses "the order I picked them").
     var clipboardSelectionOrder: [UUID] = []
 }
