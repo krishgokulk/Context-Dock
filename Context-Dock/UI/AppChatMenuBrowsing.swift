@@ -1538,8 +1538,13 @@ extension AppChatPromptModel {
                 run(.global(doc))
                 return
             }
-            query = ""
-            updateMenuMatches()
+            // A quit closes the sheet at once, as a menu row's does (`runMenuItem`).
+            var close = Transaction()
+            close.disablesAnimations = MenuExecutionCoordinator.isQuitMenuPath([pill.name])
+            withTransaction(close) {
+                query = ""
+                updateMenuMatches()
+            }
             touch()
             pill.execute()
         case .command(let item):
