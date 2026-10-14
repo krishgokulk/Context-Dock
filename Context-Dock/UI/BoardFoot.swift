@@ -66,6 +66,17 @@ struct BoardFoot: Equatable {
         case .global(let doc):
             return foot(for: CornerBoardLayout.preview(for: doc), fallbackTitle: doc.title)
         case .dock(let pill):
+            switch pill.rankingKind {
+            case GlobalFallbacks.askKind:
+                return BoardFoot(title: "Ask AI", verb: "Ask", symbol: "sparkles")
+            case GlobalFallbacks.webKind:
+                return BoardFoot(title: "Web search", verb: "Search", symbol: "globe")
+            case GlobalFallbacks.terminalKind:
+                return BoardFoot(
+                    title: "Terminal", verb: "Run", bundleID: "com.apple.Terminal",
+                    symbol: "terminal")
+            default: break
+            }
             if MenuExecutionCoordinator.isQuitMenuPath([pill.name]) {
                 return BoardFoot(
                     title: pill.sourceAppName.isEmpty ? "Running App" : "\(pill.sourceAppName) · Running",
