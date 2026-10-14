@@ -49,7 +49,7 @@ Legend — **DoraX today:** ✅ exists `[code]` · 🟡 partial / unclear · ❌
 | **Unit / currency / time-zone conversion** | ✓ | 🟡 | 🟡 one file mentions it | **Must** |
 | **Quicklinks** (saved URLs/paths with `{query}`) | ✓ | ✓ (custom searches) | ❌ | **Must** |
 | Clipboard history (text, images, files, links) | ✓ | ✓ Powerpack | ✅ `ClipboardPanelWindow` | **Must** |
-| …skips password-manager clips | ✓ | ✓ | ✅ `org.nspasteboard.ConcealedType` (`LauncherView+ContextLifecycle.swift:2221`) | **Must** |
+| …skips password-manager clips | ✓ | ✓ | ✅ `org.nspasteboard.ConcealedType` (`DockCore+ContextLifecycle.swift:2221`) | **Must** |
 | **Snippets / text expansion** | ✓ | ✓ Powerpack | ❌ none found | **1.x** |
 | Window management (halves, thirds, snap zones) | ✓ | via workflows | ✅ `SnapLayout`, `WindowManagementService` | **Must** |
 | **Per-command hotkeys + aliases** | ✓ | ✓ | 🟡 app hotkeys exist; per-command `[?]` | **Must** |
@@ -141,7 +141,7 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 
 | Shell | Swipe | Does | Source |
 |---|---|---|---|
-| Dock (⌥⌥) | two-finger ↑ / ↓ | Global Context ↔ Context Dock ↔ Media Dock | `Search/LauncherView+InteractionLifecycle.swift` |
+| Dock (⌥⌥) | two-finger ↑ / ↓ | Global Context ↔ Context Dock ↔ Media Dock | `Search/DockCore+InteractionLifecycle.swift` |
 | Dock (⌥⌥) | two-finger ← / → | Context Dock ↔ General Chat | same |
 | Corner | two-finger ← / → **over the input field** | One step along General Chat ↔ Global Context ↔ Frontmost App — the same walk as ←/→. No wrap at the ends. Only when the field is empty; needs a clearly sideways swipe (> 70 pt, sideways > 1.8× vertical) | `UI/CornerDockWindow.swift` `handleChatSwipe`, `UI/CornerChatPresentation.swift` `handleHorizontalSwipe` |
 | Corner | two-finger ↑ / ↓ | **Nothing today — to be built to match the Dock exactly** `[owner 2026-09-24]`. Spec: [`00-DOCK-AND-CORNER.md` §4b](00-DOCK-AND-CORNER.md) | — |
@@ -150,7 +150,7 @@ Read from `UI/Settings/HotkeysSettingsPage.swift` and `App/AppSettings.swift` (2
 "AI Assistant" in six places — see the blueprint's naming rule for the list.
 
 The old "long-press ⌘ opens the Selection Shortcut Sheet" was **removed**; ⌘ only tap-toggles
-scope now (`Search/LauncherView+KeyboardNavigation.swift`, around line 1303).
+scope now (`Search/DockCore+KeyboardNavigation.swift`, around line 1303).
 Earlier drafts of these plans proposed ⌥Space / ⌥⌘Space / hold-⌘ — those were never in the app.
 Whether Ask should get a default hotkey is an open owner decision.
 
@@ -315,7 +315,7 @@ DoraX proposal:
 ## 9. Corrections to earlier plan docs
 
 - `00-PRODUCT-PLAN.md §4.5` asked for skipping password-manager clips — **already done**
-  (`org.nspasteboard.ConcealedType` at `Search/LauncherView+ContextLifecycle.swift:2221`).
+  (`org.nspasteboard.ConcealedType` at `Search/DockCore+ContextLifecycle.swift:2221`).
   Remaining: retention setting + "Clear all".
 
 ---

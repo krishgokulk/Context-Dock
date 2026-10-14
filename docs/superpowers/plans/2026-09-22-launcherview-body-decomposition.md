@@ -1,4 +1,4 @@
-# LauncherView.body Decomposition Implementation Plan
+# DockCore.body Decomposition Implementation Plan
 
 > **DONE — 2026-09-22.** Release builds at `6484913` with no build-setting override: zero
 > aborts, a signed app, suite 1851 / 0. Full account on issue **#25**.
@@ -24,7 +24,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `xcodebuild -configuration Release` complete, by reducing `LauncherView.body`'s opaque type until SILGen can finish substituting it.
+**Goal:** Make `xcodebuild -configuration Release` complete, by reducing `DockCore.body`'s opaque type until SILGen can finish substituting it.
 
 **Architecture:** The compiler aborts because `body`'s `some View` type expands into a single type holding the launcher's entire UI. A computed property returning `some View` is *not* a boundary — only a nominal type is. Every task therefore converts inlined content into `struct … : View` or `ViewModifier`, and measures the result against the compiler's own dump. Nothing else counts as progress.
 
@@ -88,8 +88,8 @@ Add a one-line comment to #25 with the commit and the count. A task that does no
 Free reduction before any real work: two large properties on the body path have no references at all. Same class of finding as the L2 island deleted in `5f2f487`.
 
 **Files:**
-- Modify: `Context-Dock/Search/LauncherView+ContextActionsUI.swift` (`contextChipSection`, 141 lines)
-- Modify: `Context-Dock/Search/LauncherView+DockAppActions.swift` (`globalRunningAppStrip`, 130 lines)
+- Modify: `Context-Dock/Search/DockCore+ContextActionsUI.swift` (`contextChipSection`, 141 lines)
+- Modify: `Context-Dock/Search/DockCore+DockAppActions.swift` (`globalRunningAppStrip`, 130 lines)
 
 **Interfaces:**
 - Consumes: nothing.
@@ -109,7 +109,7 @@ Expected: `0 refs` each. **If either is non-zero, skip it and say so** — anoth
 - [ ] **Step 2: Check for the trap that hid the L2 island**
 
 ```bash
-grep -rn "contextChipSection\|globalRunningAppStrip" --include='*.swift' Context-Dock/ | grep -v "LauncherView+ContextActionsUI.swift\|LauncherView+DockAppActions.swift"
+grep -rn "contextChipSection\|globalRunningAppStrip" --include='*.swift' Context-Dock/ | grep -v "DockCore+ContextActionsUI.swift\|DockCore+DockAppActions.swift"
 ```
 
 Expected: no output. Two dead things referencing *each other* is what made the L2 island survive a file-by-file look.
@@ -138,7 +138,7 @@ Expected: `1851 / 0`, unchanged. An unchanged suite is the evidence nothing depe
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Context-Dock/Search/LauncherView+ContextActionsUI.swift Context-Dock/Search/LauncherView+DockAppActions.swift
+git add Context-Dock/Search/DockCore+ContextActionsUI.swift Context-Dock/Search/DockCore+DockAppActions.swift
 git commit -m "refactor(launcher): delete two view properties nothing references"
 ```
 
@@ -148,11 +148,11 @@ git commit -m "refactor(launcher): delete two view properties nothing references
 
 ## Task 2: Collapse the content chain's modifiers into ViewModifiers
 
-Seven computed properties in `LauncherView+ContextLifecycle.swift` form a linear chain, each adding modifiers to the one below. 71 modifiers across the chain, each one a layer on `body`'s type. The technique is already proven twice in this codebase — read `LauncherApprovalSubscriptions.swift` and `LauncherKeyHandlers.swift` before starting; they are the worked examples and their headers explain the mechanism.
+Seven computed properties in `DockCore+ContextLifecycle.swift` form a linear chain, each adding modifiers to the one below. 71 modifiers across the chain, each one a layer on `body`'s type. The technique is already proven twice in this codebase — read `LauncherApprovalSubscriptions.swift` and `LauncherKeyHandlers.swift` before starting; they are the worked examples and their headers explain the mechanism.
 
 **Files:**
 - Create: `Context-Dock/Search/LauncherLifecycleHandlers.swift`
-- Modify: `Context-Dock/Search/LauncherView+ContextLifecycle.swift:45-1181`
+- Modify: `Context-Dock/Search/DockCore+ContextLifecycle.swift:45-1181`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
@@ -207,7 +207,7 @@ Expected: `1851 / 0`.
 - [ ] **Step 6: Commit and re-measure**
 
 ```bash
-git add Context-Dock/Search/LauncherLifecycleHandlers.swift Context-Dock/Search/LauncherView+ContextLifecycle.swift
+git add Context-Dock/Search/LauncherLifecycleHandlers.swift Context-Dock/Search/DockCore+ContextLifecycle.swift
 git commit -m "refactor(launcher): the content chain's handlers are modifiers"
 ```
 
@@ -221,7 +221,7 @@ The first real content extraction, and deliberately the easiest: 264 lines that 
 
 **Files:**
 - Create: `Context-Dock/Search/AppLivePanel.swift`
-- Modify: `Context-Dock/Search/LauncherView+LivePanel.swift` (remove the property, call the new view)
+- Modify: `Context-Dock/Search/DockCore+LivePanel.swift` (remove the property, call the new view)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
@@ -231,10 +231,10 @@ The first real content extraction, and deliberately the easiest: 264 lines that 
 
 ```bash
 cd /Users/gokulakannan/Developer/Context-Dock
-./scripts/state-surface.sh appPanelView Context-Dock/Search/LauncherView+LivePanel.swift
+./scripts/state-surface.sh appPanelView Context-Dock/Search/DockCore+LivePanel.swift
 ```
 
-It prints two lists: the stored properties the body reads, which become bindings or values, and the `LauncherView` methods it calls, which become closure parameters. At the time of writing:
+It prints two lists: the stored properties the body reads, which become bindings or values, and the `DockCore` methods it calls, which become closure parameters. At the time of writing:
 
 ```
 -- stored properties it reads --
@@ -242,7 +242,7 @@ isSearchFieldFocused
 livePanelVisible
 searchState
 
--- LauncherView methods it calls --
+-- DockCore methods it calls --
 appCLIConsentTool
 checkRemInstalled
 clearSearchContext
@@ -253,7 +253,7 @@ remChatBubble
 
 **Re-run it rather than trusting that list** — the property may have grown since. Note what the script caught that a hand-written grep for state alone had missed: six method calls. Two of them (`panelWelcomeView`, `remChatBubble`) return views, so decide per call whether the new type takes them as `@ViewBuilder` closures or whether those small views move with it.
 
-Methods that mutate `LauncherView` state stay on `LauncherView` and are passed in as closures. Do not move method bodies in this task.
+Methods that mutate `DockCore` state stay on `DockCore` and are passed in as closures. Do not move method bodies in this task.
 
 - [ ] **Step 3: Create the view**
 
@@ -263,7 +263,7 @@ Deliberately no reference code here. This codebase has been bitten by it: the Pl
 
 - [ ] **Step 4: Call it from where the property was**
 
-Replace the property body with a call passing the derived inputs. Keep the property name so call sites do not change, or update both call sites (`LauncherView.swift:3636`, `LauncherView+SearchBar.swift:3055`) — check which is smaller when you get there.
+Replace the property body with a call passing the derived inputs. Keep the property name so call sites do not change, or update both call sites (`DockCore.swift:3636`, `DockCore+SearchBar.swift:3055`) — check which is smaller when you get there.
 
 - [ ] **Step 5: Build**
 
@@ -287,7 +287,7 @@ Relaunch with `./scripts/dev-run.sh` and ask the owner to open the live panel an
 - [ ] **Step 8: Commit and re-measure**
 
 ```bash
-git add Context-Dock/Search/AppLivePanel.swift Context-Dock/Search/LauncherView+LivePanel.swift
+git add Context-Dock/Search/AppLivePanel.swift Context-Dock/Search/DockCore+LivePanel.swift
 git commit -m "refactor(launcher): the live app panel is a view of its own"
 ```
 
@@ -297,11 +297,11 @@ Then re-measure with `./scripts/release-type-size.sh`. **This is the task that t
 
 ## Task 4: Extract `l2ChatSection`
 
-250 lines. Three call sites, one of them outside `LauncherView` (`ContextDockChatSurface.swift:51`), which makes it the first extraction that improves more than one surface.
+250 lines. Three call sites, one of them outside `DockCore` (`ContextDockChatSurface.swift:51`), which makes it the first extraction that improves more than one surface.
 
 **Files:**
 - Create: `Context-Dock/Search/L2ChatSection.swift`
-- Modify: `Context-Dock/Search/LauncherView+AIChat.swift`, `Context-Dock/Search/LauncherView+SearchBar.swift:416`, `Context-Dock/Search/ContextDockChatSurface.swift:51`
+- Modify: `Context-Dock/Search/DockCore+AIChat.swift`, `Context-Dock/Search/DockCore+SearchBar.swift:416`, `Context-Dock/Search/ContextDockChatSurface.swift:51`
 
 **Interfaces:**
 - Consumes: the pattern established in Task 3.
@@ -310,10 +310,10 @@ Then re-measure with `./scripts/release-type-size.sh`. **This is the task that t
 - [ ] **Step 1: Derive the inputs**
 
 ```bash
-./scripts/state-surface.sh l2ChatSection Context-Dock/Search/LauncherView+AIChat.swift
+./scripts/state-surface.sh l2ChatSection Context-Dock/Search/DockCore+AIChat.swift
 ```
 
-Stored properties become bindings or values; `LauncherView` methods become closure parameters. Method bodies stay on `LauncherView`.
+Stored properties become bindings or values; `DockCore` methods become closure parameters. Method bodies stay on `DockCore`.
 - [ ] **Step 2: Create the view** — as Task 3 Step 3.
 - [ ] **Step 3: Update all three call sites.**
 - [ ] **Step 4: Build** — `./scripts/build-debug.sh`.
@@ -325,19 +325,19 @@ Stored properties become bindings or values; `LauncherView` methods become closu
 
 ## Task 5: Extract `aiModeControls`
 
-189 lines, one call site (`LauncherView+SearchBar.swift:2651`).
+189 lines, one call site (`DockCore+SearchBar.swift:2651`).
 
 **Files:**
 - Create: `Context-Dock/Search/AIModeControls.swift`
-- Modify: `Context-Dock/Search/LauncherView+ContextActionsUI.swift`, `Context-Dock/Search/LauncherView+SearchBar.swift:2651`
+- Modify: `Context-Dock/Search/DockCore+ContextActionsUI.swift`, `Context-Dock/Search/DockCore+SearchBar.swift:2651`
 
 - [ ] **Step 1: Derive the inputs**
 
 ```bash
-./scripts/state-surface.sh aiModeControls Context-Dock/Search/LauncherView+ContextActionsUI.swift
+./scripts/state-surface.sh aiModeControls Context-Dock/Search/DockCore+ContextActionsUI.swift
 ```
 
-- [ ] **Step 2: Create the view.** Stored properties become bindings or values; methods become closure parameters, bodies staying on `LauncherView`.
+- [ ] **Step 2: Create the view.** Stored properties become bindings or values; methods become closure parameters, bodies staying on `DockCore`.
 - [ ] **Step 3: Update the call site.**
 - [ ] **Step 4: Build.**
 - [ ] **Step 5: Test** — expect `1851 / 0`.
@@ -348,19 +348,19 @@ Stored properties become bindings or values; `LauncherView` methods become closu
 
 ## Task 6: Extract `aiChatSection`
 
-133 lines, two call sites in `LauncherView+SearchBar.swift` (508, 513).
+133 lines, two call sites in `DockCore+SearchBar.swift` (508, 513).
 
 **Files:**
 - Create: `Context-Dock/Search/AIChatSection.swift`
-- Modify: `Context-Dock/Search/LauncherView+AIChat.swift`, `Context-Dock/Search/LauncherView+SearchBar.swift`
+- Modify: `Context-Dock/Search/DockCore+AIChat.swift`, `Context-Dock/Search/DockCore+SearchBar.swift`
 
 - [ ] **Step 1: Derive the inputs**
 
 ```bash
-./scripts/state-surface.sh aiChatSection Context-Dock/Search/LauncherView+AIChat.swift
+./scripts/state-surface.sh aiChatSection Context-Dock/Search/DockCore+AIChat.swift
 ```
 
-- [ ] **Step 2: Create the view.** Stored properties become bindings or values; methods become closure parameters, bodies staying on `LauncherView`.
+- [ ] **Step 2: Create the view.** Stored properties become bindings or values; methods become closure parameters, bodies staying on `DockCore`.
 - [ ] **Step 3: Update both call sites.**
 - [ ] **Step 4: Build.**
 - [ ] **Step 5: Test** — expect `1851 / 0`.
@@ -375,10 +375,10 @@ The root of the content and the largest remaining subtree — everything the doc
 
 **Files:**
 - Create: `Context-Dock/Search/SearchBarSection.swift`
-- Modify: `Context-Dock/Search/LauncherView+DockBase.swift:149,226`
+- Modify: `Context-Dock/Search/DockCore+DockBase.swift:149,226`
 
 - [ ] **Step 1: Re-measure first.** If the Release build already succeeds by this point, skip to Task 9. That is a real possibility and skipping is the correct response, not a missed opportunity.
-- [ ] **Step 2: Derive the inputs** with `./scripts/state-surface.sh searchBarWithPinnedApps Context-Dock/Search/LauncherView+DockBase.swift`. Expect a much larger surface than the earlier tasks; if it exceeds roughly a dozen inputs, group the related ones into a small `struct` passed as one value rather than passing a dozen bindings.
+- [ ] **Step 2: Derive the inputs** with `./scripts/state-surface.sh searchBarWithPinnedApps Context-Dock/Search/DockCore+DockBase.swift`. Expect a much larger surface than the earlier tasks; if it exceeds roughly a dozen inputs, group the related ones into a small `struct` passed as one value rather than passing a dozen bindings.
 - [ ] **Step 3: Create the view.**
 - [ ] **Step 4: Update `mainContent`.**
 - [ ] **Step 5: Build.**
@@ -394,11 +394,11 @@ The last of `mainContent`'s four children that is not `EmptyView()`.
 
 **Files:**
 - Create: `Context-Dock/Search/AIExtensionQuickActions.swift`
-- Modify: `Context-Dock/Search/LauncherView+ContextActionsUI.swift:18`, `Context-Dock/Search/LauncherView+DockBase.swift:148`
+- Modify: `Context-Dock/Search/DockCore+ContextActionsUI.swift:18`, `Context-Dock/Search/DockCore+DockBase.swift:148`
 
 - [ ] **Step 1: Re-measure. Skip to Task 9 if Release already builds.**
-- [ ] **Step 2: Derive the inputs** with `./scripts/state-surface.sh aiExtensionQuickActions Context-Dock/Search/LauncherView+ContextActionsUI.swift`.
-- [ ] **Step 3: Create the view.** Stored properties become bindings or values; methods become closure parameters, bodies staying on `LauncherView`.
+- [ ] **Step 2: Derive the inputs** with `./scripts/state-surface.sh aiExtensionQuickActions Context-Dock/Search/DockCore+ContextActionsUI.swift`.
+- [ ] **Step 3: Create the view.** Stored properties become bindings or values; methods become closure parameters, bodies staying on `DockCore`.
 - [ ] **Step 4: Update the call site.**
 - [ ] **Step 5: Build.**
 - [ ] **Step 6: Test** — expect `1851 / 0`.
@@ -449,14 +449,14 @@ Found while writing this plan; wrong in ways that would mislead the next session
 **Files:**
 - Modify: `CLAUDE.md`
 
-- [ ] **Step 1: Fix the state claim.** CLAUDE.md says `Search/ContentView.swift` declares `LauncherView` with "420+ `@State` vars". `ContentView.swift` is **14 lines** and contains no `@State` at all. The state is in `Search/LauncherView.swift`: 74 `@State`, plus `@StateObject` 9, `@ObservedObject` 14, `@Environment` 4, `@EnvironmentObject` 2, `@AppStorage` 1, `@FocusState` 1 — **105 stored properties**, in a 3,899-line file.
+- [ ] **Step 1: Fix the state claim.** CLAUDE.md says `Search/ContentView.swift` declares `DockCore` with "420+ `@State` vars". `ContentView.swift` is **14 lines** and contains no `@State` at all. The state is in `Search/DockCore.swift`: 74 `@State`, plus `@StateObject` 9, `@ObservedObject` 14, `@Environment` 4, `@EnvironmentObject` 2, `@AppStorage` 1, `@FocusState` 1 — **105 stored properties**, in a 3,899-line file.
 - [ ] **Step 2: Fix the "Large Files" section**, which tells readers to `awk` ranges out of `ContentView.swift`.
-- [ ] **Step 3: Fix the skills table.** It lists `view-refactor` for "Refactor large views (LauncherView, ContentView)", but no such skill is installed — `.claude/skills/` has no `view-refactor`. Either remove the row or install the skill.
+- [ ] **Step 3: Fix the skills table.** It lists `view-refactor` for "Refactor large views (DockCore, ContentView)", but no such skill is installed — `.claude/skills/` has no `view-refactor`. Either remove the row or install the skill.
 - [ ] **Step 4: Commit.**
 
 ```bash
 git add CLAUDE.md
-git commit -m "docs: CLAUDE.md named the wrong file for LauncherView's state"
+git commit -m "docs: CLAUDE.md named the wrong file for DockCore's state"
 ```
 
 ---

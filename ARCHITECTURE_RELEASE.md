@@ -44,11 +44,11 @@ Shared context facades:
 
 ## Release Rule
 
-Do not move large `LauncherView` blocks immediately before distribution. Existing behavior stays stable behind new facades.
+Do not move large `DockCore` blocks immediately before distribution. Existing behavior stays stable behind new facades.
 
 ## Post-Release Extraction Queue
 
-1. Move search bar rendering from `LauncherView` into `LauncherSearchBar`.
+1. Move search bar rendering from `DockCore` into `LauncherSearchBar`.
 2. Move integrated results sheet into `ResultsPanelView`.
 3. Move Global Context rendering into `GlobalContextView`.
 4. Move Context Dock rendering into `ContextDockView`.

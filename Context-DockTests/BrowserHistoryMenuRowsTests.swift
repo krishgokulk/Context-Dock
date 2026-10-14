@@ -16,7 +16,7 @@ import Testing
 @MainActor
 struct BrowserHistoryMenuRowsTests {
 
-    private let view = LauncherView()
+    private let view = DockCore()
 
     private func descriptor(_ path: [String], bundleID: String = "com.apple.Safari")
         -> GlobalMenuDescriptor

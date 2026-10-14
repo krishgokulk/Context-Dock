@@ -14,7 +14,7 @@ needs — which component this is, what the app believed at that moment, or wher
 The guess is the expensive part, and it is expensive for a structural reason. The surface
 files are containers, not renderers: `GeneralChatSurface.swift` is 54 lines,
 `ContextDockSurface.swift` 66, `GlobalContextSurface.swift` 70. The rendering lives in the
-`LauncherView+*.swift` extensions and in `AIMessageViews.swift`, which is 3037 lines and shared
+`DockCore+*.swift` extensions and in `AIMessageViews.swift`, which is 3037 lines and shared
 by both chat surfaces. Pointing at a pixel and asking "which file is this" has no single answer.
 
 ## What this is not
@@ -125,7 +125,7 @@ SwiftUI's `.global` coordinate space is the hosting view's coordinate space, not
 coordinates, and DoraX has around ten `NSPanel`s. Treating the two as interchangeable produces
 hit testing that looks random and is nearly impossible to debug from the symptom.
 
-This confusion is already live in the tree: `LauncherView+ContextLifecycle.swift:59` takes
+This confusion is already live in the tree: `DockCore+ContextLifecycle.swift:59` takes
 `proxy.frame(in: .global)` and assigns it directly to an `NSWindow` property.
 
 The registry therefore stores `(windowID, frame in that window's root coordinate space)` and

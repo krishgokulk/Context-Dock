@@ -5,7 +5,7 @@
 // Mail, Messages — plus current weather, as a prompt block.
 //
 // This is the difference between "I can't see your reminders" and "you have 1 today at
-// 3pm". It read nothing from LauncherView, but living there meant only the dock could
+// 3pm". It read nothing from DockCore, but living there meant only the dock could
 // use it, so the chat window's Reminders thread had capability lists and no data. Same
 // reader, both surfaces.
 

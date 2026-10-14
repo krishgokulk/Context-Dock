@@ -31,7 +31,7 @@ echo "App/           entry point, AppSettings, AppState, AppRouter, launch helpe
 echo "AI/Providers/  AI adapters (Anthropic, OpenAI, Gemini, Ollama, OpenAI-compatible)"
 echo "Accessibility/ AX observer, AXEventBus, context snapshots"
 echo "Automation/    cross-app routing, menu intent, app-specific macros"
-echo "Search/        LauncherView, surfaces, coordinators, dock rows, pill system"
+echo "Search/        DockCore, surfaces, coordinators, dock rows, pill system"
 echo "Services/      shared infrastructure (context, media, file, extensions)"
 echo "UI/Settings/   settings pages only"
 echo "UI/            reusable components (overlays, toasts, panels)"

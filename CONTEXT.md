@@ -18,7 +18,7 @@ App/           entry point, AppSettings, AppState, AppRouter, launch helpers
 AI/Providers/  AI adapters (Anthropic, OpenAI, Gemini, Ollama, OpenAI-compatible)
 Accessibility/ AX observer, AXEventBus, context snapshots
 Automation/    cross-app routing, menu intent, app-specific macros
-Search/        LauncherView, surfaces, coordinators, dock rows, pill system
+Search/        DockCore, surfaces, coordinators, dock rows, pill system
 Services/      shared infrastructure (context, media, file, extensions)
 UI/Settings/   settings pages only
 UI/            reusable components (overlays, toasts, panels)
@@ -130,40 +130,40 @@ Search/LauncherState.swift
 Search/LauncherSupportViews.swift
 Search/LauncherSurfaceContainers.swift
 Search/LauncherUIUtilities.swift
-Search/LauncherView.swift
-Search/LauncherView+AIChat.swift
-Search/LauncherView+AIResponseHandling.swift
-Search/LauncherView+ClipboardScope.swift
-Search/LauncherView+ContextActionsUI.swift
-Search/LauncherView+ContextDetection.swift
-Search/LauncherView+ContextDockAppSwitching.swift
-Search/LauncherView+ContextDockPills.swift
-Search/LauncherView+ContextLifecycle.swift
-Search/LauncherView+ContextualActions.swift
-Search/LauncherView+DockAppActions.swift
-Search/LauncherView+DockBase.swift
-Search/LauncherView+DockHeight.swift
-Search/LauncherView+FinderAttachment.swift
-Search/LauncherView+FinderContextualActions.swift
-Search/LauncherView+FinderSemantic.swift
-Search/LauncherView+GlobalAppDock.swift
-Search/LauncherView+GlobalContextActions.swift
-Search/LauncherView+InteractionLifecycle.swift
-Search/LauncherView+KeyboardNavigation.swift
-Search/LauncherView+L2QueryHandling.swift
-Search/LauncherView+L2UnifiedDockRow.swift
-Search/LauncherView+LivePanel.swift
-Search/LauncherView+MailFindActions.swift
-Search/LauncherView+PinnedResults.swift
-Search/LauncherView+PreviewHelpers.swift
-Search/LauncherView+RemPanelChat.swift
-Search/LauncherView+Safari.swift
-Search/LauncherView+Search.swift
-Search/LauncherView+SearchBar.swift
-Search/LauncherView+SearchResults.swift
-Search/LauncherView+ShareActions.swift
-Search/LauncherView+StateBridges.swift
-Search/LauncherView+Utilities.swift
+Search/DockCore.swift
+Search/DockCore+AIChat.swift
+Search/DockCore+AIResponseHandling.swift
+Search/DockCore+ClipboardScope.swift
+Search/DockCore+ContextActionsUI.swift
+Search/DockCore+ContextDetection.swift
+Search/DockCore+ContextDockAppSwitching.swift
+Search/DockCore+ContextDockPills.swift
+Search/DockCore+ContextLifecycle.swift
+Search/DockCore+ContextualActions.swift
+Search/DockCore+DockAppActions.swift
+Search/DockCore+DockBase.swift
+Search/DockCore+DockHeight.swift
+Search/DockCore+FinderAttachment.swift
+Search/DockCore+FinderContextualActions.swift
+Search/DockCore+FinderSemantic.swift
+Search/DockCore+GlobalAppDock.swift
+Search/DockCore+GlobalContextActions.swift
+Search/DockCore+InteractionLifecycle.swift
+Search/DockCore+KeyboardNavigation.swift
+Search/DockCore+L2QueryHandling.swift
+Search/DockCore+L2UnifiedDockRow.swift
+Search/DockCore+LivePanel.swift
+Search/DockCore+MailFindActions.swift
+Search/DockCore+PinnedResults.swift
+Search/DockCore+PreviewHelpers.swift
+Search/DockCore+RemPanelChat.swift
+Search/DockCore+Safari.swift
+Search/DockCore+Search.swift
+Search/DockCore+SearchBar.swift
+Search/DockCore+SearchResults.swift
+Search/DockCore+ShareActions.swift
+Search/DockCore+StateBridges.swift
+Search/DockCore+Utilities.swift
 Search/MediaDockSurface.swift
 Search/NotificationViews.swift
 Search/ResultRow.swift

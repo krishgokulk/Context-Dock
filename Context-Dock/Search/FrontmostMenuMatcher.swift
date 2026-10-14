@@ -3,7 +3,7 @@
 //
 // Which of an app's menu commands a typed query means, and in what order.
 //
-// This is the dock's rule, moved out of LauncherView so the corner can use the same one.
+// This is the dock's rule, moved out of DockCore so the corner can use the same one.
 // The corner is becoming the frontmost-app surface (plan:
 // docs/superpowers/plans/2026-09-08-corner-frontmost-app-surface.md); until the dock's own
 // path retires, both call this, so the two cannot rank the same menu differently.

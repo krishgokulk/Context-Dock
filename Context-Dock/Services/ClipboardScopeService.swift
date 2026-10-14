@@ -19,7 +19,7 @@ import Foundation
 
 @MainActor
 enum ClipboardScopeService {
-    typealias Entry = LauncherView.ClipboardEntry
+    typealias Entry = DockCore.ClipboardEntry
 
     // MARK: - Selection
 

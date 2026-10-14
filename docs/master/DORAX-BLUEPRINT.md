@@ -114,7 +114,7 @@ Context-Dock/
 |---|---|
 | Lower layers never import upper ones | Swift packages |
 | No file over 1,500 lines | `scripts/check.sh` in CI |
-| One state model per surface; `LauncherView` only routes | code review + file-size check |
+| One state model per surface; `DockCore` only routes | code review + file-size check |
 | No new singletons; pass dependencies in | review |
 | Every change has a test | PR template + CI |
 | No binaries in git | `.gitignore` + CI |
@@ -123,7 +123,7 @@ Context-Dock/
 Capabilities · reads the screen → Context · touches memory → Memory · plain data → Core.
 
 **Today vs target:** 587 files / ~248k lines; `Search/` holds 83k lines of mixed UI; 39
-`LauncherView+*` files share one view; 21 files > 2,000 lines; 12 engine/service files reach
+`DockCore+*` files share one view; 21 files > 2,000 lines; 12 engine/service files reach
 into the UI. `[code]` The move is staged so the app builds after every step.
 
 Detail → [`00-APP-STRUCTURE.md`](00-APP-STRUCTURE.md) (every file mapped) ·
@@ -231,7 +231,7 @@ Detail → [`00-ENGINEERING-OPERATING-MODEL.md`](00-ENGINEERING-OPERATING-MODEL.
 | **5 · First run + hero** | 2 | Onboarding, the "test it → fixed ✓" loop flawless, 60-second video | 5 people succeed in < 2 min alone |
 | **6 · Private beta** | 3 | 20–50 developers, opt-in crash + usage data, weekly fixes | Crash-free ≥ 99.5 %; corpus score tracked |
 | **7 · Launch 1.0** | 1 | Show HN, r/macapps, X | v1 checklist fully ticked |
-| **After launch** | ongoing | Swift packages, break up `LauncherView`, Labs features graduate by usage | Health numbers improve each release |
+| **After launch** | ongoing | Swift packages, break up `DockCore`, Labs features graduate by usage | Health numbers improve each release |
 
 **About 15 weeks** for one person with agents `[judgment — estimate]`.
 

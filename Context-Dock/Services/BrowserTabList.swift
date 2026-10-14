@@ -3,7 +3,7 @@
 //
 // Safari's open tabs as a list both shells show: the Dock's tab strip and the Corner's Safari
 // scope (inventory D13). Loading and switching stay in `SafariTabManager`; this is the order,
-// the filter, and the row — one copy, where they used to live on `LauncherView`.
+// the filter, and the row — one copy, where they used to live on `DockCore`.
 
 import AppKit
 import Foundation

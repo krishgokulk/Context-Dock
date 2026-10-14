@@ -3,7 +3,7 @@
 //
 // The inline "Run command?" card, and the rule for putting it in the transcript exactly once.
 //
-// Why a rule is needed: `LauncherView.body` gives `.onReceive` a freshly erased
+// Why a rule is needed: `DockCore.body` gives `.onReceive` a freshly erased
 // `TerminalAIBridge.$pendingApproval` on every evaluation, and a `Published` publisher replays
 // its current value to each new subscriber. The handler therefore runs again every time the
 // view re-renders while a command is waiting. Appending the card unconditionally made each

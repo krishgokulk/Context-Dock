@@ -3,7 +3,7 @@
 //
 // The Dock's keyboard rules, as one pure type both shells read.
 //
-// The ⌥⌥ Dock's key monitor (`LauncherView+KeyboardNavigation`) has always been the reference
+// The ⌥⌥ Dock's key monitor (`DockCore+KeyboardNavigation`) has always been the reference
 // for what a key does, and the Corner was meant to do the same — but each shell answered the
 // question in its own code, so the Corner drifted: ← left the highlight on the row, Esc threw
 // the query away, Backspace deleted a character out from under a highlighted row, and Tab
@@ -50,7 +50,7 @@ enum DockKeyRules {
         case pass
     }
 
-    /// The Dock's result-focus keys (`LauncherView+KeyboardNavigation`, the grouped-list
+    /// The Dock's result-focus keys (`DockCore+KeyboardNavigation`, the grouped-list
     /// switch): ← hands the caret back (C4), Esc closes the list but keeps what was typed
     /// (C5), Backspace lets go of the row and deletes nothing (C6).
     ///

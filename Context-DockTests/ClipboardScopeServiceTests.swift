@@ -9,8 +9,8 @@ import Testing
 struct ClipboardScopeServiceTests {
     private func entry(
         _ text: String, files: [String] = [], id: UUID = UUID()
-    ) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    ) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             id: id,
             text: text,
             timestamp: Date(),

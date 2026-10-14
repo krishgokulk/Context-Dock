@@ -4,7 +4,7 @@
 // Two rules about the links on the page in front of the user, kept out of the view so they
 // can be argued with in tests rather than in Safari.
 //
-// Both existed as literals inside `LauncherView+AIChat`, and both were wrong in a way that
+// Both existed as literals inside `DockCore+AIChat`, and both were wrong in a way that
 // only showed on a real page:
 //
 //  1. The direct page reader collected anchors in document order and cut the list at sixty.

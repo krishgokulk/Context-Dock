@@ -40,5 +40,5 @@ struct GeneralChatSurface: View {
     }
 }
 
-extension LauncherView {
+extension DockCore {
 }

@@ -15,7 +15,7 @@ product: quiet at rest, honest while working, and never a reason to stop what yo
 Four findings, each read from the code rather than inferred from the screenshots.
 
 1. **The corner drives the dock.** `handleAppChatPromptSubmission`
-   (`LauncherView+ContextLifecycle.swift:2045`) posts `.activateContextDock`, waits 120 ms, then
+   (`DockCore+ContextLifecycle.swift:2045`) posts `.activateContextDock`, waits 120 ms, then
    calls `handleL2QuerySkippingMenuRouter`. So every question asked in the corner **opens the
    Context Dock window over the app you were working in**. It is not a rendering difference —
    the corner owns no pipeline, and the dock is where the turn runs.
@@ -25,7 +25,7 @@ Four findings, each read from the code rather than inferred from the screenshots
    off dock state the corner only partly populates.
 3. **The spinner is literal.** `AppChatPromptPill.swift:346` renders a bare
    `ProgressView` while the last message is the user's. The dock renders
-   `LiveAgentProgressView(steps:)` (`LauncherView+AIChat.swift:1530`) over the same data. The
+   `LiveAgentProgressView(steps:)` (`DockCore+AIChat.swift:1530`) over the same data. The
    reasoning exists; the corner just does not draw it.
 4. **Clipboard has no search and no multi-select.** `ClipboardPanelModel.sources` is
    `[All] + per-app choices` and `visibleEntries` filters on `bundleID` alone
@@ -58,13 +58,13 @@ One system, so the surfaces stop looking like three products.
 The largest item, and the one everything else rests on. Until this lands, the corner cannot be
 "smooth and undisturbing" — it opens a window over the user's work on every question.
 
-**Files:** `Search/LauncherView+ContextLifecycle.swift:2045-2065`, new
+**Files:** `Search/DockCore+ContextLifecycle.swift:2045-2065`, new
 `AI/AppChatTurnRunner.swift`, `Search/LauncherState.swift`, test
 `Context-DockTests/AppChatTurnRunnerTests.swift`
 
 - [ ] **Step 1** Write a failing test: a corner submission produces messages on
       `AppChatConversation.shared` without posting `.activateContextDock`.
-- [ ] **Step 2** Extract the L2 turn from `LauncherView` into `AppChatTurnRunner`, taking the
+- [ ] **Step 2** Extract the L2 turn from `DockCore` into `AppChatTurnRunner`, taking the
       scope (app name, bundle id, folder key for Finder) and writing to `AppChatConversation`.
       The dock keeps calling it, so there is still one pipeline and one writer.
 - [ ] **Step 3** Point `handleAppChatPromptSubmission` at the runner and delete the
@@ -72,14 +72,14 @@ The largest item, and the one everything else rests on. Until this lands, the co
 - [ ] **Step 4** Verify by hand: ask from the corner while Finder is frontmost; the dock must
       not appear and Finder must not lose focus.
 
-**Risk:** the turn currently reads `@State` on `LauncherView`. Anything it needs must move to
+**Risk:** the turn currently reads `@State` on `DockCore`. Anything it needs must move to
 `AppChatConversation` or be passed in. Expect this task alone to be a session.
 
 ---
 
 ### Task 2: Finder parity, proven by a test rather than by eye
 
-**Files:** `AI/AppChatTurnRunner.swift`, `Search/LauncherView+FinderSemantic.swift` (read only),
+**Files:** `AI/AppChatTurnRunner.swift`, `Search/DockCore+FinderSemantic.swift` (read only),
 test `Context-DockTests/CornerFinderParityTests.swift`
 
 - [ ] **Step 1** Write a test asserting the corner and the dock build the **same** scope key and
@@ -123,7 +123,7 @@ header. App Chat should be the same shape so switching modes changes the scope, 
 ### Task 5 (revised): Give the corner clipboard the dock's powers back
 
 The corner panel is a reduced viewer of a scope that already does all of this. The dock's
-`LauncherView+ClipboardScope.swift` is 2429 lines to the panel's 876, and the difference is
+`DockCore+ClipboardScope.swift` is 2429 lines to the panel's 876, and the difference is
 capability, not styling:
 
 | Capability | Dock scope | Corner panel |
@@ -139,13 +139,13 @@ So the work is **extraction, not invention** — and the same rule the chat surf
 applies: one implementation, two presentations. Reimplementing any of this in the panel is how
 the two drift.
 
-**Files:** new `Services/ClipboardScopeService.swift`, `Search/LauncherView+ClipboardScope.swift`,
+**Files:** new `Services/ClipboardScopeService.swift`, `Search/DockCore+ClipboardScope.swift`,
 `Search/ClipboardPanelWindow.swift`, tests `Context-DockTests/ClipboardScopeServiceTests.swift`
 
 - [ ] **Step 1** Write failing tests against the service for the parts that are pure: ordered
       selection, the pasteboard payload for a mixed selection, and the AI context text.
 - [ ] **Step 2** Move selection, pasteboard writing, drag providers, drop handling and the AI
-      context builder out of `LauncherView+ClipboardScope` into `ClipboardScopeService`. The dock
+      context builder out of `DockCore+ClipboardScope` into `ClipboardScopeService`. The dock
       keeps working by calling it — verify the dock scope by hand before touching the panel.
 - [ ] **Step 3** Point the corner panel at the service: multi-select, paste-to-frontmost,
       drag out, drop in, ask-AI.

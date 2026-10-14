@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""view-leaves.py — which LauncherView view members are safe to extract next.
+"""view-leaves.py — which DockCore view members are safe to extract next.
 
 For #25. A view member is only worth extracting once it calls no other view member:
 a struct that takes opaque children as @ViewBuilder parameters becomes generic over
@@ -20,7 +20,7 @@ WORD = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
 
 def members():
     found = {}
-    for path in sorted(glob.glob("Context-Dock/Search/LauncherView*.swift")):
+    for path in sorted(glob.glob("Context-Dock/Search/DockCore*.swift")):
         lines = io.open(path, encoding="utf-8").read().split("\n")
         for i, line in enumerate(lines):
             m = DECL.match(line)
@@ -46,7 +46,7 @@ def members():
 
 
 def reachable_from_body(found, uses_of):
-    """Members LauncherView.body can actually reach.
+    """Members DockCore.body can actually reach.
 
     Only these contribute to body's opaque type. Extracting a member nothing reaches
     changes nothing — measured: appPillButton and globalInlineScopeChip together are 309

@@ -220,7 +220,7 @@ final class CornerDockController: NSObject {
                     let app = NSWorkspace.shared.runningApplications.first {
                         $0.bundleIdentifier == appInfo.bundleID && !$0.isTerminated
                     }
-                    // Let LauncherView consume the same environment event first, then
+                    // Let DockCore consume the same environment event first, then
                     // switch the shared session and redraw this second presentation.
                     await Task.yield()
                     self.prompt.frontmostAppDidChange(

@@ -361,7 +361,7 @@ enum LocalDataCapabilities {
 
     /// The same file the Clipboard scope persists to. Read from disk rather than from the
     /// launcher's state so this works whether or not the dock view happens to be alive.
-    private static func loadClipboardHistory() -> [LauncherView.ClipboardEntry] {
+    private static func loadClipboardHistory() -> [DockCore.ClipboardEntry] {
         let base = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory())
@@ -371,7 +371,7 @@ enum LocalDataCapabilities {
             .appendingPathComponent("clipboard-history.json")
         guard let data = try? Data(contentsOf: url),
             let entries = try? JSONDecoder().decode(
-                [LauncherView.ClipboardEntry].self, from: data)
+                [DockCore.ClipboardEntry].self, from: data)
         else { return [] }
         return entries
     }
