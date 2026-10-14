@@ -38,7 +38,6 @@ extension LauncherView {
         withAnimation(.dockSheet) {
             isSearchBarExpanded = true
         }
-        requestWindowSizeUpdate(reason: .rowLayoutChanged)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             self.isSearchFieldFocused = true
@@ -73,7 +72,7 @@ extension LauncherView {
         // Normal L2 app scope stays app-scoped (no reshuffle on every selection change).
         let includeSelectionContext =
             isGlobalContextActive
-            || (!isL2ContextActive && AppDelegate.shared?.isDockContextMode != true)
+            || !isL2ContextActive
 
         // Selected files — from context + Finder
         var contextFiles: [URL] = {

@@ -140,20 +140,4 @@ extension LauncherView {
         get { engineState.pendingCapabilityGap }
         nonmutating set { engineState.pendingCapabilityGap = newValue }
     }
-    var lastAppliedDockHeightPreset: DockHeightPreset? {
-        get { engineState.lastAppliedDockHeightPreset }
-        nonmutating set { engineState.lastAppliedDockHeightPreset = newValue }
-    }
-    var lastAppliedDockSurfaceMode: DockSurfaceMode? {
-        get { engineState.lastAppliedDockSurfaceMode }
-        nonmutating set { engineState.lastAppliedDockSurfaceMode = newValue }
-    }
-    var lastAppliedGlobalTypingPhase: GlobalContextTypingPhase? {
-        get { engineState.lastAppliedGlobalTypingPhase }
-        nonmutating set { engineState.lastAppliedGlobalTypingPhase = newValue }
-    }
-    var renderedDockHeight: CGFloat? {
-        get { engineState.renderedDockHeight }
-        nonmutating set { engineState.renderedDockHeight = newValue }
-    }
 }

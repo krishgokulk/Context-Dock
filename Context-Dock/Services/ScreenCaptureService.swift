@@ -8,7 +8,7 @@ import Vision
 /// the old implementation left to chance: Screen Recording permission (without it the
 /// picker never draws and the file is never written), and feedback — every failure used
 /// to `return` in silence, which is what "Capture Text doesn't work" looked like from
-/// the outside. The dock itself stays on screen throughout; see `holdDockThroughCapture`.
+/// the outside.
 final class ScreenCaptureService: @unchecked Sendable {
     static let shared = ScreenCaptureService()
     private init() {}
@@ -26,7 +26,7 @@ final class ScreenCaptureService: @unchecked Sendable {
             // frontmost app is screencapture, not the app the user grabbed from.
             let source = await MainActor.run { Self.captureSourceApp() }
             guard await Self.ensureScreenRecordingAccess() else { return }
-            await MainActor.run { Self.holdDockThroughCapture() }
+            await MainActor.run { AppToast.hide() }
 
             let isSavedImage: Bool
             switch kind {
@@ -70,13 +70,11 @@ final class ScreenCaptureService: @unchecked Sendable {
                 process.waitUntilExit()
             } catch {
                 await MainActor.run {
-                    Self.releaseDockAfterCapture()
                     AppToast.show(
                         "Capture failed to start", icon: "exclamationmark.triangle", tint: .orange)
                 }
                 return
             }
-            await MainActor.run { Self.releaseDockAfterCapture() }
             // Escape on the picker exits non-zero and writes nothing — that is a
             // deliberate cancel, so stay silent. A zero exit with no file is a real
             // failure and must say so.
@@ -175,32 +173,6 @@ final class ScreenCaptureService: @unchecked Sendable {
                 }
             })
         return false
-    }
-
-    /// Keep the dock exactly where it is for the duration of the picker.
-    ///
-    /// It deliberately does NOT hide the launcher. An earlier version did, on the theory
-    /// that our status-level panel sat over screencapture's crosshair — it does not, and
-    /// hiding it threw away whatever scope the user was working in. The only thing that
-    /// needs suppressing is the ordinary focus-loss hide: screencapture activates itself,
-    /// our panel resigns key, and the dock would vanish mid-capture.
-    @MainActor
-    private static func holdDockThroughCapture() {
-        AppToast.hide()
-        guard let delegate = AppDelegate.shared else { return }
-        delegate.suppressHideOnResignUntil = Date().addingTimeInterval(Self.captureHoldSeconds)
-    }
-
-    /// A capture lasts as long as the user takes to drag; the hold is released the moment
-    /// the picker exits.
-    private static let captureHoldSeconds: TimeInterval = 300
-
-    @MainActor
-    private static func releaseDockAfterCapture() {
-        guard let delegate = AppDelegate.shared else { return }
-        // One more resign arrives as the captured app takes focus back — ride that out,
-        // then normal hide-on-focus-loss resumes.
-        delegate.suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
     }
 
     // MARK: - Helpers

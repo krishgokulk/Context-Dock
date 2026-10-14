@@ -332,7 +332,6 @@ extension LauncherView {
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
         DispatchQueue.main.async {
             self.reclaimSearchInputFocus()
-            self.requestWindowSizeUpdate(reason: .contentSettled)
         }
     }
 
@@ -504,7 +503,6 @@ extension LauncherView {
             clearLiveDockMenuState()
         }
 
-        requestWindowSizeUpdate(reason: .modeChanged)
     }
 
     func scheduleDockRefreshAfterTerminationAttempt(

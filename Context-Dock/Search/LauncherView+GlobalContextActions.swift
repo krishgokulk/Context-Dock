@@ -1667,11 +1667,6 @@ extension LauncherView {
         DispatchQueue.main.async {
             guard self.currentGlobalScopedBundleID == bundleID else { return }
             self.globalContextViewModel.typingSnapshot.phase = .expanded
-            self.requestWindowSizeUpdate(
-                reason: .modeChanged,
-                animated: true,
-                debounceNanoseconds: 0
-            )
         }
         reclaimSearchInputFocus()
         return true
@@ -1699,40 +1694,6 @@ extension LauncherView {
         }
     }
 
-    /// Robust focus claim for scope switches. The single delayed reclaim used to race the
-    /// async scoped-menu load + spring animation: when that re-render stole first responder
-    /// AFTER the one attempt — and isSearchFieldFocused was already true, so re-setting it did
-    /// nothing — the caret silently vanished ("sometimes ready, sometimes not"). This force-
-    /// toggles the FocusState (false→true always re-applies) and retries across a few runloop
-    /// turns, stopping as soon as the field genuinely holds first responder.
-    func ensureSearchInputFocusReady(attempt: Int = 0) {
-        l2.focusedPillIndex = nil
-        focusedAppPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        // The window must be KEY and the app ACTIVE before @FocusState will stick — the proven
-        // .focusSearchField path does exactly this. A right-arrow scope switch can leave the
-        // launcher non-key (the frontmost app behind it is still active), which silently drops
-        // the focus assignment and the caret never appears.
-        NSApp.activate(ignoringOtherApps: true)
-        // Toggle across runloop turns so SwiftUI re-applies focus even when the binding is
-        // already true (a plain re-set of true is a no-op and won't reclaim first responder).
-        isSearchFieldFocused = false
-        DispatchQueue.main.async {
-            self.isSearchFieldFocused = true
-            if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
-                self.moveSearchInsertionPointToEnd(in: tv)
-            }
-            guard attempt < 4 else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(attempt + 1)) {
-                // Retry only while the field still lacks focus — the launcher has a single text
-                // field, so any first-responder NSTextView is ours.
-                let hasFocus = NSApp.keyWindow?.firstResponder is NSTextView
-                if !hasFocus {
-                    self.ensureSearchInputFocusReady(attempt: attempt + 1)
-                }
-            }
-        }
-    }
 
     func moveSearchInsertionPointToEnd(in textView: NSTextView) {
         let end = (textView.string as NSString).length
@@ -2080,8 +2041,6 @@ extension LauncherView {
             focusedAppPillIndex = nil
             l2.focusedPillIndex = nil
             measuredGlobalListContentHeight = 0
-            requestWindowSizeUpdate(
-                reason: .modeChanged, animated: true, debounceNanoseconds: 0)
         }
     }
 
@@ -2186,8 +2145,6 @@ extension LauncherView {
             scheduleGlobalContextIdleCollapse()
 
             // 7. Window follows the ready presentation in one smooth expansion.
-            requestWindowSizeUpdate(
-                reason: .modeChanged, animated: true, debounceNanoseconds: 0)
         }
         let elapsedMS = Date().timeIntervalSince(started) * 1_000
         if elapsedMS >= 4 {
@@ -3161,9 +3118,7 @@ extension LauncherView {
                 l2.chatDraftBundleId = bundleId
                 l2.chatArmed = true
                 l2.chatDismissed = false
-                if trimmed.isEmpty {
-                    requestWindowSizeUpdate(reason: .panelChanged, animated: true)
-                } else {
+                if !trimmed.isEmpty {
                     dismissMediaLayer()
                     handleL2QuerySkippingMenuRouter(trimmed)
                 }
@@ -3991,193 +3946,9 @@ extension LauncherView {
 
 
 
-    var currentListViewDockRowCount: Int {
-        guard showContextInDock,
-            !showMediaLayer,
-            !aiMode.isActive,
-            shouldShowL2UnifiedDockRow
-        else { return 0 }
 
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if isActiveGlobalRunningAppMenuScope() {
-            let resolvedCount = min(
-                maxListViewDockPills,
-                visibleGlobalScopedMenuNavigationState(for: q)?.totalCount ?? 0
-            )
-            let isExtensionScope =
-                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
-                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
-            // Reserve one row while a provider-backed extension scope resolves.
-            // This keeps the shared result-sheet frame alive instead of snapping
-            // back to the capsule between scope activation and row publication.
-            return isExtensionScope ? max(1, resolvedCount) : resolvedCount
-        }
-        if shouldUsePureGlobalAppSearch {
-            guard !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil
-            else { return 0 }
-            guard globalContextViewModel.typingSnapshot.phase == .expanded else { return 0 }
-            let transientMenuCount =
-                currentGlobalScopedBundleID == nil
-                ? transientGlobalScopedMenuRowCount(for: q)
-                : 0
-            if transientMenuCount > 0 {
-                return min(maxListViewDockPills, transientMenuCount)
-            }
-            let state = visibleGlobalGroupedListNavigationState(for: q)
-            if state.totalCount > 0 {
-                return min(maxListViewDockPills, state.totalCount)
-            }
-            let immediateAppCount = currentOrImmediateGlobalAppMatches(for: q).count
-            if immediateAppCount > 0 {
-                return min(maxListViewDockPills, immediateAppCount)
-            }
-            let iconRowCount = matchDockIconRowsForExpandedSheet(query: q).count
-            if iconRowCount > 0 {
-                return min(maxListViewDockPills, iconRowCount)
-            }
-            return 0
-        }
 
-        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        let visibleDockPills =
-            isGlobalContextActive
-            ? (
-                currentGlobalScopedBundleID != nil
-                ? stableVisibleDockPills(for: pillQuery)
-                : currentVisibleDockPills(for: pillQuery)
-            )
-            : contextDockViewModel.visiblePills
-        let pillCount = (pillQuery.isEmpty ? [] : visibleDockPills)
-            .filter { !$0.isSeparator }
-            .count
-        if pillCount > 0 { return min(maxListViewDockPills, pillCount) }
-        if isGlobalContextActive,
-            !pillQuery.isEmpty,
-            pendingDockPillQuery == pillQuery || isResolvingDockPills(for: pillQuery)
-        {
-            return 1
-        }
-        if showContextInDock,
-            !isGlobalContextActive,
-            !q.isEmpty
-        {
-            return 1
-        }
-        return 0
-    }
 
-    /// Never collapse an open sheet below one comfortable row — a 40pt sliver reads as a
-    /// rendering bug rather than a short result list.
-    var listViewMinimumContentHeight: CGFloat { 86 }
-
-    /// Height to reserve for the first frame of a reveal, before the rendered list has
-    /// reported its real height. Row metrics match `pillListRow`; the extra covers one
-    /// section header and the list's own padding.
-    func estimatedListContentHeight(rowCount: Int) -> CGFloat {
-        let rowHeight: CGFloat = 52
-        let headerReserve: CGFloat = 24
-        let contentPadding: CGFloat = 12
-        return max(
-            CGFloat(rowCount) * rowHeight + headerReserve + contentPadding,
-            listViewMinimumContentHeight
-        )
-    }
-
-    var currentListViewDockContentHeight: CGFloat {
-        let rowCount = currentListViewDockRowCount
-        // `shouldShowSeparateActionList` can become true one render before async app/menu
-        // rows publish. Returning zero in that frame keeps the NSPanel capsule-height while
-        // the shared list already draws its section header, producing a clipped half-sheet.
-        // Once list mode owns the shell, reserve its stable viewport immediately in both
-        // Global Context and Context Dock; rows can then populate inside without resizing.
-        guard rowCount > 0 else {
-            // Custom-list / CLI scopes (syscmd:// · cli://) draw their rows from a
-            // background script. With no rows yet — no match, or still loading — collapse
-            // to the input bar instead of reserving a tall empty sheet that just looks
-            // broken. The Quick Note scope renders its own editor surface (no rows), so
-            // it keeps the reserved viewport.
-            let bundle = currentGlobalScopedBundleID
-            let isExtensionListScope =
-                (bundle?.hasPrefix("syscmd://") == true || bundle?.hasPrefix("cli://") == true)
-                && activeNotepadScopeCommand == nil
-            if isExtensionListScope { return 0 }
-            guard isDockResultSheetRevealed else { return 0 }
-            return usesVerticalListDockLayout ? listViewVisibleHeight : 0
-        }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        // A running-app capsule is an isolated menu sheet, not the fixed-height Global
-        // Context results surface. Hug its actual rows so the NSPanel ends at the same
-        // place as the visible glass; otherwise the old 372pt reservation leaves a clear
-        // window tail that intercepts clicks below a short scoped result list.
-        if isActiveGlobalRunningAppMenuScope() {
-            // Compact until ↓: no reserved viewport, so the window stays a capsule while
-            // the user types instead of throwing the sheet open on the first keystroke.
-            guard isDockResultSheetRevealed else { return 0 }
-            let isExtensionScope =
-                currentGlobalScopedBundleID?.hasPrefix("syscmd://") == true
-                || currentGlobalScopedBundleID?.hasPrefix("cli://") == true
-            // An extension scope is a stable filtering workspace. Keep its
-            // viewport fixed while rows are replaced inline so the panel and
-            // input never jump as the match count changes.
-            if isExtensionScope { return listViewVisibleHeight }
-            let measured = measuredGlobalListContentHeight
-            if measured > 1 {
-                return min(max(measured, listViewMinimumContentHeight), listViewVisibleHeight)
-            }
-            return DockMetrics.globalListEstimatedHeight(
-                rowCount: rowCount, maximum: listViewVisibleHeight)
-        }
-        if shouldUsePureGlobalAppSearch,
-            !q.isEmpty || globalInlineAppScope != nil || currentGlobalScopedBundleID != nil
-        {
-            let groupedKey = globalGroupedStateCacheKey(for: q)
-            let state = visibleGlobalGroupedListNavigationState(for: q)
-            let hasTransientMenus =
-                currentGlobalScopedBundleID == nil && transientGlobalScopedMenuRowCount(for: q) > 0
-            let hasImmediateApps = !currentOrImmediateGlobalAppMatches(for: q).isEmpty
-            let hasIconRows = !matchDockIconRowsForExpandedSheet(query: q).isEmpty
-            let isPending = pendingGlobalGroupedQuery == groupedKey || pendingGlobalAppQuery == q
-            if state.totalCount == 0, !hasTransientMenus, !hasImmediateApps, !hasIconRows,
-                !isPending
-            {
-                return 0
-            }
-            return listViewVisibleHeight
-        }
-        // Context Dock must stay physically locked while typing. Measuring the rendered
-        // rows makes the window chase section/header changes one frame late, which looks
-        // like the sheet jumps up/down. Once the list opens, reserve the same fixed list
-        // height as Global Context; only row content changes inside the scroll area.
-        if showContextInDock, !isGlobalContextActive {
-            // Compact until ↓, so the window does not reserve a sheet the user has not asked
-            // for. Surfaces that are their own list stay open — see isDockResultSheetRevealed.
-            guard isDockResultSheetRevealed else { return 0 }
-            // Hug the rows. The fixed 372pt drawer existed because the sheet used to be open
-            // WHILE typing, where measuring made the window chase every keystroke. The sheet
-            // now opens once, on ↓, and typing collapses it — so it can end where its content
-            // ends instead of leaving dead space under two rows.
-            let measured = measuredGlobalListContentHeight
-            if measured > 1 {
-                return min(max(measured, listViewMinimumContentHeight), listViewVisibleHeight)
-            }
-            return min(estimatedListContentHeight(rowCount: rowCount), listViewVisibleHeight)
-        }
-
-        // Non-Context scopes can still hug measured content.
-        let measured = measuredGlobalListContentHeight
-        if measured > 1 {
-            return min(max(measured, 86), listViewVisibleHeight)
-        }
-        // Finder desktop clusters into several type groups (Folders / Documents /
-        // Images…), each adding a header the row-count estimate below can't see — so the
-        // estimate undercut the height and the sheet rendered as a clipped half. Until
-        // the measured height lands, reserve the full viewport (it scrolls internally).
-        if isFinderDesktopOnlyMode {
-            return listViewVisibleHeight
-        }
-        return DockMetrics.globalListEstimatedHeight(
-            rowCount: rowCount, includesHeader: rowCount > 0, maximum: listViewVisibleHeight)
-    }
 
 
     func runningBundleIdsForContextDock() -> Set<String> {
@@ -4200,20 +3971,6 @@ extension LauncherView {
     }
 
 
-
-
-    var listViewDockHeight: CGFloat {
-        guard showContextInDock,
-            !showMediaLayer,
-            !aiMode.isActive,
-            shouldShowL2UnifiedDockRow
-        else { return 0 }
-
-        let contentHeight = currentListViewDockContentHeight
-        guard contentHeight > 0 else { return 0 }
-        let dockChromeHeight: CGFloat = 68
-        return dockChromeHeight + contentHeight + 14
-    }
 
 
 }

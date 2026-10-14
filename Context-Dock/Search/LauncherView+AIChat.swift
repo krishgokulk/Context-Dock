@@ -176,15 +176,6 @@ extension LauncherView {
             && !(l2.chatAutoArmedForNoMenuMatch && l2.chatMessages.isEmpty && !l2.isLoading)
     }
 
-    /// Single writer for `AppDelegate.scopeChatSpaceHold`. Every state change that can
-    /// start or end a scope / scoped chat routes through here, so the hold can never be
-    /// left stale (dock stuck across Spaces) or cleared mid-chat (dock vanishes on click).
-    func syncScopeChatSpaceHold() {
-        AppDelegate.shared?.scopeChatSpaceHold =
-            currentGlobalScopedBundleID != nil || isContextDockChatLocked
-    }
-
-
     var isContextDockChatRoutingLocked: Bool {
         showContextInDock
             && !showMediaLayer
@@ -473,7 +464,6 @@ extension LauncherView {
         l2.chatDraftBundleId = bundleId
         l2.chatArmed = true
         l2.chatDismissed = false
-        requestWindowSizeUpdate(reason: .panelChanged, animated: true)
     }
 
 
@@ -491,10 +481,6 @@ extension LauncherView {
     }
 
     func armContextDockChat(animated: Bool = true) {
-        // Hold the dock open for the whole scoped-chat session. Setting this only from
-        // the debounced requestWindowSizeUpdate left it stale, so clicking the frontmost
-        // app resigned key and hid the chat mid-conversation.
-        AppDelegate.shared?.scopeChatSpaceHold = true
         let existingName = l2.chatDraftAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         let existingBundleId = l2.chatDraftBundleId.trimmingCharacters(in: .whitespacesAndNewlines)
         if (l2.chatArmed || l2.showChatPopover || !l2.chatMessages.isEmpty),
@@ -504,7 +490,6 @@ extension LauncherView {
             l2.chatArmed = true
             l2.chatAutoArmedForNoMenuMatch = false
             l2.chatDismissed = false
-            requestWindowSizeUpdate(reason: .panelChanged, animated: animated)
             return
         }
         let scopedName = l2.targetApp?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -516,7 +501,6 @@ extension LauncherView {
         l2.chatDismissed = false
         l2.chatDraftAppName = scopedName.isEmpty ? fallbackName : scopedName
         l2.chatDraftBundleId = scopedBundleId.isEmpty ? fallbackBundleId : scopedBundleId
-        requestWindowSizeUpdate(reason: .panelChanged, animated: animated)
     }
 
 
@@ -544,46 +528,8 @@ extension LauncherView {
 
 
 
-    /// A scoped thread the user has opened and not yet used.
-    ///
-    /// The dock draws nothing in this state — every gate on the way down asks for a
-    /// conversation, a popover or a load in flight, and an armed thread is none of those.
-    /// That is why the start strip did not appear: it was rendering inside a section that
-    /// was never reached. One property, read by every gate that needs it, because three
-    /// copies of a condition is how they drift apart.
-    var shouldShowDockScopeStart: Bool {
-        // Not `l2.targetApp`: a frontmost-app thread is scoped by the draft or by the
-        // frontmost app itself and never pins a target, so keying off targetApp meant the
-        // strip stayed hidden for exactly the case it was built for.
-        !currentContextDockChatScope.bundleId
-            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && l2.chatArmed
-            && !l2.chatDismissed
-            && l2.chatMessages.isEmpty
-            && !l2.isLoading
-            // Auto-arming because a query matched no menu item is not a session the user
-            // started, and it must not put a start strip on screen either.
-            && !l2.chatAutoArmedForNoMenuMatch
-    }
 
 
-    /// True while the active scope / scoped chat is a CLI tool (cli:// bundle, a
-    /// pinned CLI tool, or a bare binary path) — drives the embedded terminal panel.
-    var isInCLIToolScope: Bool {
-        if isCLIToolScopeLocked { return true }
-        if let scope = globalInlineAppScope,
-            isCLIToolScopeChip(
-                bundleId: scope.bundleId, appName: scope.appName, appPath: scope.appPath)
-        {
-            return true
-        }
-        if let target = l2.targetApp,
-            isCLIToolScopeChip(bundleId: target.bundleId, appName: target.name, appPath: "")
-        {
-            return true
-        }
-        return false
-    }
 
 
 
@@ -820,7 +766,6 @@ extension LauncherView {
                         draft.body = cleaned
                         self.aiMode.pendingEmailDraft = draft
                     }
-                    self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
             } catch {
                 await MainActor.run {
@@ -835,7 +780,6 @@ extension LauncherView {
                         self.aiMode.isLoading = false
                     }
                     self.persistGeneralAIConversation()
-                    self.requestWindowSizeUpdate(reason: .chatChanged)
                 }
             }
         }
@@ -971,7 +915,6 @@ extension LauncherView {
         guard !restored.isEmpty else { return }
         aiMode.messages = restored
         hasUserSentMessageInCurrentSession = true
-        requestWindowSizeUpdate(reason: .chatChanged)
     }
 
     func persistGeneralAIConversation() {
@@ -2250,7 +2193,6 @@ extension LauncherView {
                         content: plan.command,
                         structuredData: "dock_cmd|||\(plan.purpose)"))
                 finishL2AIRequest(requestID)
-                requestWindowSizeUpdate(reason: .chatChanged, animated: true)
             }
         }
         return true
@@ -2458,7 +2400,6 @@ extension LauncherView {
                 )
             )
             l2.isLoading = false
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
         if let memoryAnswer = MarkdownMemoryStore.shared.replaceFromCommand(
@@ -2474,7 +2415,6 @@ extension LauncherView {
                 )
             )
             l2.isLoading = false
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
         if let memoryAnswer = MarkdownMemoryStore.shared.forgetFromCommand(
@@ -2490,7 +2430,6 @@ extension LauncherView {
                 )
             )
             l2.isLoading = false
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
         if let memoryAnswer = MarkdownMemoryStore.shared.remember(
@@ -2501,7 +2440,6 @@ extension LauncherView {
             l2.chatMessages.append(AIChatMessage(role: .user, content: query))
             l2.chatMessages.append(AIChatMessage(role: .assistant, content: memoryAnswer))
             l2.isLoading = false
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
         if let memoryURL = MarkdownMemoryStore.shared.requestedMemoryURL(from: query) {
@@ -2515,7 +2453,6 @@ extension LauncherView {
                 )
             )
             l2.isLoading = false
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
         if let memoryAnswer = MarkdownMemoryStore.shared.recallAnswer(
@@ -2531,7 +2468,6 @@ extension LauncherView {
                 )
             )
             l2.isLoading = false
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
 
@@ -2567,7 +2503,6 @@ extension LauncherView {
             withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
                 pendingCapabilityGap = gap
             }
-            requestWindowSizeUpdate(reason: .chatChanged)
             return
         }
         // Global context + live selection or clipboard → query is about the content; skip app routing
@@ -3030,7 +2965,6 @@ extension LauncherView {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                 isSearchBarExpanded = true
             }
-            requestWindowSizeUpdate(reason: .rowLayoutChanged)
         }
 
         let frontmostName: String? = {

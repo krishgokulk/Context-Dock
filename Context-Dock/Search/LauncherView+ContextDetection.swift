@@ -563,13 +563,11 @@ extension LauncherView {
     func executeL2Extension(_ ext: ILExtension, context: UserContext) async {
         await MainActor.run {
             l2.isLoading = true
-            requestWindowSizeUpdate(reason: .contentSettled)
         }
 
         defer {
             Task { @MainActor in
                 l2.isLoading = false
-                requestWindowSizeUpdate(reason: .contentSettled)
             }
         }
 

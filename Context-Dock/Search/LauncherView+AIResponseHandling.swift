@@ -397,7 +397,6 @@ extension LauncherView {
             l2.chatMessages.append(message)
             persistActiveL2DockSession()
         }
-        requestWindowSizeUpdate(reason: .chatChanged)
     }
 
 

@@ -36,12 +36,12 @@ Unified Dock Surface rule: one shell, multiple modes, stable state, mode-specifi
 create separate floating visual containers per mode; use shared shell, input, row, animation, and
 size rules.
 
-Before touching any Dock (`LauncherView*`) or Corner (`AppChat*`, `Corner*`, `SelectionScope*`)
-code, read `docs/master/00-DOCK-AND-CORNER.md` and `docs/master/00-DOCK-PARITY-INVENTORY.md`.
-- The Dock is the reference behaviour; the Corner must match it. Reuse Dock code; never write a
-  second copy.
-- A bug fixed in one shell: check the other shell for the same bug in the same PR, and update the
-  matching inventory row.
+The Corner (`AppChat*`, `Corner*`, `SelectionScope*`) is the only shell. The old Dock's window and
+screen are gone (#257); `Search/LauncherView*` is now only the engine behind the Corner's App Chat
+and Global results, run windowless by `DockEngine`. Read `docs/master/00-DOCK-AND-CORNER.md` before
+touching either.
+- Reuse the engine's code; never write a second copy. Move code out of `LauncherView*` rather than
+  copying it.
 
 ## Build, run, test
 
@@ -124,7 +124,7 @@ the owner's checkout (`~/Developer/Context-Dock`) at the pushed SHA and runs `./
 
 **UI work is checked by eye, not only by tests.** Any change a user can see is not done until the
 agent has launched the app (`./scripts/dev-run.sh`), taken screenshots of the changed surface **and of
-its reference** — the Dock for Corner parity, Global Context for other Corner scopes — and compared
+its reference** — Global Context for other Corner scopes, the neighbouring board for a board — and compared
 them: shell width and height, padding, field size, pill and icon size, strip style, alignment, nothing
 clipped or truncated. Differences are fixed or listed in the PR; the screenshots go in the PR.
 
@@ -139,7 +139,7 @@ Before grepping or reading raw source, ask the knowledge graph:
 - Dirty `graphify-out/` files after hooks are expected, not a reason to skip it.
 - After modifying code, run `graphify update .` (AST-only, no API cost).
 
-Large files — read only the range you need: `Search/LauncherView.swift` (3,899 lines),
+Large files — read only the range you need: `Search/LauncherView.swift` (1,602 lines),
 `Search/LauncherView+ContextualActions.swift`.
 
 ## Diagnosing an AI turn

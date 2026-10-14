@@ -34,7 +34,7 @@ extension LauncherView {
 
     func handleUserContextUpdate(_ context: UserContext) {
         // Receive pre-detected context from AppDelegate (before ILauncher becomes frontmost)
-        if isL2ContextActive || AppDelegate.shared?.isDockContextMode == true {
+        if isL2ContextActive {
             // Context Dock remains app-first, but selection is additive. Preserve
             // selected text/files/URL as the conversation payload without changing
             // the visible app scope or suppressing its menus and capabilities.
@@ -104,7 +104,6 @@ extension LauncherView {
             showContextInDock = true
             isSearchBarExpanded = true
             refreshCompactScopeResults(resetSelection: false)
-            requestWindowSizeUpdate(reason: .panelChanged)
             return
         }
 
@@ -114,7 +113,6 @@ extension LauncherView {
         // it — only an explicit exit (Escape / backspace / the `−` chip) ends it.
         // Menu search (chat not locked) keeps following the frontmost app below.
         if isContextDockChatLocked {
-            syncScopeChatSpaceHold()
             syncL2DockSession(force: l2.activeDockSessionKey == nil)
             return
         }

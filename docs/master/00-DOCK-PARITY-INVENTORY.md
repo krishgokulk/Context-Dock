@@ -1,5 +1,9 @@
 # 00 — Dock → Corner parity inventory
 
+> **Status (2026-10-14): historical.** The Dock is retired (#257) — its window and screen are
+> deleted, so there is no second shell to match. Rows still 🟡 or ❌ are Corner work items now,
+> not parity gaps; the Dock column describes behaviour that no longer exists in the app.
+
 > **Goal (owner, 2026-09-24):** move the ⌥⌥ Dock into the Corner with **exactly** the same
 > behaviour, functions and navigation. The Dock retires only when every row here is ✅ or has an
 > owner decision next to it.
@@ -29,13 +33,13 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 
 | # | Dock behaviour | Corner | Evidence / note |
 |---|---|---|---|
-| A1 | ⌥⌥ opens the launcher | — | Owner 2026-09-25: ⌥⌥ opens the Dock, ⌘⌘ opens the Corner — fixed, no setting. End state after the Dock retires still open (`00-DOCK-AND-CORNER.md` §5) |
+| A1 | ⌥⌥ opens the launcher | ✅ | Owner 2026-10-12: ⌥⌥ opens the centred Corner; the Dock is retired (#257) |
 | A2 | ⌘⌘ opens Global Context | ✅ | Opens in the Corner (Hotkeys page); `CornerGlobalContextParityTests` |
 | A3 | Hotkey toggles: pressing again puts it away / brings it back | ✅ | `theHotkeyPutsAnOpenCornerAway`, `theHotkeyBringsBackAShrunkenCorner` |
 | A4 | Esc closes / steps back one layer | 🟡 | Corner General Chat: `CornerGeneralChatView.handleEscape` (one layer per press). Global/app field (checked on the app 2026-09-24): Esc clears the query first, then closes — no step back through scopes |
 | A5 | Idle collapse timer when nothing typed | ✅ | Corner idle shrink: `generalChatShrinksThenHidesAndHoverRestoresIt`, `pinAndComposerFocusProtectGeneralChatFromIdleShrink` |
 | A6 | Position | — | Dock = centre; Corner = Left / Centre / Right (`CornerDockAnchorTests`) — Corner is richer by design |
-| A7 | Dock height presets (`LauncherView+DockHeight`) | — | Corner sizes itself to content (`AppChatPromptMetrics…Tests`); not a parity item |
+| A7 | Dock height presets | — | Deleted with the Dock (#257 E4). Corner sizes itself to content (`AppChatPromptMetrics…Tests`) |
 
 ## B. The input field
 

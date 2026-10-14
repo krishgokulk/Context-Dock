@@ -94,7 +94,7 @@ extension LauncherView {
 
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let includeSelectionContext =
-            !isL2ContextActive && AppDelegate.shared?.isDockContextMode != true
+            !isL2ContextActive
 
         let contextFiles: [URL] = {
             guard includeSelectionContext else { return [] }

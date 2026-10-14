@@ -1,6 +1,11 @@
 # 00 — Dock and Corner: one product, two shells, one migration
 
-> **Status: CURRENT — owner-confirmed direction (2026-09-24).** Read with
+> **Status (2026-10-14): the Dock is retired (#257).** Its window and screen are deleted; the
+> Corner is the only shell. `Search/LauncherView*` survives only as the windowless engine
+> (`DockEngine`) behind the Corner's App Chat and Global results. The sections below are the
+> history of the migration; §5 records how it ended.
+>
+> **Earlier status: CURRENT — owner-confirmed direction (2026-09-24).** Read with
 > [`DORAX-BLUEPRINT.md`](DORAX-BLUEPRINT.md) Part 1–2 and
 > [Hotkeys as built](00-COMPLETE-APP-PLAN.md#hotkeys-as-built-code).
 > Tags: `[code]` read from source · `[owner]` owner's statement · `[plan]` written in a plan, not verified as built · `[?]` needs checking.
@@ -166,8 +171,13 @@ When every Dock job has a Corner home:
    display**, like Spotlight — the same shell turned top-down (field on top, boards opening
    below), no folding or idle shrink, closed by Esc, ⌥⌥ or clicking another app. ⌘⌘ and the
    bottom dock are unchanged; the recorded custom launcher hotkey still opens the old Dock.
-2. **Retire `LauncherView`'s Dock paths** — the frontmost-app plan already schedules this for its
-   job (Phase 3). This is also the biggest cleanup in the codebase plan (39 `LauncherView+*` files).
+   **Done (#257, 2026-10-14):** the custom launcher hotkey and the menu bar item open the centred
+   Corner too; the old Dock window no longer exists.
+2. **Retire `LauncherView`'s Dock paths** — **done (#257 E1–E4, 2026-10-14).** E1 moved its state
+   into `LauncherEngineState`, E2–E3a ran it windowless under `DockEngine`, E3b deleted the screen
+   (~35k lines), E4 the window leftovers. What remains of `LauncherView` is engine only: the L2
+   chat pipeline and the Global result builders the Corner calls. Moving those into `Services/`
+   and renaming the type is follow-up work.
 3. **Rename "Corner"?** With Centre as an option it is really "the bottom dock". Users see neither
    word today; decide before writing onboarding. `[owner decision]`
 

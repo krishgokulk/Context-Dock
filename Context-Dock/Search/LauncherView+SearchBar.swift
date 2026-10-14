@@ -55,21 +55,6 @@ extension LauncherView {
 
 
 
-    /// A CLI tool scope — detected by the cli:// prefix, a pinned CLI tool name, or a
-    /// bare executable path (bin/sbin). Any of these must render the terminal glyph,
-    /// not the binary's generic white doc icon.
-    func isCLIToolScopeChip(bundleId: String, appName: String, appPath: String) -> Bool {
-        if bundleId.hasPrefix("cli://") { return true }
-        let name = appName.lowercased()
-        if !name.isEmpty, settings.pinnedCLITools.contains(where: { $0.lowercased() == name }) {
-            return true
-        }
-        guard !appPath.isEmpty, (appPath as NSString).pathExtension.isEmpty else { return false }
-        let parent = ((appPath as NSString).deletingLastPathComponent as NSString)
-            .lastPathComponent.lowercased()
-        return (parent == "bin" || parent == "sbin")
-            && FileManager.default.isExecutableFile(atPath: appPath)
-    }
 
 
 
