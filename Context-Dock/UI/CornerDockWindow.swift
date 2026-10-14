@@ -903,7 +903,8 @@ final class CornerDockController: NSObject {
                 ? AppScopeBoardMetrics.size(shell: AppChatPromptMetrics.boardWidth(for: prompt))
                 : showsExtensionPanel
                 ? (prompt.scopedPlugin.map { CornerPluginCardMetrics.size(for: $0) }
-                    ?? ExtensionScopeMetrics.size)
+                    ?? (prompt.scopedCommand?.isNotificationsBoard == true
+                        ? NotificationsBoardMetrics.size : ExtensionScopeMetrics.size))
                 : (showsAppSnapshot
                     ? AppSnapshotMetrics.size
                     : (showsAppChatList
@@ -2153,6 +2154,12 @@ struct CornerDockSurface: View {
                     pin: nil, manifest: plugin, model: prompt,
                     onClose: { _ = prompt.leaveScopeForGlobal() })
                     .id(plugin.id)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            } else if CornerDockController.shared.showsExtensionPanel,
+                prompt.scopedCommand?.isNotificationsBoard == true
+            {
+                // Notifications (D9): the clipboard's kind of board, list beside the chosen row.
+                NotificationsBoardCard(prompt: prompt)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else if CornerDockController.shared.showsExtensionPanel {
                 ExtensionScopeCard(

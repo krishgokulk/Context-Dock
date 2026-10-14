@@ -1508,21 +1508,7 @@ extension LauncherView {
     }
 
     /// Resolve an optional color name string into a SwiftUI Color.
-    func accentColor(for name: String?) -> SwiftUI.Color {
-        switch name?.lowercased() {
-        case "blue": return .blue
-        case "red": return .red
-        case "green": return .green
-        case "orange": return .orange
-        case "yellow": return .yellow
-        case "purple": return .purple
-        case "indigo": return .indigo
-        case "teal": return .teal
-        case "pink": return .pink
-        case "gray", "grey": return .secondary
-        default: return Color.accentColor
-        }
-    }
+    func accentColor(for name: String?) -> SwiftUI.Color { .named(name) }
 
     /// Best-effort icon for a menu item. AXImage covers most items; Services items need name lookup.
     func resolvedMenuIcon(for item: AXMenuItem) -> NSImage? {
