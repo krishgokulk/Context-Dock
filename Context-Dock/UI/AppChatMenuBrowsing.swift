@@ -840,8 +840,10 @@ extension AppChatPromptModel {
         DispatchQueue.main.async { [weak self] in
             guard let self, let index, self.rows.indices.contains(index) else { return }
             self.focusedMenuIndex = index
-            // Return in a text field selects its words once it takes focus back; they stay
-            // here, so the caret goes to their end instead.
+        }
+        // Return ends the field's editing and its focus coming back selects all its words —
+        // after the turns `FieldCaret` waits for — so the caret goes back a moment later.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
             FieldCaret.collapseSelectionToEndAfterFocus()
         }
         touch()
