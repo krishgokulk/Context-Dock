@@ -482,7 +482,7 @@ extension LauncherView {
     @ViewBuilder
     /// The live panel's terminal. The drawing lives in `LivePanelTerminalView`.
     var livePanelTerminalView: some View {
-        LivePanelTerminalView(terminalHost: $panelTerminalHost, workerPool: workerPool)
+        LivePanelTerminalView(terminalHost: $engineState.panelTerminalHost, workerPool: workerPool)
     }
 
     @ViewBuilder
@@ -497,7 +497,7 @@ extension LauncherView {
     func livePanelFilePreviewView(url: URL) -> some View {
         LivePanelFilePreviewView(
             url: url,
-            rightClickPosition: $qlRightClickPos,
+            rightClickPosition: $engineState.qlRightClickPos,
             contextMenuItems: { qlContextMenuItems(for: $0) })
     }
 

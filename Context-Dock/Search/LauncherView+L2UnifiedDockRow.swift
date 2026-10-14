@@ -266,7 +266,7 @@ extension LauncherView {
         // pre-empts the grouped results list this scope would otherwise render.
         if activeNotepadScopeCommand != nil {
             NotepadScopeView(
-                selectedNoteID: $notepadSelectedNoteID,
+                selectedNoteID: $engineState.notepadSelectedNoteID,
                 isDark: isEffectiveDark,
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
@@ -369,7 +369,7 @@ extension LauncherView {
     private func dockPillContentBody(_ presentation: L2DockRowPresentation) -> some View {
         if activeNotepadScopeCommand != nil {
             NotepadScopeView(
-                selectedNoteID: $notepadSelectedNoteID,
+                selectedNoteID: $engineState.notepadSelectedNoteID,
                 isDark: isEffectiveDark,
                 isGenerating: notepadAIGenerating,
                 aiProviderName: settings.selectedAIProvider.shortName,
