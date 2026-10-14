@@ -166,8 +166,13 @@ struct AppChatListCard: View {
                                     .id("ask-ai")
                             }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                                // A section's header and its first row are one item, scrolled to
+                                // as one: aimed at the row alone, a scroll to an item not yet
+                                // laid out stopped a slot short, the header showing and the
+                                // highlighted row under it hidden.
+                                VStack(spacing: 0) {
                                 if let title = sectionHeaders[index] {
-                                    sectionHeader(title).id("section-\(index)")
+                                    sectionHeader(title)
                                 }
                                 Group {
                                     switch row {
@@ -188,6 +193,7 @@ struct AppChatListCard: View {
                                     }
                                 }
                                 .contextMenu { pinMenu(for: row) }
+                                }
                                 .id(row.id)
                             }
                         }
@@ -204,10 +210,12 @@ struct AppChatListCard: View {
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
                         // The top row's section header comes into view with it.
-                        if model.focusedMenuIndex == 0, sectionHeaders[0] != nil {
-                            proxy.scrollTo("section-0", anchor: .top)
+                        if model.focusedMenuIndex == 0, let first = model.rows.first {
+                            proxy.scrollTo(first.id, anchor: .top)
                         } else if let row = model.focusedRow {
-                            proxy.scrollTo(row.id)
+                            // A beat later: rows that arrived with the highlight ("Show N
+                            // more") are not laid out yet, and the scroll stopped short.
+                            DispatchQueue.main.async { proxy.scrollTo(row.id) }
                         } else if model.showsAskAIRow {
                             proxy.scrollTo("ask-ai", anchor: .top)
                         }
@@ -215,8 +223,6 @@ struct AppChatListCard: View {
                     .onChange(of: model.query) { _, _ in
                         if model.showsAskAIRow {
                             proxy.scrollTo("ask-ai", anchor: .top)
-                        } else if sectionHeaders[0] != nil {
-                            proxy.scrollTo("section-0", anchor: .top)
                         } else if let row = model.rows.first {
                             proxy.scrollTo(row.id, anchor: .top)
                         }
