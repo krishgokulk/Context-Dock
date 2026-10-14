@@ -782,7 +782,7 @@ final class DoraXMCPServer: ObservableObject {
         return text
     }
 
-    private func callTool(
+    func callTool(
         named name: String, arguments: [String: Any], attended: Bool, turn: AgentTurnToken? = nil,
         nested: Bool = false
     ) async -> String {

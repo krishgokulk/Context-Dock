@@ -31,19 +31,19 @@ struct DoraXMCPCapabilityToolTests {
 
     @Test func anUnknownIdIsRefusedNotRun() async {
         let server = DoraXMCPServer.shared
-        server.turn = .init(scope: .app(bundleId: "com.apple.mail"))
-        defer { server.turn = nil }
+        server.capabilityTurn = .init(scope: .app(bundleId: "com.apple.mail"))
+        defer { server.capabilityTurn = nil }
         let reply = await server.callTool(
-            named: "dorax_run_capability", arguments: ["capability_id": "mail.nope"])
+            named: "dorax_run_capability", arguments: ["capability_id": "mail.nope"], attended: true)
         #expect(reply.hasPrefix("Did not run"))
     }
 
     @Test func aCapabilityOfAnotherAppIsOutOfScope() async {
         let server = DoraXMCPServer.shared
-        server.turn = .init(scope: .app(bundleId: "com.apple.mail"))
-        defer { server.turn = nil }
+        server.capabilityTurn = .init(scope: .app(bundleId: "com.apple.mail"))
+        defer { server.capabilityTurn = nil }
         let reply = await server.callTool(
-            named: "dorax_run_capability", arguments: ["capability_id": "notes.search"])
+            named: "dorax_run_capability", arguments: ["capability_id": "notes.search"], attended: true)
         #expect(reply.hasPrefix("Did not run"))
     }
 }
