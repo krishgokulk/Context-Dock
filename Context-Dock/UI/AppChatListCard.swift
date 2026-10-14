@@ -242,47 +242,88 @@ struct AppChatListCard: View {
         .onHover { _ in model.touch() }
     }
 
-    /// The board's foot: floating key pills, no bar (owner 2026-10-07). Return is not among
-    /// them — every highlighted row already shows its ↩ — but Tab is, when the row is a
-    /// scope Tab steps into (a CLI tool, a Global Command); then pin ⌘P and Settings ⌘,.
+    /// The board's foot, as Raycast's (owner 2026-10-14): on the left what Return is about to
+    /// act on, on the right one bar of what Return does and the row's other keys, then pin
+    /// and Settings as icons. Both sides follow the arrows (`boardFoot`). A folder walk keeps
+    /// its path pills on the left instead.
     private var footer: some View {
-        HStack(spacing: 8) {
+        let foot = model.boardFoot
+        return HStack(spacing: 8) {
             if model.finderPathTrail.isEmpty {
+                contextPill(foot)
                 Spacer(minLength: 0)
             } else {
                 finderPathPills
             }
-            if tabStepsIn {
-                BoardFooter.pill {
-                    BoardFooter.keycaps(["⇥"])
-                    Text("Tab").font(.system(size: 11.5, weight: .semibold))
+            BoardFooter.pill {
+                BoardFooter.action(foot.verb, keys: ["↩"])
+                if tabStepsIn {
+                    BoardFooter.divider
+                    BoardFooter.action("Step in", keys: ["⇥"])
                 }
-            }
-            // A running app's row: quit it, a key pill like pin and settings (owner 2026-10-11).
-            if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
-                BoardFooter.pill {
-                    BoardFooter.button("xmark", keys: ["⌘", "⌫"], help: "Quit \(app.name) (⌘⌫)") {
-                        _ = model.quitFocusedApp()
+                // A running app's row: quit it (owner 2026-10-11).
+                if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
+                    BoardFooter.divider
+                    Button { _ = model.quitFocusedApp() } label: {
+                        BoardFooter.action("Quit app", keys: ["⌘", "⌫"])
                     }
+                    .buttonStyle(.plain)
+                    .help("Quit \(app.name) (⌘⌫)")
                 }
             }
+            .animation(.smooth(duration: 0.15), value: foot)
             BoardFooter.pill {
-                BoardFooter.button(
-                    model.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
-                    help: model.focusedRow != nil
-                        ? "Pin the chosen row (⌘P)"
-                        : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"),
-                    tinted: model.isPinned
-                ) { if !model.pinChosenRow() { model.togglePin() } }
-            }
-            BoardFooter.pill {
-                BoardFooter.button("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
-                    AppDelegate.shared?.showSettings()
+                Button {
+                    if !model.pinChosenRow() { model.togglePin() }
+                } label: {
+                    Image(systemName: model.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(model.isPinned ? Color.accentColor : Color.secondary)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help(model.focusedRow != nil
+                    ? "Pin the chosen row (⌘P)"
+                    : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"))
+                Button { AppDelegate.shared?.showSettings() } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
             }
         }
         .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
+    }
+
+    /// What Return is about to act on: its icon and its kind, dimmed, as Raycast's foot names
+    /// the highlighted row's section.
+    private func contextPill(_ foot: BoardFoot) -> some View {
+        BoardFooter.pill {
+            Group {
+                if let icon = foot.icon {
+                    Image(nsImage: icon).resizable().frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: foot.symbol)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14, height: 14)
+                }
+            }
+            Text(foot.title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .id(foot.title + foot.bundleID)
+        .transition(.opacity)
+        .animation(.smooth(duration: 0.15), value: foot)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(foot.title). Return: \(foot.verb)")
     }
 
     /// The folder being walked, as Finder's path bar shows it: one clickable pill per folder
