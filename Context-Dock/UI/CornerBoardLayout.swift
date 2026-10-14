@@ -179,7 +179,11 @@ enum CornerBoardLayout {
         if case .appScope = preview { floor = AppScopeBoardMetrics.height } else {
             floor = minimumPreviewHeight
         }
-        return CGSize(width: list.width, height: max(list.height, floor))
+        guard floor > list.height else { return list }
+        // Grown by whole rows, so the list beside the preview never shows half a row.
+        let row = AppChatListMetrics.rowHeight
+        let rows = ((floor - list.height) / row).rounded(.up)
+        return CGSize(width: list.width, height: list.height + rows * row)
     }
 }
 
@@ -284,7 +288,8 @@ extension AppChatPromptModel {
     var boardSize: CGSize {
         CornerBoardLayout.boardSize(
             list: AppChatListMetrics.size(
-                rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self)),
+                rows: listRowCount, width: AppChatPromptMetrics.boardWidth(for: self),
+                header: globalSectionHeaders.isEmpty),
             preview: boardPreview)
     }
 

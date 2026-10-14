@@ -33,10 +33,14 @@ enum AppChatListMetrics {
     /// board ends.
     static var footerHeight: CGFloat { BoardFooter.height }
 
-    static func size(rows: Int, output: Bool = false, width: CGFloat = width) -> CGSize {
+    /// `header`: the count line above the rows. Global's sections draw their headers as
+    /// slots in the list instead (#258), so every slot is a row tall and none shows cut.
+    static func size(
+        rows: Int, output: Bool = false, width: CGFloat = width, header: Bool = true
+    ) -> CGSize {
         CGSize(
             width: width,
-            height: headerHeight + CGFloat(rows) * rowHeight
+            height: (header ? headerHeight : 0) + CGFloat(rows) * rowHeight
                 + (output ? outputHeight : 0) + verticalPadding * 2 + footerHeight)
     }
 }
@@ -122,7 +126,7 @@ struct AppChatListCard: View {
     var body: some View {
         let preview = model.boardPreview
         // Global's sections (#258 G1): the first one's header stands where the count did.
-        let sectionHeaders = model.isGlobalScope ? GlobalResultSection.headers(for: model.rows) : [:]
+        let sectionHeaders = model.globalSectionHeaders
         // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
         // the list on the left, what the highlighted row is on the right — and one foot
         // under both.
@@ -391,9 +395,10 @@ struct AppChatListCard: View {
             .foregroundStyle(.secondary.opacity(0.8))
             .lineLimit(1)
             .padding(.horizontal, 16)
+            .padding(.bottom, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: AppChatListMetrics.headerHeight, alignment: .bottomLeading)
-            .padding(.bottom, 2)
+            // A row's height: the list keeps one grid, so scrolling never leaves half a row.
+            .frame(height: AppChatListMetrics.rowHeight, alignment: .bottomLeading)
             .accessibilityAddTraits(.isHeader)
     }
 

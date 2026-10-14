@@ -141,8 +141,11 @@ struct CornerBoardLayoutTests {
         let board = L.boardSize(list: list, preview: preview)
         // Never wider than the field: one card, split, not a second card beside it.
         #expect(board.width == list.width)
-        // A short list still leaves the preview room to read.
-        #expect(board.height == L.minimumPreviewHeight)
+        // A short list still leaves the preview room to read, grown by whole rows so the
+        // list never shows half a row.
+        #expect(board.height >= L.minimumPreviewHeight)
+        #expect(board.height < L.minimumPreviewHeight + AppChatListMetrics.rowHeight)
+        #expect((board.height - list.height).truncatingRemainder(dividingBy: AppChatListMetrics.rowHeight) == 0)
         #expect(L.boardSize(list: CGSize(width: 600, height: 400), preview: preview).height == 400)
         // The halves and the hairline add up to the card.
         let left = L.listWidth(board: board.width, preview: preview)
