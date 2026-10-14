@@ -5,8 +5,8 @@
 // the Dock's Selection rows through.
 //
 // Interim (owner 2026-09-25, 00-DOCK-AND-CORNER §4a rule 5): the rows are still built by
-// LauncherView, which conforms to `SelectionActionProviding`. The corner card knows only the
-// protocol. Extracting a `SelectionActionSource` out of LauncherView is tracked on GitHub; when
+// DockCore, which conforms to `SelectionActionProviding`. The corner card knows only the
+// protocol. Extracting a `SelectionActionSource` out of DockCore is tracked on GitHub; when
 // it lands, the new type conforms and the corner does not change.
 
 import AppKit
@@ -116,7 +116,7 @@ struct SelectionActionRow: Identifiable, Equatable {
     }
 }
 
-/// Rows for a selection, and running one. LauncherView conforms today.
+/// Rows for a selection, and running one. DockCore conforms today.
 @MainActor
 protocol SelectionActionProviding {
     func selectionRows(for snapshot: SelectionSnapshot, query: String) -> [SelectionActionRow]
@@ -131,8 +131,8 @@ protocol SelectionActionProviding {
 
 @MainActor
 enum SelectionActions {
-    /// The provider the corner asks. Set by LauncherView when it appears — at app launch, not
-    /// the first time the Dock opens (`setupLauncherWindow` runs in didFinishLaunching).
+    /// The provider the corner asks: DockCore, set by DockEngine when it starts at app
+    /// launch (didFinishLaunching).
     static var provider: (any SelectionActionProviding)?
 
     /// True while a corner build or run has the captured selection swapped into the Dock. The

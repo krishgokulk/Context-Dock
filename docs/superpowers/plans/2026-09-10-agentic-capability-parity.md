@@ -86,7 +86,7 @@ user spends most time in are the ones no skill can describe.
 
 `skills.list` / `skills.read` exist as capabilities (on demand, cheap). But
 `SkillStore.instructionsBlock(for:)` pastes **every enabled skill body** into the scoped
-prompt (`Search/LauncherView+AIChat.swift:5250`, `AI/AppScopedChatService.swift:1225`). So
+prompt (`Search/DockCore+AIChat.swift:5250`, `AI/AppScopedChatService.swift:1225`). So
 the prompt-bloat path is the live one and the progressive one is decoration.
 
 ### E. No `SKILL.md` on disk

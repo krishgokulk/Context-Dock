@@ -1,7 +1,7 @@
 // LauncherState.swift
 // Context-Dock
 //
-// Grouped @State value-type structs for LauncherView.
+// Grouped @State value-type structs for DockCore.
 // Each struct corresponds to one @State var; SwiftUI diffs them like any other value type.
 
 import AppKit
@@ -33,7 +33,7 @@ struct SearchState {
 // MARK: - L2
 
 /// The Context Dock chat's conversation, held apart from `L2State` so surfaces other than
-/// LauncherView can render the same turn.
+/// DockCore can render the same turn.
 ///
 /// The dock remains the only writer: its pipeline produces these messages and nothing else
 /// appends to them. What this buys is a second *reader* — the corner App Chat shows the
@@ -103,7 +103,7 @@ struct L2State {
     /// that read and write this keep meaning exactly what they meant.
     ///
     /// CAREFUL: a class behind a `@State` struct no longer invalidates the view that owns
-    /// it. `LauncherView` observes `AppChatConversation.shared` for that reason — without
+    /// it. `DockCore` observes `AppChatConversation.shared` for that reason — without
     /// it the dock's chat stops redrawing, which looks like the model went silent.
     var chatMessages: [AIChatMessage] {
         get { AppChatConversation.shared.messages }

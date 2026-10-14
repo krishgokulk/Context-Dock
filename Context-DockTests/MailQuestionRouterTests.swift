@@ -5,7 +5,7 @@ import Testing
 
 // The Mail scope replied to "hi hello?" with "Attach Mail context with the + button first,
 // then ask again." Seen in the running app, not in any test — the predicate lived on
-// LauncherView, which cannot be instantiated, so nothing could reach it.
+// DockCore, which cannot be instantiated, so nothing could reach it.
 //
 // One line caused it: `if rawScopedQuery.contains("?") { return true }`. Every question was a
 // mail question.

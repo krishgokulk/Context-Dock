@@ -347,14 +347,14 @@ git commit -m "fix(chat): expose corner work and approvals"
 - Modify: `Context-Dock/UI/AppChatPromptPill.swift`
 - Modify: `Context-Dock/AI/GeneralChatWindowModel.swift`
 - Modify: `Context-Dock/Search/ExtensionPanelWindow.swift`
-- Modify: `Context-Dock/Search/LauncherView+AIChat.swift`
+- Modify: `Context-Dock/Search/DockCore+AIChat.swift`
 - Modify: `Context-Dock/App/NotificationNames.swift`
 - Test: `Context-DockTests/CornerGeneralChatTests.swift`
 
 **Interfaces:**
 - Consumes: `GeneralChatWindowModel.newChat()`, `attachApp(_:)`, and `removeApp(_:)`.
 - Produces: composer `onNewChat: (() -> Void)?`; removes corner use of destructive `onClear`.
-- Produces: `.newContextDockChatRequested`, handled by `LauncherView` through
+- Produces: `.newContextDockChatRequested`, handled by `DockCore` through
   `clearContextDockChatConversation(keepScope: true)`.
 - Preserves: selected General app workspace across New Chat.
 
@@ -390,7 +390,7 @@ Expected: at least the composer behavior test fails because the corner still wir
 
 - [ ] **Step 3: Replace Clear with New Chat**
 
-Change the shared composer contract from destructive `onClear` to `onNewChat`, use a compose/new-chat symbol and accessibility label, and call `model.newChat()` in General mode. In Frontmost mode, post `.newContextDockChatRequested`; `LauncherView` handles it by calling `clearContextDockChatConversation(keepScope: true)`. Do not clear shared history merely because the corner hides.
+Change the shared composer contract from destructive `onClear` to `onNewChat`, use a compose/new-chat symbol and accessibility label, and call `model.newChat()` in General mode. In Frontmost mode, post `.newContextDockChatRequested`; `DockCore` handles it by calling `clearContextDockChatConversation(keepScope: true)`. Do not clear shared history merely because the corner hides.
 
 - [ ] **Step 4: Keep `/app` lookup and chip removal on the real model**
 
@@ -407,7 +407,7 @@ Manual check: select and remove `/message` and `/terminal`; create a New Chat; c
 Run: `./scripts/test.sh -only-testing:Context-DockTests/CornerGeneralChatTests`
 
 ```bash
-git add Context-Dock/UI/CornerGeneralChatView.swift Context-Dock/UI/AppChatPromptPill.swift Context-Dock/AI/GeneralChatWindowModel.swift Context-Dock/Search/ExtensionPanelWindow.swift Context-Dock/Search/LauncherView+AIChat.swift Context-Dock/App/NotificationNames.swift Context-DockTests/CornerGeneralChatTests.swift
+git add Context-Dock/UI/CornerGeneralChatView.swift Context-Dock/UI/AppChatPromptPill.swift Context-Dock/AI/GeneralChatWindowModel.swift Context-Dock/Search/ExtensionPanelWindow.swift Context-Dock/Search/DockCore+AIChat.swift Context-Dock/App/NotificationNames.swift Context-DockTests/CornerGeneralChatTests.swift
 git commit -m "fix(chat): preserve corner chat workspaces"
 ```
 

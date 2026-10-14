@@ -3,9 +3,9 @@
 //
 // What an app-scoped chat knows about an app beyond its list of capabilities.
 //
-// The dock built three of these on LauncherView — the workspace the app is working in, the
+// The dock built three of these on DockCore — the workspace the app is working in, the
 // vendor's own documentation for it, and the page a browser is currently on — and the chat
-// window could not reach any of them, because LauncherView's state dies with the launcher.
+// window could not reach any of them, because DockCore's state dies with the launcher.
 // So the dock could answer "what did I just commit" and "what does this setting do" and the
 // window, asked the same thing about the same app, could only describe its own tool
 // inventory.

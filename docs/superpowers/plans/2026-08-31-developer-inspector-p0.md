@@ -410,7 +410,7 @@ In `GeneralChatSurface.body`, establish the named inspection coordinate space at
 .doraxInspect(.generalChat.thread)
 ```
 
-Resolve the real `NSWindow.windowNumber` through a tiny `NSViewRepresentable` bridge local to `InspectModifier.swift`, then inject it into the surface environment. Do not edit `LauncherView+AIChat.swift`, `AIMessageViews.swift`, Context Dock Chat, or any other surface in P0.
+Resolve the real `NSWindow.windowNumber` through a tiny `NSViewRepresentable` bridge local to `InspectModifier.swift`, then inject it into the surface environment. Do not edit `DockCore+AIChat.swift`, `AIMessageViews.swift`, Context Dock Chat, or any other surface in P0.
 
 - [ ] **Step 5: Run focused tests and full suite**
 

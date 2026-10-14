@@ -18,7 +18,7 @@ Branch: `security-remediation`. Audit source: Context-Dock-REMEDIATION-PLAN.
   All seven audit payloads are blocked. The audit's `return false` would have been a
   blunter fix that also killed `ls` auto-run.
 - **Item 2 (`executeShellCommandSafely`)** — already deleted; only a NOTE comment remains
-  at Search/LauncherView+AIResponseHandling.swift:822.
+  at Search/DockCore+AIResponseHandling.swift:822.
 - **Item 11 (scope General Chat)** — already implemented, in a different file than the
   audit names. Context Dock scope routes `AICapabilityRegistry.promptBlock(for:)` →
   `AppWorkflowToolCatalog.promptBlock(for:)` → `scopedAdapters(bundleID:)`, which returns

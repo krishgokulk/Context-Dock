@@ -18,7 +18,7 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// The colour a result carries. The dock's rules, lifted out of `LauncherView` so the
+/// The colour a result carries. The dock's rules, lifted out of `DockCore` so the
 /// corner cannot drift from them: red for anything destructive whatever its phase, the
 /// acted-on app's own colour when there is one, else the phase.
 enum ActionFeedbackTint {

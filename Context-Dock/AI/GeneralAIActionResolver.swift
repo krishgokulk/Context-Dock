@@ -492,7 +492,7 @@ final class GeneralAIActionResolver {
         scopedApp: (name: String, bundleId: String)? = nil
     ) -> TargetApp? {
         guard !isQuestionShaped(lowered) else { return nil }
-        guard !LauncherView.isBrowserLibraryReadPhrase(lowered) else { return nil }
+        guard !DockCore.isBrowserLibraryReadPhrase(lowered) else { return nil }
         // In a scoped chat the app is the surface, so "private window" needs no app name.
         guard let target = resolveTargetApp(in: lowered, original: original)
             ?? scopedTargetApp(scopedApp, lowered: lowered)
@@ -690,7 +690,7 @@ final class GeneralAIActionResolver {
         // answered from the local URL library. Its leading verb ("show ") matched the verb
         // list below and routed the query to an executable capability — which opened a NEW
         // tab instead of listing the open ones.
-        if LauncherView.isBrowserLibraryReadPhrase(lowered) { return false }
+        if DockCore.isBrowserLibraryReadPhrase(lowered) { return false }
         if Self.questionStarts.contains(where: lowered.hasPrefix) { return false }
 
         let verbs = [

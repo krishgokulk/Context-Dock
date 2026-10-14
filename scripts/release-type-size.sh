@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# release-type-size.sh — how big LauncherView.body's opaque type is right now.
+# release-type-size.sh — how big DockCore.body's opaque type is right now.
 #
 # The progress signal for #25. A Debug build proves nothing: Debug has always built. What
 # matters is the size of the type SILGen prints while aborting, and whether it is going down.

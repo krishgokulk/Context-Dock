@@ -41,7 +41,7 @@ struct ClipboardPasteTarget: Identifiable, Equatable {
 /// ⌘↩ with several clips picked: where should they go? Open over the board's foot until an
 /// app is chosen or Esc.
 struct ClipboardTargetPicker {
-    var entries: [LauncherView.ClipboardEntry]
+    var entries: [DockCore.ClipboardEntry]
     var targets: [ClipboardPasteTarget]
     var index = 0
 

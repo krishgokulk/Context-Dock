@@ -1608,7 +1608,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if Self.isScreenCaptureUI(app) { return }
 
         // Only track user-facing non-DoraX apps. Resolve helper processes (ChatGPT helper, etc.)
-        // back to their owning .app before pushing context into LauncherView.
+        // back to their owning .app before pushing context into DockCore.
         guard let resolvedApp = resolvedUserFacingApplication(app) else { return }
 
         recordFrontmostApp(resolvedApp)

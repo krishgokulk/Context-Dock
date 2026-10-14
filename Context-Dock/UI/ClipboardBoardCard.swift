@@ -36,7 +36,7 @@ enum ClipboardKindFilter: String, CaseIterable, Identifiable {
         }
     }
 
-    func matches(_ entry: LauncherView.ClipboardEntry) -> Bool {
+    func matches(_ entry: DockCore.ClipboardEntry) -> Bool {
         switch self {
         case .all: return true
         case .text: return ClipboardClipInfo.kind(of: entry) == .text
@@ -65,7 +65,7 @@ enum ClipboardClipInfo {
         }
     }
 
-    static func kind(of entry: LauncherView.ClipboardEntry) -> Kind {
+    static func kind(of entry: DockCore.ClipboardEntry) -> Kind {
         if entry.imageData != nil || entry.imageFileName != nil { return .image }
         if !entry.filePaths.isEmpty {
             return entry.filePaths.allSatisfy(isImagePath) ? .image : .file
@@ -91,7 +91,7 @@ enum ClipboardClipInfo {
 
     /// "Image (1200 × 1000)", "Two Mangos.png (640 × 427)", the first line of text.
     static func title(
-        of entry: LauncherView.ClipboardEntry, pixelSize: CGSize? = nil
+        of entry: DockCore.ClipboardEntry, pixelSize: CGSize? = nil
     ) -> String {
         let dims = pixelSize.map { " (\(Int($0.width)) × \(Int($0.height)))" } ?? ""
         if let first = entry.filePaths.first {
@@ -107,7 +107,7 @@ enum ClipboardClipInfo {
 
     /// The Information section, top to bottom.
     static func details(
-        of entry: LauncherView.ClipboardEntry, pixelSize: CGSize? = nil, now: Date = Date()
+        of entry: DockCore.ClipboardEntry, pixelSize: CGSize? = nil, now: Date = Date()
     ) -> [(label: String, value: String)] {
         var rows: [(String, String)] = []
         rows.append(("Application", entry.sourceAppName.isEmpty ? "Unknown" : entry.sourceAppName))
@@ -210,7 +210,7 @@ struct ClipboardBoardSection: Identifiable, Equatable {
     struct Row: Identifiable, Equatable {
         /// Where the clip sits in `visibleEntries`: what the keys move and Return reads.
         let index: Int
-        let entry: LauncherView.ClipboardEntry
+        let entry: DockCore.ClipboardEntry
         var id: UUID { entry.id }
 
         static func == (lhs: Row, rhs: Row) -> Bool {
@@ -224,7 +224,7 @@ struct ClipboardBoardSection: Identifiable, Equatable {
 
     /// Consecutive clips from the same day share a section; history is newest first, so
     /// that is one section per day.
-    static func group(_ entries: [LauncherView.ClipboardEntry], now: Date) -> [ClipboardBoardSection] {
+    static func group(_ entries: [DockCore.ClipboardEntry], now: Date) -> [ClipboardBoardSection] {
         var result: [ClipboardBoardSection] = []
         for (index, entry) in entries.enumerated() {
             let title = ClipboardClipInfo.dayTitle(for: entry.timestamp, now: now)
@@ -429,7 +429,7 @@ struct ClipboardBoardCard: View {
     }
 
     @ViewBuilder
-    private func rowMenu(_ entry: LauncherView.ClipboardEntry) -> some View {
+    private func rowMenu(_ entry: DockCore.ClipboardEntry) -> some View {
         let controller = ClipboardPanelController.shared
         Button("Paste into \(controller.returnAppName)") {
             controller.pasteMany(model.actionableEntries(fallback: entry))
@@ -623,7 +623,7 @@ struct ClipboardBoardIcon: View {
 
 /// One clip in the list: its picture or kind, its title, and where it came from.
 private struct ClipboardBoardRow: View {
-    let entry: LauncherView.ClipboardEntry
+    let entry: DockCore.ClipboardEntry
     let isFocused: Bool
     let isSelected: Bool
 
@@ -669,7 +669,7 @@ private struct ClipboardBoardRow: View {
 
 /// The chosen clip: the picture, the text or the file, then its Information section.
 private struct ClipboardBoardPreview: View {
-    let entry: LauncherView.ClipboardEntry
+    let entry: DockCore.ClipboardEntry
 
     var body: some View {
         let data = ClipboardScopeService.imageData(for: entry)

@@ -52,7 +52,7 @@ One builder per scope kind, called by every surface:
 `sendWithTools` with `TerminalCommandExecutor` as the executor. Approval gates are
 identical on every surface — a different window is never a reason to lower one.
 
-LauncherView keeps thin delegates (`scopedAppIdentityBlock`, `currentDateTimeContextBlock`,
+DockCore keeps thin delegates (`scopedAppIdentityBlock`, `currentDateTimeContextBlock`,
 `liveAppWindowFacts`) that supply the dock-only inputs: the live browser page, the AX
 window title, the typed query.
 

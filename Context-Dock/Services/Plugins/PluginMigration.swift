@@ -19,7 +19,7 @@
 //     `layout: "compare"`, `left`, `right`, `centerIcon`, `leftQuery`, `rightQuery` and
 //     `centerAction` are not migrated. Neither is the "no row-action script authored, but
 //     the row's id/icon is a real path → Enter opens it" fallback that
-//     `LauncherView+ContextualActions.customListRowOpenablePath` provides at runtime for
+//     `DockCore+ContextualActions.customListRowOpenablePath` provides at runtime for
 //     Global Commands.
 //   - The native-provider branch below returns immediately once it recognises the
 //     provider, so a native provider's own `interaction` (Wi-Fi and Bluetooth are declared
@@ -164,7 +164,7 @@ enum PluginMigration {
     /// Turns a legacy script-type string into an action for a *secondary* slot — an undo
     /// action, a slider/toggle's `set` action, a custom list's `rowAction` — the same way
     /// the primary `run` action branch below treats it (via the same `openAction` helper),
-    /// so every runner that reads these (`LauncherView+ContextualActions`'s
+    /// so every runner that reads these (`DockCore+ContextualActions`'s
     /// command/undo/row-action switches) sees the same shape regardless of which slot the
     /// script came from:
     ///   - `url`/`file` become `openAction(value:)`.

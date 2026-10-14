@@ -37,10 +37,10 @@ create separate floating visual containers per mode; use shared shell, input, ro
 size rules.
 
 The Corner (`AppChat*`, `Corner*`, `SelectionScope*`) is the only shell. The old Dock's window and
-screen are gone (#257); `Search/LauncherView*` is now only the engine behind the Corner's App Chat
+screen are gone (#257); `Search/DockCore*` is now only the engine behind the Corner's App Chat
 and Global results, run windowless by `DockEngine`. Read `docs/master/00-DOCK-AND-CORNER.md` before
 touching either.
-- Reuse the engine's code; never write a second copy. Move code out of `LauncherView*` rather than
+- Reuse the engine's code; never write a second copy. Move code out of `DockCore*` rather than
   copying it.
 
 ## Build, run, test
@@ -139,8 +139,8 @@ Before grepping or reading raw source, ask the knowledge graph:
 - Dirty `graphify-out/` files after hooks are expected, not a reason to skip it.
 - After modifying code, run `graphify update .` (AST-only, no API cost).
 
-Large files — read only the range you need: `Search/LauncherView.swift` (1,602 lines),
-`Search/LauncherView+ContextualActions.swift`.
+Large files — read only the range you need: `Search/DockCore.swift` (1,602 lines),
+`Search/DockCore+ContextualActions.swift`.
 
 ## Diagnosing an AI turn
 

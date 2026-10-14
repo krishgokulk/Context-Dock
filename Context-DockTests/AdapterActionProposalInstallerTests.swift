@@ -10,7 +10,7 @@ import Foundation
 // callback, so the same proposal — same message, same flag — had nowhere to become an
 // adapter action. The user created one in the corner and nothing offered to keep it.
 //
-// The installer was a method on LauncherView, reading `l2.*` for its scope and appending its
+// The installer was a method on DockCore, reading `l2.*` for its scope and appending its
 // confirmation to `l2.chatMessages`. Only those two things were dock-specific. This is the
 // rest, lifted so both surfaces call it with their own scope.
 

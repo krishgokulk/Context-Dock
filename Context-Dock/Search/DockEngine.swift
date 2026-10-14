@@ -3,9 +3,9 @@
 //
 // The engine the Corner runs on, without the old launcher's window (#257).
 //
-// The old launcher (`LauncherView`) holds the Dock's search, its row builders, running a
+// The old launcher (`DockCore`) holds the Dock's search, its row builders, running a
 // result and the app-scoped chat pipeline. Its window is never shown any more, and its state
-// already lives outside SwiftUI (`LauncherEngineState`, E1). This owns a windowless instance
+// already lives outside SwiftUI (`DockCoreState`, E1). This owns a windowless instance
 // of it that shares all of that state, starts it at launch, and feeds it what reaches it from
 // outside — so none of it depends on a hidden window being alive (E2). E3 deletes the window
 // and the screen code.
@@ -18,7 +18,7 @@ final class DockEngine {
     static let shared = DockEngine()
 
     /// The launcher, as an engine: no window, the same shared state as the window's view.
-    let core = LauncherView()
+    let core = DockCore()
     private var sinks = Set<AnyCancellable>()
     private var isStarted = false
     /// `.onChange` without a view: each reads a value and acts when it differs.
@@ -33,7 +33,7 @@ final class DockEngine {
     func register() {
         // The corner's Selection card asks the Dock's rows through this.
         SelectionActions.provider = core
-        core.connectCornerGlobalResults()
+        core.connectGlobalResults()
     }
 
     func start() {
@@ -74,7 +74,7 @@ final class DockEngine {
     /// the reaction runs for each one that differs.
     private func startWatching() {
         let core = self.core
-        let state = LauncherEngineState.shared
+        let state = DockCoreState.shared
         watch({ core.selectionModel.changeCount }) { _, _ in core.handleSelectionChange() }
         watch({ AppSettings.shared.enableFrontmostDetection }) { _, new in
             core.engineFrontmostDetectionChanged(new)
@@ -87,7 +87,7 @@ final class DockEngine {
 
         let changes: [ObservableObjectPublisher] = [
             state.objectWillChange, state.selectionModel.objectWillChange,
-            state.launcherViewModel.objectWillChange, state.globalContextViewModel.objectWillChange,
+            state.dockCoreModel.objectWillChange, state.globalContextViewModel.objectWillChange,
             state.finderContext.objectWillChange, state.contextDockViewModel.objectWillChange,
             state.aiChatViewModel.objectWillChange, AppState.shared.objectWillChange,
             AppSettings.shared.objectWillChange,

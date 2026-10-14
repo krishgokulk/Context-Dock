@@ -2,7 +2,7 @@
 // Context-DockTests
 //
 // The dock's live menu filtering had no direct test, because every rule it uses was a
-// method on LauncherView — a SwiftUI struct with 420+ @State vars — and nothing could
+// method on DockCore — a SwiftUI struct with 420+ @State vars — and nothing could
 // construct one. These pin the behaviour as it shipped, so moving it into
 // FrontmostMenuMatcher is provably a move and not a rewrite.
 

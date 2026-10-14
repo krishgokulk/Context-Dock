@@ -19,7 +19,7 @@ private final class SelectionExtensionRunState: @unchecked Sendable {
     }
 }
 
-extension LauncherView {
+extension DockCore {
 
     func buildMacOSExtensionActionPills(
         query rawQuery: String,

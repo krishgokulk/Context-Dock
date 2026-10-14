@@ -4,8 +4,8 @@ import Testing
 
 @MainActor
 struct ClipboardPanelModelTests {
-    private func entry(_ text: String, app: String, bundleID: String) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    private func entry(_ text: String, app: String, bundleID: String) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             text: text,
             timestamp: Date(),
             sourceAppName: app,
@@ -167,8 +167,8 @@ struct ClipboardPanelModelTests {
 
 @MainActor
 struct ClipboardPillPhaseTests {
-    private func entry(_ text: String) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    private func entry(_ text: String) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             text: text,
             timestamp: Date(),
             sourceAppName: "Code",
@@ -286,8 +286,8 @@ struct ClipboardIngestTests {
         return ClipboardPanelModel(storeURL: url)
     }
 
-    private func entry(_ text: String, hash: String) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    private func entry(_ text: String, hash: String) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             text: text,
             timestamp: Date(),
             sourceAppName: "Code",
@@ -331,8 +331,8 @@ struct ClipboardIngestTests {
 struct ClipboardKeyboardTests {
     private func entry(
         _ text: String, files: [String] = [], imageFileName: String? = nil
-    ) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    ) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             text: text,
             timestamp: Date(),
             filePaths: files,
@@ -343,7 +343,7 @@ struct ClipboardKeyboardTests {
         )
     }
 
-    private func loaded(_ entries: LauncherView.ClipboardEntry...) -> ClipboardPanelModel {
+    private func loaded(_ entries: DockCore.ClipboardEntry...) -> ClipboardPanelModel {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("clipboard-\(UUID().uuidString).json")
         let model = ClipboardPanelModel(storeURL: url)
@@ -458,8 +458,8 @@ struct ClipboardKeyboardTests {
 
 @MainActor
 struct ClipboardBurstTests {
-    private func entry(_ text: String) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    private func entry(_ text: String) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             text: text, timestamp: Date(),
             sourceAppName: "Finder", sourceBundleId: "com.apple.finder",
             contentHash: text)

@@ -8,7 +8,7 @@ Status: planned, not implemented
 The corner App Chat surface answers with the wrong engine.
 
 Context Dock's frontmost-app chat runs `handleL2Query(_:skipMenuRouter:)` in
-`LauncherView+AIChat.swift` — a pipeline that resolves the dock scope, locks it
+`DockCore+AIChat.swift` — a pipeline that resolves the dock scope, locks it
 for the turn, builds a `FrontmostAppTaskPlan`, checks the Markdown memory store,
 handles find tokens and task-control queries, gathers the Finder selection and
 attachments, resolves a route, and only then runs the provider turn.
@@ -31,7 +31,7 @@ runs the turn, and the same conversation holds the result.**
 ## Why the obvious extraction is the wrong shape
 
 The pipeline is ~300 lines that read and mutate `l2`, `searchState`, `frontmost`,
-`contextDockChatFiles`, and call `requestWindowSizeUpdate` — all `LauncherView`
+`contextDockChatFiles`, and call `requestWindowSizeUpdate` — all `DockCore`
 state. Lifting it into a service means lifting all of that with it.
 
 And the conversation it produces, `l2.chatMessages`, has **221 references across
@@ -66,7 +66,7 @@ All 221 sites keep compiling and keep meaning what they meant. The dock stays th
 only writer. The corner becomes a second *reader* of the same conversation.
 
 Submission already has a path: the corner posts `.appChatPromptSubmitted`,
-`LauncherView` handles it and calls the dock's own pipeline. That stays — it is
+`DockCore` handles it and calls the dock's own pipeline. That stays — it is
 what makes the engine identical rather than similar.
 
 ## The one real risk
@@ -76,7 +76,7 @@ lives in a class, mutating it no longer invalidates the view that owns `l2`, and
 **the dock's chat stops redrawing** — the worst kind of regression, because it
 looks like the model stopped answering.
 
-`LauncherView` must observe the object for its own chat to keep updating:
+`DockCore` must observe the object for its own chat to keep updating:
 
 ```swift
 @ObservedObject private var conversation = AppChatConversation.shared
@@ -88,7 +88,7 @@ in the dock and watch it stream, before anything about the corner is touched.
 ## Staging
 
 1. **The object, and the dock still works.** Add `AppChatConversation`, move
-   storage behind the computed property, observe it in `LauncherView`. No corner
+   storage behind the computed property, observe it in `DockCore`. No corner
    changes. Verify: the dock's chat answers and redraws exactly as before —
    streaming, tool chips, step traces.
 2. **The corner reads it.** Render `AppChatConversation.shared.messages` in the

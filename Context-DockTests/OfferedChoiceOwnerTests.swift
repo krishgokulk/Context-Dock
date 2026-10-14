@@ -9,7 +9,7 @@ import Foundation
 // their pending work in two different places.
 //
 // A card built by the pre-model resolver carries a DoraXActionCandidate id and is remembered
-// in LauncherView.pendingActionCandidates. The corner's tap handler looked the id up in
+// in DockCore.pendingActionCandidates. The corner's tap handler looked the id up in
 // AppScopedChatService.pendingRoutesByScope, which only ever holds ChatRoutes registered by a
 // different path. Neither store is wrong; asking only one of them is.
 

@@ -2,7 +2,7 @@
 //
 // The corner's Selection card lists and runs the Dock's Selection rows through
 // SelectionActionProviding (00-DOCK-AND-CORNER §4a, interim bridge). These tests are the
-// safety net for extracting SelectionActionSource out of LauncherView: whatever type ends up
+// safety net for extracting SelectionActionSource out of DockCore: whatever type ends up
 // conforming must keep every one of them green.
 
 import Foundation
@@ -123,7 +123,7 @@ struct CornerSelectionActionsTests {
         // The Dock itself, registered when its view appeared at launch — the cold path: this
         // host never opened ⌥⌥.
         guard let dock = SelectionActions.provider else {
-            Issue.record("LauncherView did not register as the Selection provider at launch")
+            Issue.record("DockCore did not register as the Selection provider at launch")
             return
         }
         for snapshot in [text, file] {
@@ -140,7 +140,7 @@ struct CornerSelectionActionsTests {
             #expect(docks.contains { $0.id == SelectionShare.entryRowID })
             // The corner asks without the per-destination share lists, which are most of the
             // build's cost. Leaving them out must change nothing else.
-            if let launcher = dock as? LauncherView {
+            if let launcher = dock as? DockCore {
                 let full = launcher.selectionRows(for: snapshot, query: "", includeShare: true)
                 #expect(SelectionActions.cornerRows(full) == docks)
             }
@@ -252,10 +252,10 @@ struct CornerSelectionActionsTests {
         shared.isShareAction = true
         let dest = DockPill(id: "share-dest-mail", name: "Mail", icon: "", accentColorName: nil, badge: nil, execute: {})
         let copy = DockPill(id: "selection-copy", name: "Copy", icon: "", accentColorName: nil, badge: nil, execute: {})
-        #expect(LauncherView.selectionRow(from: ai).kind == .ask(prompt: "Rewrite this."))
-        #expect(LauncherView.selectionRow(from: shared).kind == .share)
-        #expect(LauncherView.selectionRow(from: dest).kind == .share)
-        #expect(LauncherView.selectionRow(from: copy).kind == .perform)
+        #expect(DockCore.selectionRow(from: ai).kind == .ask(prompt: "Rewrite this."))
+        #expect(DockCore.selectionRow(from: shared).kind == .share)
+        #expect(DockCore.selectionRow(from: dest).kind == .share)
+        #expect(DockCore.selectionRow(from: copy).kind == .perform)
     }
 
     // MARK: Keys and closing
@@ -781,14 +781,14 @@ struct CornerSelectionActionsTests {
 
     @Test("A question about a selection goes to the AI, never to a saved rule, command or extension")
     func selectionQuestionsSkipCommandRouting() {
-        #expect(!LauncherView.triesCommandRouting(
+        #expect(!DockCore.triesCommandRouting(
             isSelectionQuestion: true, looksLikeQuestion: false, scopedHasLinkedCLI: false))
-        #expect(LauncherView.triesCommandRouting(
+        #expect(DockCore.triesCommandRouting(
             isSelectionQuestion: false, looksLikeQuestion: false, scopedHasLinkedCLI: false))
-        #expect(!LauncherView.triesCommandRouting(
+        #expect(!DockCore.triesCommandRouting(
             isSelectionQuestion: false, looksLikeQuestion: true, scopedHasLinkedCLI: false))
-        #expect(!LauncherView.mayAutoRunExtension(isSelectionQuestion: true))
-        #expect(LauncherView.mayAutoRunExtension(isSelectionQuestion: false))
+        #expect(!DockCore.mayAutoRunExtension(isSelectionQuestion: true))
+        #expect(DockCore.mayAutoRunExtension(isSelectionQuestion: false))
     }
 
     // MARK: Asking inside the card
