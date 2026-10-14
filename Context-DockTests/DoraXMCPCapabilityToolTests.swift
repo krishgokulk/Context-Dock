@@ -9,7 +9,7 @@ import Testing
 @Suite("DoraX MCP capability tools")
 struct DoraXMCPCapabilityToolTests {
     @Test func theToolListOffersRunAndListCapabilities() {
-        let names = DoraXMCPServer.toolDefinitions.compactMap { $0["name"] as? String }
+        let names = DoraXMCPServer.toolDefinitions(attended: false).compactMap { $0["name"] as? String }
         #expect(names.contains("dorax_run_capability"))
         #expect(names.contains("dorax_list_capabilities"))
     }
