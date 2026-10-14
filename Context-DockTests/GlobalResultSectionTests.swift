@@ -123,3 +123,26 @@ struct AppScopeSectionTests {
         #expect(model.globalSectionHeaders.isEmpty)
     }
 }
+
+/// An app stepped into from Global that quits sends the field back to Global (owner 2026-10-14).
+@MainActor
+@Suite("Scoped app quits")
+struct ScopedAppQuitTests {
+    @Test func theSteppedIntoAppQuittingReturnsToGlobal() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summonGlobalContext()
+        model.scopeIntoApp(name: "Calculator", bundleID: "com.apple.calculator")
+        #expect(model.returnsToGlobalScope)
+        #expect(!model.scopedAppQuit("com.apple.Safari"))
+        #expect(model.scopedAppQuit("com.apple.calculator"))
+        #expect(model.isGlobalScope)
+        #expect(model.query.isEmpty)
+    }
+
+    @Test func aFrontAppScopeIsNotTheGlobalOnesToLeave() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        #expect(!model.scopedAppQuit("com.apple.calculator"))
+        #expect(model.appBundleID == "com.apple.calculator")
+    }
+}

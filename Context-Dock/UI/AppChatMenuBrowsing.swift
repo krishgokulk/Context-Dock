@@ -1211,6 +1211,19 @@ extension AppChatPromptModel {
             && !isCLIScope && !showsExtensionPanel
     }
 
+    /// The app this field was stepped into from Global quit: there is nothing left to ask it,
+    /// so the field goes back where it came from (owner 2026-10-14). False when the quit app
+    /// is not this scope's, or the scope follows the front app instead.
+    @discardableResult
+    func scopedAppQuit(_ bundleID: String) -> Bool {
+        guard returnsToGlobalScope, appBundleID == bundleID, leaveScopeForGlobal() else { return false }
+        // The words that found the app found something that is gone: Global opens empty,
+        // not on them selected.
+        query = ""
+        updateMenuMatches()
+        return true
+    }
+
     /// Leave a scope entered from Global and go back to it.
     @discardableResult
     func leaveScopeForGlobal() -> Bool {
