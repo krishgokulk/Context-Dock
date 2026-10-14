@@ -121,18 +121,22 @@ struct AppChatListCard: View {
 
     var body: some View {
         let preview = model.boardPreview
+        // Global's sections (#258 G1): the first one's header stands where the count did.
+        let sectionHeaders = model.isGlobalScope ? GlobalResultSection.headers(for: model.rows) : [:]
         // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
         // the list on the left, what the highlighted row is on the right — and one foot
         // under both.
         VStack(spacing: 0) {
         HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
-            Text(headerText)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary.opacity(0.7))
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
+            if sectionHeaders.isEmpty {
+                Text(headerText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                    .lineLimit(1)
+                    .padding(.horizontal, 16)
+                    .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
+            }
 
             // A command's result belongs with what asked for it, above the rows that offered
             // it — the same board, the way a turn shows its own reasoning. A second card is
@@ -158,6 +162,9 @@ struct AppChatListCard: View {
                                     .id("ask-ai")
                             }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                                if let title = sectionHeaders[index] {
+                                    sectionHeader(title).id("section-\(index)")
+                                }
                                 Group {
                                     switch row {
                                     case .dock(let pill):
@@ -182,7 +189,10 @@ struct AppChatListCard: View {
                         }
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
-                        if let row = model.focusedRow {
+                        // The top row's section header comes into view with it.
+                        if model.focusedMenuIndex == 0, sectionHeaders[0] != nil {
+                            proxy.scrollTo("section-0", anchor: .top)
+                        } else if let row = model.focusedRow {
                             proxy.scrollTo(row.id)
                         } else if model.showsAskAIRow {
                             proxy.scrollTo("ask-ai", anchor: .top)
@@ -191,6 +201,8 @@ struct AppChatListCard: View {
                     .onChange(of: model.query) { _, _ in
                         if model.showsAskAIRow {
                             proxy.scrollTo("ask-ai", anchor: .top)
+                        } else if sectionHeaders[0] != nil {
+                            proxy.scrollTo("section-0", anchor: .top)
                         } else if let row = model.rows.first {
                             proxy.scrollTo(row.id, anchor: .top)
                         }
@@ -372,6 +384,19 @@ struct AppChatListCard: View {
     }
 
     /// Names what the list is: what the app can do at rest, what matched once typing starts.
+    /// A section's title over its first row, set as the count line was.
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary.opacity(0.8))
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: AppChatListMetrics.headerHeight, alignment: .bottomLeading)
+            .padding(.bottom, 2)
+            .accessibilityAddTraits(.isHeader)
+    }
+
     private var headerText: String {
         let app = model.appName.isEmpty ? "App" : model.appName
         if model.slashAppFilter != nil { return "Jump to an app, tool or command · ↩ steps in" }

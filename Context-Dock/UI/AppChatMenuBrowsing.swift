@@ -147,6 +147,8 @@ extension AppChatPromptModel {
             } else {
                 rows = GlobalContextRow.documents(for: typed, limit: 48).map(AppChatRow.global)
             }
+            // In sections, best kind first (#258 G1).
+            rows = GlobalResultSection.grouped(rows)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
