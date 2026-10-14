@@ -14,6 +14,8 @@ enum GlobalResultSection {
     static let menuCommands = "Menu commands"
     static let files = "Files & Folders"
     static let web = "Web"
+    static let windowLayouts = "Window layouts"
+    static let actions = "Actions"
 
     /// A Global search result's section, by what it is — the old launcher's own buckets
     /// (`SearchResults.add`), with CLI tools among the commands.
@@ -35,6 +37,7 @@ enum GlobalResultSection {
         case "menu", "submenuChild", "finderMenu", "safariCommand": return menuCommands
         case "web", "recentURL", "webSearch", "spotlightSearch": return web
         case "application", "appLaunch", "appSwitch": return applications
+        case "nativeWindow": return windowLayouts
         default:
             if let path = pill.previewPath, !path.isEmpty, !path.hasSuffix(".app") { return files }
             return commands
@@ -52,12 +55,17 @@ enum GlobalResultSection {
         }
     }
 
-    /// A Global row's section; nil for a row that is not a Global result.
+    /// A row's section; nil for a CLI tool's subcommand, which has no kind of its own.
+    /// An app's Context Dock lists in the same sections (#258 G4).
     static func title(for row: AppChatRow) -> String? {
         switch row {
         case .dock(let pill): return title(for: pill)
         case .global(let doc): return title(for: doc)
-        default: return nil
+        case .command: return menuCommands
+        case .action: return actions
+        case .file: return files
+        case .app: return applications
+        case .cliSuggestion: return nil
         }
     }
 

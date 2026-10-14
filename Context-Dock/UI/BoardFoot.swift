@@ -67,6 +67,8 @@ struct BoardFoot: Equatable {
             return foot(for: CornerBoardLayout.preview(for: doc), fallbackTitle: doc.title)
         case .dock(let pill):
             switch pill.rankingKind {
+            case "appSwitch", "appLaunch", "application" where !pill.sourceBundleId.isEmpty:
+                return appFoot(pill.sourceBundleId)
             case GlobalResultSection.showMoreKind:
                 return BoardFoot(title: pill.resultSection, verb: "Show all", symbol: "chevron.down")
             case GlobalFallbacks.askKind:
