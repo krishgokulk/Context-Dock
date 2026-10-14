@@ -22,51 +22,11 @@ struct LauncherView: View {
     /// The Drop Shelf's state in this shell — the Dock keeps its own, so opening the shelf here
     /// never opens a card in the Corner. The store is the one shelf.
     @ObservedObject var dockShelf = DropShelfController.shared.dockPresentation
-    @State var searchState = SearchState()
-    @State var queryChangeTask: Task<Void, Never>? = nil
-    @State var queryChangeGeneration: Int = 0
-    // Selected note in the Quick Note (provider:notepad) split editor scope.
-    @State var notepadSelectedNoteID: UUID? = nil
-    // True while a Quick Note AI prompt is generating into the open note.
-    @State var notepadAIGenerating: Bool = false
-    // Frontmost-window context attached to the next Quick Note AI prompt.
-    @State var notepadFrontmostContext: String? = nil
-    @State var notepadFrontmostLabel: String? = nil
-    @State var notepadCapturedText: String? = nil
-    // Image/file attachments for the next Quick Note AI prompt.
-    @State var notepadAttachments: [URL] = []
-    // Clipboard scope: selected source-app filter (empty = All).
-    @State var clipboardSourceFilterBundleId: String = ""
-    @State var clipboardSourceFilterName: String = ""
-    @State var clipboardSourcePillFocusIndex: Int? = nil
-    // Running apps explicitly shared with General AI chat from the app picker.
-    @State var chatFocusApps: [GeneralChatFocusApp] = []
-    /// The newest thing this general-chat session built, if it built one.
-    ///
-    /// The dock throws no window at the user here: the sheet is where they asked, so the
-    /// artifact arrives as a button beside Clear and opens only when pressed. Session
-    /// state, not a store read — an artifact from a thread that has since been cleared is
-    /// not something this composer should still be offering.
-    @State var generalChatArtifact: URL? = nil
-    /// True while a submitted dock turn is carrying files or captured text. Early routes
-    /// check it so an attachment is never dropped without the user being told.
-    @State var pendingAttachmentTurn = false
-    @State var isShowingChatFocusAppPicker = false
-    @State var hoveredChatFocusBundleId: String? = nil
+    /// The launcher's remembered state, outside SwiftUI (#257 E1): the engine that reads
+    /// it is headed out of this view. `LauncherView+EngineState` bridges each field.
+    @ObservedObject var engineState = LauncherEngineState.shared
     // Max visible list height: rows beyond this scroll inside the glass card.
     let listViewVisibleHeight: CGFloat = 372
-    // These are isolated from searchState so their mutations don't trigger a struct-wide re-render
-    // (SwiftUI re-renders all readers of a @State struct when ANY property changes)
-    // General launcher/search state lives in LauncherViewModel.
-    // rem-powered Reminders panel chat
-    // AI chat session state lives in AIChatViewModel.
-    // Tool-removal cleanup banner
-    // Per-panel terminal history — keyed by searchState.activeSmartQueryKey or searchState.contextApp bundleID
-    @State var panelConsoleLinesMap: [String: [(line: String, isCommand: Bool)]] = [:]
-    @State var panelShowConsoleMap: [String: Bool] = [:]
-    @State var panelConsoleHeight: CGFloat = 160
-    // Per-panel embedded PTY terminals (real SwiftTerm instances)
-    @State var panelTerminalControllers: [String: TerminalHostController] = [:]
     // Computed helpers — always work off the active panel key
     var activeConsoleKey: String {
         if let k = searchState.activeSmartQueryKey { return k }
@@ -113,18 +73,9 @@ struct LauncherView: View {
             }
         }
     }
-    @State var livePanelMode: LivePanelMode = .results([])
-    @State var livePanelVisible: Bool = false  // drives the slide-in animation
-    /// One cancellable idle timer for a batch of Global Context quit actions. Keeping
-    /// this in the view avoids polling and makes a second quit simply reset the timer.
-    @State var globalQuitIdleDismissTask: Task<Void, Never>?
-    @State var globalQuitIdleDismissGeneration: Int = 0
-    @State var qlRightClickPos: CGPoint? = nil  // position for QL pill context menu
-    @State var panelTerminalHost: TerminalHostController? = nil
     @ObservedObject var workerPool = BackgroundWorkerPool.shared
     @ObservedObject var miniPlayer = MiniPlayerController.shared
     @StateObject var mediaDockEngine = MediaDockEngine.shared
-    @State var l2 = L2State()
     /// The dock chat's messages live in an object now, so the view has to watch it: a
     /// mutation through `l2.chatMessages` no longer invalidates this view by itself.
     @ObservedObject var chatConversation = AppChatConversation.shared
@@ -160,86 +111,10 @@ struct LauncherView: View {
         get { appState.contextDock.frontmost }
         nonmutating set { appState.contextDock.frontmost = newValue }
     }
-    @State var pendingTerminalCommand: PendingTerminalCommand?
-    @State var pendingFinderOperation: PendingFinderOperation?
     @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
-    @State var finderDesktopRecentPills: [DockPill] = []
-    @State var finderDesktopIndexedPills: [DockPill] = []  // all user-folder files, pre-loaded for instant filter
-    /// Non-nil while browsing INTO a folder in Finder desktop mode: the result list
-    /// shows that folder's contents instead of the search results. Right-arrow on a
-    /// focused folder drills in; Backspace on an empty field pops back out.
-    @State var finderBrowsePath: String? = nil
-    /// Multi-file clipboard clips the user expanded into a stack of individual files.
-    @State var expandedClipboardEntryIDs: Set<UUID> = []
-    /// Captured text (OCR / on-screen grab) attached to the frontmost-app chat — the
-    /// "Capture Text" action feeds on-screen content (e.g. a Messages thread) to the
-    /// scoped chat so the model can act on what's visible.
-    @State var contextDockChatCapturedText: String? = nil
-    /// Files / screenshots attached to the frontmost-app chat via its + menu.
-    @State var contextDockChatFiles: [URL] = []
-    @State var finderDesktopFullIndexPrimed = false  // complete (all-file-type) index built once per session
-    @State var finderDesktopSearchPills: [DockPill] = []
-    @State var finderDesktopSearchQuery: String = ""
-    /// Grace window right after a hotkey open during which a launch-time Selection Scope
-    /// (frozen payload) survives the `.activateContextDock` posts the open sequence fires.
-    @State var launchSelectionScopeGraceUntil: Date = .distantPast
-    /// The frozen selection that makes Selection Scope active. Deliberately INDEPENDENT of
-    /// globalContextActivation: selections come from the frontmost app, so the scope belongs to
-    /// whichever surface the user is on (Context Dock or Global Context). Storing it inside the
-    /// activation meant entering the scope forced Global Context — launching with a frontmost
-    /// selection jumped surfaces, and clicking the selection icon in Context Dock threw the user
-    /// out of it.
-    @State var selectionScopePayload: GlobalContextActivation?
-    /// Hotkey-opened Selection Scope starts as a bare compact bar (input + selection pill only),
-    /// matching the idle launcher shell. Typing — or ↓ — unfolds the actions sheet. Entering the
-    /// scope from the selection button keeps the sheet open immediately, as before.
-    @State var selectionScopeSheetCollapsed = false
-    /// True only when the frozen selection came from a writable text control, so "Replace text"
-    /// is offered for a Mail draft or code editor but not for Finder files or a read-only page.
-    @State var selectionScopeSourceAcceptsReplacement = false
-    /// Set by the Selection Scope router when it ran a real row, so the answer path knows the
-    /// work actually happened (and may attach app buttons). Nil means nothing executed.
-    @State var selectionRouterExecutedRouteTitle: String?
-    /// Set when the router checked the whole catalog and found no route — turns the fallback
-    /// answer into "here's the gap, here's the extension" instead of a guess.
-    @State var selectionRouterNoRouteNote: String?
-    /// Recipient remembered by the `deliver.email` route while the answer is still being written.
-    /// The finished text becomes the draft body, so "summarise this and mail it to X" is one
-    /// request instead of two disconnected ones.
-    @State var selectionRouterPendingEmail: PendingSelectionEmail?
-    /// Activation generation already entered, so the window-open handler and the posted
-    /// activation don't both rebuild the surface for one hotkey press.
-    @State var lastAppliedSelectionActivation: Int = -1
-    /// Cloud-consent request rendered inline in the chat (instead of the floating window)
-    /// whenever a chat surface is already on screen.
-    @State var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval?
-    @State var pendingCapabilityApproval: AICapabilityApprovalCenter.PendingApproval?
-    /// Adapter / menu-command approval rendered inline in the chat (instead of the
-    /// floating panel) whenever a chat surface is already on screen.
-    @State var pendingAdapterApproval: AdapterActionRequest?
-    /// Candidates behind the pick-one buttons on the last answer, kept so a click runs the
-    /// exact route that was offered.
-    @State var pendingActionCandidates: [DoraXActionCandidate] = []
-    @State var pendingActionQuery: String = ""
-    /// "This scope has no tool for that" offer — link an installed CLI, or install one.
-    @State var pendingCapabilityGap: CapabilityGapService.Gap?
-    @State var capabilityGapWorking = false
-    @State var lastAppliedDockHeightPreset: DockHeightPreset?
-    @State var lastAppliedDockSurfaceMode: DockSurfaceMode?
-    /// Global Context's collapsed⇄expanded phase at the last applied frame. The height preset
-    /// and surface mode both stay put across that transition, so without this the resize
-    /// cannot tell it apart from a row appearing.
-    @State var lastAppliedGlobalTypingPhase: GlobalContextTypingPhase?
-    // Visible shell height is staged separately from the NSWindow's target capacity so the
-    // input stays pinned while only the area beneath it animates open/closed.
-    @State var renderedDockHeight: CGFloat?
     @StateObject var launcherViewModel = LauncherViewModel()
     @StateObject var globalContextViewModel = GlobalContextViewModel()
     @StateObject var finderContext = FinderContextViewModel()
-    @State var isHoveringSearchIcon = false
-    @State var isHoveringInputField = false
-    @State var suppressMouseDrivenInteractionUntil: Date = .distantPast
-    @State var suppressMouseDrivenInteractionOrigin: NSPoint?
     @StateObject var contextDockViewModel = ContextDockViewModel()
     @StateObject var aiChatViewModel = AIChatViewModel()
     @FocusState var isSearchFieldFocused: Bool
@@ -305,10 +180,6 @@ struct LauncherView: View {
     // Web research
     @StateObject var webResearch = WebResearchSession.shared
 
-    // Swipe gesture monitor
-    // Swipe and launcher hover state lives in LauncherViewModel.
-    @State var isHoveringNowPlayingIcon = false  // Hover over Now Playing icon
-    @State var showMediaHoverDock = false  // Popover-style media dock on hover
 
     // Live menu-bar items loaded from frontmost app on dock open
     // Live and cross-app menu state lives in ContextDockViewModel.

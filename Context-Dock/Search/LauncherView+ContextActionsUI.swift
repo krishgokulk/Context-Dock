@@ -118,7 +118,7 @@ extension LauncherView {
             }
             .buttonStyle(.plain)
             .help("Add running apps")
-            .popover(isPresented: $isShowingChatFocusAppPicker, arrowEdge: .top) {
+            .popover(isPresented: $engineState.isShowingChatFocusAppPicker, arrowEdge: .top) {
                 chatFocusAppPicker
             }
 

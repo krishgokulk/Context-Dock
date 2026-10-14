@@ -2114,7 +2114,7 @@ extension LauncherView {
                                     }
                                 }
 
-                                TextField("", text: $searchState.query)
+                                TextField("", text: $engineState.searchState.query)
                                     // ⌘V of a screenshot, in the dock's own field. Only
                                     // while a chat is armed: outside chat mode the field is
                                     // a search box, and an image has nothing to attach to.
