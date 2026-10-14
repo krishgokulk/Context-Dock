@@ -720,10 +720,7 @@ extension LauncherView {
     }
 
     func resolvedRunningAppIcon(for app: NSRunningApplication) -> NSImage? {
-        if let bundleURL = app.bundleURL {
-            return preparedDockIcon(NSWorkspace.shared.icon(forFile: bundleURL.path))
-        }
-        return preparedDockIcon(app.icon)
+        GlobalSearchIndexBuilder.runningAppIcon(app)
     }
 
     func currentBrowserPageURL() -> URL? {

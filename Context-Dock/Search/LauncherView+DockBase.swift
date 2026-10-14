@@ -262,10 +262,7 @@ extension LauncherView {
     }
 
     func preparedDockIcon(_ icon: NSImage?) -> NSImage? {
-        guard let icon else { return nil }
-        let copy = icon.copy() as? NSImage ?? icon
-        copy.size = NSSize(width: 64, height: 64)
-        return copy
+        GlobalSearchIndexBuilder.preparedIcon(icon)
     }
 
     @ViewBuilder

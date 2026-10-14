@@ -683,6 +683,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // The clipboard history records every copy from launch, whatever is on screen. Not
         // in the test host: it would write the developer's own history file.
         if !Self.isHostingTests { ClipboardHistoryEngine.shared.start() }
+        // Global search's index builds itself and stays fresh, whatever is on screen.
+        if !Self.isHostingTests { GlobalSearchIndexBuilder.shared.start() }
 
         // Create the launcher window
         setupLauncherWindow()
