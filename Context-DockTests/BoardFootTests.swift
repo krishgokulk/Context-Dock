@@ -92,4 +92,16 @@ struct BoardFootTests {
         #expect(closed.kind == "Application")
         #expect(closed.verb == "Open")
     }
+
+    /// "Switch to Safari" in an app's dock is an app, not a command (#258 G4).
+    @Test func anAppRowIsAnApplication() {
+        var pill = DockPill(id: "s", name: "Nowhere", icon: "app", badge: "Switch", execute: {})
+        pill.rankingKind = "appSwitch"
+        pill.sourceBundleId = "com.example.never-installed"
+        let foot = BoardFoot.foot(
+            for: .dock(pill), scopeName: "Calculator", scopeBundleID: "com.apple.calculator",
+            isGlobal: false)
+        #expect(foot.kind == "Application")
+        #expect(foot.verb == "Open")
+    }
 }

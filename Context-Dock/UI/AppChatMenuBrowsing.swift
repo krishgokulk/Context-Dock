@@ -223,6 +223,9 @@ extension AppChatPromptModel {
                 appendFinderDiskMatches(for: folderRows.isEmpty ? typed : "")
             }
         }
+        // An app's Context Dock lists what is typed in Global's sections, best kind first
+        // (#258 G4); the opening list, before anything is typed, stays as it is.
+        if !typed.isEmpty { rows = GlobalResultSection.grouped(rows) }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -1402,7 +1405,14 @@ extension AppChatPromptModel {
     /// on an empty card.
     /// Global's section headers by the row they stand over (#258 G1); empty elsewhere.
     var globalSectionHeaders: [Int: String] {
-        isGlobalScope ? GlobalResultSection.headers(for: rows) : [:]
+        if isGlobalScope { return GlobalResultSection.headers(for: rows) }
+        // An app's Context Dock: headers once something is typed and the answer has more
+        // than one kind — one kind is the whole answer, and the opening list keeps its
+        // summary line (#258 G4).
+        guard !isCLIScope, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return [:] }
+        let headers = GlobalResultSection.headers(for: rows)
+        return headers.count > 1 ? headers : [:]
     }
 
     var listRowCount: Int {

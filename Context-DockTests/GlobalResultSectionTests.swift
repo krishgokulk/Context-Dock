@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 import Testing
 
@@ -22,8 +23,9 @@ struct GlobalResultSectionTests {
         file.previewPath = "/tmp/notes.md"
         #expect(GlobalResultSection.title(for: .dock(file)) == "Files & Folders")
         #expect(GlobalResultSection.title(for: SearchResult.ResultType.cliTool) == "Commands")
-        // A row that is not a Global result has no section.
-        #expect(GlobalResultSection.title(for: .file(URL(fileURLWithPath: "/tmp"))) == nil)
+        // An app's own rows have Global's sections too (G4); a CLI subcommand has none.
+        #expect(GlobalResultSection.title(for: .file(URL(fileURLWithPath: "/tmp"))) == "Files & Folders")
+        #expect(GlobalResultSection.title(for: .cliSuggestion("status")) == nil)
     }
 
     @Test func rowsGatherUnderTheSectionOfTheirBestRowInOrder() {
@@ -49,7 +51,7 @@ struct GlobalResultSectionTests {
             pill("Safari Preview", section: "Applications"),
         ])
         #expect(GlobalResultSection.headers(for: rows) == [0: "Applications", 2: "Menu commands"])
-        #expect(GlobalResultSection.headers(for: [.file(URL(fileURLWithPath: "/tmp"))]).isEmpty)
+        #expect(GlobalResultSection.headers(for: [.cliSuggestion("status")]).isEmpty)
     }
 }
 
@@ -91,5 +93,33 @@ struct GlobalShowMoreTests {
     @Test func theFallbacksAreNeverCut() {
         let many = [row("Safari", "Applications")] + (1...7).map { row("F\($0)", GlobalFallbacks.section) }
         #expect(GlobalResultSection.capped(many, expanded: [], showMore: more).count == 8)
+    }
+}
+
+/// An app's Context Dock lists what is typed in the same sections (#258 G4).
+@MainActor
+@Suite("App scope sections")
+struct AppScopeSectionTests {
+    private let copy = AppChatRow.command(AXMenuItem(
+        title: "Copy", path: ["Edit", "Copy"], isEnabled: true,
+        element: AXUIElementCreateSystemWide(), children: []))
+
+    @Test func twoKindsTypedGetHeaders() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        model.rows = [copy, .file(URL(fileURLWithPath: "/tmp/copy.txt"))]
+        model.query = "cop"
+        #expect(model.globalSectionHeaders == [0: "Menu commands", 1: "Files & Folders"])
+    }
+
+    @Test func oneKindOrNothingTypedHasNone() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        model.rows = [copy]
+        model.query = "cop"
+        #expect(model.globalSectionHeaders.isEmpty)
+        model.rows = [copy, .file(URL(fileURLWithPath: "/tmp/copy.txt"))]
+        model.query = ""
+        #expect(model.globalSectionHeaders.isEmpty)
     }
 }
