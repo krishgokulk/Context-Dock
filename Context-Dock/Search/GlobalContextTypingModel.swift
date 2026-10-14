@@ -10,13 +10,6 @@ enum GlobalContextTypingPhase: Equatable {
     case expanded
 }
 
-/// The two visual states of the Global Context surface. Derived ONLY from
-/// `GlobalContextTypingSnapshot.phase` (the single expansion source of truth) —
-/// never from query text, selected row, match dock contents, or result count.
-enum GlobalContextVisualState: Equatable {
-    case compactTyping
-    case expandedNavigation
-}
 
 struct GlobalContextTopMatch: Identifiable, Equatable {
     enum Kind: Equatable {

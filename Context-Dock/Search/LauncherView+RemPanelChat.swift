@@ -1304,48 +1304,7 @@ extension LauncherView {
         }
     }
 
-    func checkRemInstalled() {
-        Task {
-            // Check known install paths directly — app doesn't inherit shell PATH
-            let home = NSHomeDirectory()
-            let knownPaths = [
-                "/usr/local/bin/rem",
-                "/opt/homebrew/bin/rem",
-                "\(home)/.local/bin/rem",
-                "\(home)/go/bin/rem",
-                "\(home)/.cargo/bin/rem",
-                "\(home)/bin/rem",
-            ]
-            let fm = FileManager.default
-            if knownPaths.contains(where: { fm.fileExists(atPath: $0) }) {
-                await MainActor.run { remIsInstalled = true }
-                return
-            }
-            // Fallback: login shell which — loads user's full PATH
-            let proc = Process()
-            proc.launchPath = "/bin/bash"
-            proc.arguments = ["-l", "-c", "which rem"]
-            proc.standardOutput = Pipe()
-            proc.standardError = Pipe()
-            try? proc.run()
-            proc.waitUntilExit()
-            await MainActor.run { remIsInstalled = proc.terminationStatus == 0 }
-        }
-    }
 
-    func installRem() {
-        // Copy install command to clipboard — user runs it in their own terminal
-        // (curl|bash is blocked by TerminalAIBridge security policy, correctly so)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(
-            "curl -fsSL https://rem.sidv.dev/install | bash", forType: .string)
-        remPanelChatMessages.append(
-            AIChatMessage(
-                role: .assistant,
-                content:
-                    "📋 Install command copied to clipboard!\n\nPaste it in Terminal:\n```\ncurl -fsSL https://rem.sidv.dev/install | bash\n```\nAnswer **n** when asked about the AI agent skill — ILauncher uses your selected provider (\(AppSettings.shared.selectedAIProvider.shortName)) instead.\n\nAlternatively: open ILauncher terminal → type \"install rem\" → AI will handle it."
-            ))
-    }
 
     func isAffirmativeResponse(_ text: String) -> Bool {
         let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()

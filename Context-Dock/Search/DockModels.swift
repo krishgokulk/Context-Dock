@@ -102,11 +102,6 @@ struct SharedResultRowModel: Identifiable {
     var copy: (() -> Void)? = nil
 }
 
-struct SharedResultSectionModel: Identifiable {
-    let id: String
-    let title: String
-    let rows: [SharedResultRowModel]
-}
 
 struct AIMenuProposal {
     var path: [String]

@@ -20,55 +20,6 @@ enum GlobalSearchIndexThrottle {
 import Vision
 
 extension LauncherView {
-    /// Final Backspace/Clear is input-critical. Cancel work immediately, but leave the
-    /// rendered result snapshot alive for one display frame so AppKit can paint the empty
-    /// NSTextField before SwiftUI tears down rows and resizes the translucent NSPanel.
-    func beginGlobalContextEmptyQueryTransition() {
-        globalContextViewModel.fastMatchTask?.cancel()
-        globalContextViewModel.prepareTask?.cancel()
-        globalContextViewModel.autoExpandTask?.cancel()
-        globalContextViewModel.idleCollapseTask?.cancel()
-        globalAppMatchTask?.cancel()
-        globalGroupedTask?.cancel()
-        queryChangeTask?.cancel()
-        globalAppMatchGeneration &+= 1
-        globalGroupedGeneration &+= 1
-        queryChangeGeneration &+= 1
-        globalContextViewModel.isResolvingFastMatches = false
-        globalContextViewModel.expandWhenFastMatchesResolve = false
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) {
-            guard self.isGlobalContextActive,
-                self.globalInlineAppScope == nil,
-                self.searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            else { return }
-
-            var transaction = Transaction()
-            transaction.animation = nil
-            withTransaction(transaction) {
-                self.globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
-                self.globalContextViewModel.preparedResults = nil
-                self.cachedGlobalAppQuery = ""
-                self.cachedGlobalAppMatches = []
-                self.cachedGlobalGroupedQuery = ""
-                self.cachedGlobalGroupedState = nil
-                self.globalContextViewModel.cachedGroupedFingerprint = ""
-                self.pendingGlobalAppQuery = nil
-                self.pendingGlobalGroupedQuery = nil
-                self.focusedAppPillIndex = nil
-                self.l2.focusedPillIndex = nil
-                self.l2.pillNavViaKeyboard = false
-                self.measuredGlobalListContentHeight = 0
-            }
-            self.globalContextViewModel.fastMatchTask = nil
-            self.globalContextViewModel.prepareTask = nil
-            self.globalContextViewModel.autoExpandTask = nil
-            self.globalContextViewModel.idleCollapseTask = nil
-            self.globalAppMatchTask = nil
-            self.globalGroupedTask = nil
-            self.queryChangeTask = nil
-        }
-    }
 
     func currentGlobalAppMatches(for query: String) -> [SearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -306,56 +257,7 @@ extension LauncherView {
             ?? globalGroupedListNavigationState(for: query)
     }
 
-    /// Opens an app-scope capsule's result sheet. Typing keeps the capsule compact; this is
-    /// the one transition that reveals its rows, so it also seats the first selection and
-    /// animates the panel as a single motion.
-    func expandScopedCapsuleSheet(selectFirst: Bool) {
-        guard !globalContextViewModel.scopedSheetExpanded else { return }
-        globalContextViewModel.scopedSheetExpanded = true
-        // `typingSnapshot.phase` is the documented single source of truth for expansion, and
-        // several gates key off it (the Global Context surface only renders when the snapshot
-        // stops asking for the top match alone). A scoped capsule never runs the typing
-        // pipeline, so its phase would sit at .typing forever and ↓ would set a flag nothing
-        // downstream believed — the dock stayed a transparent pill with no sheet.
-        if globalContextViewModel.typingSnapshot.phase != .expanded {
-            globalContextViewModel.typingSnapshot.phase = .expanded
-        }
-        if selectFirst {
-            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if isGlobalContextActive {
-                let state = visibleGlobalGroupedListNavigationState(for: q)
-                if state.totalCount > 0 {
-                    setGlobalGroupedFocus(
-                        globalGroupedVisibleOrder(state: state).first, state: state)
-                }
-            } else {
-                // Frontmost Context Dock renders dock pills: seat the first non-separator row
-                // so ↓ lands on something and the next ↓ moves down the list.
-                let pills = renderedOrderDockPills(for: q)
-                if let index = pills.firstIndex(where: { !$0.isSeparator }) {
-                    l2.pillNavViaKeyboard = true
-                    l2.focusedPillIndex = index
-                }
-            }
-        }
-        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
-    }
 
-    /// Collapses the capsule back to its input. Called whenever the query or the scope
-    /// changes, so a new search starts compact instead of inheriting the open sheet.
-    func collapseScopedCapsuleSheet() {
-        guard globalContextViewModel.scopedSheetExpanded else { return }
-        globalContextViewModel.scopedSheetExpanded = false
-        // Back to the compact contract: the snapshot asks for the top match alone again.
-        if globalContextViewModel.typingSnapshot.phase == .expanded {
-            globalContextViewModel.typingSnapshot.phase =
-                searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? .idle : .typing
-        }
-        l2.focusedPillIndex = nil
-        focusedAppPillIndex = nil
-        requestWindowSizeUpdate(reason: .modeChanged, animated: true, debounceNanoseconds: 0)
-    }
 
     func isActiveGlobalRunningAppMenuScope() -> Bool {
         guard isGlobalContextActive, currentGlobalScopedBundleID != nil else { return false }
@@ -404,15 +306,6 @@ extension LauncherView {
         return snapshot.documents
     }
 
-    func indexedAppDocuments(_ docs: [GlobalSearchService.SearchDocument])
-        -> [GlobalSearchService.SearchDocument]
-    {
-        docs.filter { doc in
-            if case .cachedMenu = doc.action { return false }
-            if case .browserURL = doc.action { return false }
-            return true
-        }
-    }
 
     func indexedRunningMenuDocuments(_ docs: [GlobalSearchService.SearchDocument])
         -> [GlobalSearchService.SearchDocument]
@@ -450,13 +343,6 @@ extension LauncherView {
         }
     }
 
-    func mergeGlobalCommandRows(
-        _ commandRows: [SearchResult],
-        with appRows: [SearchResult],
-        limit: Int
-    ) -> [SearchResult] {
-        mergeGlobalRowsPreservingPriority([appRows, commandRows], limit: limit)
-    }
 
     func mergeGlobalRows(
         _ rowGroups: [[SearchResult]],
@@ -1050,61 +936,10 @@ extension LauncherView {
             .map { $0 }
     }
 
-    func hasStrongGlobalAppMatch(query: String, appMatches: [SearchResult]) -> Bool {
-        let q = normalizedDockPillText(query)
-        guard !q.isEmpty, let first = appMatches.first else { return false }
-        let title = normalizedDockPillText(first.title)
-        if title == q || title.hasPrefix(q) { return true }
-        return first.score >= 8_900
-    }
 
-    func shouldIncludeFrontmostGlobalMenuResults(
-        query: String,
-        appMatches: [SearchResult],
-        isGenericAppQuery: Bool
-    ) -> Bool {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty, !isGenericAppQuery else { return false }
-        if frontmost.bundleID == "com.apple.finder" { return false }
-        return true
-    }
 
-    func shouldIncludeCrossAppGlobalMenuResults(
-        query: String,
-        appMatches: [SearchResult],
-        isGenericAppQuery: Bool
-    ) -> Bool {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty, !isGenericAppQuery else { return false }
-        guard q.count >= 3 else { return false }
-        return true
-    }
 
-    var shouldShowGlobalInputLoadingIndicator: Bool {
-        guard isGlobalContextActive, shouldUsePureGlobalAppSearch else { return false }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let groupedKey = globalGroupedStateCacheKey(for: q)
-        guard !q.isEmpty else { return false }
-        if globalContextViewModel.isResolvingFastMatches { return true }
-        // Committed state for the current query → done, no spinner.
-        if cachedGlobalGroupedQuery == groupedKey, cachedGlobalGroupedState != nil {
-            return false
-        }
-        if searchState.isLoadingApps { return q.count >= 3 }
-        // Build in flight for this query (coalesced keystroke rebuild) → spinner.
-        return pendingGlobalAppQuery == q || pendingGlobalGroupedQuery == q
-    }
 
-    var shouldShowContextDockInputLoadingIndicator: Bool {
-        guard showContextInDock,
-            !isGlobalContextActive,
-            !aiMode.isActive,
-            !showMediaLayer
-        else { return false }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        return cachedDockPills.isEmpty && pendingDockPillQuery == pillQuery
-    }
 
     func isGenericApplicationListQuery(_ query: String) -> Bool {
         switch normalizedDockPillText(query) {
@@ -1194,148 +1029,11 @@ extension LauncherView {
         return score
     }
 
-    func pureGlobalAppMenuFallbackScope(
-        for query: String,
-        appMatches: [SearchResult]? = nil
-    ) -> DockScopeResolution? {
-        guard shouldUsePureGlobalAppSearch else { return nil }
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard q.split(separator: " ").count >= 2 else { return nil }
-        guard (appMatches ?? currentGlobalAppMatches(for: q)).isEmpty else { return nil }
 
-        let scope = resolveDockScope(for: q)
-        let actionQuery = scope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard scope.isExplicitAppScope, !actionQuery.isEmpty else { return nil }
-        return scope
-    }
 
-    func focusedDockPillForInputPreview() -> DockPill? {
-        guard usesVerticalListDockLayout,
-            let idx = l2.focusedPillIndex
-        else { return nil }
 
-        if shouldUsePureGlobalAppSearch {
-            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let state = visibleGlobalGroupedListNavigationState(for: q)
-            let menuIndex = idx - state.appResults.count
-            guard menuIndex >= 0,
-                menuIndex < state.menuPills.count,
-                !state.menuPills[menuIndex].isSeparator
-            else { return nil }
-            return state.menuPills[menuIndex]
-        }
 
-        let q =
-            isL2ContextActive
-            ? searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            : ""
-        let pillQuery = shouldUseFinderSearchPopover(for: q) ? "" : q
-        let pills = currentVisibleDockPills(for: pillQuery)
-        guard idx >= 0, idx < pills.count, !pills[idx].isSeparator else { return nil }
-        return pills[idx]
-    }
 
-    func focusedGlobalAppResultForInputPreview() -> SearchResult? {
-        guard usesVerticalListDockLayout,
-            isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            let idx = focusedAppPillIndex
-        else { return nil }
-
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = visibleGlobalGroupedListNavigationState(for: q)
-        guard idx >= 0, idx < state.appResults.count else { return nil }
-        return state.appResults[idx]
-    }
-
-    func topGlobalAppResultForInputPreview() -> SearchResult? {
-        guard shouldUsePureGlobalAppSearch else { return nil }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return nil }
-        if let prepared = globalContextViewModel.preparedResults,
-            prepared.query == q
-        {
-            return prepared.navigationState?.appResults.first
-        }
-        return globalGroupedListNavigationState(for: q).appResults.first
-    }
-
-    func moveGlobalAppResultFocus(direction: Int) -> Bool {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = visibleGlobalGroupedListNavigationState(for: q)
-        if state.totalCount > 0 || isActiveGlobalRunningAppMenuScope() {
-            return moveGlobalGroupedListFocus(direction: direction)
-        }
-        let matches =
-            state.appResults.isEmpty
-            ? currentGlobalAppMatches(for: q)
-            : state.appResults
-        guard !matches.isEmpty else {
-            focusedAppPillIndex = nil
-            l2.pillNavViaKeyboard = false
-            return false
-        }
-
-        if direction > 0 {
-            // Row 0 is shown pre-selected (render default) while typing even though
-            // focusedAppPillIndex is nil — start from it so the first Down goes to the second row.
-            let start = focusedAppPillIndex ?? (q.isEmpty ? -1 : 0)
-            let next = min(start + 1, matches.count - 1)
-            focusedAppPillIndex = next
-            l2.pillNavViaKeyboard = true
-            return true
-        }
-
-        if direction < 0 {
-            // At the first row (explicit index 0, or the render-default first where index is nil):
-            // Up returns to the input with the query selected, Spotlight-style.
-            guard let current = focusedAppPillIndex, current > 0 else {
-                DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
-                return true
-            }
-            focusedAppPillIndex = current - 1
-            l2.pillNavViaKeyboard = true
-            return true
-        }
-
-        return true
-    }
-
-    struct GlobalInputLoadingDots: View {
-        @Environment(\.accessibilityReduceMotion) var reduceMotion
-
-        var body: some View {
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
-                Canvas { context, size in
-                    let dotCount = 10
-                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
-                    let radius = min(size.width, size.height) * 0.36
-                    let dotSize = min(size.width, size.height) * 0.10
-                    let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-
-                    for index in 0..<dotCount {
-                        let progress = (Double(index) / Double(dotCount) + time * 1.15)
-                            .truncatingRemainder(dividingBy: 1)
-                        let angle = Double(index) / Double(dotCount) * .pi * 2
-                        let x = center.x + CGFloat(cos(angle)) * radius
-                        let y = center.y + CGFloat(sin(angle)) * radius
-                        let opacity = 0.18 + progress * 0.72
-                        let rect = CGRect(
-                            x: x - dotSize / 2,
-                            y: y - dotSize / 2,
-                            width: dotSize,
-                            height: dotSize
-                        )
-                        context.fill(
-                            Path(ellipseIn: rect),
-                            with: .color(Color.accentColor.opacity(opacity))
-                        )
-                    }
-                }
-            }
-            .accessibilityLabel("Loading")
-        }
-    }
 
     /// Three-layer intent signal: learned picks → verb heuristic → on-device AI cache.
     func intentFavorsMenu(_ q: String) -> Bool {
@@ -1802,34 +1500,7 @@ extension LauncherView {
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
     }
 
-    func buildGlobalGroupedListNavigationState(for query: String)
-        -> GlobalGroupedListNavigationState
-    {
-        SearchPerformanceLog.shared.signpost("global.buildGroupedState", query: query) {
-            let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard shouldUsePureGlobalAppSearch, !q.isEmpty || globalInlineAppScope != nil else {
-                return emptyGlobalGroupedListNavigationState()
-            }
-            return instantGlobalGroupedListNavigationState(for: q)
-        }
-    }
 
-    func groupMenuPillsByTitle(_ pills: [DockPill]) -> [MenuPillGroup] {
-        var seen: [String: Int] = [:]
-        var groups: [MenuPillGroup] = []
-        for pill in pills {
-            let key = normalizedDockPillText(pill.name)
-            if let idx = seen[key] {
-                let g = groups[idx]
-                groups[idx] = MenuPillGroup(
-                    id: g.id, primaryPill: g.primaryPill, allPills: g.allPills + [pill])
-            } else {
-                seen[key] = groups.count
-                groups.append(MenuPillGroup(id: key, primaryPill: pill, allPills: [pill]))
-            }
-        }
-        return groups
-    }
 
     func currentGlobalGroupedFocusIndex(
         state: GlobalGroupedListNavigationState
@@ -1852,22 +1523,6 @@ extension LauncherView {
         return state.menuFirst ? menuIndices + appIndices : appIndices + menuIndices
     }
 
-    func globalGroupedTitle(
-        at index: Int,
-        state: GlobalGroupedListNavigationState
-    ) -> String? {
-        guard index >= 0, index < state.totalCount else { return nil }
-        let title: String
-        if index < state.appResults.count {
-            title = state.appResults[index].title
-        } else {
-            let menuIndex = index - state.appResults.count
-            guard menuIndex >= 0, menuIndex < state.menuPills.count else { return nil }
-            title = state.menuPills[menuIndex].name
-        }
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
 
     func setGlobalGroupedFocus(
         _ index: Int?,
@@ -1895,213 +1550,11 @@ extension LauncherView {
         }
     }
 
-    func moveGlobalGroupedListFocus(direction: Int) -> Bool {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = visibleGlobalGroupedListNavigationState(for: q)
-        guard state.totalCount > 0 else {
-            setGlobalGroupedFocus(nil, state: state)
-            return false
-        }
 
-        if direction > 0 {
-            let visibleOrder = globalGroupedVisibleOrder(state: state)
-            // Row 0 is shown pre-selected (render default) whenever the list renders
-            // a default-first row even though the focus index is nil — while typing
-            // (q non-empty) OR inside any active global scope (which always shows the
-            // first row selected via isRunningAppMenuScopeDefaultFirstRow). Start from
-            // that row so the first Down advances to the second instead of re-selecting
-            // the first. Mirrors the fallback in moveGlobalAppResultFocus(direction:).
-            let showsDefaultFirstRow = !q.isEmpty || isActiveGlobalRunningAppMenuScope()
-            let current =
-                currentGlobalGroupedFocusIndex(state: state)
-                .flatMap { visibleOrder.firstIndex(of: $0) }
-                ?? (showsDefaultFirstRow ? 0 : -1)
-            setGlobalGroupedFocus(
-                visibleOrder[min(current + 1, visibleOrder.count - 1)], state: state)
-            return true
-        }
 
-        if direction < 0 {
-            let visibleOrder = globalGroupedVisibleOrder(state: state)
-            guard let focused = currentGlobalGroupedFocusIndex(state: state),
-                let current = visibleOrder.firstIndex(of: focused)
-            else {
-                setGlobalGroupedFocus(nil, state: state)
-                DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
-                return true
-            }
-            if current <= 0 {
-                setGlobalGroupedFocus(nil, state: state)
-                DispatchQueue.main.async { self.reclaimSearchInputFocusSelectingAll() }
-            } else {
-                setGlobalGroupedFocus(visibleOrder[current - 1], state: state)
-            }
-            return true
-        }
 
-        return true
-    }
 
-    func executeFocusedGlobalGroupedListRow() -> Bool {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var state = visibleGlobalGroupedListNavigationState(for: q)
-        // Before the sheet expands there is no committed grouped state — that method returns
-        // empty on purpose, so SwiftUI body evaluation never starts index work per keystroke.
-        // The prepared snapshot is what exists at that point, and it is what the leading icon
-        // and the ghost are already drawn from. Without it Enter did nothing at all until the
-        // user pressed Down to expand, which is what committed the state.
-        if state.totalCount == 0,
-            let prepared = globalContextViewModel.preparedResults,
-            prepared.query == q,
-            let preparedState = prepared.navigationState,
-            preparedState.totalCount > 0
-        {
-            state = preparedState
-        }
-        // Neither snapshot has rows while the dock is compact: the grouped state is not
-        // committed until expansion, and preparedResults carries a nil navigationState at
-        // this point. The ghost and the leading icon come from
-        // currentOrImmediateGlobalAppMatches — verified by logging the real keystroke, which
-        // showed preparedQ matching the query with a nil state behind it. Enter runs that
-        // same row, so it acts on exactly what is on screen.
-        if state.totalCount == 0 {
-            guard let immediate = currentOrImmediateGlobalAppMatches(for: q).first else {
-                return false
-            }
-            executeGlobalAppSearchResult(immediate)
-            return true
-        }
-        guard state.totalCount > 0 else { return false }
 
-        let index =
-            currentGlobalGroupedFocusIndex(state: state)
-            ?? globalGroupedVisibleOrder(state: state).first
-            ?? 0
-        if index < state.appResults.count {
-            executeGlobalAppSearchResult(state.appResults[index])
-            return true
-        }
-
-        let menuIndex = index - state.appResults.count
-        guard menuIndex >= 0, menuIndex < state.menuPills.count else { return false }
-        executeDockPill(state.menuPills[menuIndex])
-        searchState.query = ""
-        focusedAppPillIndex = nil
-        l2.focusedPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        return true
-    }
-
-    /// Scopes exactly the row highlighted by the grouped result sheet. This must
-    /// use the grouped navigation snapshot—not the app-only match array—because
-    /// Global Commands and apps can share the same visible title.
-    @discardableResult
-    func scopeFocusedGlobalGroupedListRow() -> Bool {
-        guard isGlobalContextActive, currentGlobalScopedBundleID == nil else { return false }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state = visibleGlobalGroupedListNavigationState(for: q)
-        guard state.totalCount > 0,
-            let index = currentGlobalGroupedFocusIndex(state: state)
-                ?? globalGroupedVisibleOrder(state: state).first,
-            index >= 0,
-            index < state.appResults.count
-        else { return false }
-
-        let result = state.appResults[index]
-        if result.subtitle.hasPrefix("syscmd://") || result.subtitle.hasPrefix("cli://") {
-            return activateGlobalInlineScope(result: result, bundleID: result.subtitle)
-        }
-        guard result.type == .application,
-            let bundleID = bundleIdentifier(forApplicationResult: result),
-            !bundleID.isEmpty
-        else { return false }
-        return activateGlobalInlineScope(result: result, bundleID: bundleID)
-    }
-
-    func quitFocusedGlobalAppResultIfPossible(state: GlobalGroupedListNavigationState) -> Bool {
-        guard let index = currentGlobalGroupedFocusIndex(state: state),
-            index >= 0,
-            index < state.appResults.count
-        else { return false }
-        let result = state.appResults[index]
-        let lookup = runningApplicationLookup()
-        guard let runningApp = runningApplication(forGlobalResult: result, lookup: lookup) else {
-            return false
-        }
-        let preservedQuery = searchState.query
-        terminateRunningAppFromDock(runningApp)
-        searchState.query = preservedQuery
-        focusedAppPillIndex = nil
-        hoveredAppPillIndex = nil
-        l2.focusedPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        scheduleGlobalAppMatchRebuild(query: preservedQuery, delayNanoseconds: 0)
-        scheduleGlobalGroupedListRebuild(query: preservedQuery, delayNanoseconds: 0)
-        return true
-    }
-
-    func topContextMatchDockTitleForInputPreview() -> String? {
-        guard isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            globalInlineAppScope == nil
-        else { return nil }
-
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return nil }
-
-        // CLI packages are an immediate, local match.  Do this before consulting the
-        // debounced grouped-result snapshot so the input completion stays in lockstep
-        // with the terminal result (for example, `bre` -> `brew`) on the first keystroke.
-        if let cli = directGlobalCLIScopeMatches(for: q, limit: 1).first {
-            return cli.title
-        }
-
-        // Ghost must use the same visible order as the result sheet. If first row is
-        // a menu command, preview that command, not the first app result.
-        if let prepared = globalContextViewModel.preparedResults,
-            prepared.query == q.lowercased(),
-            let state = prepared.navigationState,
-            let index = globalGroupedVisibleOrder(state: state).first,
-            let title = globalGroupedTitle(at: index, state: state)
-        {
-            return title
-        }
-
-        let state = globalGroupedListNavigationState(for: q.lowercased())
-        if let index = globalGroupedVisibleOrder(state: state).first,
-            let title = globalGroupedTitle(at: index, state: state)
-        {
-            return title
-        }
-
-        return currentOrImmediateGlobalAppMatches(for: q).first?.title
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func focusedOrTopGlobalAppResult() -> SearchResult? {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let state: GlobalGroupedListNavigationState = {
-            if let prepared = globalContextViewModel.preparedResults,
-                prepared.query == q,
-                let navigationState = prepared.navigationState
-            {
-                return navigationState
-            }
-            return globalGroupedListNavigationState(for: q)
-        }()
-        let matches =
-            state.appResults.isEmpty
-            ? currentOrImmediateGlobalAppMatches(for: q)
-            : state.appResults
-        guard !matches.isEmpty else { return nil }
-        if let focused = currentGlobalGroupedFocusIndex(state: state),
-            focused >= 0,
-            focused < matches.count
-        {
-            return matches[focused]
-        }
-        return matches[0]
-    }
 
     func executeGlobalAppSearchResult(_ result: SearchResult) {
         // A Global Command with an inline control executes in place and keeps the
@@ -2144,10 +1597,6 @@ extension LauncherView {
         // Enter/click runs the command's action directly — Global Commands no longer
         // auto-scope on Enter. Scoping into a command's live list (Bluetooth devices,
         // Wi-Fi networks, presets) is reserved for the explicit scope gesture (→).
-        // Arm the launch morph BEFORE running the action: result.action() may activate a
-        // running app and force-hide the dock — this makes those hides no-op so the dock
-        // stays and morphs into the launched app's Context Dock.
-        AppDelegate.shared?.holdDockThroughAppLaunch()
         result.action()
         searchState.query = ""
         focusedAppPillIndex = nil
@@ -2164,161 +1613,8 @@ extension LauncherView {
         scheduleContextDockTransition(bundleId: bundleId, appName: result.title)
     }
 
-    @discardableResult
-    func focusTopGlobalAppResultIfPossible() -> Bool {
-        guard isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            globalContextViewModel.typingSnapshot.phase == .expanded,
-            searchInputCursorIsAtEnd()
-        else { return false }
 
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty || isActiveGlobalRunningAppMenuScope() else { return false }
-        let state = visibleGlobalGroupedListNavigationState(for: q)
-        if state.totalCount > 0 {
-            let first = globalGroupedVisibleOrder(state: state).first ?? 0
-            let current = currentGlobalGroupedFocusIndex(state: state) ?? first
-            setGlobalGroupedFocus(min(current, state.totalCount - 1), state: state)
-            return true
-        }
-        let matches =
-            state.appResults.isEmpty
-            ? currentOrImmediateGlobalAppMatches(for: q)
-            : state.appResults
-        guard !matches.isEmpty else { return false }
-        focusedAppPillIndex = min(focusedAppPillIndex ?? 0, matches.count - 1)
-        l2.focusedPillIndex = nil
-        l2.pillNavViaKeyboard = true
-        return true
-    }
 
-    @discardableResult
-    func activateFocusedGlobalAppScopeIfPossible() -> Bool {
-        guard isGlobalContextActive,
-            currentGlobalScopedBundleID == nil,
-            searchInputCursorIsAtEnd()
-        else { return false }
-
-        // The input's leading CLI icon is resolved synchronously from the package
-        // registry, while the grouped app snapshot is intentionally debounced. On a
-        // quick Right Arrow those two could disagree and scope an old app result.
-        // Command-name prefix matches own this gesture until the user navigates to a
-        // different row explicitly.
-        if let cliResult = directGlobalCLIScopeMatches(
-            for: searchState.query,
-            limit: 1
-        ).first {
-            return activateGlobalInlineScope(result: cliResult, bundleID: cliResult.subtitle)
-        }
-
-        guard let result = focusedGlobalAppResultForInputPreview() ?? focusedOrTopGlobalAppResult()
-        else { return false }
-
-        if result.subtitle.hasPrefix("syscmd://") || result.subtitle.hasPrefix("cli://") {
-            let activated = activateGlobalInlineScope(
-                result: result,
-                bundleID: result.subtitle
-            )
-            if activated {
-                focusedAppPillIndex = nil
-                l2.focusedPillIndex = nil
-                reclaimSearchInputFocus()
-            }
-            return activated
-        }
-
-        guard shouldUsePureGlobalAppSearch,
-            result.type == .application,
-            let bundleID = bundleIdentifier(forApplicationResult: result)
-        else { return false }
-
-        let activated = activateGlobalInlineScope(
-            result: result,
-            bundleID: bundleID
-        )
-        if activated {
-            focusedAppPillIndex = nil
-            l2.focusedPillIndex = nil
-            reclaimSearchInputFocus()
-        }
-        return activated
-    }
-
-    @discardableResult
-    func acceptTopGlobalAppGhostCompletionIfPossible() -> Bool {
-        guard isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            searchInputCursorIsAtEnd()
-        else { return false }
-
-        let typed = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedQuery = typed.lowercased()
-
-        // Keep Right Arrow consistent with the immediate command result/leading icon,
-        // rather than waiting for the debounced grouped-result state to catch up.
-        if let cliResult = directGlobalCLIScopeMatches(for: typed, limit: 1).first {
-            return activateGlobalInlineScope(result: cliResult, bundleID: cliResult.subtitle)
-        }
-
-        // Right Arrow always follows the visibly highlighted row. Commands enter
-        // their scope immediately; apps first accept their visible completion.
-        let state = visibleGlobalGroupedListNavigationState(for: normalizedQuery)
-        let selectedIndex =
-            currentGlobalGroupedFocusIndex(state: state)
-            ?? globalGroupedVisibleOrder(state: state).first
-        let selectedResult: SearchResult? = {
-            guard let selectedIndex,
-                selectedIndex >= 0,
-                selectedIndex < state.appResults.count
-            else { return nil }
-            return state.appResults[selectedIndex]
-        }()
-        if let selectedResult,
-            selectedResult.subtitle.hasPrefix("syscmd://")
-                || selectedResult.subtitle.hasPrefix("cli://")
-        {
-            return activateGlobalInlineScope(
-                result: selectedResult,
-                bundleID: selectedResult.subtitle
-            )
-        }
-
-        // The ghost the user is looking at wins. It is computed by
-        // topContextMatchDockTitleForInputPreview from preparedResults, while selectedResult
-        // above comes from visibleGlobalGroupedListNavigationState — two snapshots that
-        // disagree about which row is first. Completing from the other one is what filled
-        // "iPhone Mirroring" while the input plainly ghosted "screenshot".
-        //
-        // Only accept it as the completion when it actually continues what was typed;
-        // otherwise fall back to the selected row, since a ghost that does not extend the
-        // query is not what Tab is completing.
-        let displayedGhost = topContextMatchDockTitleForInputPreview()
-        let ghostContinuesQuery =
-            displayedGhost?.lowercased().hasPrefix(normalizedQuery) == true
-        let completionTitle =
-            (ghostContinuesQuery ? displayedGhost : nil)
-            ?? selectedResult?.title
-            ?? displayedGhost
-            ?? focusedOrTopGlobalAppResult()?.title
-
-        guard !typed.isEmpty,
-            let completionTitle,
-            completionTitle.caseInsensitiveCompare(typed) != .orderedSame
-        else { return false }
-
-        suppressGlobalInlineAppScopeDetection = true
-        searchState.query = completionTitle + " "
-        focusedAppPillIndex = nil
-        l2.focusedPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        scheduleGlobalAppMatchRebuild(query: searchState.query, delayNanoseconds: 0)
-        scheduleGlobalGroupedListRebuild(query: searchState.query, delayNanoseconds: 0)
-        reclaimSearchInputFocus()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-            suppressGlobalInlineAppScopeDetection = false
-        }
-        return true
-    }
 
     @discardableResult
     func activateGlobalInlineScope(result: SearchResult, bundleID: String) -> Bool {
@@ -2381,40 +1677,11 @@ extension LauncherView {
         return true
     }
 
-    @discardableResult
-    func executeScopedRunningAppIfIdle() -> Bool {
-        guard isGlobalContextActive,
-            searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-            let scopedBundleID = currentGlobalScopedBundleID
-        else { return false }
-        if let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == scopedBundleID && !$0.isTerminated
-        }) {
-            activateRunningAppFromGlobalContext(app)
-            return true
-        }
-        let appName =
-            l2.targetApp?.bundleId == scopedBundleID
-            ? l2.targetApp?.name
-            : globalInlineAppScope?.appName
-        guard let url = applicationURL(
-            bundleIdentifier: scopedBundleID,
-            appName: appName ?? ""
-        ) else { return false }
-        AppDelegate.shared?.holdDockThroughAppLaunch()
-        hideLauncherAfterResultExecution()
-        NSWorkspace.shared.openApplication(at: url, configuration: .init())
-        scheduleContextDockTransition(bundleId: scopedBundleID, appName: appName ?? url.deletingPathExtension().lastPathComponent)
-        return true
-    }
 
     func reclaimSearchInputFocus() {
         l2.focusedPillIndex = nil
         focusedAppPillIndex = nil
         l2.pillNavViaKeyboard = false
-        if let window = AppDelegate.shared?.launcherWindow {
-            window.makeKeyAndOrderFront(nil)
-        }
 
         if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
             moveSearchInsertionPointToEnd(in: textView)
@@ -2446,9 +1713,6 @@ extension LauncherView {
         // .focusSearchField path does exactly this. A right-arrow scope switch can leave the
         // launcher non-key (the frontmost app behind it is still active), which silently drops
         // the focus assignment and the caret never appears.
-        if let window = AppDelegate.shared?.launcherWindow {
-            window.makeKeyAndOrderFront(nil)
-        }
         NSApp.activate(ignoringOtherApps: true)
         // Toggle across runloop turns so SwiftUI re-applies focus even when the binding is
         // already true (a plain re-set of true is a no-op and won't reclaim first responder).
@@ -2478,8 +1742,7 @@ extension LauncherView {
 
     func clearSearchFieldEditorText() {
         let keyResponder = NSApp.keyWindow?.firstResponder as? NSTextView
-        let launcherResponder = AppDelegate.shared?.launcherWindow?.firstResponder as? NSTextView
-        let textViews = [keyResponder, launcherResponder].compactMap { $0 }
+        let textViews = [keyResponder].compactMap { $0 }
 
         for textView in textViews {
             if !textView.string.isEmpty {
@@ -2490,36 +1753,6 @@ extension LauncherView {
         }
     }
 
-    /// Like reclaimSearchInputFocus, but selects the whole query (Spotlight-style) so pressing Up
-    /// from the first result lands back on the input with the typed text highlighted.
-    func reclaimSearchInputFocusSelectingAll() {
-        l2.focusedPillIndex = nil
-        focusedAppPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        // Deliberate select-all (Up-arrow editing) — tell the focus handler not to move
-        // the caret to end this time.
-        launcherViewModel.pendingSelectAllOnFocus = true
-        if let window = AppDelegate.shared?.launcherWindow {
-            window.makeKeyAndOrderFront(nil)
-        }
-        func selectAll(in textView: NSTextView) {
-            let length = (textView.string as NSString).length
-            textView.setSelectedRange(NSRange(location: 0, length: length))
-        }
-        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
-            isSearchFieldFocused = true
-            selectAll(in: textView)
-            return
-        }
-        DispatchQueue.main.async {
-            self.isSearchFieldFocused = true
-            DispatchQueue.main.async {
-                if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
-                    selectAll(in: textView)
-                }
-            }
-        }
-    }
 
     func scheduleGlobalAppMatchRebuild(query: String, delayNanoseconds: UInt64 = 120_000_000) {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -3284,42 +2517,6 @@ extension LauncherView {
         GlobalSearchIndexBuilder.shared.rebuild()
     }
 
-    func clearGlobalContextQuerySmoothly() {
-        var transaction = Transaction(animation: .easeOut(duration: 0.12))
-        transaction.disablesAnimations = false
-        withTransaction(transaction) {
-            globalAppMatchTask?.cancel()
-            globalGroupedTask?.cancel()
-            globalContextViewModel.prepareTask?.cancel()
-            pendingGlobalAppQuery = nil
-            pendingGlobalGroupedQuery = nil
-            globalContextViewModel.typingSnapshot = GlobalContextTypingSnapshot()
-            // Clearing the field is a fresh start: drop the capsule's expanded flag and the
-            // last measured sheet height too, or the next query inherits the previous
-            // session's open sheet and its size.
-            globalContextViewModel.scopedSheetExpanded = false
-            measuredGlobalListContentHeight = 0
-            globalContextViewModel.preparedResults = nil
-            cachedGlobalAppQuery = ""
-            cachedGlobalAppMatches = []
-            cachedGlobalGroupedQuery = ""
-            cachedGlobalGroupedState = nil
-            globalContextViewModel.cachedGroupedFingerprint = ""
-            focusedAppPillIndex = nil
-            hoveredAppPillIndex = nil
-            l2.focusedPillIndex = nil
-            l2.pillNavViaKeyboard = false
-            l2.appCompletion = nil
-            l2.showResultsPopover = false
-            globalInlineAppScope = nil
-            additionalGlobalInlineAppScopes = []
-            suppressGlobalInlineAppScopeDetection = false
-            dismissedGlobalInlineAppScopes = [:]
-            searchState.query = ""
-            searchState.results = []
-            searchState.selectedIndex = nil
-        }
-    }
 
     func activeGlobalInlineDockScope(for query: String) -> DockScopeResolution? {
         guard shouldUsePureGlobalAppSearch,
@@ -3410,134 +2607,12 @@ extension LauncherView {
         [globalInlineAppScope].compactMap { $0 } + additionalGlobalInlineAppScopes
     }
 
-    enum GlobalInlineQueryPiece: Identifiable {
-        case text(String, Int)
-        case scope(GlobalInlineAppScope)
 
-        var id: String {
-            switch self {
-            case .text(let value, let index):
-                return "text-\(index)-\(value)"
-            case .scope(let scope):
-                return "scope-\(scope.bundleId)"
-            }
-        }
-    }
 
-    /// UTF-16 character range of every whitespace-separated token in the query
-    /// (matches NSTextView selection offsets).
-    func globalInlineQueryTokenRanges() -> [Range<Int>] {
-        let query = searchState.query
-        var ranges: [Range<Int>] = []
-        var offset = 0
-        var start: Int? = nil
-        for character in query {
-            let width = String(character).utf16.count
-            if character == " " {
-                if let s = start {
-                    ranges.append(s..<offset)
-                    start = nil
-                }
-            } else if start == nil {
-                start = offset
-            }
-            offset += width
-        }
-        if let s = start { ranges.append(s..<offset) }
-        return ranges
-    }
 
-    func globalInlinePieceSpan(
-        _ piece: GlobalInlineQueryPiece,
-        tokenRanges: [Range<Int>]
-    ) -> Range<Int>? {
-        switch piece {
-        case .text(_, let tokenIndex):
-            guard tokenIndex >= 0, tokenIndex < tokenRanges.count else { return nil }
-            return tokenRanges[tokenIndex]
-        case .scope(let scope):
-            // Explicit extension scopes clear their matched alias from the real
-            // NSTextField. Their chip is visual-only and therefore owns no text
-            // range once the user starts a scoped filter query.
-            if scope.isExplicit, !queryContainsInlineScopeAlias(scope) { return nil }
-            let count = max(1, scope.matchedAlias.split(separator: " ").count)
-            let end = scope.aliasStartIndex + count - 1
-            guard scope.aliasStartIndex >= 0, end < tokenRanges.count else { return nil }
-            return tokenRanges[scope.aliasStartIndex].lowerBound..<tokenRanges[end].upperBound
-        }
-    }
 
-    /// Scope pills with their UTF-16 character spans in the underlying query.
-    func globalInlineScopeUTF16Spans() -> [(scope: GlobalInlineAppScope, span: Range<Int>)] {
-        let tokenRanges = globalInlineQueryTokenRanges()
-        return allGlobalInlineAppScopes.compactMap { scope in
-            globalInlinePieceSpan(.scope(scope), tokenRanges: tokenRanges)
-                .map { (scope, $0) }
-        }
-    }
 
-    func splitTokenForCaret(_ value: String, utf16Offset: Int) -> (String, String) {
-        let utf16View = value.utf16
-        guard utf16Offset > 0 else { return ("", value) }
-        guard utf16Offset < utf16View.count else { return (value, "") }
-        let uIndex = utf16View.index(utf16View.startIndex, offsetBy: utf16Offset)
-        guard let index = String.Index(uIndex, within: value) else { return (value, "") }
-        return (String(value[..<index]), String(value[index...]))
-    }
 
-    var globalInlineQueryPieces: [GlobalInlineQueryPiece] {
-        let tokens = searchState.query
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        if allGlobalInlineAppScopes.count == 1,
-            let scope = allGlobalInlineAppScopes.first,
-            scope.isExplicit,
-            !queryContainsInlineScopeAlias(scope)
-        {
-            // The scope chip is no longer backed by a token in the query. Keep
-            // it as a visual prefix and preserve every typed token after it so
-            // device filtering never consumes the first word.
-            return [.scope(scope)] + tokens.enumerated().map {
-                .text($0.element, $0.offset)
-            }
-        }
-        let scopesByStartIndex = allGlobalInlineAppScopes.reduce(
-            into: [Int: GlobalInlineAppScope]()
-        ) { scopes, scope in
-            if scopes[scope.aliasStartIndex] == nil {
-                scopes[scope.aliasStartIndex] = scope
-            }
-        }
-        if tokens.isEmpty {
-            return allGlobalInlineAppScopes.map { .scope($0) }
-        }
-        var pieces: [GlobalInlineQueryPiece] = []
-        var index = 0
-        while index < tokens.count {
-            if let scope = scopesByStartIndex[index] {
-                pieces.append(.scope(scope))
-                index += max(1, scope.matchedAlias.split(separator: " ").count)
-            } else {
-                pieces.append(.text(tokens[index], index))
-                index += 1
-            }
-        }
-        return pieces
-    }
-
-    func queryContainsInlineScopeAlias(_ scope: GlobalInlineAppScope) -> Bool {
-        let tokens = searchState.query
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .map { normalizedDockPillText(String($0)) }
-        let alias = scope.matchedAlias
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .map { normalizedDockPillText(String($0)) }
-        let end = scope.aliasStartIndex + alias.count
-        return !alias.isEmpty
-            && scope.aliasStartIndex >= 0
-            && tokens.count >= end
-            && Array(tokens[scope.aliasStartIndex..<end]) == alias
-    }
 
     func effectiveGlobalInlineActionQuery(_ query: String) -> String {
         let tokens = query.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
@@ -3625,324 +2700,10 @@ extension LauncherView {
         return best?.0
     }
 
-    @discardableResult
-    func applyGlobalInlineAppScopeIfNeeded(for rawQuery: String) -> Bool {
-        guard shouldUsePureGlobalAppSearch,
-            isGlobalContextActive,
-            !hasSelectionScopeSurface,
-            l2.targetApp == nil,
-            lockedSubmenuParent == nil,
-            globalInlineAppScope == nil,
-            // Inside a CLI tool or System Command provider scope the input is a
-            // command/prompt, not a scope-building query — never convert typed words
-            // into a second app-scope chip (which flipped the layer + double-scoped).
-            currentGlobalScopedBundleID?.hasPrefix("cli://") != true,
-            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true
-        else { return false }
 
-        let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty, !isGenericApplicationListQuery(raw.lowercased()) else { return false }
-        guard
-            let target = indexedGlobalAppMenuTarget(
-                for: raw,
-                allowPrefixAlias: true,
-                preserveRemainingQueryTokens: true,
-                excludingBundleIds: Set(dismissedGlobalInlineAppScopes.keys)
-            )
-                ?? installedAppMenuTarget(
-                    for: raw,
-                    includeAppsWithoutMenuSnapshot: true,
-                    allowPrefixAlias: true,
-                    preserveRemainingQueryTokens: true,
-                    excludingBundleIds: Set(dismissedGlobalInlineAppScopes.keys)
-                )
-        else { return false }
-        let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !actionQuery.isEmpty else { return false }
 
-        globalInlineAppScope = GlobalInlineAppScope(
-            appName: target.appName,
-            bundleId: target.bundleId,
-            appPath: target.appPath,
-            matchedAlias: target.matchedAlias,
-            aliasStartIndex: target.aliasStartIndex
-        )
-        additionalGlobalInlineAppScopes = []
-        hoveredGlobalInlineScopeBundleId = nil
-        ensureTrailingSpaceAfterInlineScopeIfNeeded(target: target, rawQuery: raw)
-        scheduleGlobalGroupedListRebuild(query: actionQuery, delayNanoseconds: 80_000_000)
-        return true
-    }
 
-    @discardableResult
-    func activateRunningGlobalAppScopeIfMentioned(for rawQuery: String) -> Bool {
-        guard shouldUsePureGlobalAppSearch,
-            isGlobalContextActive,
-            !hasSelectionScopeSurface,
-            l2.targetApp == nil,
-            lockedSubmenuParent == nil,
-            lockedFindToken == nil,
-            !suppressGlobalInlineAppScopeDetection,
-            // Inside a System Command provider scope (Quick Note, Windows, …) or a CLI
-            // tool scope the input is a prompt/command, not a scope-building query —
-            // never convert typed words like "apple notes app" into app-scope chips.
-            currentGlobalScopedBundleID?.hasPrefix("syscmd://") != true,
-            currentGlobalScopedBundleID?.hasPrefix("cli://") != true
-        else { return false }
 
-        let raw = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        reconcileGlobalInlineAppScopePositions(for: raw)
-        guard raw.count >= 4, !isGenericApplicationListQuery(raw.lowercased()) else { return false }
-        pruneDismissedGlobalInlineAppScopes(for: raw)
-        var excludedBundleIds = Set(dismissedGlobalInlineAppScopes.keys)
-            .union(allGlobalInlineAppScopes.map(\.bundleId))
-        var occupiedTokenIndexes = Set(
-            allGlobalInlineAppScopes.flatMap { scope -> [Int] in
-                let count = max(1, scope.matchedAlias.split(separator: " ").count)
-                return Array(scope.aliasStartIndex..<(scope.aliasStartIndex + count))
-            })
-        var addedScopes: [GlobalInlineAppScope] = []
-        // Automatic pilling requires the full app name/alias typed out — prefix
-        // matches ("saf" → Safari) are reserved for explicit Tab completion.
-        while let target = indexedGlobalAppMenuTarget(
-            for: raw,
-            allowPrefixAlias: false,
-            preserveRemainingQueryTokens: true,
-            excludingBundleIds: excludedBundleIds
-        )
-            ?? installedAppMenuTarget(
-                for: raw,
-                runningOnly: false,
-                includeAppsWithoutMenuSnapshot: true,
-                allowPrefixAlias: false,
-                preserveRemainingQueryTokens: true,
-                excludingBundleIds: excludedBundleIds
-            )
-        {
-            let actionQuery = target.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !actionQuery.isEmpty else {
-                excludedBundleIds.insert(target.bundleId)
-                continue
-            }
-            excludedBundleIds.insert(target.bundleId)
-            let count = max(1, target.matchedAlias.split(separator: " ").count)
-            let targetIndexes = Set(target.aliasStartIndex..<(target.aliasStartIndex + count))
-            guard occupiedTokenIndexes.isDisjoint(with: targetIndexes) else { continue }
-            addedScopes.append(
-                GlobalInlineAppScope(
-                    appName: target.appName,
-                    bundleId: target.bundleId,
-                    appPath: target.appPath,
-                    matchedAlias: target.matchedAlias,
-                    aliasStartIndex: target.aliasStartIndex
-                ))
-            occupiedTokenIndexes.formUnion(targetIndexes)
-        }
-        let typoScopes = typoTolerantGlobalInlineAppScopes(
-            in: raw,
-            excludingBundleIds: excludedBundleIds,
-            occupiedTokenIndexes: occupiedTokenIndexes
-        )
-        for scope in typoScopes {
-            let count = max(1, scope.matchedAlias.split(separator: " ").count)
-            let scopeIndexes = Set(scope.aliasStartIndex..<(scope.aliasStartIndex + count))
-            guard occupiedTokenIndexes.isDisjoint(with: scopeIndexes),
-                !excludedBundleIds.contains(scope.bundleId)
-            else { continue }
-            addedScopes.append(scope)
-            excludedBundleIds.insert(scope.bundleId)
-            occupiedTokenIndexes.formUnion(scopeIndexes)
-        }
-        guard !addedScopes.isEmpty else { return false }
-
-        if globalInlineAppScope == nil {
-            globalInlineAppScope = addedScopes.removeFirst()
-        }
-        additionalGlobalInlineAppScopes.append(contentsOf: addedScopes)
-        if let scope = allGlobalInlineAppScopes.max(by: { $0.aliasStartIndex < $1.aliasStartIndex })
-        {
-            ensureTrailingSpaceAfterInlineScopeIfNeeded(scope: scope, rawQuery: raw)
-        }
-        focusedAppPillIndex = nil
-        l2.focusedPillIndex = nil
-        scheduleGlobalGroupedListRebuild(query: raw, delayNanoseconds: 0)
-        DispatchQueue.main.async {
-            DispatchQueue.main.async {
-                self.reclaimSearchInputFocus()
-            }
-        }
-        return true
-    }
-
-    func typoTolerantGlobalInlineAppScopes(
-        in rawQuery: String,
-        excludingBundleIds: Set<String>,
-        occupiedTokenIndexes: Set<Int>
-    ) -> [GlobalInlineAppScope] {
-        let queryTokens = rawQuery.split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        let normalizedQueryTokens = queryTokens.map(normalizedDockPillText)
-        guard normalizedQueryTokens.count >= 2 else { return [] }
-
-        var candidates: [(name: String, bundleId: String, path: String, baseScore: Int)] = []
-        var seenBundleIds = Set<String>()
-
-        func appendCandidate(name: String, bundleId: String, path: String, baseScore: Int) {
-            guard !name.isEmpty, !bundleId.isEmpty, !excludingBundleIds.contains(bundleId),
-                seenBundleIds.insert(bundleId).inserted
-            else { return }
-            candidates.append((name, bundleId, path, baseScore))
-        }
-
-        for result in allApplications where result.type == .application {
-            guard let bundleId = AppScopeMatchCache.shared.bundleId(forAppPath: result.subtitle)
-            else { continue }
-            appendCandidate(
-                name: result.title.trimmingCharacters(in: .whitespacesAndNewlines),
-                bundleId: bundleId,
-                path: result.subtitle,
-                baseScore: 100
-            )
-        }
-
-        let builtInAppTargets: [(name: String, bundleId: String, path: String)] = [
-            ("Safari", "com.apple.Safari", "/Applications/Safari.app"),
-            ("Notes", "com.apple.Notes", "/System/Applications/Notes.app"),
-            ("Messages", "com.apple.MobileSMS", "/System/Applications/Messages.app"),
-            ("Mail", "com.apple.mail", "/System/Applications/Mail.app"),
-            ("Calendar", "com.apple.iCal", "/System/Applications/Calendar.app"),
-            ("Reminders", "com.apple.reminders", "/System/Applications/Reminders.app"),
-            ("Photos", "com.apple.Photos", "/System/Applications/Photos.app"),
-            ("Contacts", "com.apple.AddressBook", "/System/Applications/Contacts.app"),
-            (
-                "System Settings", "com.apple.systempreferences",
-                "/System/Applications/System Settings.app"
-            ),
-        ]
-        for target in builtInAppTargets {
-            appendCandidate(
-                name: target.name,
-                bundleId: target.bundleId,
-                path: target.path,
-                baseScore: 108
-            )
-        }
-
-        var bestByBundleId:
-            [String: (scope: GlobalInlineAppScope, tokenRange: Range<Int>, score: Int)] = [:]
-
-        for candidate in candidates {
-            let aliases = Set(
-                ([candidate.name]
-                    + dockPillAppAliases(appName: candidate.name, bundleId: candidate.bundleId))
-                    .map(normalizedDockPillText)
-                    .filter { $0.count >= 4 }
-            )
-            for alias in aliases {
-                let aliasTokens = alias.split(separator: " ", omittingEmptySubsequences: true)
-                    .map(String.init)
-                guard !aliasTokens.isEmpty, aliasTokens.count <= normalizedQueryTokens.count
-                else { continue }
-                let maxStart = normalizedQueryTokens.count - aliasTokens.count
-                for start in 0...maxStart {
-                    let range = start..<(start + aliasTokens.count)
-                    guard occupiedTokenIndexes.isDisjoint(with: Set(range)) else { continue }
-
-                    var score = candidate.baseScore + alias.count
-                    var usedTypo = false
-                    var matched = true
-                    for offset in aliasTokens.indices {
-                        let queryToken = normalizedQueryTokens[start + offset]
-                        let aliasToken = aliasTokens[offset]
-                        if queryToken == aliasToken {
-                            score += 220
-                            continue
-                        }
-                        guard queryToken.count >= 4,
-                            aliasToken.count >= 4,
-                            queryToken.first == aliasToken.first
-                        else {
-                            matched = false
-                            break
-                        }
-                        let distance = levenshteinDistance(queryToken, aliasToken)
-                        let allowedDistance = min(2, max(1, min(queryToken.count, aliasToken.count) / 4))
-                        guard distance <= allowedDistance else {
-                            matched = false
-                            break
-                        }
-                        usedTypo = true
-                        score += 150 - (distance * 28)
-                    }
-                    guard matched, usedTypo else { continue }
-                    score -= start * 12
-                    let scope = GlobalInlineAppScope(
-                        appName: candidate.name,
-                        bundleId: candidate.bundleId,
-                        appPath: candidate.path,
-                        matchedAlias: queryTokens[range].joined(separator: " "),
-                        aliasStartIndex: start
-                    )
-                    if bestByBundleId[candidate.bundleId].map({ score > $0.score }) ?? true {
-                        bestByBundleId[candidate.bundleId] = (scope, range, score)
-                    }
-                }
-            }
-        }
-
-        var claimedIndexes = occupiedTokenIndexes
-        return bestByBundleId.values
-            .sorted {
-                if $0.tokenRange.lowerBound != $1.tokenRange.lowerBound {
-                    return $0.tokenRange.lowerBound < $1.tokenRange.lowerBound
-                }
-                return $0.score > $1.score
-            }
-            .compactMap { entry in
-                let indexes = Set(entry.tokenRange)
-                guard claimedIndexes.isDisjoint(with: indexes) else { return nil }
-                claimedIndexes.formUnion(indexes)
-                return entry.scope
-            }
-    }
-
-    func ensureTrailingSpaceAfterInlineScopeIfNeeded(
-        target: InstalledAppMenuTarget,
-        rawQuery: String
-    ) {
-        let scope = GlobalInlineAppScope(
-            appName: target.appName,
-            bundleId: target.bundleId,
-            appPath: target.appPath,
-            matchedAlias: target.matchedAlias,
-            aliasStartIndex: target.aliasStartIndex
-        )
-        ensureTrailingSpaceAfterInlineScopeIfNeeded(scope: scope, rawQuery: rawQuery)
-    }
-
-    func ensureTrailingSpaceAfterInlineScopeIfNeeded(
-        scope: GlobalInlineAppScope,
-        rawQuery: String
-    ) {
-        guard searchInputCursorIsAtEnd(),
-            let last = searchState.query.last,
-            !last.isWhitespace
-        else { return }
-        let queryTokens = rawQuery.split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        let aliasTokenCount = max(1, scope.matchedAlias.split(separator: " ").count)
-        guard scope.aliasStartIndex + aliasTokenCount == queryTokens.count else { return }
-        let normalizedMatchedAlias = normalizedDockPillText(scope.matchedAlias)
-        let exactAliases = Set(
-            ([scope.appName]
-                + GlobalSearchService.SearchDocument.aliases(
-                    appName: scope.appName,
-                    bundleId: scope.bundleId
-                )).map(normalizedDockPillText)
-        )
-        guard exactAliases.contains(normalizedMatchedAlias) else { return }
-        searchState.query += " "
-    }
 
     func globalInlineScopeAliasIsPresent(_ alias: String, in query: String) -> Bool {
         let aliasTokens = alias.split(separator: " ").map(String.init)
@@ -3956,50 +2717,6 @@ extension LauncherView {
         }
     }
 
-    func reconcileGlobalInlineAppScopePositions(for query: String) {
-        let queryTokens = query.split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        let normalizedTokens = queryTokens.map(normalizedDockPillText)
-        var occupiedIndexes = Set<Int>()
-        var reconciledScopes: [GlobalInlineAppScope] = []
-
-        for var scope in allGlobalInlineAppScopes.sorted(by: {
-            $0.aliasStartIndex < $1.aliasStartIndex
-        }) {
-            // Explicit (right-arrow) scopes aren't tied to a typed alias — keep them
-            // verbatim so typing an action query doesn't drop the scope.
-            if scope.isExplicit {
-                reconciledScopes.append(scope)
-                continue
-            }
-            let aliasTokens = scope.matchedAlias.split(separator: " ").map {
-                normalizedDockPillText(String($0))
-            }
-            guard !aliasTokens.isEmpty, normalizedTokens.count >= aliasTokens.count else {
-                continue
-            }
-
-            let maxStart = normalizedTokens.count - aliasTokens.count
-            guard
-                let start = (0...maxStart).first(where: { candidateStart in
-                    let range = candidateStart..<(candidateStart + aliasTokens.count)
-                    return occupiedIndexes.isDisjoint(with: Set(range))
-                        && Array(normalizedTokens[range]) == aliasTokens
-                })
-            else {
-                continue
-            }
-
-            let range = start..<(start + aliasTokens.count)
-            scope.aliasStartIndex = start
-            scope.matchedAlias = queryTokens[range].joined(separator: " ")
-            reconciledScopes.append(scope)
-            occupiedIndexes.formUnion(range)
-        }
-
-        globalInlineAppScope = reconciledScopes.first
-        additionalGlobalInlineAppScopes = Array(reconciledScopes.dropFirst())
-    }
 
     func clearGlobalInlineAppScope(
         preserveQuery: Bool = true,
@@ -4056,57 +2773,7 @@ extension LauncherView {
         scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
     }
 
-    func removeGlobalInlineAppScopeFromBackspace(_ scope: GlobalInlineAppScope) {
-        dismissedGlobalInlineAppScopes[scope.bundleId] = scope.matchedAlias
-        let tokens = searchState.query
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        let scopeTokenCount = max(1, scope.matchedAlias.split(separator: " ").count)
-        let scopeRange = scope.aliasStartIndex..<(scope.aliasStartIndex + scopeTokenCount)
-        var nextTokens: [String] = []
-        let replacementTokens = scope.matchedAlias
-            .split(separator: " ", omittingEmptySubsequences: true)
-            .map(String.init)
-        for (index, token) in tokens.enumerated() {
-            if index == scope.aliasStartIndex {
-                nextTokens.append(contentsOf: replacementTokens)
-            }
-            if !scopeRange.contains(index) {
-                nextTokens.append(token)
-            }
-        }
-        let nextQuery = nextTokens.joined(separator: " ")
 
-        let remaining = allGlobalInlineAppScopes.filter { $0.bundleId != scope.bundleId }
-        globalInlineAppScope = remaining.first
-        additionalGlobalInlineAppScopes = Array(remaining.dropFirst())
-        focusedAppPillIndex = nil
-        hoveredAppPillIndex = nil
-        l2.focusedPillIndex = nil
-        l2.appCompletion = nil
-        cachedGlobalAppQuery = ""
-        cachedGlobalAppMatches = []
-        cachedGlobalGroupedQuery = ""
-        cachedGlobalGroupedState = nil
-        globalContextViewModel.cachedGroupedFingerprint = ""
-        searchState.query = nextQuery
-        reconcileGlobalInlineAppScopePositions(for: nextQuery)
-        pruneDismissedGlobalInlineAppScopes(for: nextQuery)
-        scheduleGlobalAppMatchRebuild(query: nextQuery, delayNanoseconds: 0)
-        scheduleGlobalGroupedListRebuild(query: nextQuery, delayNanoseconds: 0)
-    }
-
-    func trailingGlobalInlineAppScopeForBackspace() -> GlobalInlineAppScope? {
-        guard searchInputCursorIsAtEnd(),
-            let lastCharacter = searchState.query.last,
-            !lastCharacter.isWhitespace,
-            let piece = globalInlineQueryPieces.last,
-            case .scope(let scope) = piece
-        else {
-            return nil
-        }
-        return scope
-    }
 
     func appMenuGroups(from descriptorGroups: [GlobalMenuDescriptorGroup]) -> [AppMenuGroup] {
         descriptorGroups.compactMap { group -> AppMenuGroup? in
@@ -4127,22 +2794,6 @@ extension LauncherView {
         }
     }
 
-    func globalNativeWritingToolGroups(for query: String) -> [AppMenuGroup] {
-        let pills = buildNativeWritingToolPills(query: query)
-        guard !pills.isEmpty else { return [] }
-        let sourceBundleId = pills.first?.sourceBundleId ?? nativeWritingToolContext?.bundleId ?? ""
-        let sourceAppName =
-            pills.first?.sourceAppName ?? nativeWritingToolContext?.appName ?? "Current App"
-        return [
-            AppMenuGroup(
-                id: "writing-tools-\(sourceBundleId.isEmpty ? sourceAppName : sourceBundleId)",
-                appName: sourceAppName,
-                icon: resolvedApplicationIcon(
-                    bundleIdentifier: sourceBundleId, appName: sourceAppName),
-                pills: pills
-            )
-        ]
-    }
 
     func indexedRunningMenuGroups(
         from docs: [GlobalSearchService.SearchDocument],
@@ -4267,7 +2918,6 @@ extension LauncherView {
                 } else {
                     NSWorkspace.shared.open(url)
                 }
-                AppDelegate.shared?.hideLauncher()
             }
         )
         pill.sourceBundleId = descriptor.bundleID
@@ -4475,226 +3125,12 @@ extension LauncherView {
         return groups
     }
 
-    func topGlobalMenuGroupIconForInputPreview(query: String) -> NSImage? {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            !hasSelectionScopeSurface,
-            globalInlineAppScope == nil,
-            !q.isEmpty
-        else { return nil }
-        return globalGroupedListNavigationState(for: q).appMenuGroups.first?.icon
-    }
 
-    func globalAppContentSearchGroups(for query: String) -> [AppMenuGroup] {
-        let appGroups = AppContentSearchRouter.shared.intents(for: query).map { intent in
-            let icon = resolvedApplicationIcon(
-                bundleIdentifier: intent.bundleId,
-                appName: intent.appName
-            )
-            var pill = appContentSearchDockPill(intent)
-            pill.menuItemImage = icon
-            return AppMenuGroup(
-                id: "content-search:\(intent.bundleId)",
-                appName: "Search \(intent.appName)",
-                icon: icon,
-                pills: [pill]
-            )
-        }
-        return appGroups
-    }
 
-    func globalRoleExpandedAppGroups(for query: String) -> [AppMenuGroup] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            !hasSelectionScopeSurface,
-            globalInlineAppScope == nil,
-            !q.isEmpty
-        else { return [] }
 
-        let resolution = GlobalContextQueryRoleResolver.shared.resolve(q)
-        let roles = ([resolution.scope].compactMap { $0 } + resolution.targets)
-            .reduce(into: [GlobalContextResolvedAppRole]()) { output, role in
-                guard !output.contains(where: { $0.bundleId == role.bundleId }) else { return }
-                output.append(role)
-            }
-        guard !roles.isEmpty else { return [] }
 
-        return roles.prefix(3).compactMap { scope -> AppMenuGroup? in
-            let scopeResolution = DockScopeResolution(
-                scopedBundleId: scope.bundleId,
-                scopedAppName: scope.appName,
-                scopedSearchQuery: scope.actionQuery,
-                isExplicitAppScope: true,
-                isGlobalScope: false
-            )
-            let icon = resolvedApplicationIcon(
-                bundleIdentifier: scope.bundleId,
-                appName: scope.appName
-            )
 
-            var pills: [DockPill] = []
-            let hasNativeBrowserCommand =
-                isBrowserMenuSource(scope.bundleId)
-                && !BrowserNativeCommandService.shared
-                    .matchingCommands(for: scope.actionQuery)
-                    .isEmpty
-            if isBrowserMenuSource(scope.bundleId),
-                !hasNativeBrowserCommand,
-                !scope.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                pills.append(globalBrowserSearchPill(scope: scope, icon: icon))
-                pills.append(
-                    contentsOf: buildBrowserURLLibraryPills(
-                        query: scope.actionQuery,
-                        scopedBrowserBundleId: scope.bundleId,
-                        limit: 12
-                    )
-                )
-            }
 
-            let cachedPills = cachedGlobalAppScopeDockPills(
-                query: scope.actionQuery,
-                scope: scopeResolution,
-                appPath: scope.appPath
-            )
-            for pill in cachedPills
-            where !pills.contains(where: { $0.trackingIdentifier == pill.trackingIdentifier }) {
-                pills.append(pill)
-                if pills.count >= 5 { break }
-            }
-            if !pills.contains(where: {
-                $0.rankingKind == "appLaunch"
-                    || normalizedDockPillText($0.name)
-                        == "open \(normalizedDockPillText(scope.appName))"
-            }) {
-                pills.append(globalOpenAppPill(scope: scope, icon: icon))
-            }
-
-            let visible = Array(pills.prefix(maxListViewDockPills))
-            guard !visible.isEmpty else { return nil }
-            return AppMenuGroup(
-                id: scope.bundleId,
-                appName: scope.appName,
-                icon: icon,
-                pills: visible
-            )
-        }
-    }
-
-    func globalBrowserSearchPill(
-        scope: GlobalContextResolvedAppRole,
-        icon: NSImage?
-    ) -> DockPill {
-        let query = scope.actionQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        let intent = AppContentSearchIntent(
-            bundleId: scope.bundleId,
-            appName: scope.appName,
-            query: query
-        )
-        var pill = DockPill(
-            id: "global-browser-search:\(scope.bundleId):\(normalizedDockPillText(query))",
-            name: "Search web for \"\(query)\"",
-            icon: "magnifyingglass",
-            accentColorName: "blue",
-            badge: "Search",
-            execute: {
-                let actionId = DockActionFeedback.start(
-                    "Searching", subject: scope.appName,
-                    icon: "magnifyingglass", tint: .blue.opacity(0.85)
-                )
-                Task {
-                    let output = await AppContentSearchRouter.shared.execute(intent)
-                    await MainActor.run {
-                        let clean =
-                            output
-                            .replacingOccurrences(of: "✅ ", with: "")
-                            .replacingOccurrences(of: "❌ ", with: "")
-                        if output.hasPrefix("❌") {
-                            DockActionFeedback.fail(actionId, label: clean)
-                        } else {
-                            DockActionFeedback.complete(actionId, label: clean)
-                        }
-                        searchState.query = ""
-                        focusedAppPillIndex = nil
-                        l2.focusedPillIndex = nil
-                    }
-                }
-            }
-        )
-        pill.menuItemImage = icon
-        pill.sourceBundleId = scope.bundleId
-        pill.sourceAppName = scope.appName
-        pill.rankingKind = "contentSearch"
-        pill.trackingIdentifier =
-            "global-browser-search:\(scope.bundleId):\(normalizedDockPillText(query))"
-        pill.searchTerms = [query, scope.appName, "search", "web", "find"]
-        pill.rankingScore = 10_000
-        return pill
-    }
-
-    func globalOpenWebsitePill(
-        url: URL,
-        scope: GlobalContextResolvedAppRole,
-        target: GlobalContextResolvedAppRole
-    ) -> DockPill {
-        var pill = DockPill(
-            id:
-                "global-open-website:\(scope.bundleId):\(target.bundleId):\(url.host ?? url.absoluteString)",
-            name: "Open \(url.host ?? target.appName)",
-            icon: "link",
-            accentColorName: "blue",
-            badge: "Web",
-            execute: { [self] in
-                openURL(url, inBrowserBundleId: scope.bundleId)
-            }
-        )
-        pill.sourceBundleId = scope.bundleId
-        pill.sourceAppName = scope.appName
-        pill.rankingKind = "web"
-        pill.trackingIdentifier = pill.id
-        pill.resolvedURL = url
-        pill.searchTerms = [target.appName, url.absoluteString, "open", "download", "web"]
-        return pill
-    }
-
-    func globalOpenAppPill(
-        scope: GlobalContextResolvedAppRole,
-        icon: NSImage?
-    ) -> DockPill {
-        var pill = DockPill(
-            id: "global-open-app:\(scope.bundleId)",
-            name: "Open \(scope.appName)",
-            icon: "app.badge",
-            accentColorName: "blue",
-            badge: nil,
-            execute: { [self] in
-                _ = launchApplication(
-                    bundleIdentifier: scope.bundleId,
-                    appName: scope.appName,
-                    path: scope.appPath
-                )
-            }
-        )
-        pill.menuItemImage = icon
-        pill.sourceBundleId = scope.bundleId
-        pill.sourceAppName = scope.appName
-        pill.rankingKind = "appLaunch"
-        pill.trackingIdentifier = pill.id
-        pill.searchTerms = [scope.appName, "open", "launch"]
-        return pill
-    }
-
-    func globalRoleWebsiteURL(for target: GlobalContextResolvedAppRole) -> URL? {
-        let hostBase =
-            normalizedDockPillText(target.appName)
-            .split(separator: " ")
-            .first
-            .map(String.init) ?? ""
-        guard hostBase.count >= 3 else { return nil }
-        return URL(string: "https://www.\(hostBase).com")
-    }
 
     func openURL(_ url: URL, inBrowserBundleId bundleId: String) {
         hideLauncherAfterResultExecution()
@@ -4855,36 +3291,6 @@ extension LauncherView {
             || pathText.contains("visited")
     }
 
-    /// The frontmost app's installed adapter actions (linked shortcuts, deep
-    /// links, etc.) as Global Context rows. Menu-bar/CLI types are excluded —
-    /// menus come from the AX cache, CLI is a scoped concept.
-    func globalFrontmostAdapterActionRows(for query: String, limit: Int) -> [SearchResult] {
-        let bundleId =
-            AppDelegate.shared?.previousFrontmostApp?.bundleIdentifier
-            ?? frontmost.bundleID
-        guard !bundleId.isEmpty else { return [] }
-        let actions = adapterManager.actions(for: bundleId, query: query)
-            .filter { $0.type != .menubar && $0.type != .cliTool }
-        guard !actions.isEmpty else { return [] }
-        let capturedContext = axContext
-        return actions.prefix(limit).map { action in
-            SearchResult(
-                title: action.name,
-                subtitle: action.type == .shortcut ? "Shortcut" : action.type.displayName,
-                icon: NSImage(systemSymbolName: action.icon, accessibilityDescription: nil),
-                action: {
-                    Task {
-                        _ = await AppAdapterManager.shared.execute(
-                            action, context: capturedContext, targetBundleId: bundleId)
-                    }
-                },
-                score: 9_500,
-                type: action.type == .shortcut ? .shortcut : .extensionCommand,
-                filePath: nil,
-                contactData: nil,
-                stableID: "global-adapter:\(bundleId):\(action.id)")
-        }
-    }
 
     func isBrowserMenuSource(_ bundleID: String) -> Bool {
         let normalized = bundleID.lowercased()
@@ -5040,12 +3446,6 @@ extension LauncherView {
         }?.url
     }
 
-    /// The action's own SF Symbol, tinted with its accent colour, as a row icon.
-    /// Nil when the symbol name is empty or macOS does not know it, so the caller can fall
-    /// back to the app icon rather than render an empty frame.
-    func adapterActionSymbolImage(_ action: AdapterAction) -> NSImage? {
-        GlobalSearchIndexBuilder.adapterActionSymbolImage(action)
-    }
 
     func cachedGlobalAppScopeDockPills(
         query: String,
@@ -5589,37 +3989,7 @@ extension LauncherView {
         }
     }
 
-    func cachedFrontmostGlobalMenuPills(query: String, maxResults: Int) -> [DockPill] {
-        let bundleId = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let appName = frontmost.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !bundleId.isEmpty, !appName.isEmpty else {
-            return []
-        }
-        // Global Context is a read-only fast path: persistent cache only, no live AX snapshot.
-        // Context Dock/app-switch warmers are responsible for refreshing this cache.
-        let cachedPills = cachedScopedAppMenuPills(
-            bundleIdentifier: bundleId,
-            appName: appName,
-            appPath: nil,
-            query: query,
-            maxResults: maxResults,
-            allowLiveRefresh: false
-        ).filter { !isAppleRecentItemsPill($0) }
-        return cachedPills.prefix(maxResults).map { $0 }
-    }
 
-    /// Apple Recent Items is intentionally excluded from Global Context. Its
-    /// volatile contents make the cache-first path noisy and stale.
-    func isAppleRecentItemsPill(_ pill: DockPill) -> Bool {
-        let normalizedTerms = pill.searchTerms.map(normalizedDockPillText)
-        let root = normalizedTerms.first ?? ""
-        let belongsToAppleMenu =
-            root.isEmpty
-            || root == "apple"
-            || normalizedDockPillText(pill.sourceAppName ?? "") == "apple menu"
-
-        return belongsToAppleMenu && normalizedTerms.contains("recent items")
-    }
 
     var currentListViewDockRowCount: Int {
         guard showContextInDock,
@@ -5809,11 +4179,6 @@ extension LauncherView {
             rowCount: rowCount, includesHeader: rowCount > 0, maximum: listViewVisibleHeight)
     }
 
-    var isExplicitAppScopeLocked: Bool {
-        guard let target = l2.targetApp else { return false }
-        guard !isGlobalContextActive else { return false }
-        return target.bundleId != "scope://clipboard"
-    }
 
     func runningBundleIdsForContextDock() -> Set<String> {
         Set(
@@ -5834,23 +4199,8 @@ extension LauncherView {
             appName: appName, bundleIdentifier: bundleIdentifier, path: path)
     }
 
-    var resultsPanelLeadingInset: CGFloat {
-        floatingClipboardOccupiedWidth + 12
-    }
 
-    var resultsPanelWidth: CGFloat {
-        max(visibleDockWidth - 24, 280)
-    }
 
-    var calculatedDockHeight: CGFloat {
-        // Fixed height anchors the NSVisualEffectView sampling surface vertically.
-        // Computed from max dockIconSize (72): input row (92) + pill row (88) + gap (20) = 200.
-        // The actual content is clipped by the mask — glass stays constant.
-        let maxSz: CGFloat = 72
-        let inputRow = maxSz + 8 + 12  // inputPillHeight + 2×inputVerticalPadding
-        let pillRow = maxSz + 4 + 12  // pinnedRowHeight  + 2×outerVerticalPadding
-        return inputRow + pillRow + 20  // 200
-    }
 
     var listViewDockHeight: CGFloat {
         guard showContextInDock,
@@ -5865,57 +4215,5 @@ extension LauncherView {
         return dockChromeHeight + contentHeight + 14
     }
 
-    var listViewResizeToken: String {
-        guard usesVerticalListDockLayout else { return "off" }
-        if isActiveGlobalRunningAppMenuScope() {
-            let expanded = isDockResultSheetRevealed ? "open" : "compact"
-            return "app-scope:\(currentGlobalScopedBundleID ?? ""):\(expanded):\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
-        }
-        // Pure Global Context must feel like Spotlight/Raycast: once results are visible,
-        // the window frame stays fixed and only row content changes inside the scroll area.
-        // Encoding row/measured height here caused visible jumps while typing.
-        if isGlobalContextActive {
-            return "global:\(currentListViewDockRowCount > 0 ? "open" : "closed")"
-        }
-        if showContextInDock {
-            let expanded = isDockResultSheetRevealed ? "open" : "compact"
-            return "scoped:\(expanded):\(currentListViewDockRowCount > 0 ? "open" : "closed")"
-        }
-        // Frontmost Context Dock now also hugs the MEASURED content (section headers vary
-        // per app, so row count alone undercounts) — react to the measured height in 8px
-        // buckets so the sheet settles to fit the real rows, no clipped last row.
-        return "scoped:\(currentListViewDockRowCount):\(Int(measuredGlobalListContentHeight / 8))"
-    }
-
-    /// Records the measured intrinsic height of the global/scoped result list. The
-    /// sheet sizes to this (via currentListViewDockContentHeight) and the resize token
-    /// reacts to it, so the window settles to fit the actual rendered rows.
-    func updateMeasuredGlobalListHeight(_ height: CGFloat) {
-        // A clipped list measures itself as zero. Recording that wiped the real height, so
-        // the first ↓ sized the sheet to nothing (a transparent card) and only a second pass
-        // — after the rows re-measured — showed it. Keep the last real measurement instead.
-        guard isDockResultSheetRevealed else { return }
-        let clamped = max(0, height)
-        guard abs(measuredGlobalListContentHeight - clamped) > 2 else { return }
-        let previous = measuredGlobalListContentHeight
-        measuredGlobalListContentHeight = clamped
-        guard isGlobalContextActive else { return }
-
-        // The expanded sheet is sized from an estimate — rows × 52 + 36 — taken before the
-        // rows exist. Real rows are not 52pt (the codebase carries 52, 58 and 66 for
-        // different lists), so when they are taller the window is short and the last row is
-        // clipped. This measurement is the true height, and it was being stored and then
-        // ignored: the early return meant the window was never corrected while Global
-        // Context was active, which is the one mode that uses the estimate.
-        //
-        // Correct only once the sheet is already expanded, so compact typing keeps its
-        // suppression and the window does not chase every keystroke. The threshold is well
-        // above the 2pt noise floor above, so sub-pixel reflow cannot start a resize loop.
-        guard globalContextViewModel.typingSnapshot.phase == .expanded,
-            abs(previous - clamped) > 6
-        else { return }
-        requestWindowSizeUpdate(
-            reason: .modeChanged, animated: true, debounceNanoseconds: 30_000_000)
-    }
 
 }

@@ -24,12 +24,6 @@ extension LauncherView {
         case undecided  // everything else — the model decides, from the catalog
     }
 
-    struct SelectionRouteCandidate {
-        let id: String
-        let title: String
-        let group: String
-        let accepts: String
-    }
 
     // MARK: - Intent
 
@@ -146,36 +140,6 @@ extension LauncherView {
 
     // MARK: - Enter
 
-    /// Enter in Selection Scope runs the highlighted row, or the first row when nothing is
-    /// highlighted. Previously it went through `executeFirstOrFocusedPill`, which bails unless
-    /// `focusedPillIndex` is set — so Enter did nothing until the user pressed ↓ first, even
-    /// though the first row renders pre-selected.
-    @discardableResult
-    func executeSelectionScopeSubmit() -> Bool {
-        guard hasSelectionScopeSurface else { return false }
-        let query = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return false }
-
-        let normalized = query.lowercased()
-        let rendered = renderedOrderDockPills(for: normalized)
-        let pills = rendered.isEmpty ? buildDockPills(query: normalized) : rendered
-        let target: DockPill? = {
-            if let index = l2.focusedPillIndex, index < pills.count, !pills[index].isSeparator {
-                return pills[index]
-            }
-            return pills.first { !$0.isSeparator }
-        }()
-        guard let target else {
-            // No rows at all (shouldn't happen — Ask AI is the floor) — go to chat directly.
-            enterSelectionChat(initialQuery: query)
-            return true
-        }
-        l2.focusedPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        executeDockPill(target)
-        searchState.query = ""
-        return true
-    }
 
     // MARK: - File operation routes
 
@@ -462,31 +426,6 @@ extension LauncherView {
             """
     }
 
-    /// Leaving Selection Scope ends its conversation too — the chat is grounded in a selection
-    /// that no longer applies, so keeping it would answer the next selection with stale content.
-    func exitSelectionScopeAIChat() {
-        aiMode.currentTask?.cancel()
-        aiMode.currentTask = nil
-        aiMode.isActive = false
-        aiMode.messages = []
-        aiMode.isLoading = false
-        aiMode.loadingStatus = nil
-        aiMode.streamingId = nil
-        aiMode.pendingToolChips = []
-        aiMode.routerTrace = []
-        aiMode.pendingShare = nil
-        aiMode.pendingEmailDraft = nil
-        selectionRouterPendingEmail = nil
-        aiMode.pendingEnableApp = nil
-        aiMode.attachments = []
-        aiMode.selectionText = nil
-        aiMode.selectionFiles = []
-        aiMode.selectionURL = nil
-        selectionRouterExecutedRouteTitle = nil
-        selectionRouterNoRouteNote = nil
-        hasUserSentMessageInCurrentSession = false
-        clearGeneralAIConversation()
-    }
 
     /// One step of the live trace: shown next to the typing indicator now, kept on the answer
     /// afterwards. Every line describes work the app performed, never model reasoning.

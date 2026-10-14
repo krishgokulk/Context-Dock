@@ -134,7 +134,6 @@ final class BrowserNativeCommandService {
             return
         }
 
-        AppDelegate.shared?.hideLauncher(force: true)
         let feedbackId = DockActionFeedback.start(
             command.title,
             subject: appName,

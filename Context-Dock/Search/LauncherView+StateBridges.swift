@@ -28,10 +28,6 @@ extension LauncherView {
         nonmutating set { launcherViewModel.shouldAutoScroll = newValue }
     }
 
-    var removedToolBannerName: String? {
-        get { launcherViewModel.removedToolBannerName }
-        nonmutating set { launcherViewModel.removedToolBannerName = newValue }
-    }
 
     var isVisible: Bool {
         get { launcherViewModel.isVisible }
@@ -93,57 +89,15 @@ extension LauncherView {
         nonmutating set { launcherViewModel.folderPreviewPath = newValue }
     }
 
-    var showContactPreview: Bool {
-        get { launcherViewModel.showContactPreview }
-        nonmutating set { launcherViewModel.showContactPreview = newValue }
-    }
 
-    var showContactPreviewBinding: Binding<Bool> {
-        Binding(
-            get: { launcherViewModel.showContactPreview },
-            set: { launcherViewModel.showContactPreview = $0 }
-        )
-    }
 
-    var contactPreviewData: SearchResult? {
-        get { launcherViewModel.contactPreviewData }
-        nonmutating set { launcherViewModel.contactPreviewData = newValue }
-    }
 
-    var quickLookEventMonitor: Any? {
-        get { launcherViewModel.quickLookEventMonitor }
-        nonmutating set { launcherViewModel.quickLookEventMonitor = newValue }
-    }
 
-    var cmdHoldTask: Task<Void, Never>? {
-        get { launcherViewModel.cmdHoldTask }
-        nonmutating set { launcherViewModel.cmdHoldTask = newValue }
-    }
 
-    var cmdHoldMonitor: Any? {
-        get { launcherViewModel.cmdHoldMonitor }
-        nonmutating set { launcherViewModel.cmdHoldMonitor = newValue }
-    }
 
-    var cmdHoldGlobalMonitor: Any? {
-        get { launcherViewModel.cmdHoldGlobalMonitor }
-        nonmutating set { launcherViewModel.cmdHoldGlobalMonitor = newValue }
-    }
 
-    var cmdTapArmed: Bool {
-        get { launcherViewModel.cmdTapArmed }
-        nonmutating set { launcherViewModel.cmdTapArmed = newValue }
-    }
 
-    var cmdChordUsed: Bool {
-        get { launcherViewModel.cmdChordUsed }
-        nonmutating set { launcherViewModel.cmdChordUsed = newValue }
-    }
 
-    var cmdHoldTriggered: Bool {
-        get { launcherViewModel.cmdHoldTriggered }
-        nonmutating set { launcherViewModel.cmdHoldTriggered = newValue }
-    }
 
     var isSearchBarExpanded: Bool {
         get { launcherViewModel.isSearchBarExpanded }
@@ -155,10 +109,6 @@ extension LauncherView {
         nonmutating set { launcherViewModel.collapseTimer = newValue }
     }
 
-    var suppressCommandScopeToggleUntil: Date {
-        get { launcherViewModel.suppressCommandScopeToggleUntil }
-        nonmutating set { launcherViewModel.suppressCommandScopeToggleUntil = newValue }
-    }
 
     var suppressHoverExpand: Bool {
         get { launcherViewModel.suppressHoverExpand }
@@ -170,35 +120,11 @@ extension LauncherView {
         nonmutating set { launcherViewModel.suppressOpenResize = newValue }
     }
 
-    var lastKnownBrowserURL: String {
-        get { launcherViewModel.lastKnownBrowserURL }
-        nonmutating set { launcherViewModel.lastKnownBrowserURL = newValue }
-    }
 
-    var swipeGestureMonitor: Any? {
-        get { launcherViewModel.swipeGestureMonitor }
-        nonmutating set { launcherViewModel.swipeGestureMonitor = newValue }
-    }
 
-    var accumulatedSwipeDeltaY: CGFloat {
-        get { launcherViewModel.accumulatedSwipeDeltaY }
-        nonmutating set { launcherViewModel.accumulatedSwipeDeltaY = newValue }
-    }
 
-    var accumulatedSwipeDeltaX: CGFloat {
-        get { launcherViewModel.accumulatedSwipeDeltaX }
-        nonmutating set { launcherViewModel.accumulatedSwipeDeltaX = newValue }
-    }
 
-    var didSwitchLayerInCurrentSwipe: Bool {
-        get { launcherViewModel.didSwitchLayerInCurrentSwipe }
-        nonmutating set { launcherViewModel.didSwitchLayerInCurrentSwipe = newValue }
-    }
 
-    var isHoveringDockArea: Bool {
-        get { launcherViewModel.isHoveringDockArea }
-        nonmutating set { launcherViewModel.isHoveringDockArea = newValue }
-    }
 
     var hoveredDockAppKey: String? {
         get { launcherViewModel.hoveredDockAppKey }
@@ -215,43 +141,10 @@ extension LauncherView {
         nonmutating set { launcherViewModel.isSharingSheetActive = newValue }
     }
 
-    var showNotificationPanel: Bool {
-        get { launcherViewModel.showNotificationPanel }
-        nonmutating set {
-            guard launcherViewModel.showNotificationPanel != newValue else { return }
-            launcherViewModel.showNotificationPanel = newValue
-        }
-    }
 
-    var showNotificationDock: Bool {
-        get { launcherViewModel.showNotificationDock }
-        nonmutating set {
-            guard launcherViewModel.showNotificationDock != newValue else { return }
-            launcherViewModel.showNotificationDock = newValue
-        }
-    }
 
-    var showNotificationDockBinding: Binding<Bool> {
-        Binding(
-            get: { launcherViewModel.showNotificationDock },
-            set: { launcherViewModel.showNotificationDock = $0 }
-        )
-    }
 
-    var notifDockTab: Int {
-        get { launcherViewModel.notificationDockTab }
-        nonmutating set {
-            guard launcherViewModel.notificationDockTab != newValue else { return }
-            launcherViewModel.notificationDockTab = newValue
-        }
-    }
 
-    var notifDockTabBinding: Binding<Int> {
-        Binding(
-            get: { launcherViewModel.notificationDockTab },
-            set: { launcherViewModel.notificationDockTab = $0 }
-        )
-    }
 
     var currentContext: UserContext {
         get { contextDockViewModel.currentContext }
@@ -261,12 +154,6 @@ extension LauncherView {
         }
     }
 
-    var currentContextBinding: Binding<UserContext> {
-        Binding(
-            get: { contextDockViewModel.currentContext },
-            set: { contextDockViewModel.currentContext = $0 }
-        )
-    }
 
     var axContext: AXContext {
         get { contextDockViewModel.axContext }
@@ -304,37 +191,19 @@ extension LauncherView {
         nonmutating set { contextDockViewModel.shortcutMetadataCache = newValue }
     }
 
-    var isContextExpanded: Bool {
-        get { contextDockViewModel.isContextExpanded }
-        nonmutating set { contextDockViewModel.isContextExpanded = newValue }
-    }
 
     var axContextRefreshTimer: Timer? {
         get { contextDockViewModel.axContextRefreshTimer }
         nonmutating set { contextDockViewModel.axContextRefreshTimer = newValue }
     }
 
-    var showSafariTabPicker: Bool {
-        get { contextDockViewModel.showSafariTabPicker }
-        nonmutating set { contextDockViewModel.showSafariTabPicker = newValue }
-    }
 
-    var showSafariTabPickerBinding: Binding<Bool> {
-        Binding(
-            get: { contextDockViewModel.showSafariTabPicker },
-            set: { contextDockViewModel.showSafariTabPicker = $0 }
-        )
-    }
 
     var safariTabPickerTabs: [SafariTab] {
         get { contextDockViewModel.safariTabPickerTabs }
         nonmutating set { contextDockViewModel.safariTabPickerTabs = newValue }
     }
 
-    var safariTabPickerLoading: Bool {
-        get { contextDockViewModel.safariTabPickerLoading }
-        nonmutating set { contextDockViewModel.safariTabPickerLoading = newValue }
-    }
 
     var appSwitchObserver: NSObjectProtocol? {
         get { launcherViewModel.appSwitchObserver }
@@ -366,52 +235,18 @@ extension LauncherView {
         nonmutating set { aiChatViewModel.remPanelTask = newValue }
     }
 
-    var remIsInstalled: Bool? {
-        get { aiChatViewModel.remIsInstalled }
-        nonmutating set { aiChatViewModel.remIsInstalled = newValue }
-    }
 
-    var showAIExtensionSuggestions: Bool {
-        get { aiChatViewModel.showExtensionSuggestions }
-        nonmutating set { aiChatViewModel.showExtensionSuggestions = newValue }
-    }
 
-    var showAIExtensionSuggestionsBinding: Binding<Bool> {
-        Binding(
-            get: { aiChatViewModel.showExtensionSuggestions },
-            set: { aiChatViewModel.showExtensionSuggestions = $0 }
-        )
-    }
 
-    var aiExtensionSuggestions: [SuggestedExtension] {
-        get { aiChatViewModel.extensionSuggestions }
-        nonmutating set { aiChatViewModel.extensionSuggestions = newValue }
-    }
 
-    var chatReturnContextInDock: Bool {
-        get { aiChatViewModel.returnContextInDock }
-        nonmutating set { aiChatViewModel.returnContextInDock = newValue }
-    }
 
-    var chatReturnBrowserLayer: Bool {
-        get { aiChatViewModel.returnBrowserLayer }
-        nonmutating set { aiChatViewModel.returnBrowserLayer = newValue }
-    }
 
-    var chatReturnGlobalContext: GlobalContextActivation? {
-        get { aiChatViewModel.returnGlobalContext }
-        nonmutating set { aiChatViewModel.returnGlobalContext = newValue }
-    }
 
     var hasUserSentMessageInCurrentSession: Bool {
         get { aiChatViewModel.hasUserSentMessageInCurrentSession }
         nonmutating set { aiChatViewModel.hasUserSentMessageInCurrentSession = newValue }
     }
 
-    var suggestedExtensionCode: String? {
-        get { aiChatViewModel.suggestedExtensionCode }
-        nonmutating set { aiChatViewModel.suggestedExtensionCode = newValue }
-    }
 
     var originalUserQuery: String? {
         get { aiChatViewModel.originalUserQuery }
@@ -423,30 +258,7 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.focusedAppPillIndex = newValue }
     }
 
-    /// Compact header vs expanded navigation — pure projection of the phase.
-    var globalContextVisualState: GlobalContextVisualState {
-        globalContextViewModel.typingSnapshot.phase == .expanded
-            ? .expandedNavigation : .compactTyping
-    }
 
-    /// Sheet expansion has exactly ONE source of truth: `typingSnapshot.phase`.
-    /// This alias keeps existing call sites working — reads report `.expanded`,
-    /// writes transition the phase (false re-derives the pre-expansion phase from
-    /// the current match icons). It can never diverge from the presentation gate.
-    var globalMenuResultsRevealed: Bool {
-        get { globalContextViewModel.typingSnapshot.phase == .expanded }
-        nonmutating set {
-            if newValue {
-                globalContextViewModel.typingSnapshot.phase = .expanded
-            } else if globalContextViewModel.typingSnapshot.phase == .expanded {
-                let icons = globalContextViewModel.typingSnapshot.matchDockIcons
-                globalContextViewModel.typingSnapshot.phase =
-                    icons.contains(where: \.isExpandable)
-                    ? .expandable
-                    : (icons.isEmpty ? .typing : .matched)
-            }
-        }
-    }
 
     var liveDockSelectionPreviewText: String? {
         get { globalContextViewModel.liveSelectionPreviewText }
@@ -533,15 +345,7 @@ extension LauncherView {
         nonmutating set { globalContextViewModel.hoveredInlineScopeBundleId = newValue }
     }
 
-    var isHoveringL2ScopeChip: Bool {
-        get { globalContextViewModel.isHoveringL2ScopeChip }
-        nonmutating set { globalContextViewModel.isHoveringL2ScopeChip = newValue }
-    }
 
-    var isHoveringFrontmostContextChip: Bool {
-        get { globalContextViewModel.isHoveringFrontmostContextChip }
-        nonmutating set { globalContextViewModel.isHoveringFrontmostContextChip = newValue }
-    }
 
     var globalClipboardText: String {
         get { globalContextViewModel.clipboardText }
@@ -558,74 +362,26 @@ extension LauncherView {
         nonmutating set { ClipboardHistoryEngine.shared.lastCheckedPasteboardCount = newValue }
     }
 
-    var suppressClipboardImportUntilChangeCount: Int? {
-        get { ClipboardHistoryEngine.shared.suppressImportUntilChangeCount }
-        nonmutating set { ClipboardHistoryEngine.shared.suppressImportUntilChangeCount = newValue }
-    }
 
     var clipboardHistory: [ClipboardEntry] {
         get { ClipboardHistoryEngine.shared.history }
         nonmutating set { ClipboardHistoryEngine.shared.history = newValue }
     }
 
-    var showClipboardHistory: Bool {
-        get { globalContextViewModel.showClipboardHistory }
-        nonmutating set { globalContextViewModel.showClipboardHistory = newValue }
-    }
 
-    var showClipboardHistoryBinding: Binding<Bool> {
-        Binding(
-            get: { globalContextViewModel.showClipboardHistory },
-            set: { globalContextViewModel.showClipboardHistory = $0 }
-        )
-    }
 
-    var clipboardHistoryExpanded: Bool {
-        get { globalContextViewModel.clipboardHistoryExpanded }
-        nonmutating set { globalContextViewModel.clipboardHistoryExpanded = newValue }
-    }
 
-    var clipboardIndicatorHideTask: Task<Void, Never>? {
-        get { globalContextViewModel.clipboardIndicatorHideTask }
-        nonmutating set { globalContextViewModel.clipboardIndicatorHideTask = newValue }
-    }
 
-    var clipboardSelectionOrder: [UUID] {
-        get { globalContextViewModel.clipboardSelectionOrder }
-        nonmutating set { globalContextViewModel.clipboardSelectionOrder = newValue }
-    }
 
-    var clipboardDropTargetVisible: Bool {
-        get { globalContextViewModel.clipboardDropTargetVisible }
-        nonmutating set { globalContextViewModel.clipboardDropTargetVisible = newValue }
-    }
 
-    var clipboardDropTargeted: Bool {
-        get { globalContextViewModel.clipboardDropTargeted }
-        nonmutating set { globalContextViewModel.clipboardDropTargeted = newValue }
-    }
 
-    var clipboardDropTargetedBinding: Binding<Bool> {
-        Binding(
-            get: { globalContextViewModel.clipboardDropTargeted },
-            set: { globalContextViewModel.clipboardDropTargeted = $0 }
-        )
-    }
 
-    var clipboardScopeShowsGrid: Bool {
-        get { globalContextViewModel.clipboardScopeShowsGrid }
-        nonmutating set { globalContextViewModel.clipboardScopeShowsGrid = newValue }
-    }
 
     var focusedClipboardEntryIndex: Int? {
         get { globalContextViewModel.focusedClipboardEntryIndex }
         nonmutating set { globalContextViewModel.focusedClipboardEntryIndex = newValue }
     }
 
-    var selectedClipboardEntryIDs: Set<UUID> {
-        get { globalContextViewModel.selectedClipboardEntryIDs }
-        nonmutating set { globalContextViewModel.selectedClipboardEntryIDs = newValue }
-    }
 
     var dismissedFinderSelectionSignature: String? {
         get { globalContextViewModel.dismissedFinderSelectionSignature }
@@ -647,10 +403,6 @@ extension LauncherView {
         nonmutating set { finderContext.attachedFolderSearchPath = newValue }
     }
 
-    var approvedFinderFolderSearchPaths: Set<String> {
-        get { finderContext.approvedFolderSearchPaths }
-        nonmutating set { finderContext.approvedFolderSearchPaths = newValue }
-    }
 
     var cachedFinderCurrentDirectoryPath: String {
         get { finderContext.cachedCurrentDirectoryPath }
@@ -677,15 +429,7 @@ extension LauncherView {
         nonmutating set { finderContext.snapshotDate = newValue }
     }
 
-    var attachedFinderFolderSnapshotWatcher: FinderFolderSnapshotWatcher? {
-        get { finderContext.snapshotWatcher }
-        nonmutating set { finderContext.snapshotWatcher = newValue }
-    }
 
-    var attachedFinderFolderSnapshotWatcherTask: Task<Void, Never>? {
-        get { finderContext.snapshotWatcherTask }
-        nonmutating set { finderContext.snapshotWatcherTask = newValue }
-    }
 
     var finderFollowUpFolderPath: String {
         get { finderContext.followUpFolderPath }
@@ -817,25 +561,13 @@ extension LauncherView {
         nonmutating set { contextDockViewModel.warmingMenuBundleIds = newValue }
     }
 
-    var hoveredDockPillIndex: Int? {
-        get { contextDockViewModel.hoveredDockPillIndex }
-        nonmutating set { contextDockViewModel.hoveredDockPillIndex = newValue }
-    }
 
-    var isHoveringPillRow: Bool {
-        get { contextDockViewModel.isHoveringPillRow }
-        nonmutating set { contextDockViewModel.isHoveringPillRow = newValue }
-    }
 
     var listViewHoveredIndex: Int? {
         get { contextDockViewModel.listViewHoveredIndex }
         nonmutating set { contextDockViewModel.listViewHoveredIndex = newValue }
     }
 
-    var pillScrollAccumulator: CGFloat {
-        get { contextDockViewModel.pillScrollAccumulator }
-        nonmutating set { contextDockViewModel.pillScrollAccumulator = newValue }
-    }
 
     var pendingAIMenuProposal: AIMenuProposal? {
         get { contextDockViewModel.pendingAIProposal }

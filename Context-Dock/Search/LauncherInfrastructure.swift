@@ -99,20 +99,6 @@ final class FinderFolderSnapshotWatcher {
     }
 }
 
-struct OptionalDragProviderModifier: ViewModifier {
-    let provider: (() -> NSItemProvider?)?
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if let provider {
-            content.onDrag {
-                provider() ?? NSItemProvider()
-            }
-        } else {
-            content
-        }
-    }
-}
 
 // MARK: - Shortcuts Query Helper
 class ShortcutsLinkQuery {

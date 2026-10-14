@@ -201,9 +201,6 @@ final class ScreenCaptureService: @unchecked Sendable {
         // One more resign arrives as the captured app takes focus back — ride that out,
         // then normal hide-on-focus-loss resumes.
         delegate.suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
-        guard let window = delegate.launcherWindow, window.isVisible else { return }
-        window.alphaValue = 1
-        window.orderFrontRegardless()
     }
 
     // MARK: - Helpers

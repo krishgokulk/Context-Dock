@@ -64,8 +64,7 @@ final class AppToast: ObservableObject {
             // post reaches whichever is on screen.
             let canRouteToDock =
                 !persistent && actionTitle == nil
-                && (AppDelegate.shared?.launcherWindow?.isVisible == true
-                    || CornerDockController.shared.isCornerChatVisible)
+                && CornerDockController.shared.isCornerChatVisible
             if canRouteToDock {
                 let warning =
                     icon.contains("exclamationmark") || icon.contains("shield")

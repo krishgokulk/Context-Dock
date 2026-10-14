@@ -690,14 +690,7 @@ extension LauncherView {
         return false
     }
 
-    func shouldKeepFinderSearchPopoverVisible(for query: String) -> Bool {
-        return false
-    }
 
-    func isFinderFolderSearchModeEnabled(for query: String) -> Bool {
-        // File search results disabled — the attached folder path flows into AI context only.
-        return false
-    }
 
     func shouldShowFinderSearchResultsPanel(for query: String) -> Bool {
         // File search results panel removed — folder path is used as AI context only.

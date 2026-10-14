@@ -9,61 +9,6 @@ import AppKit
 import Carbon
 import SwiftUI
 
-// Custom NSHostingView that can accept first responder and has a transparent background
-class FocusableHostingView<Content: View>: NSHostingView<Content> {
-    override var acceptsFirstResponder: Bool { true }
-    override func becomeFirstResponder() -> Bool { true }
-    // The launcher is a non-activating panel: without this, the first click from
-    // another app is swallowed just to make the window key, so a drag over chat text
-    // never starts a selection. Accepting first mouse lets that drag select text (and
-    // click controls) immediately.
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    /// The fixed host is far taller than the card, so most of it is empty glass-less
-    /// space. Without this, that emptiness would swallow every click aimed at whatever is
-    /// behind the launcher. Drag and key routing are unaffected — only hit testing.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        if let window = window as? KeyableWindow, window.usesFixedHost {
-            let card = window.dockCardRect
-            if card.height > 0 {
-                // AppKit hands this view coordinates with the origin at the bottom-left and
-                // y rising; SwiftUI measured the card with the origin at the top-left and y
-                // falling. Same window, two conventions — comparing them unconverted is how
-                // a click-through region ends up mirrored about the middle of the screen.
-                let flipped = CGPoint(x: point.x, y: bounds.height - point.y)
-                return card.insetBy(dx: -1, dy: -1).contains(flipped)
-                    ? super.hitTest(point) : nil
-            }
-            // No measurement yet — first frame, or a surface that does not report one.
-            // Falls back to the old top-pinned assumption rather than swallowing the screen.
-            let cardHeight = window.dockCardHeight
-            if cardHeight > 0, point.y < bounds.height - cardHeight {
-                return nil
-            }
-        }
-        return super.hitTest(point)
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        wantsLayer = true
-        // The launcher grows downward from a pinned top edge. AppKit's default preserved-content
-        // resize can reuse the BOTTOM slice of the final NSHostingView while the window is still
-        // pill-height, which temporarily replaces the input with result rows. Force the hosting
-        // layer to redraw at every animated size and keep any interim layer contents top-aligned.
-        layerContentsRedrawPolicy = .duringViewResize
-        layerContentsPlacement = .topLeft
-        window?.preservesContentDuringLiveResize = false
-        layer?.backgroundColor = CGColor.clear
-        layer?.cornerCurve = .continuous
-        layer?.cornerRadius = 34
-        layer?.masksToBounds = true
-        // Suppress the system focus ring — without this a blue rounded rectangle
-        // appears over all apps when the window is visible and the view is first responder.
-        focusRingType = .none
-        layer?.borderWidth = 0
-    }
-}
 
 // Custom NSWindow that can become key window and is draggable
 // NSPanel (not NSWindow) so it can carry .nonactivatingPanel: the launcher
@@ -417,7 +362,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// (The @NSApplicationDelegateAdaptor pattern can make NSApp.delegate as? AppDelegate fail.)
     static weak var shared: AppDelegate?
 
-    var launcherWindow: NSWindow?
     var settingsWindow: NSWindow?
     var statusItem: NSStatusItem?
     var eventMonitor: Any?
@@ -460,6 +404,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// While in the future, a global-context app launch is morphing into that app's Context
     /// Dock — result-execution hides are skipped so the dock stays instead of hide+relaunch.
     var suppressResultHideUntil: Date = .distantPast
+
+    func holdDockThroughAppLaunch(seconds: TimeInterval = 1.5) {
+        suppressResultHideUntil = Date().addingTimeInterval(seconds)
+    }
+
+    /// Quitting an app transfers macOS focus before the process has fully exited; the
+    /// hold lets the user quit several apps from the same result list.
+    func holdDockForGlobalQuitBatch(seconds: TimeInterval = 10) {
+        let deadline = Date().addingTimeInterval(seconds)
+        suppressResultHideUntil = deadline
+        suppressHideOnResignUntil = deadline
+    }
     /// Bumped per scope activation. The launcher view reads it so the open handler and the
     /// activation notification can't both enter the same scope twice (which repainted the shell).
     private(set) var smartScopeActivationGeneration = 0
@@ -791,16 +747,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             object: nil
         )
 
-        // Desktop/Space switches briefly deactivate the app, which would trigger
-        // the hide-on-resign-key path. Suppress that hide around space changes so
-        // the launcher (which joins all Spaces) survives desktop switching.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(handleActiveSpaceChanged),
-            name: NSWorkspace.activeSpaceDidChangeNotification,
-            object: nil
-        )
-
         // Safari toolbar button — open Context Dock scoped to the frontmost browser
         NotificationCenter.default.addObserver(
             self,
@@ -866,13 +812,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: NSWorkspace.didLaunchApplicationNotification,
             object: nil
         )
-
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(handleAppTermination(_:)),
-            name: NSWorkspace.didTerminateApplicationNotification,
-            object: nil
-        )
     }
 
     @objc private func handleAppActivation(_ notification: Notification) {
@@ -882,18 +821,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         else { return }
 
         // A capture UI taking the screen — ours via /usr/sbin/screencapture, or the system
-        // Screenshot app on ⌘⇧4/⌘⇧5 — is not the user clicking away from the dock. Without
-        // this the dock resigns key, hides for real, and the scope the user was working in
-        // is gone by the time the capture ends.
-        if Self.isScreenCaptureUI(app) {
-            handleScreenCaptureUIActivation()
-            return
-        }
-        restoreDockAfterScreenCaptureIfNeeded()
+        // Screenshot app on ⌘⇧4/⌘⇧5 — is not an app the user switched to.
+        if Self.isScreenCaptureUI(app) { return }
 
         guard let resolvedApp = resolvedUserFacingApplication(app) else { return }
         recordFrontmostApp(resolvedApp)
-        reinforceFloatingDockWindow(reason: "app activation", activate: false)
         // Menu cache is validated by bundleVersion inside AXMenuEnumerator — no manual invalidation needed.
     }
 
@@ -908,29 +840,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return executable == "screencapture" || executable == "screencaptureui"
     }
 
-    private func handleScreenCaptureUIActivation() {
-        if !screenCaptureUIIsActive {
-            dockWasVisibleBeforeScreenCapture = launcherWindow?.isVisible == true
-        }
-        screenCaptureUIIsActive = true
-        // Generous: a capture lasts as long as the user takes to drag. Cleared below.
-        suppressHideOnResignUntil = Date().addingTimeInterval(300)
-    }
-
-    /// Called when any normal app becomes frontmost again — the capture is over.
-    func restoreDockAfterScreenCaptureIfNeeded() {
-        guard screenCaptureUIIsActive else { return }
-        screenCaptureUIIsActive = false
-        let shouldRestore = dockWasVisibleBeforeScreenCapture
-        dockWasVisibleBeforeScreenCapture = false
-        // One more resign follows as the captured app takes focus back; ride that out,
-        // then let normal hide-on-focus-loss resume.
-        suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
-        guard shouldRestore, let window = launcherWindow else { return }
-        window.alphaValue = 1
-        window.orderFrontRegardless()
-    }
-
     @objc private func handleAppLaunch(_ notification: Notification) {
         guard
             let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey]
@@ -938,11 +847,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             app.bundleIdentifier != Bundle.main.bundleIdentifier
         else { return }
         MenuWarmCacheService.shared.appDidLaunch(app)
-        reinforceFloatingDockWindow(reason: "app launch", activate: false)
-    }
-
-    @objc private func handleAppTermination(_ notification: Notification) {
-        reinforceFloatingDockWindow(reason: "app termination", activate: false)
     }
 
     @objc func handleBrowserActivateDockRequest(_ notification: Notification) {
@@ -1187,7 +1091,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // throwing the window into a corner.
         let activeScreen =
             NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? AppDelegate.shared?.launcherWindow?.screen
             ?? NSScreen.main
         let screenFrame =
             activeScreen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -1262,7 +1165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 $0.title.contains("Settings") || $0.title.contains("Preferences")
             })
             ?? NSApp.windows.first(where: {
-                $0 !== self.launcherWindow && $0.styleMask.contains(.titled) && $0.isVisible
+                $0.styleMask.contains(.titled) && $0.isVisible
             })
         guard let win else { return }
 
@@ -1358,58 +1261,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func setupLauncherWindow() {
-        let contentView = LauncherShell(onClose: {
-            self.hideLauncher(force: true)
-        })
-        .environmentObject(ContextDockEnvironment.shared)
-        .environmentObject(AppState.shared)
-
-        launcherWindow = KeyableWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 60),
-            styleMask: [.borderless, .fullSizeContentView, .resizable, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-
-        // FocusableHostingView directly as contentView (original working approach)
-        let hostingView = FocusableHostingView(rootView: contentView)
-        hostingView.autoresizingMask = [.width, .height]
-
-        launcherWindow?.contentView = hostingView
-        launcherWindow?.backgroundColor = .clear
-        launcherWindow?.isOpaque = false
-        // Stay visible when Context-Dock isn't the active app — it never becomes
-        // active now that it's a non-activating panel.
-        launcherWindow?.hidesOnDeactivate = false
-        let windowLevel: NSWindow.Level = settings.effectiveDockAtBottom
-            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
-            : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
-        launcherWindow?.level = windowLevel
-        launcherWindow?.collectionBehavior = currentDockCollectionBehavior()
-        // This borderless panel previously treated transparent space below a result sheet
-        // as draggable window background. That made clicks/drags outside the visible card
-        // move the entire launcher. The shared dock shell is intentionally position-stable.
-        launcherWindow?.isMovableByWindowBackground = false
-        // No window shadow: on a tight transparent window it renders as a hard dark
-        // edge that fights the glass rim (double outline). A soft shadow needs window
-        // margin around the card — handled in SwiftUI instead.
-        launcherWindow?.hasShadow = false
-        launcherWindow?.delegate = self
-        launcherWindow?.ignoresMouseEvents = false
-        launcherWindow?.hidesOnDeactivate = false
-        // Persistent context dock: window stays visible + joins all spaces
-        applyPersistentDockBehavior()
-
-        // Set min/max size for resizing
-        launcherWindow?.minSize = NSSize(width: 400, height: 60)
-        launcherWindow?.maxSize = NSSize(width: 1200, height: 1000)
-
-        launcherWindow?.showsResizeIndicator = false
-
-        // Apply appearance from settings
-        applyAppearanceOverride()
-    }
 
 
     /// True when the dock should be present on EVERY Space at a fixed screen position
@@ -1418,12 +1269,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Set while the dock is inside an active scope / scoped chat (CLI tool, app
     /// scope, provider scope). Makes the dock float on every Space so switching
     /// desktops keeps it put until the user exits the scope — same as a pin.
-    var scopeChatSpaceHold: Bool = false {
-        didSet {
-            guard oldValue != scopeChatSpaceHold else { return }
-            applyPersistentDockBehavior()
-        }
-    }
+    var scopeChatSpaceHold: Bool = false
 
     var dockJoinsAllSpaces: Bool {
         settings.effectiveDockAtBottom || settings.alwaysFloatDock || settings.launcherPinned
@@ -1440,35 +1286,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             : [.moveToActiveSpace, .fullScreenAuxiliary, .stationary]
     }
 
-    func applyPersistentDockBehavior() {
-        guard let window = launcherWindow else { return }
-        window.collectionBehavior = currentDockCollectionBehavior()
-        let newLevel: NSWindow.Level = settings.effectiveDockAtBottom
-            ? NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.statusWindow)))
-            : NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.floatingWindow)))
-        if window.level != newLevel { window.level = newLevel }
-        window.isMovableByWindowBackground = true
-    }
-
     func launcherScreenIdentifier(_ screen: NSScreen?) -> String {
         guard let screen else { return "" }
         if let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] {
             return "\(number)"
         }
         return "\(Int(screen.frame.minX)):\(Int(screen.frame.minY)):\(Int(screen.frame.width)):\(Int(screen.frame.height))"
-    }
-
-    func preferredLauncherScreen(fallback window: NSWindow?) -> NSScreen? {
-        if !settings.launcherWindowScreenID.isEmpty,
-            let screen = NSScreen.screens.first(where: {
-                launcherScreenIdentifier($0) == settings.launcherWindowScreenID
-            })
-        {
-            return screen
-        }
-        return NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
-            ?? window?.screen
-            ?? NSScreen.main
     }
 
     func clampLauncherFrame(_ frame: NSRect, to visibleFrame: NSRect) -> NSRect {
@@ -1483,117 +1306,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             width: frame.width,
             height: frame.height
         )
-    }
-
-    func saveLauncherFloatingPosition() {
-        guard !settings.effectiveDockAtBottom,
-            let window = launcherWindow,
-            window.isVisible
-        else { return }
-        let frame = window.frame
-        guard frame.width >= 200, frame.height >= 40 else { return }
-        settings.launcherWindowHasSavedPosition = true
-        settings.launcherWindowAnchorX = Double(frame.midX)
-        settings.launcherWindowTopY = Double(frame.maxY)
-        settings.launcherWindowScreenID = launcherScreenIdentifier(window.screen ?? NSScreen.main)
-    }
-
-    func restoredLauncherFrame(
-        screen: NSScreen,
-        width: CGFloat,
-        height: CGFloat
-    ) -> NSRect? {
-        guard settings.launcherWindowHasSavedPosition,
-            !settings.effectiveDockAtBottom,
-            settings.launcherWindowAnchorX >= 0,
-            settings.launcherWindowTopY >= 0
-        else { return nil }
-        let frame = NSRect(
-            x: CGFloat(settings.launcherWindowAnchorX) - (width / 2),
-            y: CGFloat(settings.launcherWindowTopY) - height,
-            width: width,
-            height: height
-        )
-        return clampLauncherFrame(frame, to: screen.visibleFrame)
-    }
-
-    /// Keep the dock visible + on top through an app launch started from the dock, so a
-    /// global-context launch morphs smoothly into that app's Context Dock instead of
-    /// hiding and reappearing. Unlike reinforceFloatingDockWindow this is NOT gated to
-    /// always-float/bottom — it holds a transient floating dock too, but only one that's
-    /// already visible (never resurrects a hidden dock) and only for a short window.
-    func holdDockThroughAppLaunch(seconds: TimeInterval = 1.5) {
-        // Suppress result-execution hides for the morph window even if the window is
-        // momentarily not visible yet — set this before the visibility guard so a hide
-        // fired by the launch action itself is skipped.
-        suppressResultHideUntil = Date().addingTimeInterval(seconds)
-        guard let window = launcherWindow, window.isVisible else { return }
-        suppressHideOnResignUntil = Date().addingTimeInterval(seconds)
-        window.alphaValue = 1
-        window.orderFrontRegardless()
-    }
-
-    /// Quitting an app transfers macOS focus before the process has fully exited.
-    /// Keep an already-visible Global Context sheet alive through that transition so
-    /// the user can quit several apps from the same result list.
-    func holdDockForGlobalQuitBatch(seconds: TimeInterval = 10) {
-        let deadline = Date().addingTimeInterval(seconds)
-        suppressResultHideUntil = deadline
-        suppressHideOnResignUntil = deadline
-        guard let window = launcherWindow, window.isVisible else { return }
-        window.alphaValue = 1
-        window.orderFrontRegardless()
-        window.makeKey()
-    }
-
-    func reinforceFloatingDockWindow(reason: String, activate: Bool) {
-        guard settings.alwaysFloatDock || settings.effectiveDockAtBottom else { return }
-        guard let window = launcherWindow else { return }
-        // Only keep an ALREADY-visible dock on top. Never resurrect a dock the
-        // user hid — otherwise switching/activating apps re-opens it. Manual
-        // show/hide only. (Bottom dock is exempt; it's meant to be persistent.)
-        // `isVisible` alone is not "shown": the window is ordered in at alpha 0 from launch,
-        // and forcing alpha to 1 here is what made the hidden dock appear whenever any app
-        // quit, launched or activated. A dock the user can see already has its alpha.
-        guard (window.isVisible && window.alphaValue > 0.01) || settings.effectiveDockAtBottom
-        else { return }
-        applyPersistentDockBehavior()
-        suppressHideOnResignUntil = Date().addingTimeInterval(0.8)
-        window.orderFrontRegardless()
-        if activate {
-            window.makeKeyAndOrderFront(nil)
-            self.launcherWindow?.makeKey()
-        }
-    }
-
-    /// Overrides window appearance (light/dark/system)
-    func applyAppearanceOverride() {
-        guard let window = launcherWindow else { return }
-        switch settings.appearanceMode {
-        case "light":
-            window.appearance = NSAppearance(named: .aqua)
-        case "dark":
-            window.appearance = NSAppearance(named: .darkAqua)
-        default:
-            window.appearance = nil
-        }
-    }
-
-    @objc private func handleActiveSpaceChanged(_ notification: Notification) {
-        guard let window = launcherWindow, window.isVisible else { return }
-        // A Space/desktop switch is NEVER a click-away gesture — it only looks like one
-        // because macOS resigns key focus. Suppress the resign-key hide in every mode so
-        // the dock never blinks out on a desktop switch. A dock that joins all Spaces stays
-        // put; a transient floating dock rides along via .moveToActiveSpace.
-        suppressHideOnResignUntil = Date().addingTimeInterval(1.0)
-        if dockJoinsAllSpaces {
-            applyPersistentDockBehavior()
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard let self, let window = self.launcherWindow, window.isVisible else { return }
-            self.reinforceFloatingDockWindow(reason: "active Space changed", activate: false)
-            self.adoptMenuBarOwnerAfterSpaceChange()
-        }
     }
 
     /// After a Space switch macOS usually hands the menu bar to a different app WITHOUT
@@ -1616,69 +1328,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    // Match Spotlight/Raycast: clicking another app dismisses launcher without terminating it.
-    func windowDidResignKey(_ notification: Notification) {
-        guard notification.object as? NSWindow === launcherWindow else { return }
-        guard !settings.effectiveDockAtBottom else { return }
-        // Always-float: never auto-hide on focus loss (incl. when a launched/menu-acted
-        // app comes frontmost). Dismiss only via Escape / hotkey.
-        guard !settings.alwaysFloatDock else { return }
-        // Pinned via the pin button: stays floating over every app until unpinned.
-        guard !settings.launcherPinned else { return }
-        // Clipboard / Notifications scopes stay put — the user opened them to work
-        // alongside another app, so focus loss must not tear them down.
-        guard !smartScopeActive else { return }
-        // An active scope / scoped chat (CLI tool, app scope) floats until the user
-        // exits it — a Space switch resigns key, and hiding here made it disappear.
-        guard !scopeChatSpaceHold else { return }
-        guard Date() >= suppressHideOnResignUntil else { return }
-        // A chat-approved command can briefly activate its target app (`code --status`
-        // spawns VS Code's CLI and VS Code takes focus). That's not the user clicking
-        // away — hiding here would tear down the running chat request mid-flight.
-        if TerminalAIBridge.shared.isExecuting || TerminalAIBridge.shared.pendingApproval != nil {
-            return
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let window = self.launcherWindow, window.isVisible else { return }
-            guard Date() >= self.suppressHideOnResignUntil else { return }
-            // The scope may have activated after this resign callback was queued.
-            // Re-check at execution time so a stale hide cannot collapse Clipboard/
-            // Notifications after the user has entered the persistent scope.
-            guard !self.smartScopeActive else { return }
-            guard !self.scopeChatSpaceHold else { return }
-            // Keep launcher available while one of our own panels (settings, approvals) owns focus.
-            guard !NSApp.isActive else { return }
-            // Hide on any focus loss to another app — mouse click OR Cmd+Tab OR Dock click.
-            // The previous mouse-click-only guard caused the launcher to remain key after
-            // Cmd+Tab, silently eating all keyboard input (space, arrows) in the user's app.
-            self.hideLauncher()
-        }
-    }
-
     private var savePositionWorkItem: DispatchWorkItem?
-
-    func windowDidMove(_ notification: Notification) {
-        guard notification.object as? NSWindow === launcherWindow else { return }
-        // windowDidMove fires many times per second while dragging. Persisting the
-        // position on each event wrote four @AppStorage values per frame, and each
-        // write triggers AppSettings.objectWillChange → a full launcher re-render — the
-        // drag lag. Debounce so the save (and its one re-render) happens only after the
-        // drag settles.
-        savePositionWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.saveLauncherFloatingPosition() }
-        savePositionWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
-    }
-
-    func windowDidEndLiveResize(_ notification: Notification) {
-        guard notification.object as? NSWindow === launcherWindow else { return }
-        saveLauncherFloatingPosition()
-    }
-
-    func windowDidBecomeKey(_ notification: Notification) {
-        guard notification.object as? NSWindow === launcherWindow else { return }
-        NotificationCenter.default.post(name: .focusSearchField, object: nil)
-    }
 
     func applicationDidResignActive(_ notification: Notification) {
         // Do not hide on Space/full-screen switches. `windowDidResignKey` handles real outside clicks.
@@ -2284,81 +1934,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         commandAloneActive = false
     }
 
-    // Single Option press (alone, no other modifiers, from another app) → focus our search field.
-    func registerSingleOptionFocusMonitor() {
-        if let m = singleOptionFocusMonitor {
-            NSEvent.removeMonitor(m)
-            singleOptionFocusMonitor = nil
-        }
-        if let m = singleOptionLocalFocusMonitor {
-            NSEvent.removeMonitor(m)
-            singleOptionLocalFocusMonitor = nil
-        }
-        if let m = singleOptionCancelMonitor {
-            NSEvent.removeMonitor(m)
-            singleOptionCancelMonitor = nil
-        }
-        if let m = singleOptionLocalCancelMonitor {
-            NSEvent.removeMonitor(m)
-            singleOptionLocalCancelMonitor = nil
-        }
-
-        // Single Option only releases focus. Double Option remains launcher open.
-        let toggleDockInputFocus: () -> Void = { [weak self] in
-            guard let self else { return }
-            guard let window = self.launcherWindow, window.isVisible else { return }
-            DispatchQueue.main.async {
-                if window.isKeyWindow {
-                    // Dock has focus → give it back to the previous app
-                    guard let app = self.previousFrontmostApp, !app.isTerminated else { return }
-                    window.resignKey()
-                    app.activate(options: [.activateIgnoringOtherApps])
-                }
-            }
-        }
-
-        // If any regular key fires while Option is held, the press is a modifier — cancel.
-        singleOptionCancelMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) {
-            [weak self] _ in
-            self?.optionAloneActive = false
-        }
-        singleOptionLocalCancelMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-            [weak self] event in
-            self?.optionAloneActive = false
-            return event
-        }
-
-        let handleFlagsChanged: (NSEvent) -> Void = { [weak self] event in
-            guard let self else { return }
-            let flags = event.modifierFlags
-            let optionNow = flags.contains(.option)
-            let extraMods = flags.intersection([.command, .control, .shift])
-
-            if optionNow && !self.optionAloneActive && extraMods.isEmpty {
-                // Option pressed alone — record
-                self.optionAloneActive = true
-                self.optionAloneDownTime = Date().timeIntervalSince1970
-            } else if !optionNow && self.optionAloneActive {
-                // Option released — check duration
-                let duration = Date().timeIntervalSince1970 - self.optionAloneDownTime
-                self.optionAloneActive = false
-                guard duration > 0.05 && duration < 0.45 else { return }
-                toggleDockInputFocus()
-            } else if !optionNow {
-                self.optionAloneActive = false
-            }
-        }
-
-        singleOptionFocusMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) {
-            handleFlagsChanged($0)
-        }
-        singleOptionLocalFocusMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
-            event in
-            handleFlagsChanged(event)
-            return event
-        }
-    }
-
     // Single Command press (alone, no other modifiers, no regular key) toggles scope.
     func registerSingleCommandGlobalContextMonitor() {
         if let m = singleCommandFocusMonitor {
@@ -2427,37 +2002,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func focusAndCenterPersistentDock() {
-        guard let window = launcherWindow, window.isVisible else { return }
-        let screen = preferredLauncherScreen(fallback: window)
-        if let screen {
-            let visibleFrame = screen.visibleFrame
-            var frame = window.frame
-            if !settings.effectiveDockAtBottom,
-                let restored = restoredLauncherFrame(
-                    screen: screen,
-                    width: frame.width,
-                    height: frame.height
-                )
-            {
-                frame.origin = restored.origin
-            } else {
-                frame.origin.x = visibleFrame.midX - frame.width / 2
-                if settings.alwaysFloatDock && !settings.effectiveDockAtBottom {
-                    frame.origin.y = visibleFrame.midY - frame.height / 2
-                    (window as? KeyableWindow)?.anchorAtBottom = false
-                }
-            }
-            window.setFrame(frame, display: false)
-            (window as? KeyableWindow)?.horizontalResizeAnchorX = frame.midX
-            (window as? KeyableWindow)?.pinnedTopY = frame.maxY
-        }
-        window.alphaValue = 1
-        window.orderFrontRegardless()
-        window.makeKeyAndOrderFront(nil)
-        self.launcherWindow?.makeKey()
-    }
-
     func activateContextDock() {
         // Captured before the async hop, which is what lost the caller last time: the stack
         // inside the dispatched closure shows only libdispatch.
@@ -2480,13 +2024,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        // The clipboard opens in whichever shell's result sheet is on screen (owner
-        // 2026-10-07): the Dock's own clipboard scope while the Dock is up, the Corner's
-        // board otherwise.
-        if launcherWindow?.isVisible == true {
-            NotificationCenter.default.post(name: .activateClipboardScope, object: nil)
-            return
-        }
+        // The Corner's clipboard board (owner 2026-10-07).
         ClipboardPanelController.shared.toggle()
     }
 
@@ -2693,277 +2231,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // hotkey opens it, as ⌥⌥ does. Notifications (D9) and Quick Note (D11) are Corner
         // boards now, so nothing opens the old window any more (#247).
         toggleCentredCorner()
-    }
-
-    /// Watches where the pointer is so the launcher can stand aside.
-    ///
-    /// The host window is screen-tall and mostly empty; without this it sits over the whole
-    /// desktop as an invisible sheet of glass, taking every click aimed at what is behind it.
-    /// Two monitors because neither is enough alone: the global one sees the pointer while
-    /// another app is active, the local one sees it while the launcher itself is key.
-    private func startPointerTransparencyMonitor() {
-        stopPointerTransparencyMonitor()
-        let events: NSEvent.EventTypeMask = [
-            .mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseDown,
-        ]
-        pointerTransparencyGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) {
-            [weak self] _ in
-            self?.applyPointerTransparency()
-        }
-        pointerTransparencyLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: events) {
-            [weak self] event in
-            self?.applyPointerTransparency()
-            return event
-        }
-        applyPointerTransparency()
-    }
-
-    private func stopPointerTransparencyMonitor() {
-        if let monitor = pointerTransparencyGlobalMonitor {
-            NSEvent.removeMonitor(monitor)
-            pointerTransparencyGlobalMonitor = nil
-        }
-        if let monitor = pointerTransparencyLocalMonitor {
-            NSEvent.removeMonitor(monitor)
-            pointerTransparencyLocalMonitor = nil
-        }
-        // Left interactive on the way out: a hidden window ignoring the mouse would stay
-        // that way if it were ever shown by a path that does not restart the monitor.
-        (launcherWindow as? KeyableWindow)?.ignoresMouseEvents = false
-    }
-
-    private func applyPointerTransparency() {
-        guard let window = launcherWindow as? KeyableWindow, window.isVisible else { return }
-        window.updateMouseTransparency(
-            pointer: NSEvent.mouseLocation, isDragging: window.isDraggingFromCard)
-    }
-
-    func showLauncher() {
-        // Who asked. The corner chat runs its turn on the dock's pipeline without wanting the
-        // dock on screen, and it kept arriving anyway — with every static caller ruled out,
-        // the honest instrument is the stack at the moment it happens. Only while the turn log
-        // is switched on, so this costs nothing in normal use.
-        if DoraXTurnLog.isEnabled {
-            let stack = Thread.callStackSymbols.dropFirst().prefix(8).joined(separator: " | ")
-            DoraXTurnLog.record("showLauncher called — \(stack)")
-        }
-        guard let window = launcherWindow else { return }
-        startPointerTransparencyMonitor()
-
-        #if DEBUG
-        print("🚀 [AppDelegate] ===== SHOW LAUNCHER CALLED =====")
-        #endif
-        isDockContextMode = true
-
-        // Capture the CURRENT frontmost app RIGHT NOW before we show the window — read it from
-        // the MENU BAR owner, the same thing the user sees, so the dock never scopes to a stale
-        // app when our panel already holds focus.
-        if let currentApp = menuBarOwningUserFacingApplication() {
-            recordFrontmostApp(currentApp)
-            print(
-                "📱 [AppDelegate] Captured frontmost app at hotkey press: \(currentApp.localizedName ?? "Unknown")"
-            )
-            // Immediately update LauncherView's frontmostAppName so the dock reflects the real app
-            DispatchQueue.main.async {
-                ContextDockEnvironment.shared.frontmostAppDidChange(
-                    name: currentApp.localizedName ?? "",
-                    bundleID: currentApp.bundleIdentifier ?? ""
-                )
-            }
-        }
-
-        // Do not block launcher open on context detection. The detector can touch AX,
-        // AppleScript, browser state, PDFs and OCR; running that here freezes typing.
-        #if DEBUG
-        print("🔍 [AppDelegate] Scheduling context detection after launcher shows...")
-        #endif
-        scheduleUserContextDetection()
-
-        // Restore last floating position first. If no saved position exists, use the
-        // current screen's default placement.
-        let activeScreen = preferredLauncherScreen(fallback: window)
-        guard let activeScreen else { return }
-        let screenFrame = activeScreen.visibleFrame
-        let windowWidth: CGFloat = 700  // Increased from 600 to 700
-
-        // Match calculatedHeight's idle formula exactly so updateWindowSize() fires a ≤1px
-        // change and the guard inside skips it — prevents the visible post-open jump.
-        let statusBarHeight: CGFloat = settings.enableStatusBar ? 45 : 0
-        let initialHeight: CGFloat = statusBarHeight + 70  // statusBar + searchBar (matches calculatedHeight base case)
-
-        var x = screenFrame.midX - (windowWidth / 2)
-
-        // Position window based on "Always Dock at Bottom" setting
-        var y: CGFloat
-        if settings.effectiveDockAtBottom {
-            // When "Always Dock at Bottom" is enabled, ALWAYS stay at bottom
-            // Results will expand upward, dock stays fixed
-            y = screenFrame.minY + 10  // 10px from bottom - FIXED position
-            // Enable bottom anchoring so window grows upward
-            if let keyableWindow = window as? KeyableWindow {
-                keyableWindow.anchorAtBottom = true
-            }
-            applyPersistentDockBehavior()
-            print(
-                "📍 [AppDelegate] Positioning window at BOTTOM (y: \(y)) - Anchor: BOTTOM (stays fixed, results expand upward)"
-            )
-        } else if let restoredFrame = restoredLauncherFrame(
-            screen: activeScreen,
-            width: windowWidth,
-            height: initialHeight
-        ) {
-            x = restoredFrame.minX
-            y = restoredFrame.minY
-            if let keyableWindow = window as? KeyableWindow {
-                keyableWindow.anchorAtBottom = false
-            }
-            #if DEBUG
-            print("📍 [AppDelegate] Restoring floating window position: \(restoredFrame)")
-            #endif
-        } else if settings.alwaysFloatDock {
-            // Always Float Dock should remain persistent, but launch centered like a
-            // floating command surface instead of inheriting a bottom/corner dock pose.
-            y = screenFrame.midY - (initialHeight / 2)
-            if let keyableWindow = window as? KeyableWindow {
-                keyableWindow.anchorAtBottom = false
-            }
-            #if DEBUG
-            print("📍 [AppDelegate] Positioning always-float window at CENTER (y: \(y))")
-            #endif
-        } else {
-            // Default: upper third of screen
-            y = screenFrame.maxY - screenFrame.height / 3
-            // Disable bottom anchoring (normal behavior)
-            if let keyableWindow = window as? KeyableWindow {
-                keyableWindow.anchorAtBottom = false
-            }
-            #if DEBUG
-            print("📍 [AppDelegate] Positioning window at TOP (y: \(y)) - Anchor: TOP")
-            #endif
-        }
-
-        let initialFrame = NSRect(x: x, y: y, width: windowWidth, height: initialHeight)
-        if let keyableWindow = window as? KeyableWindow {
-            keyableWindow.horizontalResizeAnchorX = initialFrame.midX
-            keyableWindow.pinnedTopY = initialFrame.maxY
-        }
-        #if DEBUG
-        print("📐 [AppDelegate] Setting initial frame: \(initialFrame)")
-        #endif
-        #if DEBUG
-        print("📐 [AppDelegate] Screen frame: \(screenFrame)")
-        #endif
-        // Use display: false — window is off-screen; no need to force a render pass here.
-        window.setFrame(initialFrame, display: false)
-        #if DEBUG
-        print("📐 [AppDelegate] Actual window frame after setFrame: \(window.frame)")
-        #endif
-
-        window.alphaValue = 0
-
-        window.orderFrontRegardless()
-        window.makeKey()
-        window.acceptsMouseMovedEvents = true
-        self.launcherWindow?.makeKey()
-
-        // The global hotkey must show a usable shell before any accessibility work.  This read
-        // is still performed on the next main-loop turn (the app's AX element is usually valid
-        // during the activation hand-off), while the lifecycle's existing async pass remains the
-        // authoritative refresh for selections that arrive later.  Keeping it out of the hotkey
-        // handler removes the only synchronous cross-process call on the launch critical path.
-        if let currentApp = previousFrontmostApp {
-            DispatchQueue.main.async {
-                AXContextReader.shared.refreshSelectionOnly(
-                    from: currentApp, includeFinderFiles: false)
-            }
-        }
-
-        // Reset content state now that the window is key and the app is active.
-        // The window is still alpha=0 at this point, so stale content is not visible.
-        // Posting here (after makeKey) ensures NSApp.keyWindow is correct when
-        // updateWindowSize() fires its 10ms-delayed check inside the handler.
-        NotificationCenter.default.post(name: .launcherWindowOpened, object: nil, userInfo: nil)
-        NotificationCenter.default.post(name: .activateContextDock, object: nil)
-
-        // Fade only. Resizing the window while NSVisualEffectView is initializing changes
-        // the sampled wallpaper region and makes the dock glass tint drift on launch.
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.10
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            window.animator().alphaValue = 1.0
-        }
-
-        #if DEBUG
-        print("✅ [AppDelegate] Window is now visible and key")
-        #endif
-        #if DEBUG
-        print("🚀 [AppDelegate] ===== SHOW LAUNCHER COMPLETED =====")
-        #endif
-    }
-
-    func hideLauncher(force: Bool = false) {
-        // A pinned preview is a window the user asked to keep; only the one following
-        // the dock's selection goes away with the dock.
-        PreviewController.shared.closeUnpinned()
-        guard let window = launcherWindow else { return }
-        // Stopped only when the window is really going away — the persistent-scope paths
-        // below return early and keep it on screen, where it still has to stand aside.
-        defer {
-            if !window.isVisible { stopPointerTransparencyMonitor() }
-        }
-        // Compact scopes are intentionally persistent while the user works in another app.
-        // Only an explicit forced dismissal (Escape/hotkey) or clearSearchContext(), which
-        // first clears smartScopeActive, may close them.
-        if !force && smartScopeActive {
-            window.alphaValue = 1
-            applyPersistentDockBehavior()
-            window.orderFrontRegardless()
-            return
-        }
-        // An active scope / frontmost-app chat owns the dock. windowDidResignKey already
-        // guards this, but every other soft-hide path (action executed, app activated,
-        // context switch) reached hideLauncher() directly and tore the conversation down.
-        if !force && scopeChatSpaceHold {
-            window.alphaValue = 1
-            applyPersistentDockBehavior()
-            window.orderFrontRegardless()
-            return
-        }
-        // Pinned: stay floating over every app — even after actions run. Only a
-        // forced hide (Escape / hotkey toggle) dismisses, which also unpins.
-        if !force && settings.launcherPinned {
-            window.orderFrontRegardless()
-            return
-        }
-        if force {
-            settings.launcherPinned = false
-            smartScopeActive = false
-            // Escape / hotkey ends the session outright — release the scope-chat hold so a
-            // later reopen starts unheld instead of floating on every Space forever.
-            scopeChatSpaceHold = false
-        }
-        if !force && (settings.alwaysFloatDock || settings.effectiveDockAtBottom) {
-            // A floating dock stays on screen when focus moves — that is what floating means.
-            // It must not take focus while doing so: this branch runs from hide-on-focus-loss,
-            // and `.focusSearchField` ends in NSApp.activate(ignoringOtherApps: true), so
-            // pressing Return in the corner chat pulled the dock over the app the user was
-            // working in. A hide request that activates the app is not a hide.
-            window.alphaValue = 1
-            applyPersistentDockBehavior()
-            window.orderFrontRegardless()
-            return
-        }
-        NSAnimationContext.runAnimationGroup(
-            { ctx in
-                ctx.duration = 0.15
-                ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-                window.animator().alphaValue = 0
-            },
-            completionHandler: {
-                window.acceptsMouseMovedEvents = false
-                window.orderOut(nil)
-                window.alphaValue = 1  // reset for next show
-            })
     }
 
     // Detect and store user context BEFORE launcher window opens

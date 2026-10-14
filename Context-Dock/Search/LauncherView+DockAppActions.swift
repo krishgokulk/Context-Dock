@@ -86,8 +86,7 @@ extension LauncherView {
             self.expandSearchBar()
             self.isSearchFieldFocused = true
 
-            if let window = AppDelegate.shared?.launcherWindow
-                ?? NSApp.windows.first(where: { $0.isVisible })
+            if let window = NSApp.windows.first(where: { $0.isVisible })
             {
                 window.orderFrontRegardless()
                 window.makeKeyAndOrderFront(nil)
@@ -317,16 +316,9 @@ extension LauncherView {
                 searchState.query == queryAtLastQuit
             else { return }
             isSearchFieldFocused = false
-            AppDelegate.shared?.hideLauncher()
         }
     }
 
-    func appQuitFeedbackPhase(bundleID: String?) -> DockInlineFeedback.Phase? {
-        guard let bundleID = bundleID?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !bundleID.isEmpty
-        else { return nil }
-        return launcherViewModel.appQuitFeedbackPhases[bundleID]
-    }
 
     func refreshGlobalSearchAfterRunningAppMutation() {
         guard isGlobalContextActive else { return }
@@ -344,86 +336,11 @@ extension LauncherView {
         }
     }
 
-    func shouldRequireFullAppNameMatch(
-        appName: String,
-        bundleIdentifier: String?
-    ) -> Bool {
-        let normalizedName = normalizedDockPillText(appName)
-        if normalizedName == "news" { return true }
-        return bundleIdentifier == "com.apple.news"
-    }
 
-    func shouldAllowShortAppPrefixMatch(
-        prefix: String,
-        appName: String,
-        bundleIdentifier: String?
-    ) -> Bool {
-        guard
-            !shouldRequireFullAppNameMatch(
-                appName: appName,
-                bundleIdentifier: bundleIdentifier
-            )
-        else {
-            return prefix.count >= 4
-        }
-        return true
-    }
 
-    func shouldAllowLocalAppPartialCompletion(
-        fullQuery: String,
-        firstToken: String,
-        actionQuery: String
-    ) -> Bool {
-        guard !actionQuery.isEmpty else { return true }
-        if isQuestionLikeAppPartialQuery(fullQuery) { return false }
-        if isCommonLanguageAppPartialStart(firstToken)
-            && !looksLikeAppCommandRemainder(actionQuery)
-        {
-            return false
-        }
-        return true
-    }
 
-    func isQuestionLikeAppPartialQuery(_ query: String) -> Bool {
-        let tokens = query.split(separator: " ").map(String.init)
-        guard let first = tokens.first else { return false }
-        let questionStarts: Set<String> = [
-            "what", "whats", "who", "when", "where", "why", "how",
-            "is", "are", "do", "does", "did", "can", "could", "should",
-            "tell", "explain", "describe", "summarize", "analyse", "analyze",
-        ]
-        if questionStarts.contains(first) { return true }
-        if tokens.count >= 2 {
-            let firstTwo = tokens.prefix(2).joined(separator: " ")
-            if ["what is", "what are", "how do", "how can", "tell me"].contains(firstTwo) {
-                return true
-            }
-        }
-        return false
-    }
 
-    func isCommonLanguageAppPartialStart(_ token: String) -> Bool {
-        let commonStarts: Set<String> = [
-            "a", "an", "the", "this", "that", "these", "those",
-            "what", "whats", "who", "when", "where", "why", "how",
-            "is", "are", "do", "does", "did", "can", "could", "should",
-            "i", "me", "my", "we", "you", "it", "its",
-            "tell", "explain", "describe", "summarize", "analyse", "analyze",
-        ]
-        return commonStarts.contains(token)
-    }
 
-    func looksLikeAppCommandRemainder(_ actionQuery: String) -> Bool {
-        guard let first = actionQuery.split(separator: " ").map(String.init).first else {
-            return false
-        }
-        let commandStarts: Set<String> = [
-            "open", "new", "close", "send", "message", "call", "search", "find",
-            "show", "list", "compose", "create", "add", "play", "pause", "stop",
-            "next", "previous", "download", "share", "copy", "paste", "reply",
-        ]
-        return commandStarts.contains(first)
-    }
 
     func fallbackRunningAppAfterTermination(
         excludingProcessIdentifier processIdentifier: pid_t,
@@ -588,22 +505,6 @@ extension LauncherView {
         }
 
         requestWindowSizeUpdate(reason: .modeChanged)
-
-        // Re-scoping the context dock to the next app is for a dock that is on screen. This
-        // view outlives the window being hidden and still hears every termination, and
-        // activateContextDock() *shows* the dock — so quitting an app from the corner chat
-        // brought the dock up over the user's work, scoped to whatever came next. A dock the
-        // user is not looking at has nothing to re-scope.
-        if shouldStayInContextDockAfterQuit,
-            let fallback,
-            fallback.bundleIdentifier != nil,
-            AppDelegate.shared?.launcherWindow?.isVisible == true
-        {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                guard AppDelegate.shared?.launcherWindow?.isVisible == true else { return }
-                AppDelegate.shared?.activateContextDock()
-            }
-        }
     }
 
     func scheduleDockRefreshAfterTerminationAttempt(
@@ -784,35 +685,8 @@ extension LauncherView {
         }
     }
 
-    func currentBrowserPageIcon() -> NSImage? {
-        guard let url = currentBrowserPageURL() else { return nil }
-        if let favicon = FaviconStore.shared.icon(for: url) {
-            return preparedDockIcon(favicon)
-        }
-        FaviconStore.shared.fetchIfNeeded(for: url)
-        let symbol = SafariTab(title: "", url: url.absoluteString, windowIndex: 0, tabIndex: 0).icon
-        return preparedDockIcon(NSImage(systemSymbolName: symbol, accessibilityDescription: nil))
-    }
 
-    var currentBrowserPageIconIdentity: String? {
-        currentBrowserPageURL()?.absoluteString
-    }
 
-    var shouldShowGlobalRunningAppStrip: Bool {
-        showContextInDock
-            && !aiMode.isActive
-            && !showMediaLayer
-            && !isCompactSmartScope
-            && searchState.contextApp == nil
-            && searchState.selectedIndex == nil
-            && !isContextDockChatConnected
-            // A live selection is ADDITIVE: it adds an icon NEXT TO this strip, it must never
-            // replace it. Hiding the strip on any selection made the running-app capsule vanish
-            // the moment the user selected a file. Shown in Global Context, and in an explicit
-            // app scope (l2.targetApp) so the strip survives scoping and right-arrow cycling.
-            // Hidden only for the plain frontmost Context Dock.
-            && (isGlobalContextActive || l2.targetApp != nil)
-    }
 
     var currentGlobalScopedBundleID: String? {
         if let target = l2.targetApp?.bundleId,
@@ -828,162 +702,9 @@ extension LauncherView {
         return nil
     }
 
-    var globalRunningAppStripApps: [NSRunningApplication] {
-        guard shouldShowGlobalRunningAppStrip else { return [] }
-        let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scopedBundle = currentGlobalScopedBundleID
-        // Keep the stable cached ordering, but merge a fresh workspace read before cycling.
-        // Electron apps such as VS Code can become `.regular` after the original launch
-        // notification snapshot; using only a non-empty cache permanently omitted them.
-        var liveSeen = Set<String>()
-        let source = (runningRegularApps + currentRegularRunningApps()).filter { app in
-            let identity = app.bundleIdentifier
-                ?? app.bundleURL?.standardizedFileURL.path
-                ?? "pid:\(app.processIdentifier)"
-            return liveSeen.insert(identity).inserted
-        }
-        let frontmostApp = source.first { app in
-            !frontmostBundle.isEmpty
-                && frontmostBundle != "com.apple.finder"
-                && frontmostBundle != scopedBundle
-                && app.bundleIdentifier == frontmostBundle
-        }
-        let others = source.filter { app in
-                guard !app.isTerminated else { return false }
-                guard app.bundleURL != nil || app.executableURL != nil else { return false }
-                guard let bundleID = app.bundleIdentifier else { return true }
-                return bundleID != "com.apple.finder"
-                    && bundleID != scopedBundle
-                    && bundleID != frontmostBundle
-            }
-        // Finder leads the strip in Global Context as the entry into desktop file-search —
-        // but once Finder IS the active scope it owns the chip, so drop it from the strip
-        // (otherwise it shows twice: scope chip + strip icon). Show only the other apps.
-        let finder =
-            scopedBundle == "com.apple.finder"
-            ? nil
-            : NSWorkspace.shared.runningApplications.first {
-                $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
-            }
-        // Keep Finder as universal file scope, then show app that owned focus before
-        // Context-Dock opened. Filtering frontmost here caused exactly this stale UI:
-        // ChatGPT vanished while frontmost, then appeared after switching Spaces when
-        // Finder became frontmost. Dedupe it from `others`, but never hide it.
-        return (Array([finder, frontmostApp].compactMap { $0 }) + others)
-            .prefix(5)
-            .map { $0 }
-    }
 
-    var globalScopeCycleApps: [NSRunningApplication] {
-        // Available in Global Context AND in an app scope entered from it (l2.targetApp set),
-        // so right-arrow keeps cycling to the next running app after the first scope.
-        guard isGlobalContextActive || l2.targetApp != nil,
-            showContextInDock,
-            !aiMode.isActive,
-            !showMediaLayer,
-            !isCompactSmartScope,
-            searchState.contextApp == nil,
-            activeSelectionLabel == nil
-        else { return [] }
 
-        let frontmostBundle = frontmost.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
-        let scopedBundle = currentGlobalScopedBundleID
-        var seen = Set<String>()
-        var cycleSourceSeen = Set<String>()
-        let source = (runningRegularApps + currentRegularRunningApps()).filter { app in
-            let identity = app.bundleIdentifier
-                ?? app.bundleURL?.standardizedFileURL.path
-                ?? "pid:\(app.processIdentifier)"
-            return cycleSourceSeen.insert(identity).inserted
-        }
-        let frontmostApp = source.first { app in
-            !frontmostBundle.isEmpty
-                && frontmostBundle != "com.apple.finder"
-                && frontmostBundle != scopedBundle
-                && app.bundleIdentifier == frontmostBundle
-        }
-        let others = source
-            .filter { app in
-                guard !app.isTerminated else { return false }
-                guard let bundleID = app.bundleIdentifier, !bundleID.isEmpty else { return false }
-                guard seen.insert(bundleID).inserted else { return false }
-                if bundleID == Bundle.main.bundleIdentifier { return false }
-                if bundleID == "com.apple.finder" { return false }
-                if bundleID == scopedBundle { return true }
-                return bundleID != frontmostBundle
-            }
-        // Finder leads the cycle so the first right-arrow scopes Finder (matches the strip),
-        // entering desktop file-search mode.
-        let finder = NSWorkspace.shared.runningApplications.first {
-            $0.bundleIdentifier == "com.apple.finder" && !$0.isTerminated
-        }
-        return Array([finder, frontmostApp].compactMap { $0 }) + others
-    }
 
-    @discardableResult
-    func switchGlobalContextScope(to app: NSRunningApplication) -> Bool {
-        guard let bundleID = app.bundleIdentifier,
-            let appName = app.localizedName?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !bundleID.isEmpty,
-            !appName.isEmpty
-        else { return false }
-        // Scoping Finder in Global Context is pure desktop/home file search — it must NOT
-        // inherit a folder attachment left over from an earlier Context Dock session
-        // (otherwise the desktop mode "locks" to e.g. Downloads).
-        if bundleID == "com.apple.finder" {
-            detachFinderFolderSearch()
-        }
-        // Running-app scopes entered from Global Context stay in Global Context. The left
-        // scoped chip shows the active app, while the right capsule keeps the remaining
-        // running apps for fast cycling. Context Dock stays a separate frontmost-app surface.
-        let activated = activateInlineDockAppScope(
-            bundleIdentifier: bundleID,
-            appName: appName,
-            // Choosing a running-app capsule consumes app identity into the scope chip.
-            // Keeping the app-name query here leaves two owners for the same text
-            // (SwiftUI binding + AppKit field editor), so async menu refresh can restore
-            // deleted text forever. Scoped action input always starts clean.
-            queryOverride: "",
-            preserveGlobalContext: true
-        )
-        if activated {
-            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Rebuild scoped results immediately (no Cmd "kick" needed). Finder's provider is
-            // the desktop/current-folder file index — prime it; every other app uses the
-            // cached-menu provider via the normal pill rebuild. Both run cache-only.
-            if isFinderDesktopOnlyMode {
-                primeFinderDesktopModeCache(commitQuery: q.lowercased(), preserveFocus: true)
-            } else {
-                scheduleDockPillRebuild(query: q, delayNanoseconds: 0, refreshContext: false)
-            }
-            requestWindowSizeUpdate(reason: .panelChanged)
-            // Authoritative, self-retrying focus claim after activateInlineDockAppScope's own
-            // toggle — survives the async scoped-menu load / spring animation that could
-            // otherwise leave the field unfocused (no caret) after a right-arrow scope.
-            ensureSearchInputFocusReady()
-        }
-        return activated
-    }
-
-    @discardableResult
-    func cycleGlobalContextAppScope(direction: Int) -> Bool {
-        let apps = globalScopeCycleApps
-        guard !apps.isEmpty else { return false }
-
-        let nextApp: NSRunningApplication
-        if let scopedBundle = currentGlobalScopedBundleID,
-            let currentIndex = apps.firstIndex(where: { $0.bundleIdentifier == scopedBundle })
-        {
-            let count = apps.count
-            let offset = direction >= 0 ? 1 : -1
-            let nextIndex = (currentIndex + offset + count) % count
-            nextApp = apps[nextIndex]
-        } else {
-            nextApp = direction >= 0 ? apps[0] : apps[apps.count - 1]
-        }
-
-        return switchGlobalContextScope(to: nextApp)
-    }
 
     @ViewBuilder
     /// Apps matched from the query's word tokens ("mail recent notes" → Mail, Notes).
@@ -1006,46 +727,7 @@ extension LauncherView {
         return out
     }
 
-    /// True when the trailing strip is in token-fallback mode: query typed, nothing
-    /// matched apps/commands/menus, but individual words match apps.
-    var globalStripShowsTokenMatches: Bool {
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty, shouldUsePureGlobalAppSearch else { return false }
-        guard cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
-            let state = cachedGlobalGroupedState, state.totalCount == 0
-        else { return false }
-        return true
-    }
 
-    /// Apps that own the deferred menu-only matches ("save new notes" → Notes) —
-    /// shown as strip pills while the menu sheet is collapsed behind ↓.
-    var globalStripMenuOwnerApps: [(bundleId: String, icon: NSImage?, name: String)] {
-        guard !globalMenuResultsRevealed, shouldUsePureGlobalAppSearch else { return [] }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty,
-            cachedGlobalGroupedQuery == globalGroupedStateCacheKey(for: q),
-            let state = cachedGlobalGroupedState,
-            state.appResults.isEmpty, state.totalCount > 0
-        else { return [] }
-        var seen = Set<String>()
-        var owners: [(bundleId: String, icon: NSImage?, name: String)] = []
-        let ownerBundleIds =
-            state.menuPills.map(\.sourceBundleId)
-            + state.appMenuGroups.compactMap { $0.pills.first?.sourceBundleId }
-        for bundleId in ownerBundleIds {
-            let trimmed = bundleId.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty, seen.insert(trimmed).inserted else { continue }
-            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed)
-            let icon = url.map { NSWorkspace.shared.icon(forFile: $0.path) }
-            let name = url.map {
-                FileManager.default.displayName(atPath: $0.path)
-                    .replacingOccurrences(of: ".app", with: "")
-            } ?? trimmed
-            owners.append((trimmed, icon, name))
-            if owners.count >= 5 { break }
-        }
-        return owners
-    }
 
     var shouldShowSafariTabStrip: Bool {
         showContextInDock
@@ -1060,46 +742,9 @@ extension LauncherView {
             && AXWebReader.shared.isBrowser(bundleId: frontmost.bundleID)
     }
 
-    var visibleSafariTabStripTabs: [SafariTab] {
-        let tabs = safariTabPickerTabs.isEmpty
-            ? SafariTabManager.shared.cachedTabs(maxAge: 45)
-            : safariTabPickerTabs
-        guard !tabs.isEmpty else { return [] }
-        let currentURLKey = normalizedBrowserTabURLKey(currentBrowserPageURL()?.absoluteString)
-        let ordered = BrowserTabList.ordered(tabs, currentURL: currentBrowserPageURL()?.absoluteString)
-        let visible = ordered.filter { tab in
-            guard isContextDockChatConnected else { return true }
-            guard let currentURLKey else { return true }
-            return normalizedBrowserTabURLKey(tab.url) != currentURLKey
-        }
-        return Array(visible.prefix(5))
-    }
 
-    func normalizedBrowserTabURLKey(_ raw: String?) -> String? {
-        BrowserTabList.normalizedURLKey(raw)
-    }
 
-    var connectedBrowserPageGhostTitle: String? {
-        guard showContextInDock,
-            isContextDockChatConnected
-        else { return nil }
-        guard let page = webResearch.pages.last else { return nil }
-        let title = page.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !title.isEmpty { return title }
-        return URL(string: page.url)?.host ?? currentBrowserPageURL()?.host
-    }
 
-    /// Favicon URL for the connected browser page — lets chat headers show the
-    /// site icon so the user sees WHICH page they are chatting with.
-    var connectedBrowserPageFaviconURL: URL? {
-        guard showContextInDock,
-            isContextDockChatConnected
-        else { return nil }
-        let host = webResearch.pages.last.flatMap { URL(string: $0.url)?.host }
-            ?? currentBrowserPageURL()?.host
-        guard let host, !host.isEmpty else { return nil }
-        return URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64")
-    }
 
     func syncSafariTabStrip(force: Bool = false) {
         let cached = SafariTabManager.shared.cachedTabs(maxAge: 45)
@@ -1118,142 +763,9 @@ extension LauncherView {
         }
     }
 
-    func syncCurrentSafariTabForStrip() {
-        guard shouldShowSafariTabStrip else { return }
-        Task {
-            guard let tab = await SafariTabManager.shared.currentTab() else { return }
-            await MainActor.run {
-                let currentKey = normalizedBrowserTabURLKey(tab.url)
-                let oldKey = normalizedBrowserTabURLKey(currentBrowserPageURL()?.absoluteString)
-                guard currentKey != nil, currentKey != oldKey else { return }
-                SafariTabManager.shared.rememberSelectedTab(tab)
 
-                var tabs = safariTabPickerTabs.isEmpty
-                    ? SafariTabManager.shared.cachedTabs(maxAge: 45)
-                    : safariTabPickerTabs
-                if let idx = tabs.firstIndex(where: {
-                    normalizedBrowserTabURLKey($0.url) == currentKey
-                }) {
-                    tabs[idx] = tab
-                } else {
-                    tabs.insert(tab, at: 0)
-                }
-                withAnimation(.dockSoft) {
-                    safariTabPickerTabs = tabs
-                    if isContextDockChatConnected {
-                        attachBrowserPageSnapshotToCurrentChat(
-                            PageSnapshot(
-                                url: tab.url, text: "", title: tab.title,
-                                timestamp: Date()))
-                    } else {
-                        searchState.revision += 1
-                    }
-                }
-                if let url = URL(string: tab.url) {
-                    FaviconStore.shared.fetchIfNeeded(for: url)
-                }
-            }
-        }
-    }
 
-    func safariTabStripIcon(for tab: SafariTab) -> NSImage? {
-        guard let favicon = BrowserTabList.favicon(for: tab) else { return nil }
-        return preparedDockIcon(favicon)
-    }
 
-    func selectSafariTabFromStrip(_ tab: SafariTab) {
-        SafariTabManager.shared.switchTo(tab)
-        if isContextDockChatConnected {
-            attachSafariTabToCurrentChat(tab)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
-            syncSafariTabStrip(force: true)
-            searchState.revision += 1
-        }
-    }
 
-    func attachSafariTabToCurrentChat(_ tab: SafariTab) {
-        attachBrowserPageSnapshotToCurrentChat(
-            PageSnapshot(url: tab.url, text: "", title: tab.title, timestamp: Date()))
-
-        let capturedTab = tab
-        Task { @MainActor in
-            let js = """
-                (function(){
-                    var el = document.querySelector('article')
-                             || document.querySelector('main')
-                             || document.body;
-                    return el ? el.innerText.trim().substring(0, 8000) : '';
-                })()
-                """
-            let text = await SafariTabManager.shared.executeJS(
-                js,
-                windowIndex: capturedTab.windowIndex,
-                tabIndex: capturedTab.tabIndex
-            ) ?? ""
-            if !text.isEmpty {
-                WebResearchSession.shared.updateText(url: capturedTab.url, text: text)
-            }
-        }
-    }
-
-    func attachBrowserPageSnapshotToCurrentChat(_ snapshot: PageSnapshot) {
-        let snapshotKey = normalizedBrowserTabURLKey(snapshot.url)
-        if let idx = webResearch.pages.firstIndex(where: {
-            normalizedBrowserTabURLKey($0.url) == snapshotKey
-        }) {
-            WebResearchSession.shared.remove(at: idx)
-        }
-        WebResearchSession.shared.addPage(snapshot)
-        searchState.revision += 1
-    }
-
-    @ViewBuilder
-    var safariTabStrip: some View {
-        let tabs = visibleSafariTabStripTabs
-        if !tabs.isEmpty {
-            HStack(spacing: 5) {
-                ForEach(tabs) { tab in
-                    Button {
-                        selectSafariTabFromStrip(tab)
-                    } label: {
-                        if let icon = safariTabStripIcon(for: tab) {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 17, height: 17)
-                                .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        } else {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(Color.blue.opacity(0.86))
-                                .frame(width: 17, height: 17)
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .help(tab.title.isEmpty ? tab.domain : tab.title)
-                }
-            }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(.regularMaterial, in: Capsule(style: .continuous))
-            .overlay(
-                Capsule(style: .continuous)
-                    .strokeBorder(
-                        Color.white.opacity(systemColorScheme == .dark ? 0.16 : 0.22),
-                        lineWidth: 0.7)
-            )
-            .onAppear { syncSafariTabStrip() }
-            .onReceive(Timer.publish(every: 0.45, on: .main, in: .common).autoconnect()) { _ in
-                syncCurrentSafariTabForStrip()
-            }
-            .transition(.scale(scale: 0.9, anchor: .trailing).combined(with: .opacity))
-        } else {
-            Color.clear
-                .frame(width: 0, height: 0)
-                .onAppear { syncSafariTabStrip(force: true) }
-        }
-    }
 
 }
