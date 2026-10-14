@@ -2985,7 +2985,6 @@ struct LauncherView: View {
         if !dismissedFinderPaths.isEmpty {
             dismissedFinderSelectionSignature = finderSelectionSignature(dismissedFinderPaths)
         }
-        AppDelegate.shared?.clearSmartScope(key: "selection")
         if hasSelectionScopeSurface { exitSelectionScopeAIChat() }
         withAnimation(.spring(response: 0.2, dampingFraction: 0.8)) {
             currentContext = .none
@@ -3003,9 +3002,6 @@ struct LauncherView: View {
     func dismissSelectionAndStayInGlobalContext() {
         // Cancel the launch grace so the re-assert pass can't drag the user straight back in.
         launchSelectionScopeGraceUntil = .distantPast
-        // Hotkey-opened scopes park their key on the delegate; drop it so the shortcut re-enters
-        // Selection Scope instead of reading as a toggle-off and hiding the dock.
-        AppDelegate.shared?.clearSmartScope(key: "selection")
         selectionScopeSheetCollapsed = false
         exitSelectionScopeAIChat()
         let payloadToKeepLive = selectionScopePayload

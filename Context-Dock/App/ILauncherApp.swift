@@ -2519,7 +2519,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let now = Date().timeIntervalSinceReferenceDate
         guard now - lastHotkeyFiredAt > 0.15 else { return }
         lastHotkeyFiredAt = now
-        if toggleOffSmartScopeIfActive("selection") { return }
         // Read the selection BEFORE the panel appears, while the source app is still frontmost.
         // The launcher then paints Selection Scope on its first frame instead of showing Context
         // Dock and swapping once an async AX read lands.
@@ -2546,69 +2545,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// True while a compact scope (Clipboard / Notifications) is showing, so the
     /// launcher does not auto-hide when another app takes focus.
     var smartScopeActive = false
-    private var activeSmartScopeKey: String?
     /// Non-nil only while a hotkey-driven scope open is in flight. The window-open handler reads
     /// it to tell "open because a scope was requested" from a plain launcher open, which must
     /// never resume the scope the user was last in.
     var pendingSmartScopeKey: String?
 
-    /// UI exited a smart scope surface — forget the key so the same hotkey re-enters the scope
-    /// instead of reading as a second press and closing the dock.
-    func clearSmartScope(key: String) {
-        guard activeSmartScopeKey == key else { return }
-        activeSmartScopeKey = nil
-        smartScopeActive = false
-    }
-
     /// Drop any remembered scope — used when a plain launcher open resets the surface.
     func clearSmartScopeState() {
-        activeSmartScopeKey = nil
         smartScopeActive = false
-    }
-
-    private func toggleOffSmartScopeIfActive(_ key: String) -> Bool {
-        guard activeSmartScopeKey == key, launcherWindow?.isVisible == true else { return false }
-        smartScopeActivationGeneration &+= 1
-        smartScopeActive = false
-        activeSmartScopeKey = nil
-        isDockContextMode = false
-        hideLauncher(force: true)
-        return true
-    }
-
-    private func presentSmartScope(_ notificationName: Notification.Name, key: String) {
-        smartScopeActive = true
-        activeSmartScopeKey = key
-        pendingSmartScopeKey = key
-        smartScopeActivationGeneration &+= 1
-        let generation = smartScopeActivationGeneration
-        DispatchQueue.main.async {
-            guard generation == self.smartScopeActivationGeneration else { return }
-            if self.launcherWindow == nil {
-                self.setupLauncherWindow()
-            }
-            self.isDockContextMode = true
-            if let window = self.launcherWindow, window.isVisible {
-                window.makeKeyAndOrderFront(nil)
-                // Seat the top anchor at the CURRENT position so entering/leaving a
-                // smart scope only grows/shrinks the sheet below the input bar
-                // instead of letting the resize re-place the window (the "jump").
-                if let keyable = window as? KeyableWindow, !keyable.anchorAtBottom {
-                    keyable.pinnedTopY = window.frame.maxY
-                }
-                self.launcherWindow?.makeKey()
-            } else {
-                self.showLauncher()
-            }
-            DispatchQueue.main.async {
-                guard generation == self.smartScopeActivationGeneration else {
-                    self.pendingSmartScopeKey = nil
-                    return
-                }
-                NotificationCenter.default.post(name: notificationName, object: nil)
-                self.pendingSmartScopeKey = nil
-            }
-        }
     }
 
     func fallbackToNSEventMonitoring() {
@@ -2736,8 +2680,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func toggleLauncher() {
         // The launcher is the centred Corner now (owner 2026-10-12): the recorded launcher
-        // hotkey opens it, as ⌥⌥ does. The old window stays reachable only through the smart
-        // scopes still waiting for a Corner home (Notifications D9, Quick Note D11).
+        // hotkey opens it, as ⌥⌥ does. Notifications (D9) and Quick Note (D11) are Corner
+        // boards now, so nothing opens the old window any more (#247).
         toggleCentredCorner()
     }
 
@@ -2984,7 +2928,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if force {
             settings.launcherPinned = false
             smartScopeActive = false
-            activeSmartScopeKey = nil
             // Escape / hotkey ends the session outright — release the scope-chat hold so a
             // later reopen starts unheld instead of floating on every Space forever.
             scopeChatSpaceHold = false
