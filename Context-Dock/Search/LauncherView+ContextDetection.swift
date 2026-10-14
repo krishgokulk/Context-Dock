@@ -21,29 +21,6 @@ extension LauncherView {
         return NSWorkspace.shared.frontmostApplication?.bundleIdentifier == ownBundleId
     }
 
-    func loadShortcutMetadata() {
-        // Load shortcuts metadata from JSON file
-        guard
-            let metadataURL = Bundle.main.url(
-                forResource: "shortcuts-metadata", withExtension: "json", subdirectory: ".claude")
-        else { return }
-
-        do {
-            let data = try Data(contentsOf: metadataURL)
-            let decoder = JSONDecoder()
-            let metadata = try decoder.decode([String: ShortcutMetadataJSON].self, from: data)
-            for (name, meta) in metadata {
-                shortcutMetadataCache[name] = ShortcutMetadata(
-                    acceptsFiles: meta.acceptsFiles,
-                    acceptsText: meta.acceptsText,
-                    acceptsImages: meta.acceptsImages,
-                    acceptsContacts: meta.acceptsContacts,
-                    acceptsPDFs: meta.acceptsPDFs,
-                    fileExtensions: meta.fileExtensions
-                )
-            }
-        } catch {}
-    }
 
     func detectAndUpdateContext() {
         guard settings.enableContextAIExtensions else {
@@ -294,69 +271,8 @@ extension LauncherView {
         return nil
     }
 
-    func menuSourceApps() -> [NSRunningApplication] {
-        var apps: [NSRunningApplication] = []
-        var seen = Set<pid_t>()
 
-        func append(_ app: NSRunningApplication?) {
-            guard let app, !app.isTerminated else { return }
-            guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
-            guard seen.insert(app.processIdentifier).inserted else { return }
-            apps.append(app)
-        }
 
-        append(contextTargetApp())
-        append(AppDelegate.shared?.previousFrontmostApp)
-        append(NSWorkspace.shared.frontmostApplication)
-
-        if !frontmost.bundleID.isEmpty,
-            let fallback = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == frontmost.bundleID
-            })
-        {
-            append(fallback)
-        }
-
-        return apps
-    }
-
-    func menuInventory(for app: NSRunningApplication) -> [AXMenuItem] {
-        let pid = app.processIdentifier
-        var items = AXMenuReader.shared.peekCachedAllMenuItems(for: pid)
-        if items.isEmpty {
-            items = ContextDockEngine.shared.cachedMenuItems(for: app, maxResults: 120)
-        }
-        for i in items.indices {
-            items[i].sourcePID = pid
-            items[i].sourceAppName = app.localizedName ?? ""
-        }
-        return items
-    }
-
-    func filterMenuInventory(_ items: [AXMenuItem], query: String, maxResults: Int = 16)
-        -> [AXMenuItem]
-    {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let matches =
-            q.isEmpty
-            ? items
-            : items.filter { item in
-                item.title.lowercased().contains(q)
-                    || item.path.contains { $0.lowercased().contains(q) }
-            }
-        return Array(
-            matches.sorted {
-                let aPrefix = q.isEmpty ? 1 : ($0.title.lowercased().hasPrefix(q) ? 0 : 1)
-                let bPrefix = q.isEmpty ? 1 : ($1.title.lowercased().hasPrefix(q) ? 0 : 1)
-                if aPrefix != bPrefix { return aPrefix < bPrefix }
-
-                let aTitle = q.isEmpty ? 1 : ($0.title.lowercased().contains(q) ? 0 : 1)
-                let bTitle = q.isEmpty ? 1 : ($1.title.lowercased().contains(q) ? 0 : 1)
-                if aTitle != bTitle { return aTitle < bTitle }
-
-                return $0.path.count < $1.path.count
-            }.prefix(maxResults))
-    }
 
     func currentFrontmostMenuCapabilityJSONBlock(maxItems: Int = 40) -> String {
         let items =
@@ -391,116 +307,9 @@ extension LauncherView {
             """
     }
 
-    func acceptL2AppCompletion(_ completion: AppCompletion) {
-        self.l2.appCompletion = nil
-        if completion.bundleId == "scope://clipboard" {
-            activateClipboardScope(queryOverride: completion.actionQuery)
-            return
-        }
-        // Activate the scope immediately (explicit Tab action) and clear the app name
-        // so the user can type their query into an empty field — Spotlight-style.
-        let activated = activateInlineDockAppScope(
-            bundleIdentifier: completion.bundleId,
-            appName: completion.appName,
-            queryOverride: completion.actionQuery,
-            preserveGlobalContext: isGlobalContextActive
-        )
-        if !activated {
-            let currentTokens = self.searchState.query.trimmingCharacters(in: .whitespaces)
-                .split(separator: " ").map(String.init)
-            let afterApp = currentTokens.dropFirst().joined(separator: " ")
-            let fullName = (currentTokens.first ?? "") + completion.ghost
-            self.searchState.query = afterApp.isEmpty ? fullName + " " : fullName + " " + afterApp
-        }
-    }
 
-    @discardableResult
-    func activateTypedAppScopeIfPossible(for query: String? = nil) -> Bool {
-        guard isGlobalContextActive else { return false }
 
-        let rawQuery = query ?? searchState.query
-        let rawTrimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard rawTrimmed.count >= 2 else { return false }
 
-        let normalized =
-            rawTrimmed.lowercased().hasSuffix(".app")
-            ? String(rawTrimmed.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            : rawTrimmed.lowercased()
-
-        if let completion = l2.appCompletion, !completion.ghost.isEmpty {
-            acceptL2AppCompletion(completion)
-            return true
-        }
-
-        if normalized == "clipboard" {
-            activateClipboardScope()
-            return true
-        }
-
-        if let target = L2AppActionRouter.shared.appScopeTarget(for: normalized) {
-            let activated = activateInlineDockAppScope(
-                bundleIdentifier: target.bundleId,
-                appName: target.appName,
-                queryOverride: target.actionQuery,
-                preserveGlobalContext: isGlobalContextActive
-            )
-            if !activated { searchState.query = target.appName + " " }
-            return true
-        }
-
-        if let target = installedAppMenuTarget(
-            for: normalized,
-            runningOnly: false,
-            includeAppsWithoutMenuSnapshot: true,
-            allowPrefixAlias: true
-        ) {
-            let activated = activateInlineDockAppScope(
-                bundleIdentifier: target.bundleId,
-                appName: target.appName,
-                queryOverride: target.actionQuery,
-                preserveGlobalContext: isGlobalContextActive
-            )
-            if !activated { searchState.query = target.appName + " " }
-            return true
-        }
-
-        if let completion = bestL2PartialAppCompletion(for: normalized, runningOnly: false),
-            !completion.ghost.isEmpty
-        {
-            acceptL2AppCompletion(completion)
-            return true
-        }
-
-        return false
-    }
-
-    func menuDebugSummary(query: String) -> String {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let matches =
-            q.isEmpty
-            ? liveMenuItems.count
-            : liveMenuItems.filter {
-                $0.title.lowercased().contains(q)
-                    || $0.path.contains { part in part.lowercased().contains(q) }
-            }.count
-        return "\(menuDebugText), \(matches) matches"
-    }
-
-    func setupQuickLookEventMonitor() {
-        // Remove any existing monitor first
-        removeQuickLookEventMonitor()
-
-        // A local monitor, not .onKeyPress: the field editor swallows Space before
-        // SwiftUI ever sees it while the search field has focus.
-        quickLookEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
-            [self] event in
-            // A floating panel owns its own keys — Space there belongs to that panel,
-            // not to the dock's selection behind it.
-            if previewOwnsKeyEvent(event) { return event }
-            return handleSpaceKeyForPreview(event) ? nil : event
-        }
-    }
 
     /// After a Quick Look peek closes, keep the list selection on the file that was
     /// being previewed — Spotlight-style — instead of dropping back to the first row.
@@ -530,12 +339,6 @@ extension LauncherView {
         }
     }
 
-    func removeQuickLookEventMonitor() {
-        if let monitor = quickLookEventMonitor {
-            NSEvent.removeMonitor(monitor)
-            quickLookEventMonitor = nil
-        }
-    }
 
     func quickLookPanelIsVisible() -> Bool {
         PreviewController.shared.isOpen
@@ -560,83 +363,9 @@ extension LauncherView {
         // selection, so re-taking focus here would fight it.
         guard PreviewController.shared.isOpen else { return true }
 
-        if let window = AppDelegate.shared?.launcherWindow {
-            window.makeKey()
-            // List-view (finder desktop) results: keep the RESULT focused, not the input —
-            // so when the peek closes (however it closes) the user lands back on the result
-            // and can arrow to the next one (Spotlight-style), instead of in the input field.
-            if usesVerticalListDockLayout {
-                if l2.focusedPillIndex == nil { l2.focusedPillIndex = listViewHoveredIndex }
-                l2.pillNavViaKeyboard = true
-                isSearchFieldFocused = false
-            } else {
-                isSearchFieldFocused = true
-            }
-        }
         return true
     }
 
-    /// Electron/Catalyst apps (VS Code, Slack, Discord…) usually don't expose `selectedText`
-    /// via Accessibility, so the AX read returns nothing. Fallback: briefly copy the selection
-    /// (synthetic ⌘C to the still-frontmost previous app), read it off the pasteboard, then
-    /// RESTORE the previous pasteboard — so the selection chip works in any app. Non-destructive:
-    /// the user's clipboard is preserved, and an empty selection just times out to nil.
-    func peekSelectionViaClipboard(completion: @escaping (String?) -> Void) {
-        guard AXIsProcessTrusted() else { completion(nil); return }
-        // Target the app that held the selection. The dock panel is key by now, so a generic
-        // event post would go to the DOCK, not the selected app — deliver ⌘C to its PID.
-        guard let targetPID = AppDelegate.shared?.previousFrontmostApp?.processIdentifier,
-            targetPID != 0
-        else { completion(nil); return }
-        let pb = NSPasteboard.general
-
-        // Snapshot the current pasteboard so we can put it back.
-        let saved: [NSPasteboardItem] =
-            pb.pasteboardItems?.map { item in
-                let copy = NSPasteboardItem()
-                for type in item.types {
-                    if let data = item.data(forType: type) { copy.setData(data, forType: type) }
-                }
-                return copy
-            } ?? []
-        let beforeCount = pb.changeCount
-        suppressClipboardImportUntilChangeCount = beforeCount + 2
-
-        // Synthetic ⌘C posted directly to the selected app's process (postToPid), so it lands
-        // there even though the dock window currently has key focus.
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let keyC: CGKeyCode = 0x08  // 'c'
-        let down = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: true)
-        down?.flags = .maskCommand
-        let up = CGEvent(keyboardEventSource: src, virtualKey: keyC, keyDown: false)
-        up?.flags = .maskCommand
-        down?.postToPid(targetPID)
-        up?.postToPid(targetPID)
-
-        func restore() {
-            pb.clearContents()
-            if !saved.isEmpty { pb.writeObjects(saved) }
-            suppressClipboardImportUntilChangeCount = pb.changeCount
-            lastCheckedPasteboardCount = pb.changeCount
-        }
-
-        func poll(_ attempt: Int) {
-            if pb.changeCount != beforeCount {
-                let text = pb.string(forType: .string)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                restore()
-                completion((text?.isEmpty == false) ? text : nil)
-                return
-            }
-            if attempt >= 10 {  // ~200ms — copy never landed (no selection)
-                suppressClipboardImportUntilChangeCount = nil
-                completion(nil)
-                return
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(attempt + 1) }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { poll(1) }
-    }
 
     func refreshQuickLookPreviewForCurrentFocusIfVisible() {
         guard quickLookPanelIsVisible() else { return }
@@ -703,194 +432,9 @@ extension LauncherView {
         AppCatalogService.shared.appsNow()
     }
 
-    func findAllShortcuts() -> [SearchResult] {
-        var shortcuts: [SearchResult] = []
 
-        do {
-            let query = ShortcutsLinkQuery()
-            let results = try query.shortcuts()
 
-            for shortcut in results {
-                let shortcutName = shortcut.name
-                let shortcutIcon = NSImage(
-                    systemSymbolName: ShortcutsCatalog.iconName(for: shortcutName),
-                    accessibilityDescription: shortcutName
-                ) ?? ShortcutsCatalog.appIcon ?? NSWorkspace.shared.icon(forFileType: "shortcut")
-                shortcuts.append(
-                    SearchResult(
-                        title: shortcutName,
-                        subtitle: "Shortcut",
-                        icon: shortcutIcon,
-                        action: {
-                            if let encodedName = shortcutName.addingPercentEncoding(
-                                withAllowedCharacters: .urlPathAllowed),
-                                let url = URL(
-                                    string: "shortcuts://run-shortcut?name=\(encodedName)")
-                            {
-                                NSWorkspace.shared.open(url)
-                            }
-                        },
-                        type: .shortcut,
-                        filePath: nil,
-                        contactData: nil
-                    ))
-            }
-        } catch {}
 
-        return shortcuts.sorted { $0.title.lowercased() < $1.title.lowercased() }
-    }
-
-    func findSystemFolders() -> [SearchResult] {
-        var folders: [SearchResult] = []
-        let fileManager = FileManager.default
-
-        // Get user's home directory
-        let homeURL = fileManager.homeDirectoryForCurrentUser
-
-        // Common system folders with their names and icons
-        let systemFolders: [(name: String, path: String, icon: String)] = [
-            ("Desktop", "\(homeURL.path)/Desktop", "desktop"),
-            ("Documents", "\(homeURL.path)/Documents", "doc.text.fill"),
-            ("Downloads", "\(homeURL.path)/Downloads", "arrow.down.circle.fill"),
-            ("Pictures", "\(homeURL.path)/Pictures", "photo.fill"),
-            ("Music", "\(homeURL.path)/Music", "music.note"),
-            ("Movies", "\(homeURL.path)/Movies", "film.fill"),
-            ("Applications", "/Applications", "app.fill"),
-            ("Library", "\(homeURL.path)/Library", "books.vertical.fill"),
-            ("Public", "\(homeURL.path)/Public", "person.2.fill"),
-            (
-                "iCloud Drive", "\(homeURL.path)/Library/Mobile Documents/com~apple~CloudDocs",
-                "icloud.fill"
-            ),
-        ]
-
-        // Scan home directory for user-created folders (like MEGA, Projects, etc.)
-        do {
-            let homeContents = try fileManager.contentsOfDirectory(
-                at: homeURL,
-                includingPropertiesForKeys: [.isDirectoryKey, .isHiddenKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            )
-
-            // Get list of system folder names to exclude duplicates
-            let systemFolderNames = Set(systemFolders.map { $0.name.lowercased() })
-
-            for url in homeContents {
-                // Check if it's a directory
-                guard let resourceValues = try? url.resourceValues(forKeys: [.isDirectoryKey]),
-                    resourceValues.isDirectory == true
-                else {
-                    continue
-                }
-
-                let folderName = url.lastPathComponent
-
-                // Skip if it's already in system folders
-                guard !systemFolderNames.contains(folderName.lowercased()) else {
-                    continue
-                }
-
-                // Skip hidden folders (like .ssh, .config, etc.)
-                guard !folderName.hasPrefix(".") else {
-                    continue
-                }
-
-                // Skip known non-interesting folders
-                let skipFolders = ["Applications (Parallels)", "Parallels", "VirtualBox VMs"]
-                guard !skipFolders.contains(folderName) else {
-                    continue
-                }
-
-                // Add user folder with inline preview
-                let folderPath = url.path
-                folders.append(
-                    SearchResult(
-                        title: folderName,
-                        subtitle: url.path,
-                        icon: NSWorkspace.shared.icon(forFile: url.path),
-                        action: {
-                            self.showFolderPreviewInline(path: folderPath)
-                        },
-                        type: .folder,
-                        filePath: url.path,
-                        contactData: nil
-                    ))
-
-            }
-        } catch {}
-
-        // Add predefined system folders
-        for folder in systemFolders {
-            let folderURL = URL(fileURLWithPath: folder.path)
-
-            // Check if folder exists
-            var isDirectory: ObjCBool = false
-            if fileManager.fileExists(atPath: folder.path, isDirectory: &isDirectory),
-                isDirectory.boolValue
-            {
-                folders.append(
-                    SearchResult(
-                        title: folder.name,
-                        subtitle: folder.path,
-                        icon: NSImage(
-                            systemSymbolName: folder.icon, accessibilityDescription: folder.name),
-                        action: {
-                            // Folder opening is handled in executeResult
-                        },
-                        type: .folder,
-                        filePath: folder.path,
-                        contactData: nil
-                    ))
-            }
-        }
-
-        return folders
-    }
-
-    func findAllContacts() async -> [SearchResult] {
-        var contacts: [SearchResult] = []
-
-        // Check if contacts search is enabled in settings
-        if !settings.allowContacts { return [] }
-
-        if !contactManager.hasContactsPermission {
-            let granted = await contactManager.requestPermission()
-            if !granted { return [] }
-        }
-
-        // Get all contacts for searching
-        let contactResults = await contactManager.getAllContacts()
-
-        for contactResult in contactResults {
-            contacts.append(
-                SearchResult(
-                    title: contactResult.fullName,
-                    subtitle: contactResult.subtitle,
-                    icon: contactResult.image,
-                    action: { [contactResult] in
-                        // Default action: open in Contacts app
-                        contactResult.openInContacts()
-                    },
-                    type: .contact,
-                    filePath: nil,
-                    contactData: SearchResult.ContactData(
-                        primaryEmail: contactResult.primaryEmail,
-                        allEmails: contactResult.allEmails,
-                        primaryPhone: contactResult.primaryPhone,
-                        allPhones: contactResult.allPhones,
-                        identifier: contactResult.identifier
-                    )
-                ))
-        }
-
-        return contacts
-    }
-
-    func initializeFileIndex() {
-        Task {
-            await fileIndexManager.initialize()
-        }
-    }
 
     func searchIndexedFiles(for query: String) {
         guard settings.enableSpotlightSearch,
@@ -955,167 +499,8 @@ extension LauncherView {
         }
     }
 
-    func searchSystemData(for query: String) async {
-        // System data (calendar, reminders, notes, mail) only appears in the
-        // dedicated app panel (searchState.activeSmartQueryKey), never in normal search results.
-        // This prevents clutter like "call mom" showing under CALENDAR & NOTES when
-        // the user types "cal" looking for Calendar.app.
-        guard !query.isEmpty else {
-            await MainActor.run {
-                systemDataResults = []
-            }
-            return
-        }
-        // Skip entirely when not in app panel mode
-        guard
-            await MainActor.run(
-                resultType: Bool.self, body: { searchState.activeSmartQueryKey != nil })
-        else {
-            return
-        }
 
-        #if DEBUG
-        print("🔍 [SystemSearch] Starting search for: '\(query)'")
-        #endif
 
-        // Search all system data types
-        let systemResults = await systemDataManager.searchAll(
-            query: query,
-            types: [.calendarEvent, .reminder, .note, .mail, .photo, .voiceRecording],
-            perTypeLimit: 5
-        )
-
-        #if DEBUG
-        print("✅ [SystemSearch] Found \(systemResults.count) system data results")
-        #endif
-        if systemResults.isEmpty {
-            print(
-                "⚠️ [SystemSearch] No results found - this might indicate permission issues or no matching data"
-            )
-        } else {
-            print(
-                "📊 [SystemSearch] Result types: \(systemResults.map { "\($0.type)" }.joined(separator: ", "))"
-            )
-        }
-
-        // Convert SystemSearchResult to SearchResult
-        let convertedSearchResults = systemResults.map { systemResult -> SearchResult in
-            // Map SystemDataType to ResultType
-            let resultType: SearchResult.ResultType
-            switch systemResult.type {
-            case .calendarEvent:
-                resultType = .calendarEvent
-            case .reminder:
-                resultType = .reminder
-            case .note:
-                resultType = .note
-            case .mail:
-                resultType = .mail
-            case .photo:
-                resultType = .photo
-            case .message:
-                resultType = .message
-            case .voiceRecording, .contact:
-                // Map voiceRecording to file type and contact is already handled separately
-                resultType = .file
-            }
-
-            return SearchResult(
-                title: systemResult.title,
-                subtitle: systemResult.subtitle,
-                icon: systemResult.icon,
-                action: { systemResult.open() },
-                score: 0.0,
-                type: resultType,
-                filePath: nil,
-                contactData: nil
-            )
-        }
-
-        #if DEBUG
-        print("✅ [SystemSearch] Converted to \(convertedSearchResults.count) SearchResults")
-        #endif
-
-        await MainActor.run {
-            #if DEBUG
-            print("📝 [SystemSearch] Updating systemDataResults on main thread")
-            #endif
-            systemDataResults = convertedSearchResults
-            #if DEBUG
-            print("📝 [SystemSearch] Current systemDataResults count: \(systemDataResults.count)")
-            #endif
-            #if DEBUG
-            print("📝 [SystemSearch] Current allItems count: \(allItems.count)")
-            #endif
-            // Trigger re-search on next run loop to avoid state changes during view updates
-            DispatchQueue.main.async {
-                performSearchWithoutSpotlight()
-            }
-        }
-    }
-
-    func navigateResults(direction: Int) {
-        let results = searchState.results  // Capture current snapshot
-        guard !results.isEmpty else {
-            searchState.selectedIndex = nil
-            return
-        }
-
-        // Mark as keyboard navigation for auto-scroll
-        isKeyboardNavigation = true
-
-        let movementDirection = direction
-
-        if let currentIndex = searchState.selectedIndex {
-            // Validate current index is still valid
-            guard currentIndex >= 0 && currentIndex < results.count else {
-                searchState.selectedIndex = 0
-                return
-            }
-
-            let newIndex = currentIndex + movementDirection
-            if newIndex >= 0 && newIndex < results.count {
-                searchState.selectedIndex = newIndex
-            } else if movementDirection < 0 {
-                // At the top, stay at top
-                searchState.selectedIndex = 0
-            } else {
-                // At the bottom, stay at bottom
-                searchState.selectedIndex = results.count - 1
-            }
-        } else {
-            searchState.selectedIndex = direction > 0 ? 0 : max(results.count - 1, 0)
-        }
-    }
-
-    func executeSelectedResult() {
-        // Cancel any in-flight background search task so its stale result batch
-        // cannot overwrite searchState.results after the action has already fired.
-        debounceTask?.cancel()
-        debounceTask = nil
-
-        // In AI mode, submit to AI provider instead
-        if aiMode.isActive {
-            if launchTypedAppMatchIfNeeded() {
-                return
-            }
-            let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines)
-            if q.count > 3 {
-                submitAIQuery()
-            }
-            return
-        }
-
-        // Validate index bounds before accessing
-        if let index = searchState.selectedIndex, index >= 0 && index < searchState.results.count {
-            executeResult(searchState.results[index])
-        } else if !searchState.results.isEmpty {
-            executeResult(searchState.results[0])
-        } else {
-            // Try to open as URL or perform web search
-            handleDirectInput()
-        }
-    }
 
     func hideLauncherAfterResultExecution() {
         suppressAutomaticGlobalContextUntil = Date().addingTimeInterval(1.6)
@@ -1145,7 +530,6 @@ extension LauncherView {
         }
 
         isSearchFieldFocused = false
-        AppDelegate.shared?.hideLauncher()
     }
 
     func forceHideLauncherAfterResultExecution() {
@@ -1162,7 +546,6 @@ extension LauncherView {
             return
         }
         isSearchFieldFocused = false
-        AppDelegate.shared?.hideLauncher(force: true)
     }
 
     func hideLauncherAfterFinderAction() {
@@ -1176,57 +559,6 @@ extension LauncherView {
         hideLauncherAfterResultExecution()
     }
 
-    func executeResult(_ result: SearchResult) {
-        // Track usage for frecency ranking
-        UsageTracker.shared.recordAccess(for: result.trackingIdentifier)
-
-        // Contacts → open context panel (contact card)
-        if result.type == .contact {
-            activateSearchContext(for: result)
-            return
-        }
-
-        // Files, documents, and folders → Enter always opens them directly
-        // (Use Tab or → to open the context panel instead)
-        if result.type == .file || result.type == .document || result.type == .folder {
-            result.action()
-            hideLauncherAfterResultExecution()
-            return
-        }
-
-        if result.type == .application {
-            let bundleId =
-                Bundle(url: URL(fileURLWithPath: result.subtitle))?.bundleIdentifier
-            _ = launchApplication(
-                bundleIdentifier: bundleId,
-                appName: result.title,
-                path: result.subtitle
-            )
-            if isGlobalContextActive {
-                forceHideLauncherAfterResultExecution()
-            } else {
-                hideLauncherAfterResultExecution()
-            }
-            return
-        }
-
-        // Special handling for shortcuts with context
-        if result.type == .shortcut {
-            executeShortcutWithContext(result)
-        } else {
-            result.action()
-        }
-
-        if result.dismissesLauncher {
-            hideLauncherAfterResultExecution()
-        } else {
-            // Stay-open actions (e.g. "Quit App" rows in Global Context):
-            // keep the dock up and ready for the next query.
-            searchState.query = ""
-            searchState.selectedIndex = nil
-            DispatchQueue.main.async { self.reclaimSearchInputFocus() }
-        }
-    }
 
     func executeL2Extension(_ ext: ILExtension, context: UserContext) async {
         await MainActor.run {

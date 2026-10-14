@@ -59,10 +59,6 @@ class CommandApprovalWindowHost: NSObject, NSWindowDelegate {
     }
 }
 
-final class AdapterApprovalPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-}
 
 // MARK: - Adapter Approval Window Host
 /// Manages the standalone NSPanel used for adapter action approval dialogs.

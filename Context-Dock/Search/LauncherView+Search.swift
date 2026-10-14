@@ -498,9 +498,6 @@ extension LauncherView {
 
     // MARK: - Helpers
 
-    func findApplications(matching query: String) -> [SearchResult] {
-        allItems.filter { $0.title.lowercased().contains(query) }
-    }
 
     func systemCommandPresetSearchResults(for query: String) -> [SearchResult] {
         let normalizedQuery = normalizedDockPillText(query)
@@ -579,16 +576,6 @@ extension LauncherView {
         return nil
     }
 
-    private func findExactApplicationMatch(query: String) -> String? {
-        let lowercased = query.lowercased().trimmingCharacters(in: .whitespaces)
-        for app in allApplications {
-            guard let appPath = app.filePath else { continue }
-            let appName = URL(fileURLWithPath: appPath)
-                .deletingPathExtension().lastPathComponent.lowercased()
-            if appName == lowercased { return appPath }
-        }
-        return nil
-    }
 
     @discardableResult
     private func handleSmartQueryResult(_ smartQuery: SmartQueryType) -> Bool {

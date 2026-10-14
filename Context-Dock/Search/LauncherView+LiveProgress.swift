@@ -18,51 +18,13 @@ import Foundation
 
 extension LauncherView {
 
-    /// The steps to show for a running turn, or empty when nothing is running.
-    static func liveProgressSteps(
-        isLoading: Bool, trace: [String], status: String?
-    ) -> [String] {
-        guard isLoading else { return [] }
-        return trace.isEmpty ? [status ?? "Working…"] : trace
-    }
 
     // MARK: - Context Dock chat
 
-    /// The dock has no streaming id, so the message being written is the last one: an
-    /// assistant message with something in it. While it is still empty the dock deliberately
-    /// renders nothing for it (see the placeholder branch), and the trailing block stands in.
-    var dockProgressBelongsToLastMessage: Bool {
-        guard l2.isLoading, let last = l2.chatMessages.last, last.role == .assistant else {
-            return false
-        }
-        return !last.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
 
-    var dockLiveProgressSteps: [String] {
-        Self.liveProgressSteps(
-            isLoading: l2.isLoading, trace: l2.routerTrace, status: l2.loadingStatus)
-    }
 
-    /// Steps for one row of the dock transcript — empty for every message except the one
-    /// currently being written.
-    func dockLiveSteps(for message: AIChatMessage) -> [String] {
-        guard dockProgressBelongsToLastMessage, message.id == l2.chatMessages.last?.id else {
-            return []
-        }
-        return dockLiveProgressSteps
-    }
 
     // MARK: - General chat
 
-    var generalLiveProgressSteps: [String] {
-        Self.liveProgressSteps(
-            isLoading: aiMode.isLoading, trace: aiMode.routerTrace, status: aiMode.loadingStatus)
-    }
 
-    func generalLiveSteps(for message: AIChatMessage) -> [String] {
-        guard aiMode.isLoading, let streamingId = aiMode.streamingId,
-            message.id == streamingId
-        else { return [] }
-        return generalLiveProgressSteps
-    }
 }

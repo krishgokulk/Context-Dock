@@ -30,12 +30,6 @@ final class AXSearchFieldInjector {
         let bundleId = app.bundleIdentifier ?? ""
         let appName = app.localizedName ?? bundleId
 
-        // Fully yield keyboard focus BEFORE posting any events. The DoraX dock is a
-        // panel that stays key; if it isn't ordered out, the synthetic Cmd+F / paste
-        // go to its search field ("typed into our app") and nothing lands in the
-        // target app. orderOut is synchronous, so key focus is released immediately.
-        await MainActor.run { AppDelegate.shared?.launcherWindow?.orderOut(nil) }
-
         _ = app.activate(options: [.activateIgnoringOtherApps])
         // Electron/Catalyst apps ignore NSRunningApplication.activate — re-open via
         // NSWorkspace (activates a running app, never relaunches) so it truly fronts.

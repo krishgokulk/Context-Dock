@@ -3,15 +3,6 @@ import Foundation
 import SwiftUI
 
 extension LauncherView {
-    func isCurrentFinderFolderAttachedToConversation() -> Bool {
-        guard
-            frontmost.bundleID == "com.apple.finder"
-                || contextTargetApp()?.bundleIdentifier == "com.apple.finder"
-        else { return false }
-        guard canAttachCurrentFinderFolderToConversation else { return false }
-
-        return isFinderFolderSearchAttached(currentFolderPath: currentFinderFolderPath())
-    }
 
     func isCurrentMailContextAttached() -> Bool {
         guard
@@ -21,56 +12,9 @@ extension LauncherView {
         return isMailContextAttached
     }
 
-    func toggleMailContextAttachment() {
-        isMailContextAttached.toggle()
-    }
 
-    func addCurrentFinderFolderToConversation() {
-        refreshCachedFinderCurrentDirectory(for: "com.apple.finder")
-        let folderPath = currentFinderFolderPath()
-        let normalizedPath = URL(fileURLWithPath: folderPath).standardizedFileURL.path
-        guard isAttachableFinderFolder(normalizedPath) else { return }
-        guard FileManager.default.fileExists(atPath: normalizedPath) else { return }
 
-        if isFinderFolderSearchAttached(currentFolderPath: normalizedPath) {
-            detachFinderFolderSearch(path: normalizedPath)
-        } else {
-            attachFinderFolderSearch(path: normalizedPath)
-            finderFolderQueryModeActive = true
-            l2.focusedPillIndex = nil
-            focusedAppPillIndex = nil
-            l2.pillNavViaKeyboard = false
-            expandSearchBar()
-            isSearchFieldFocused = true
-        }
-    }
 
-    @discardableResult
-    func attachCurrentFinderFolderFromEmptyFieldIfNeeded() -> Bool {
-        guard showContextInDock, !isGlobalContextActive else { return false }
-        // Allowed for the unscoped frontmost-Finder dock AND for a Finder app scope — both
-        // mean "this Finder window's folder". A non-Finder app scope must not attach.
-        guard l2.targetApp == nil || l2.targetApp?.bundleId == "com.apple.finder" else {
-            return false
-        }
-        guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return false
-        }
-        guard isSearchInputActiveAtEnd() else { return false }
-        guard isFinderFrontmostWindowContext() else { return false }
-        guard canAttachCurrentFinderFolderToConversation else { return false }
-        guard !isCurrentFinderFolderAttachedToConversation() else { return false }
-
-        addCurrentFinderFolderToConversation()
-        scheduleDockPillRebuild(query: "", delayNanoseconds: 0, refreshContext: false)
-        requestWindowSizeUpdate(reason: .panelChanged)
-        return true
-    }
-
-    func isSearchInputActiveAtEnd() -> Bool {
-        if searchInputHasHighlightedText() { return false }
-        return searchInputCursorIsAtEnd()
-    }
 
     func isFinderFolderSearchAttached(currentFolderPath: String? = nil) -> Bool {
         let folderPath =
@@ -80,152 +24,15 @@ extension LauncherView {
         return attachedFinderFolderSearchPath == folderPath
     }
 
-    /// Any real folder the frontmost Finder window is showing can be attached as the
-    /// current-folder search context — not just home subfolders. Desktop is excluded
-    /// (Finder desktop-only mode owns that), as are the home root and filesystem root,
-    /// which are too broad to be useful as a folder snapshot.
-    func isAttachableFinderFolder(_ path: String) -> Bool {
-        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        guard !normalizedPath.isEmpty, normalizedPath != "/" else { return false }
-        let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.path
-        guard normalizedPath != "\(home)/Desktop", normalizedPath != home else { return false }
-        var isDir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: normalizedPath, isDirectory: &isDir)
-            && isDir.boolValue
-    }
 
-    var canAttachCurrentFinderFolderToConversation: Bool {
-        guard !isFinderDesktopOnlyMode else { return false }
-        return isAttachableFinderFolder(currentFinderFolderPath())
-    }
 
-    func attachFinderFolderSearch(path: String) {
-        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        approvedFinderFolderSearchPaths.insert(normalizedPath)
-        attachedFinderFolderSearchPath = normalizedPath
-        finderFolderQueryModeActive = true
-        refreshCachedFinderCurrentDirectory(for: "com.apple.finder")
-        refreshAttachedFinderFolderSnapshot(path: normalizedPath, force: true)
-        startAttachedFinderFolderSnapshotWatcher(path: normalizedPath)
 
-        if showContextInDock {
-            scheduleFinderSemanticSearchIfNeeded(for: searchState.query)
-        }
-    }
 
-    func detachFinderFolderSearch(path: String? = nil) {
-        let currentAttached = attachedFinderFolderSearchPath
-        guard !currentAttached.isEmpty else { return }
 
-        if let path {
-            let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-            guard normalizedPath == currentAttached else { return }
-        }
 
-        attachedFinderFolderSearchPath = ""
-        finderFolderQueryModeActive = false
-        stopAttachedFinderFolderSnapshotWatcher()
-        attachedFinderFolderSnapshotTask?.cancel()
-        attachedFinderFolderSnapshotTask = nil
-        attachedFinderFolderSnapshotPath = ""
-        attachedFinderFolderSnapshotItems = []
-        attachedFinderFolderSnapshotDate = .distantPast
-        clearFinderSemanticState()
-    }
 
-    @discardableResult
-    func detachFinderFolderQueryModeFromEmptyBackspace() -> Bool {
-        // Any attached folder detaches on empty backspace — do NOT require the
-        // attachment to still match the live Finder folder (the cached current-
-        // folder path drifts while the dock has focus, which made exit impossible).
-        guard finderFolderQueryModeActive || !attachedFinderFolderSearchPath.isEmpty else {
-            return false
-        }
-        guard searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return false
-        }
 
-        detachFinderFolderSearch()
-        // detachFinderFolderSearch no-ops when the path is already empty — force the
-        // mode off so backspace can never be consumed without actually exiting.
-        finderFolderQueryModeActive = false
-        // Folder mode armed the chat surface; a message-less chat disarms with it so
-        // the dock lands back on the Finder menu search, not an empty chat sheet.
-        if l2.chatMessages.isEmpty {
-            l2.chatArmed = false
-            l2.showChatPopover = false
-        }
-        l2.focusedPillIndex = nil
-        focusedAppPillIndex = nil
-        l2.pillNavViaKeyboard = false
-        scheduleDockPillRebuild(query: "", delayNanoseconds: 0)
-        isSearchFieldFocused = true
-        return true
-    }
 
-    func presentFinderFolderSearchPermissionAlert(for path: String) {
-        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        let folderName = URL(fileURLWithPath: normalizedPath).lastPathComponent
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Allow Folder Search?"
-        alert.informativeText =
-            "Allow Context-Dock to search names and indexed file contents inside “\(folderName.isEmpty ? normalizedPath : folderName)” for this Finder session."
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Cancel")
-        alert.icon = NSWorkspace.shared.icon(forFile: normalizedPath)
-
-        NSApp.activate(ignoringOtherApps: true)
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            attachFinderFolderSearch(path: normalizedPath)
-        }
-    }
-
-    func clearFinderFolderSearchAttachmentIfNeeded() {
-        if attachedFinderFolderSearchPath.isEmpty { return }
-        if !isFinderFolderSearchAttached() {
-            clearFinderSemanticState()
-        }
-    }
-
-    func startAttachedFinderFolderSnapshotWatcher(path: String) {
-        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        if attachedFinderFolderSnapshotWatcher?.path == normalizedPath { return }
-
-        stopAttachedFinderFolderSnapshotWatcher()
-        attachedFinderFolderSnapshotWatcher = FinderFolderSnapshotWatcher(path: normalizedPath) {
-            changedPath in
-            Task { @MainActor in
-                handleAttachedFinderFolderDidChange(path: changedPath)
-            }
-        }
-    }
-
-    func stopAttachedFinderFolderSnapshotWatcher() {
-        attachedFinderFolderSnapshotWatcherTask?.cancel()
-        attachedFinderFolderSnapshotWatcherTask = nil
-        attachedFinderFolderSnapshotWatcher?.stop()
-        attachedFinderFolderSnapshotWatcher = nil
-    }
-
-    func handleAttachedFinderFolderDidChange(path: String) {
-        let normalizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-        guard attachedFinderFolderSearchPath == normalizedPath else { return }
-
-        attachedFinderFolderSnapshotWatcherTask?.cancel()
-        attachedFinderFolderSnapshotWatcherTask = Task(priority: .userInitiated) {
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard attachedFinderFolderSearchPath == normalizedPath else { return }
-                refreshAttachedFinderFolderSnapshot(path: normalizedPath, force: true)
-                if showContextInDock {
-                    scheduleFinderSemanticSearchIfNeeded(for: searchState.query)
-                }
-            }
-        }
-    }
 
     func refreshAttachedFinderFolderSnapshot(path: String? = nil, force: Bool = false) {
         let resolvedPath = URL(

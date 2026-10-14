@@ -218,9 +218,6 @@ extension LauncherView {
         return MailSearchIntent(query: cleaned, tokenKind: tokenKind, displayLabel: label)
     }
 
-    func mailSemanticSearchQuery(from rawScopedQuery: String) -> String? {
-        mailSemanticSearchIntent(from: rawScopedQuery)?.query
-    }
 
     /// Whether the sentence is asking something. Says nothing about whether it is asking
     /// about mail — see `MailQuestionRouter.mentionsMailbox` for that half, which the
@@ -388,40 +385,6 @@ extension LauncherView {
         return answer
     }
 
-    func buildAttachedMailContextBlock(for query: String) -> String? {
-        let filters = mailQuestionFilters(for: query)
-        guard
-            let snapshot = MailAutomation.mailboxSnapshotData(
-                senderContains: filters.senderFilter,
-                subjectContains: filters.subjectFilter,
-                unreadOnly: filters.unreadOnly,
-                relativeDay: filters.relativeDay,
-                limit: 12,
-                maxScan: 150
-            )
-        else {
-            return "\n📧 ACTUAL MAIL DATA:\nMail context could not be read.\n"
-        }
-
-        var block = "\n📧 ACTUAL MAIL DATA (recent \(snapshot.mailboxName) scan):\n"
-        if !filters.criteriaSummary.isEmpty {
-            block += "Criteria: " + filters.criteriaSummary.joined(separator: ", ") + "\n"
-        }
-        block += "Mailbox: \(snapshot.mailboxName)\n"
-
-        if snapshot.messages.isEmpty {
-            block += "No matching messages were found in the recent Mail scan.\n"
-            return block
-        }
-
-        for message in snapshot.messages {
-            block +=
-                "- \(message.subject) | From: \(message.sender) | \(message.dateText) | Read: \(message.isRead)\n"
-        }
-        block +=
-            "IMPORTANT: Use this ACTUAL mail data to answer mailbox questions. Do not make up email results.\n"
-        return block
-    }
 
     func applicationURL(bundleIdentifier: String, appName: String) -> URL? {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
@@ -494,11 +457,6 @@ extension LauncherView {
         return ref as? String
     }
 
-    func axStringArrayAttribute(_ element: AXUIElement, _ attribute: CFString) -> [String] {
-        var ref: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute, &ref) == .success else { return [] }
-        return ref as? [String] ?? []
-    }
 
     func axChildElements(_ element: AXUIElement) -> [AXUIElement] {
         var ref: CFTypeRef?
@@ -528,36 +486,6 @@ extension LauncherView {
         return ["AXSearchField", "AXTextField", "AXComboBox", "AXTextArea"].contains(role)
     }
 
-    func findMailSearchField(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
-        guard depth < 8 else { return nil }
-
-        let role = axStringAttribute(element, kAXRoleAttribute as CFString) ?? ""
-        if role == "AXSearchField" {
-            return element
-        }
-
-        let description = axStringAttribute(element, kAXDescriptionAttribute as CFString) ?? ""
-        let title = axStringAttribute(element, kAXTitleAttribute as CFString) ?? ""
-        let help = axStringAttribute(element, kAXHelpAttribute as CFString) ?? ""
-        let metadata = normalizedDockPillText([description, title, help].joined(separator: " "))
-
-        if isEditableAXElement(element),
-            metadata.contains("search") || metadata.contains("mailbox")
-        {
-            return element
-        }
-
-        var firstEditableField: AXUIElement?
-        for child in axChildElements(element) {
-            if let exact = findMailSearchField(in: child, depth: depth + 1) {
-                return exact
-            }
-            if firstEditableField == nil, isEditableAXElement(child) {
-                firstEditableField = child
-            }
-        }
-        return firstEditableField
-    }
 
     func findGenericSearchField(in element: AXUIElement, depth: Int = 0) -> AXUIElement? {
         guard depth < 9 else { return nil }
@@ -637,18 +565,6 @@ extension LauncherView {
         keyUp.postToPid(pid)
     }
 
-    func postUnicodeText(_ text: String, to pid: pid_t) {
-        let utf16 = Array(text.utf16)
-        guard !utf16.isEmpty,
-            let source = CGEventSource(stateID: .hidSystemState),
-            let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-            let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-        else { return }
-        keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
-        keyUp.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
-        keyDown.postToPid(pid)
-        keyUp.postToPid(pid)
-    }
 
     func pasteString(_ text: String, to pid: pid_t) {
         let pasteboard = NSPasteboard.general
@@ -743,26 +659,7 @@ extension LauncherView {
         return true
     }
 
-    func axSearchableStrings(for element: AXUIElement) -> [String] {
-        [
-            axStringAttribute(element, kAXTitleAttribute as CFString),
-            axStringAttribute(element, kAXValueAttribute as CFString),
-            axStringAttribute(element, kAXDescriptionAttribute as CFString),
-            axStringAttribute(element, kAXHelpAttribute as CFString),
-        ]
-        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-        .filter { !$0.isEmpty }
-    }
 
-    func axSubtreeSearchableStrings(for element: AXUIElement, depth: Int = 0) -> [String] {
-        guard depth < 2 else { return axSearchableStrings(for: element) }
-
-        var results = axSearchableStrings(for: element)
-        for child in axChildElements(element).prefix(12) {
-            results.append(contentsOf: axSubtreeSearchableStrings(for: child, depth: depth + 1))
-        }
-        return results
-    }
 
 
 
@@ -993,157 +890,10 @@ extension LauncherView {
         return nil
     }
 
-    func leafFindChildren(for parent: AXMenuItem) -> [AXMenuItem] {
-        var leaves: [AXMenuItem] = []
-        for child in parent.children {
-            if child.isLeaf {
-                leaves.append(child)
-            } else {
-                leaves.append(contentsOf: child.children.filter(\.isLeaf))
-            }
-        }
-        return leaves.filter { $0.isEnabled }
-    }
 
-    func findMenuParent(
-        targetBundleId: String,
-        targetAppName: String
-    ) -> AXMenuItem? {
-        let liveMatches = targetBundleId == frontmost.bundleID ? liveMenuItems : []
-        let cachedMatches = GlobalContextEngine.shared.cachedMenuItems(
-            bundleIdentifier: targetBundleId,
-            appName: targetAppName,
-            processIdentifier: 0,
-            query: "find",
-            maxResults: 32
-        )
-        let candidates = liveMatches + cachedMatches
-        let normalizedFindTitles: Set<String> = ["find", "find..."]
 
-        let parent =
-            candidates.first { item in
-                !item.children.isEmpty
-                    && normalizedFindTitles.contains(normalizedDockPillText(item.title))
-                    && !leafFindChildren(for: item).isEmpty
-            }
-            ?? synthesizedFindParentFromCachedPaths(
-                cachedMatches,
-                targetBundleId: targetBundleId,
-                targetAppName: targetAppName
-            )
 
-        guard let parent else { return nil }
 
-        let fallbackPID =
-            parent.sourcePID != 0
-            ? parent.sourcePID
-            : (NSWorkspace.shared.runningApplications.first {
-                $0.bundleIdentifier == targetBundleId && !$0.isTerminated
-            }?.processIdentifier ?? 0)
-        return menuItemWithSourceFallback(parent, pid: fallbackPID, appName: targetAppName)
-    }
-
-    func synthesizedFindParentFromCachedPaths(
-        _ items: [AXMenuItem],
-        targetBundleId: String,
-        targetAppName: String
-    ) -> AXMenuItem? {
-        let placeholder = AXUIElementCreateSystemWide()
-        var seen = Set<String>()
-        let children: [AXMenuItem] = items.compactMap { item in
-            let normalizedPath = item.path.map(normalizedDockPillText)
-            guard
-                let findIndex = normalizedPath.firstIndex(where: { $0 == "find" || $0 == "find..." }
-                )
-            else {
-                return nil
-            }
-            guard item.path.count > findIndex + 1 else { return nil }
-            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty else { return nil }
-            let key = item.path.joined(separator: " > ").lowercased()
-            guard seen.insert(key).inserted else { return nil }
-            var child = item
-            child.children = []
-            child.element = placeholder
-            child.sourceAppName = targetAppName
-            return child
-        }
-
-        guard !children.isEmpty else { return nil }
-        return AXMenuItem(
-            title: "Find",
-            path: ["Edit", "Find"],
-            isEnabled: true,
-            element: placeholder,
-            children: children,
-            sourcePID: 0,
-            sourceAppName: targetAppName
-        )
-    }
-
-    func makeFindToken(
-        title: String,
-        targetBundleId: String,
-        targetAppName: String
-    ) -> AppFindToken {
-        AppFindToken(
-            title: title,
-            targetBundleId: targetBundleId,
-            targetAppName: targetAppName,
-            parentMenu: findMenuParent(
-                targetBundleId: targetBundleId,
-                targetAppName: targetAppName
-            ),
-            selectedMenu: nil
-        )
-    }
-
-    @discardableResult
-    func activateFindTokenIfNeeded(from rawQuery: String) -> Bool {
-        guard showContextInDock, !isGlobalContextActive, !aiMode.isActive,
-            lockedFindToken == nil
-        else { return false }
-
-        let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-
-        let scope = resolveDockScope(for: trimmed)
-        let rawScopedQuery = rawScopedActionQuery(for: trimmed, scope: scope)
-        guard isFindIntentCommand(rawScopedQuery, fullQuery: trimmed),
-            let target = resolvedFindTarget(dockScope: scope)
-        else { return false }
-
-        let payload = findIntentPayload(from: rawScopedQuery)
-        withAnimation(.spring(response: 0.22, dampingFraction: 0.82)) {
-            lockedFindToken = makeFindToken(
-                title: findTokenTitle(for: rawScopedQuery),
-                targetBundleId: target.bundleId,
-                targetAppName: target.appName
-            )
-            showFindTokenMenu = false
-            if searchState.query != payload {
-                searchState.query = payload
-            }
-            l2.focusedPillIndex = nil
-            l2.pillNavViaKeyboard = false
-            listViewHoveredIndex = nil
-        }
-        l2.appCompletion = nil
-        l2.showResultsPopover = false
-        cachedDockPills = []
-        if scope.isExplicitAppScope,
-            l2.targetApp?.bundleId != target.bundleId
-        {
-            _ = activateInlineDockAppScope(
-                bundleIdentifier: target.bundleId,
-                appName: target.appName,
-                queryOverride: payload,
-                preserveGlobalContext: isGlobalContextActive
-            )
-        }
-        return true
-    }
 
     func clearFindToken(preserveQuery: Bool = true) {
         withAnimation(.spring(response: 0.2, dampingFraction: 0.82)) {

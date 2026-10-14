@@ -10,15 +10,6 @@ extension LauncherView {
         }
     }
 
-    /// Shows NSSharingServicePicker anchored above the pill row,
-    /// using the current AX context (selected files, URL, or text).
-    /// Sets shareSheetVisible = true so arrow keys are passed through to the picker.
-    func showShareSheetForContext() {
-        let items = ShareIntentRouter.shared.shareableItems(
-            for: effectiveShareAXContext())
-        guard !items.isEmpty else { return }
-        presentSharingPicker(items: items)
-    }
 
     /// Share items resolved with the LIVE browser URL. Runs synchronous AppleScript,
     /// so call this ONLY at share-execution time (a user tap) — never during pill
@@ -139,13 +130,7 @@ extension LauncherView {
         return SelectedContextResolver.focusedDocumentURL(pid: pid)
     }
 
-    func fileURLFromAXValue(_ value: CFTypeRef) -> URL? {
-        SelectedContextResolver.fileURLFromAXValue(value)
-    }
 
-    func validShareFileURL(_ url: URL) -> URL? {
-        SelectedContextResolver.validShareFileURL(url)
-    }
 
     func isBrowserBundleId(_ bundleId: String) -> Bool {
         SelectedContextResolver.isBrowserBundleId(bundleId)

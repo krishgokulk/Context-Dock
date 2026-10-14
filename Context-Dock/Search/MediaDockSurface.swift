@@ -191,8 +191,4 @@ struct MediaDockSurface: View {
 }
 
 extension LauncherView {
-    @ViewBuilder
-    var mediaDockSurface: some View {
-        MediaDockSurface(mediaObserver: mediaObserver)
-    }
 }

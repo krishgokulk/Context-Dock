@@ -20,41 +20,9 @@ extension LauncherView {
         get { engineState.queryChangeGeneration }
         nonmutating set { engineState.queryChangeGeneration = newValue }
     }
-    var notepadSelectedNoteID: UUID? {
-        get { engineState.notepadSelectedNoteID }
-        nonmutating set { engineState.notepadSelectedNoteID = newValue }
-    }
-    var notepadAIGenerating: Bool {
-        get { engineState.notepadAIGenerating }
-        nonmutating set { engineState.notepadAIGenerating = newValue }
-    }
-    var notepadFrontmostContext: String? {
-        get { engineState.notepadFrontmostContext }
-        nonmutating set { engineState.notepadFrontmostContext = newValue }
-    }
-    var notepadFrontmostLabel: String? {
-        get { engineState.notepadFrontmostLabel }
-        nonmutating set { engineState.notepadFrontmostLabel = newValue }
-    }
-    var notepadCapturedText: String? {
-        get { engineState.notepadCapturedText }
-        nonmutating set { engineState.notepadCapturedText = newValue }
-    }
-    var notepadAttachments: [URL] {
-        get { engineState.notepadAttachments }
-        nonmutating set { engineState.notepadAttachments = newValue }
-    }
     var clipboardSourceFilterBundleId: String {
         get { engineState.clipboardSourceFilterBundleId }
         nonmutating set { engineState.clipboardSourceFilterBundleId = newValue }
-    }
-    var clipboardSourceFilterName: String {
-        get { engineState.clipboardSourceFilterName }
-        nonmutating set { engineState.clipboardSourceFilterName = newValue }
-    }
-    var clipboardSourcePillFocusIndex: Int? {
-        get { engineState.clipboardSourcePillFocusIndex }
-        nonmutating set { engineState.clipboardSourcePillFocusIndex = newValue }
     }
     var chatFocusApps: [GeneralChatFocusApp] {
         get { engineState.chatFocusApps }
@@ -68,14 +36,6 @@ extension LauncherView {
         get { engineState.pendingAttachmentTurn }
         nonmutating set { engineState.pendingAttachmentTurn = newValue }
     }
-    var isShowingChatFocusAppPicker: Bool {
-        get { engineState.isShowingChatFocusAppPicker }
-        nonmutating set { engineState.isShowingChatFocusAppPicker = newValue }
-    }
-    var hoveredChatFocusBundleId: String? {
-        get { engineState.hoveredChatFocusBundleId }
-        nonmutating set { engineState.hoveredChatFocusBundleId = newValue }
-    }
     var panelConsoleLinesMap: [String: [(line: String, isCommand: Bool)]] {
         get { engineState.panelConsoleLinesMap }
         nonmutating set { engineState.panelConsoleLinesMap = newValue }
@@ -83,10 +43,6 @@ extension LauncherView {
     var panelShowConsoleMap: [String: Bool] {
         get { engineState.panelShowConsoleMap }
         nonmutating set { engineState.panelShowConsoleMap = newValue }
-    }
-    var panelConsoleHeight: CGFloat {
-        get { engineState.panelConsoleHeight }
-        nonmutating set { engineState.panelConsoleHeight = newValue }
     }
     var panelTerminalControllers: [String: TerminalHostController] {
         get { engineState.panelTerminalControllers }
@@ -107,14 +63,6 @@ extension LauncherView {
     var globalQuitIdleDismissGeneration: Int {
         get { engineState.globalQuitIdleDismissGeneration }
         nonmutating set { engineState.globalQuitIdleDismissGeneration = newValue }
-    }
-    var qlRightClickPos: CGPoint? {
-        get { engineState.qlRightClickPos }
-        nonmutating set { engineState.qlRightClickPos = newValue }
-    }
-    var panelTerminalHost: TerminalHostController? {
-        get { engineState.panelTerminalHost }
-        nonmutating set { engineState.panelTerminalHost = newValue }
     }
     var l2: L2State {
         get { engineState.l2 }
@@ -140,10 +88,6 @@ extension LauncherView {
         get { engineState.finderBrowsePath }
         nonmutating set { engineState.finderBrowsePath = newValue }
     }
-    var expandedClipboardEntryIDs: Set<UUID> {
-        get { engineState.expandedClipboardEntryIDs }
-        nonmutating set { engineState.expandedClipboardEntryIDs = newValue }
-    }
     var contextDockChatCapturedText: String? {
         get { engineState.contextDockChatCapturedText }
         nonmutating set { engineState.contextDockChatCapturedText = newValue }
@@ -152,10 +96,6 @@ extension LauncherView {
         get { engineState.contextDockChatFiles }
         nonmutating set { engineState.contextDockChatFiles = newValue }
     }
-    var finderDesktopFullIndexPrimed: Bool {
-        get { engineState.finderDesktopFullIndexPrimed }
-        nonmutating set { engineState.finderDesktopFullIndexPrimed = newValue }
-    }
     var finderDesktopSearchPills: [DockPill] {
         get { engineState.finderDesktopSearchPills }
         nonmutating set { engineState.finderDesktopSearchPills = newValue }
@@ -163,10 +103,6 @@ extension LauncherView {
     var finderDesktopSearchQuery: String {
         get { engineState.finderDesktopSearchQuery }
         nonmutating set { engineState.finderDesktopSearchQuery = newValue }
-    }
-    var launchSelectionScopeGraceUntil: Date {
-        get { engineState.launchSelectionScopeGraceUntil }
-        nonmutating set { engineState.launchSelectionScopeGraceUntil = newValue }
     }
     var selectionScopePayload: GlobalContextActivation? {
         get { engineState.selectionScopePayload }
@@ -192,22 +128,6 @@ extension LauncherView {
         get { engineState.selectionRouterPendingEmail }
         nonmutating set { engineState.selectionRouterPendingEmail = newValue }
     }
-    var lastAppliedSelectionActivation: Int {
-        get { engineState.lastAppliedSelectionActivation }
-        nonmutating set { engineState.lastAppliedSelectionActivation = newValue }
-    }
-    var pendingPrivacyApproval: AIPrivacyApprovalCenter.PendingApproval? {
-        get { engineState.pendingPrivacyApproval }
-        nonmutating set { engineState.pendingPrivacyApproval = newValue }
-    }
-    var pendingCapabilityApproval: AICapabilityApprovalCenter.PendingApproval? {
-        get { engineState.pendingCapabilityApproval }
-        nonmutating set { engineState.pendingCapabilityApproval = newValue }
-    }
-    var pendingAdapterApproval: AdapterActionRequest? {
-        get { engineState.pendingAdapterApproval }
-        nonmutating set { engineState.pendingAdapterApproval = newValue }
-    }
     var pendingActionCandidates: [DoraXActionCandidate] {
         get { engineState.pendingActionCandidates }
         nonmutating set { engineState.pendingActionCandidates = newValue }
@@ -219,10 +139,6 @@ extension LauncherView {
     var pendingCapabilityGap: CapabilityGapService.Gap? {
         get { engineState.pendingCapabilityGap }
         nonmutating set { engineState.pendingCapabilityGap = newValue }
-    }
-    var capabilityGapWorking: Bool {
-        get { engineState.capabilityGapWorking }
-        nonmutating set { engineState.capabilityGapWorking = newValue }
     }
     var lastAppliedDockHeightPreset: DockHeightPreset? {
         get { engineState.lastAppliedDockHeightPreset }
@@ -239,29 +155,5 @@ extension LauncherView {
     var renderedDockHeight: CGFloat? {
         get { engineState.renderedDockHeight }
         nonmutating set { engineState.renderedDockHeight = newValue }
-    }
-    var isHoveringSearchIcon: Bool {
-        get { engineState.isHoveringSearchIcon }
-        nonmutating set { engineState.isHoveringSearchIcon = newValue }
-    }
-    var isHoveringInputField: Bool {
-        get { engineState.isHoveringInputField }
-        nonmutating set { engineState.isHoveringInputField = newValue }
-    }
-    var suppressMouseDrivenInteractionUntil: Date {
-        get { engineState.suppressMouseDrivenInteractionUntil }
-        nonmutating set { engineState.suppressMouseDrivenInteractionUntil = newValue }
-    }
-    var suppressMouseDrivenInteractionOrigin: NSPoint? {
-        get { engineState.suppressMouseDrivenInteractionOrigin }
-        nonmutating set { engineState.suppressMouseDrivenInteractionOrigin = newValue }
-    }
-    var isHoveringNowPlayingIcon: Bool {
-        get { engineState.isHoveringNowPlayingIcon }
-        nonmutating set { engineState.isHoveringNowPlayingIcon = newValue }
-    }
-    var showMediaHoverDock: Bool {
-        get { engineState.showMediaHoverDock }
-        nonmutating set { engineState.showMediaHoverDock = newValue }
     }
 }
