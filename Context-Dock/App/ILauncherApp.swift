@@ -687,10 +687,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if !Self.isHostingTests { GlobalSearchIndexBuilder.shared.start() }
 
         // The engine the Corner's search and App Chat run on, window or not (#257 E2).
+        DockEngine.shared.register()
         if !Self.isHostingTests { DockEngine.shared.start() }
 
-        // Create the launcher window
-        setupLauncherWindow()
+        // No launcher window: the engine runs without one, and the Corner is the launcher
+        // (#257 E3).
 
         // Register global hotkeys
         registerGlobalHotkey()

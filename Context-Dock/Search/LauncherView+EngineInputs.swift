@@ -286,4 +286,61 @@ extension LauncherView {
             scheduleGlobalGroupedListRebuild(query: q, delayNanoseconds: 0)
         }
     }
+
+    // MARK: - Reactions to its own state (#257 E3)
+    //
+    // `.onChange` hooks on the view that did engine work — saving the chat, keeping its
+    // session keyed to the right app, following the selection. `DockEngine` runs them when
+    // the value changes, the way `.onChange` did. Bodies moved unchanged.
+
+    func engineFrontmostDetectionChanged(_ newValue: Bool) {
+        if newValue {
+            // Start observing when enabled
+            startObservingAppSwitches()
+        } else {
+            // Clear frontmost app data when disabled
+            frontmost.name = ""
+            frontmost.icon = nil
+            frontmost.bundleID = ""
+            stopObservingAppSwitches()
+        }
+    }
+
+    func engineTargetAppChanged() {
+        syncL2DockSession(force: true)
+        scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+    }
+
+    func engineShowContextInDockChanged(_ newValue: Bool) {
+        handleShowContextInDockChange(newValue)
+        if newValue {
+            syncL2DockSession(force: true)
+            if shouldShowSafariTabStrip {
+                syncSafariTabStrip(force: true)
+            }
+            scheduleDockPillRebuild(query: lastPillQuery, delayNanoseconds: 0)
+        }
+    }
+
+    /// Clear stale chat when the selected content changes so AI focuses on the new context.
+    /// App-level changes are handled by the frontmost-app update; this covers file/text/URL.
+    func engineContextChanged() {
+        let newKey = contextIdentityKey(currentContext)
+        if l2.activeRequestID == nil && newKey != "none" && !l2.chatContextKey.isEmpty
+            && newKey != l2.chatContextKey
+            && !l2.chatMessages.isEmpty
+        {
+            persistActiveL2DockSession()
+            l2.chatMessages = []
+            l2.isLoading = false
+            l2.currentTask?.cancel()
+            l2.currentTask = nil
+            updateL2Results([])
+        }
+        if newKey != "none" {
+            l2.chatContextKey = newKey
+        }
+        // Auto-return to Context Dock if context cleared and global context was auto-activated
+        autoReturnFromGlobalContextIfNeeded()
+    }
 }
