@@ -147,6 +147,8 @@ extension AppChatPromptModel {
             } else {
                 rows = GlobalContextRow.documents(for: typed, limit: 48).map(AppChatRow.global)
             }
+            // In sections, best kind first (#258 G1).
+            rows = GlobalResultSection.grouped(rows)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
@@ -1359,7 +1361,15 @@ extension AppChatPromptModel {
     /// What the card's height is computed from. Falls back to the handed-in suggestions
     /// for an app with no adapter and no cached menus — otherwise the surface would open
     /// on an empty card.
+    /// Global's section headers by the row they stand over (#258 G1); empty elsewhere.
+    var globalSectionHeaders: [Int: String] {
+        isGlobalScope ? GlobalResultSection.headers(for: rows) : [:]
+    }
+
     var listRowCount: Int {
+        // Global's section headers take a row's slot each.
+        let headers = globalSectionHeaders.count
+        if headers > 0 { return min(rows.count + headers, Self.menuRowLimit) }
         // A scope stepped into from Global answers with what was asked for — files in
         // Finder, a window elsewhere. Falling back to that app's menu list there filled the
         // board with "About Finder" and "AirDrop", which is not what the user came for.

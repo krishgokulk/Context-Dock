@@ -280,6 +280,7 @@ extension LauncherView {
         pill.sourceAppName = result.subtitle
         pill.sourceBundleId = bundleIdentifier(forApplicationResult: result) ?? ""
         pill.rankingKind = result.type == .extensionCommand ? "globalCommand" : "application"
+        pill.resultSection = GlobalResultSection.title(for: result.type)
         pill.trackingIdentifier = result.trackingIdentifier
         // A Global result's id is its search document's (`stableID: doc.id`).
         pill.searchDocumentID = result.id

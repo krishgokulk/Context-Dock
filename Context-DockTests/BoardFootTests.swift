@@ -70,4 +70,26 @@ struct BoardFootTests {
         model.focusedMenuIndex = 1
         #expect(model.boardFoot.verb == "Quit")
     }
+
+    /// A row's status is the foot's last word: the same kind, never a second wording (#258 G2).
+    @Test func aRowsKindIsTheFootsLastWord() {
+        let menu = BoardFoot.foot(
+            for: command(["Edit", "Copy"]), scopeName: "Calculator",
+            scopeBundleID: "com.apple.calculator", isGlobal: false)
+        #expect(menu.kind == "Menu")
+        let folder = BoardFoot.foot(
+            for: .file(FileManager.default.temporaryDirectory), scopeName: "Finder",
+            scopeBundleID: "com.apple.finder", isGlobal: false)
+        #expect(folder.kind == "Folder")
+        #expect(!folder.isRunningApp)
+    }
+
+    @Test func aClosedAppOpensAndIsNotRunning() {
+        let closed = BoardFoot.foot(
+            for: .app(ChatAppEntry(name: "Nowhere", bundleId: "com.example.never-installed", icon: nil, isRunning: false)),
+            scopeName: "Global Context", scopeBundleID: "", isGlobal: true)
+        #expect(!closed.isRunningApp)
+        #expect(closed.kind == "Application")
+        #expect(closed.verb == "Open")
+    }
 }
