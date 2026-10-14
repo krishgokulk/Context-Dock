@@ -54,3 +54,28 @@ struct NotificationsBoardTests {
         #expect(NotificationsBoard.moved(from: "a", in: [], down: true) == nil)
     }
 }
+
+/// Quick Note in the Corner's result board (issue #247, D11): the rules it shares with the
+/// Dock's editor.
+@MainActor
+struct QuickNoteBoardTests {
+    @Test func theBoardAnswersForQuickNote() {
+        let note = SystemCommandsRegistry.defaults.first { $0.name == "Quick Note" }
+        #expect(note?.isQuickNoteBoard == true)
+        #expect(note?.hasOwnCornerBoard == true)
+        let notifications = SystemCommandsRegistry.defaults.first { $0.name == "Notifications" }
+        #expect(notifications?.hasOwnCornerBoard == true)
+        #expect(notifications?.isQuickNoteBoard == false)
+    }
+
+    @Test func theRequestCarriesWhatWasAttached() {
+        #expect(QuickNoteAI.request(prompt: "list milk", capturedText: "", frontmostContext: nil)
+            == "list milk")
+        let captured = QuickNoteAI.request(prompt: "", capturedText: "Total 42", frontmostContext: nil)
+        #expect(captured.hasPrefix("Write a note from the attached"))
+        #expect(captured.hasSuffix("Captured screen text:\nTotal 42"))
+        let framed = QuickNoteAI.request(
+            prompt: "summarise", capturedText: "", frontmostContext: "Frontmost app: Safari")
+        #expect(framed == "Context from the user's frontmost window:\nFrontmost app: Safari\n\n---\n\nRequest: summarise")
+    }
+}
