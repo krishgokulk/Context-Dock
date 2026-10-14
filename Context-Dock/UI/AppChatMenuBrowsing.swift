@@ -147,8 +147,12 @@ extension AppChatPromptModel {
             } else {
                 rows = GlobalContextRow.documents(for: typed, limit: 48).map(AppChatRow.global)
             }
-            // In sections, best kind first (#258 G1).
+            // In sections, best kind first (#258 G1), and what to do with the words
+            // themselves last (G3).
             rows = GlobalResultSection.grouped(rows)
+                + GlobalFallbacks.rows(for: typed) { [weak self] question in
+                    self?.askFromGlobal(question)
+                }.map(AppChatRow.dock)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
@@ -817,6 +821,13 @@ extension AppChatPromptModel {
     /// reasoning, and no way for the two surfaces to agree. This hands the question to the
     /// same pipeline with the same `cli://` scope, so the corner behaves like the dock
     /// because it *is* the dock's behaviour.
+    /// The fallback "Ask AI: …" row: the words go to the AI as a question, as Return does
+    /// in a scope that asks (#258 G3). Running the row emptied the field first.
+    func askFromGlobal(_ question: String) {
+        query = question
+        _ = submit()
+    }
+
     func runCLICommand() {
         guard isCLIScope else { return }
         submit()
