@@ -55,7 +55,7 @@ extension LauncherView {
     func performSearch() {
         // NOTE: detectAndUpdateContext() deliberately NOT called here.
         // Synchronous AX calls block the main thread 100–500ms per call.
-        // Context is captured once when the launcher shows (showLauncher / onAppear).
+        // Context arrives through DockEngine's frontmost / user-context subscriptions.
 
         let query = searchState.query.trimmingCharacters(in: .whitespaces)
         let signpostState = SearchPerformanceLog.shared.beginInterval("performSearch", query: query)

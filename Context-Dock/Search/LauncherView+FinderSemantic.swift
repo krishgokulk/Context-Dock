@@ -692,10 +692,6 @@ extension LauncherView {
 
 
 
-    func shouldShowFinderSearchResultsPanel(for query: String) -> Bool {
-        // File search results panel removed — folder path is used as AI context only.
-        return false
-    }
 
     func applyFinderSemanticPanelResults(_ results: [SearchResult]) {
         // Finder search results are shown as dock pills only (finderSemanticPills).

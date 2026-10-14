@@ -67,11 +67,9 @@ struct LauncherView {
     @ObservedObject var contactManager = ContactSearchManager.shared
     @ObservedObject var systemDataManager = SystemDataSearchManager.shared
     @ObservedObject var terminalPackageManager = TerminalPackageManager.shared
-    @ObservedObject var cliScopeTerminal = CLIScopeTerminalManager.shared
     @ObservedObject var adapterManager = AppAdapterManager.shared
 
     @ObservedObject var notificationManager = ILauncherNotificationManager.shared
-    @ObservedObject var mediaObserver = MediaPlayerObserver.shared
     @ObservedObject var selectionModel = LauncherEngineState.shared.selectionModel
     // Reserved height for L1 results panel. Resets to 0 when results clear and otherwise tracks
     // visible result count so short result sets do not keep a mostly empty sheet.
@@ -113,9 +111,6 @@ struct LauncherView {
 
     // Layer memory — restored when closing chat
     // AI layer return state lives in AIChatViewModel.
-    // Suppress hover-expand briefly after a layer switch (prevents phantom hover fires on icon change)
-    /// True during the opening animation (~0.25s) — suppresses updateWindowSize so the
-    /// launch animation can't be interrupted by a SwiftUI layout pass firing a resize.
 
     // Context in dock state
     var showContextInDock: Bool {
@@ -243,28 +238,14 @@ struct LauncherView {
             }
     }
 
-    var expandedDockWidth: CGFloat { DockShellWidth.dockWindowWidth }  // Spotlight-matched
-    var visibleDockWidth: CGFloat { expandedDockWidth }
 
 
 
 
-    var calculatedWidth: CGFloat {
-        visibleDockWidth + floatingClipboardOccupiedWidth + floatingAppLogoOccupiedWidth
-    }
-
-    var floatingClipboardOccupiedWidth: CGFloat {
-        0
-    }
 
 
-    var shouldShowFloatingAppLogo: Bool {
-        false
-    }
 
-    var floatingAppLogoOccupiedWidth: CGFloat {
-        shouldShowFloatingAppLogo ? 44 : 0
-    }
+
 
     var isCompactSmartScope: Bool {
         guard let key = searchState.activeSmartQueryKey else { return false }
@@ -1264,7 +1245,6 @@ struct LauncherView {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                 self.isSearchBarExpanded = true
                             }
-                            self.requestWindowSizeUpdate(reason: .rowLayoutChanged)
                         }
                     }
                 }
@@ -1523,18 +1503,6 @@ struct LauncherView {
 
 
 
-    // Shared condition: whether any results panel should be visible.
-    var hasMatchingGlobalContextResults: Bool {
-        guard isGlobalContextActive,
-            shouldUsePureGlobalAppSearch,
-            globalInlineAppScope == nil
-        else { return false }
-        let q = searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return false }
-        if transientGlobalScopedMenuRowCount(for: q) > 0 { return true }
-        if globalGroupedListNavigationState(for: q).totalCount > 0 { return true }
-        return !matchDockIconRowsForExpandedSheet(query: q).isEmpty
-    }
 
     var hasExpandedGlobalContextResults: Bool {
         guard isGlobalContextActive,
@@ -1560,18 +1528,6 @@ struct LauncherView {
 
 
 
-    var shouldShowContextDockAppPanel: Bool {
-        guard searchState.contextApp != nil || searchState.activeSmartQueryKey != nil else {
-            return false
-        }
-        guard showContextInDock, !showMediaLayer else {
-            return true
-        }
-        if isCompactSmartScope {
-            return true
-        }
-        return searchState.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
 
 
 

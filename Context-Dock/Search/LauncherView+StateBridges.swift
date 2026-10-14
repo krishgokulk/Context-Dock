@@ -64,25 +64,13 @@ extension LauncherView {
         nonmutating set { launcherViewModel.browserWarmupTask = newValue }
     }
 
-    var windowResizeTask: Task<Void, Never>? {
-        get { launcherViewModel.windowResizeTask }
-        nonmutating set { launcherViewModel.windowResizeTask = newValue }
-    }
 
-    var l1ResultsReservedHeight: CGFloat {
-        get { launcherViewModel.l1ResultsReservedHeight }
-        nonmutating set { launcherViewModel.l1ResultsReservedHeight = newValue }
-    }
 
     var measuredGlobalListContentHeight: CGFloat {
         get { launcherViewModel.measuredGlobalListContentHeight }
         nonmutating set { launcherViewModel.measuredGlobalListContentHeight = newValue }
     }
 
-    var measuredChatContentHeight: CGFloat {
-        get { launcherViewModel.measuredChatContentHeight }
-        nonmutating set { launcherViewModel.measuredChatContentHeight = newValue }
-    }
 
     var folderPreviewPath: String? {
         get { launcherViewModel.folderPreviewPath }
@@ -115,10 +103,6 @@ extension LauncherView {
         nonmutating set { launcherViewModel.suppressHoverExpand = newValue }
     }
 
-    var suppressOpenResize: Bool {
-        get { launcherViewModel.suppressOpenResize }
-        nonmutating set { launcherViewModel.suppressOpenResize = newValue }
-    }
 
 
 

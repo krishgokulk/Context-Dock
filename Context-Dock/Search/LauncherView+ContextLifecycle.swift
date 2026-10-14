@@ -7,33 +7,12 @@ import Vision
 
 extension LauncherView {
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     func persistActiveL2DockSession() {
         if let key = l2.activeDockSessionKey {
             AppPanelChatStore.shared.saveSession(l2.chatMessages, for: key)
         }
     }
     // MARK: - Context Dock Filter (type to find actions)
-
-
-
 
     // MARK: - Instant menu reload on app switch
 
@@ -562,7 +541,6 @@ extension LauncherView {
         retargetCornerAppChat(appName: appName, bundleId: bundleId)
 
         guard !query.isEmpty else {
-            requestWindowSizeUpdate(reason: .panelChanged, animated: true)
             return
         }
         dismissMediaLayer()
@@ -644,16 +622,9 @@ extension LauncherView {
         refreshLiveSelectionIntoDockContext()
     }
 
-
-
     func clipboardImageData(for entry: ClipboardEntry) -> Data? {
         ClipboardHistoryEngine.imageData(for: entry)
     }
-
-
-
-
-
 
     /// Auto-returns to Context Dock when the selection that triggered global context is gone.
     /// Only fires if global context was auto-activated (not manually swiped by user).
@@ -719,10 +690,6 @@ extension LauncherView {
             l2.appCompletion = nil
         } else {
             scheduleBrowserContextWarmup(reason: "AI mode toggled")
-        }
-        // Delay resize so it runs after the animation starts (prevents background flash)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            requestWindowSizeUpdate(reason: .modeChanged)
         }
     }
 
@@ -916,16 +883,6 @@ extension LauncherView {
             menuLoadTask?.cancel()
             crossAppMenuTask?.cancel()
         }
-        requestWindowSizeUpdate(reason: .modeChanged)
     }
 
-
-
-
-
-
-
-}
-
-extension LauncherView {
 }
