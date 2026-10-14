@@ -491,14 +491,10 @@ final class CornerDockController: NSObject {
         }
         let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .first { !$0.isTerminated }
-        // A resting dock stays resting: the switch opens the field, and a quit that popped the
-        // dock open read as the sheet hiding and showing again (owner 2026-10-12).
-        let wasResting = prompt.phase == .dock
         prompt.frontmostAppDidChange(
             app: name, bundleID: bundleID,
             suggestions: AppChatSuggestionProvider.suggestions(for: app),
             summary: AppChatSuggestionProvider.summary(for: app))
-        if wasResting { prompt.restAsDockNow() }
         prompt.loadMenuItems()
     }
 

@@ -950,12 +950,9 @@ extension AppChatPromptModel {
     /// when the last read is a few seconds old; the rows land with the next refresh.
     /// Finder is showing the Desktop alone: its front folder is the Desktop, which is what
     /// `FinderFrontFolder` reads when no Finder window is open.
-    var finderShowsDesktopOnly: Bool {
-        guard let folder = finderFrontFolder else { return false }
-        let desktop = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Desktop", isDirectory: true)
-        return folder.standardizedFileURL.path == desktop.standardizedFileURL.path
-    }
+    /// Asked of the screen, as the Dock asks it: Finder's own window count includes windows
+    /// on other Spaces, which kept the Desktop showing Finder's menus (owner 2026-10-14).
+    var finderShowsDesktopOnly: Bool { !finderHasWindowOnScreen() }
 
     func finderFrontFolderRows(matching typed: String) -> [AppChatRow] {
         if Date().timeIntervalSince(finderFolderReadAt) > 2 {
@@ -970,7 +967,8 @@ extension AppChatPromptModel {
                 self.updateMenuMatches()
             }
         }
-        guard let folder = finderFrontFolder else { return [] }
+        guard let folder = finderShowsDesktopOnly ? FinderFrontFolder.desktop : finderFrontFolder
+        else { return [] }
         // Every match in the front folder — the Desktop included — not the first eight: a
         // cap cut most of the Desktop's files and folders from a one-letter search (owner
         // 2026-10-12).
@@ -1540,8 +1538,13 @@ extension AppChatPromptModel {
                 run(.global(doc))
                 return
             }
-            query = ""
-            updateMenuMatches()
+            // A quit closes the sheet at once, as a menu row's does (`runMenuItem`).
+            var close = Transaction()
+            close.disablesAnimations = MenuExecutionCoordinator.isQuitMenuPath([pill.name])
+            withTransaction(close) {
+                query = ""
+                updateMenuMatches()
+            }
             touch()
             pill.execute()
         case .command(let item):
@@ -1763,6 +1766,37 @@ nonisolated enum FinderFrontFolder {
         end tell
         return ""
         """
+
+    /// A Finder folder window is on screen in this Space. Finder's own window count also
+    /// holds windows on other Spaces, so it is not the test for "only the Desktop shows".
+    static func hasWindowOnScreen() -> Bool {
+        guard
+            let finderApp = NSWorkspace.shared.runningApplications.first(where: {
+                $0.bundleIdentifier == "com.apple.finder"
+            })
+        else { return false }
+
+        let pid = Int(finderApp.processIdentifier)
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[String: Any]] else { return false }
+
+        for info in list {
+            guard let wpid = info[kCGWindowOwnerPID as String] as? Int, wpid == pid,
+                  let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
+                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let w = bounds["Width"] as? CGFloat, let h = bounds["Height"] as? CGFloat,
+                  w > 120, h > 120
+            else { continue }
+            // Do NOT require kCGWindowName: it's unavailable without Screen Recording
+            // permission, so a real folder window would be invisible and Context Dock would
+            // wrongly fall into desktop file-search. .excludeDesktopElements + layer == 0
+            // already drop the desktop; the size floor drops tiny service windows.
+            return true
+        }
+        return false
+    }
 
     static func read() async -> URL? {
         // The test host has no Finder to ask, and an answer landing mid-test would change

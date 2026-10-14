@@ -262,6 +262,8 @@ final class AppChatPromptModel: ObservableObject {
     var finderFolderReadAt: Date = .distantPast
     /// Where the front folder is read from. A test swaps it; the app asks Finder.
     var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
+    /// Whether a Finder window is on screen (`finderShowsDesktopOnly`). A test swaps it.
+    var finderHasWindowOnScreen: () -> Bool = { FinderFrontFolder.hasWindowOnScreen() }
     /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
     var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
         GlobalSearchService.shared.document(withID: $0)
@@ -965,6 +967,9 @@ final class AppChatPromptModel: ObservableObject {
         // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
         // on the app it was pinned in, whatever comes forward after.
         guard !isPinned else { return }
+        // A resting dock stays resting: it follows the new app without opening. The next app
+        // coming forward as one quits popped the field open (owner 2026-10-14).
+        let wasResting = phase == .dock
         query = ""
         attachments = []
         appName = name
@@ -976,6 +981,11 @@ final class AppChatPromptModel: ObservableObject {
         isShowingSelectionScope = false
         stopAwaitingAnswer()
         hasPresentedConversation = !messages.isEmpty
+        if wasResting {
+            cancel()
+            set(.dock)
+            return
+        }
         set(hasPresentedConversation ? .chat : restingInputPhase)
         if isPinned || isPointerInside {
             cancel()
