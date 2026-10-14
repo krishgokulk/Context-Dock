@@ -11,18 +11,19 @@ struct FinderDesktopOnlyTests {
     private let desktop = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Desktop", isDirectory: true)
 
-    @Test func theDesktopAsFrontFolderIsDesktopOnly() {
+    @Test func noFinderWindowOnScreenIsDesktopOnly() {
         let model = AppChatPromptModel()
-        model.finderFrontFolder = desktop
+        model.finderHasWindowOnScreen = { false }
+        // Finder's own answer can name a window on another Space; the screen decides.
+        model.finderFrontFolder = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Downloads", isDirectory: true)
         #expect(model.finderShowsDesktopOnly)
     }
 
-    @Test func aFinderWindowOnAnotherFolderIsNot() {
+    @Test func aFinderWindowOnScreenIsNot() {
         let model = AppChatPromptModel()
-        model.finderFrontFolder = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents", isDirectory: true)
-        #expect(!model.finderShowsDesktopOnly)
-        model.finderFrontFolder = nil
+        model.finderHasWindowOnScreen = { true }
+        model.finderFrontFolder = desktop
         #expect(!model.finderShowsDesktopOnly)
     }
 }

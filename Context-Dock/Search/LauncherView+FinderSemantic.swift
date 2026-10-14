@@ -629,32 +629,7 @@ extension LauncherView {
     /// Checks CGWindowList for Finder-owned, layer-0, titled, non-tiny windows.
     /// Does NOT require Finder to be the frontmost app (works while dock is active).
     func finderHasActiveWindow() -> Bool {
-        guard
-            let finderApp = NSWorkspace.shared.runningApplications.first(where: {
-                $0.bundleIdentifier == "com.apple.finder"
-            })
-        else { return false }
-
-        let pid = Int(finderApp.processIdentifier)
-        guard let list = CGWindowListCopyWindowInfo(
-            [.optionOnScreenOnly, .excludeDesktopElements],
-            kCGNullWindowID
-        ) as? [[String: Any]] else { return false }
-
-        for info in list {
-            guard let wpid = info[kCGWindowOwnerPID as String] as? Int, wpid == pid,
-                  let layer = info[kCGWindowLayer as String] as? Int, layer == 0,
-                  let bounds = info[kCGWindowBounds as String] as? [String: Any],
-                  let w = bounds["Width"] as? CGFloat, let h = bounds["Height"] as? CGFloat,
-                  w > 120, h > 120
-            else { continue }
-            // Do NOT require kCGWindowName: it's unavailable without Screen Recording
-            // permission, so a real folder window would be invisible and Context Dock would
-            // wrongly fall into desktop file-search. .excludeDesktopElements + layer == 0
-            // already drop the desktop; the size floor drops tiny service windows.
-            return true
-        }
-        return false
+        FinderFrontFolder.hasWindowOnScreen()
     }
 
     /// True when Finder is frontmost (or scoped via chip) but only the desktop is visible (no folder window).

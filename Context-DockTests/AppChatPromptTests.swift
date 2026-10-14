@@ -529,6 +529,19 @@ struct AppChatPromptTests {
         #expect(model.focusedMenuIndex == nil)
     }
 
+    /// The next app coming forward as one quits used to open a resting dock's field.
+    @Test func aRestingDockFollowsTheNewAppWithoutOpening() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        model.set(.dock)
+
+        model.frontmostAppDidChange(
+            app: "Code", bundleID: "com.microsoft.VSCode", suggestions: [], summary: "")
+
+        #expect(model.phase == .dock)
+        #expect(model.appBundleID == "com.microsoft.VSCode")
+    }
+
     @Test func switchingFrontmostAppKeepsThePromptAndUpdatesItsScope() {
         let model = AppChatPromptModel(conversation: AppChatConversation())
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
