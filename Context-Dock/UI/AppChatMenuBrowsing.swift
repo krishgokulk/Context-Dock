@@ -149,7 +149,16 @@ extension AppChatPromptModel {
             }
             // In sections, best kind first (#258 G1), and what to do with the words
             // themselves last (G3).
-            rows = GlobalResultSection.grouped(rows)
+            rows = GlobalResultSection.capped(
+                GlobalResultSection.grouped(rows), expanded: expandedGlobalSections
+            ) { section, hidden in
+                var pill = DockPill(
+                    id: "show-more-\(section)", name: "Show \(hidden) more",
+                    icon: "chevron.down", badge: nil, execute: {})
+                pill.rankingKind = GlobalResultSection.showMoreKind
+                pill.resultSection = section
+                return pill
+            }
                 + GlobalFallbacks.rows(for: typed) { [weak self] question in
                     self?.askFromGlobal(question)
                 }.map(AppChatRow.dock)
@@ -821,6 +830,25 @@ extension AppChatPromptModel {
     /// reasoning, and no way for the two surfaces to agree. This hands the question to the
     /// same pipeline with the same `cli://` scope, so the corner behaves like the dock
     /// because it *is* the dock's behaviour.
+    /// "Show N more": the section opens in place, the field keeps its words, and the
+    /// highlight lands on the first row that was hidden — where "Show N more" stood.
+    func showAllOfSection(_ section: String, at index: Int?) {
+        expandedGlobalSections.insert(section)
+        updateMenuMatches()
+        // A beat later: the refresh cleared the highlight and setting it back in the same
+        // turn reads as no change, so the list never scrolled to the row.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let index, self.rows.indices.contains(index) else { return }
+            self.focusedMenuIndex = index
+        }
+        // Return ends the field's editing and its focus coming back selects all its words —
+        // after the turns `FieldCaret` waits for — so the caret goes back a moment later.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+            FieldCaret.collapseSelectionToEndAfterFocus()
+        }
+        touch()
+    }
+
     /// The fallback "Ask AI: …" row: the words go to the AI as a question, as Return does
     /// in a scope that asks (#258 G3). Running the row emptied the field first.
     func askFromGlobal(_ question: String) {
@@ -1560,6 +1588,10 @@ extension AppChatPromptModel {
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }
+            if pill.rankingKind == GlobalResultSection.showMoreKind {
+                showAllOfSection(pill.resultSection, at: rows.firstIndex { $0.id == "dock:" + pill.id })
+                return
+            }
             // A command, extension or tool from Global steps in, in this board — the Dock's
             // closure for it runs the command outright ("Sleep" slept the Mac from ↩) or
             // opens a window beside the Corner (task 7, inventory D4–D5).

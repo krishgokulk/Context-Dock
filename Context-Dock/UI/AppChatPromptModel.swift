@@ -260,6 +260,9 @@ final class AppChatPromptModel: ObservableObject {
     /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
     var finderFrontFolder: URL?
     var finderFolderReadAt: Date = .distantPast
+    /// Global sections opened past their first rows with "Show N more"; a new query closes
+    /// them again (#258 G4).
+    var expandedGlobalSections: Set<String> = []
     /// Where the front folder is read from. A test swaps it; the app asks Finder.
     var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
     /// Whether a Finder window is on screen (`finderShowsDesktopOnly`). A test swaps it.
@@ -856,6 +859,7 @@ final class AppChatPromptModel: ObservableObject {
         let typedNow = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if hadTypedQuery, !typedNow { focusedMenuIndex = nil }
         hadTypedQuery = typedNow
+        expandedGlobalSections = []
         // Typing is the caret's: the pills leave the field while anything is typed.
         focusedPillIndex = nil
         guard phase.isVisible else { return }

@@ -86,4 +86,37 @@ enum GlobalResultSection {
         }
         return headers
     }
+
+    /// A section's own row that opens the rest of it (#258 G4).
+    static let showMoreKind = "showMore"
+    /// How many rows a section shows before "Show N more", when there is more than one.
+    static let cap = 5
+
+    /// Each long section cut to its best `cap` rows and a "Show N more" row, while the list
+    /// has more than one section — one section is the whole answer and stays whole. The
+    /// fallbacks and the sections already opened are never cut.
+    static func capped(
+        _ rows: [AppChatRow], expanded: Set<String>,
+        showMore: (_ section: String, _ hidden: Int) -> DockPill
+    ) -> [AppChatRow] {
+        let titles = rows.map { title(for: $0) ?? "" }
+        // The fallbacks close every typed list; they do not make a second section of matches.
+        guard Set(titles.filter { $0 != GlobalFallbacks.section }).count > 1 else { return rows }
+        var result: [AppChatRow] = []
+        var index = 0
+        while index < rows.count {
+            let section = titles[index]
+            var end = index
+            while end < rows.count, titles[end] == section { end += 1 }
+            let count = end - index
+            if count > cap, section != GlobalFallbacks.section, !expanded.contains(section) {
+                result += rows[index..<(index + cap)]
+                result.append(.dock(showMore(section, count - cap)))
+            } else {
+                result += rows[index..<end]
+            }
+            index = end
+        }
+        return result
+    }
 }
