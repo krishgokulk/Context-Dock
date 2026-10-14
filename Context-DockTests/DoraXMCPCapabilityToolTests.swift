@@ -23,10 +23,11 @@ struct DoraXMCPCapabilityToolTests {
     }
 
     @Test func anAppWithNoCapabilitiesAddsNothingToThePrompt() {
+        // Unowned capabilities (clipboard, browser) are listed in every app but are not the
+        // app's own, so they must not make a prompt block for it.
         #expect(
             CapabilityRegistry.shared.cliPromptBlock(for: "com.example.none", appName: "None")
-                .isEmpty
-                == CapabilityRegistry.shared.capabilities(for: "com.example.none").isEmpty)
+                .isEmpty)
     }
 
     @Test func anUnknownIdIsRefusedNotRun() async {
