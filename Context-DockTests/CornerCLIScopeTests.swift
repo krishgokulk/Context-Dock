@@ -101,6 +101,25 @@ struct CornerCLIScopeTests {
         #expect(model.returnsToGlobalScope)
     }
 
+    @Test("Reopening on the front app, or stepping into an app, leaves the command's board")
+    func aNewScopeLeavesTheCommandsBoard() {
+        // Owner 2026-10-14: closed inside Notifications, reopened on Finder — the field said
+        // "Ask Finder" over the Notifications board.
+        let command = SystemCommand(
+            name: "Notifications", icon: "bell", keywords: ["provider:notifications"],
+            scriptType: "applescript", script: "return")
+        let model = globalModel()
+        model.scopeIntoCommand(command)
+        model.summon(app: "Finder", bundleID: "com.apple.finder")
+        #expect(model.scopedCommand == nil)
+        #expect(!model.showsExtensionPanel)
+
+        let stepped = globalModel()
+        stepped.scopeIntoCommand(command)
+        stepped.scopeIntoApp(name: "Finder", bundleID: "com.apple.finder")
+        #expect(!stepped.showsExtensionPanel)
+    }
+
     @Test("A tool's scope shows no window snapshot — it has no window")
     func toolsHaveNoSnapshot() {
         let model = globalModel()

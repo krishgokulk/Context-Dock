@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-private final class GlobalApplicationMetadataCache: @unchecked Sendable {
+final class GlobalApplicationMetadataCache: @unchecked Sendable {
     static let shared = GlobalApplicationMetadataCache()
 
     private let lock = NSLock()
@@ -53,20 +53,7 @@ extension LauncherView {
     }
 
     func currentRegularRunningApps() -> [NSRunningApplication] {
-        var seen = Set<String>()
-        return NSWorkspace.shared.runningApplications.filter { app in
-            guard app.activationPolicy == .regular,
-                app.bundleIdentifier != Bundle.main.bundleIdentifier,
-                !app.isTerminated
-            else { return false }
-
-            let key =
-                app.bundleIdentifier
-                ?? app.bundleURL?.standardizedFileURL.path
-                ?? (app.localizedName ?? "").lowercased()
-            guard !key.isEmpty else { return false }
-            return seen.insert(key).inserted
-        }
+        GlobalSearchIndexBuilder.currentRegularRunningApps()
     }
 
     func runningApplicationLookup() -> (
@@ -1181,43 +1168,9 @@ extension LauncherView {
     func resolvedApplicationIcon(bundleIdentifier: String?, appName: String? = nil)
         -> NSImage?
     {
-        if let bundleIdentifier, !bundleIdentifier.isEmpty {
-            if let runningURL = runningRegularApps.first(where: {
-                $0.bundleIdentifier == bundleIdentifier
-            })?.bundleURL {
-                return preparedDockIcon(NSWorkspace.shared.icon(forFile: runningURL.path))
-            }
-            if let appURL = applicationURLForBundleIdentifier(bundleIdentifier)
-            {
-                return preparedDockIcon(NSWorkspace.shared.icon(forFile: appURL.path))
-            }
-        }
-
-        guard let appName, !appName.isEmpty else { return nil }
-        if let result = allApplications.first(where: {
-            $0.title.compare(appName, options: [.caseInsensitive, .diacriticInsensitive])
-                == .orderedSame
-        }) {
-            return preparedDockIcon(result.icon)
-        }
-
-        let appDirectories = [
-            "/Applications",
-            "/System/Applications",
-            "/System/Volumes/Preboot/Cryptexes/App/System/Applications",
-            "\(NSHomeDirectory())/Applications",
-        ]
-        let fileManager = FileManager.default
-        for directory in appDirectories {
-            let url = URL(fileURLWithPath: directory)
-                .appendingPathComponent(appName)
-                .appendingPathExtension("app")
-            if fileManager.fileExists(atPath: url.path) {
-                return preparedDockIcon(NSWorkspace.shared.icon(forFile: url.path))
-            }
-        }
-
-        return nil
+        GlobalSearchIndexBuilder.applicationIcon(
+            running: runningRegularApps, apps: allApplications,
+            bundleIdentifier: bundleIdentifier, appName: appName)
     }
 
     func typedL2AppIcon(for query: String) -> (icon: NSImage, bundleId: String)? {

@@ -576,6 +576,7 @@ final class AppChatPromptModel: ObservableObject {
         // The app in front's own Context Dock, not one stepped into from Global: a flag left
         // from an earlier step-in swallowed every sideways swipe here (owner 2026-10-09).
         returnsToGlobalScope = false
+        clearScopedPanel()
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         isShowingSelectionScope = false

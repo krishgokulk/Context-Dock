@@ -159,6 +159,22 @@ final class QuickNotesStore: ObservableObject {
         save()
     }
 
+    /// An assistant's answer to "write this into my note": appended to the note's text —
+    /// unless it is the assistant talking about itself (an error, a refusal). Once in `text`
+    /// that would be a note, mirrored into memory and returned later as something the user
+    /// wrote ("I can't see or access your current Safari page" came back in a listing of
+    /// their own saved notes that way). Those go to the note's sidecar chat instead, which
+    /// is kept apart from `text` for exactly this.
+    func insertAssistantReply(_ reply: String, into id: UUID) {
+        let body = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard AssistantNoteReply.isNoteContent(body) else {
+            appendChatMessage(ChatMessage(role: .assistant, content: body), for: id)
+            return
+        }
+        let existing = notes.first(where: { $0.id == id })?.text ?? ""
+        updateText(existing.isEmpty ? body : existing + "\n\n" + body, for: id)
+    }
+
     func delete(_ note: QuickNote) {
         deleteAttachmentFiles(note.attachments)
         notes.removeAll { $0.id == note.id }

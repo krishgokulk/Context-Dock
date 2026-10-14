@@ -3,7 +3,8 @@
 //
 // The in-sheet surface for the "Quick Note" (provider:notepad) Global Command.
 // A split panel: notes list on the left (delete inline), a live editor on the
-// right — type to edit or update the selected note, saved as you go.
+// right — type to edit or update the selected note, saved as you go. Drawn by the Dock's
+// sheet and by the Corner's Quick Note board (`QuickNoteBoardCard`, issue #247).
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -18,13 +19,19 @@ struct NotepadScopeView: View {
     var hasCapturedText: Bool = false
     var attachments: [URL] = []
     var onAttachFrontmost: () -> Void = {}
-    var onUploadPhoto: () -> Void = {}
-    var onTakeScreenshot: () -> Void = {}
-    var onCaptureArea: () -> Void = {}
+    /// File captures are offered only where the host can send files with the prompt.
+    var onUploadPhoto: (() -> Void)? = nil
+    var onTakeScreenshot: (() -> Void)? = nil
+    var onCaptureArea: (() -> Void)? = nil
     var onCaptureText: () -> Void = {}
     var onRemoveCapturedText: () -> Void = {}
     var onRemoveAttachment: (URL) -> Void = { _ in }
     var onExit: () -> Void
+    /// The editor took or gave up the caret — the Corner's key monitor stands aside while it
+    /// has it (`PluginKeyboardClaim`).
+    var onEditorFocusChanged: (Bool) -> Void = { _ in }
+    var listWidth: CGFloat = 300
+    var height: CGFloat = 320
 
     @FocusState private var editorFocused: Bool
     @State private var hoveredNoteID: UUID?
@@ -34,12 +41,12 @@ struct NotepadScopeView: View {
     var body: some View {
         HStack(spacing: 0) {
             listColumn
-                .frame(width: 300)
+                .frame(width: listWidth)
             Divider()
             editorColumn
                 .frame(maxWidth: .infinity)
         }
-        .frame(height: 320)
+        .frame(height: height)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Color.clear)
@@ -47,6 +54,8 @@ struct NotepadScopeView: View {
         .onAppear {
             if selectedNoteID == nil { selectedNoteID = store.notes.first?.id }
         }
+        .onChange(of: editorFocused) { _, focused in onEditorFocusChanged(focused) }
+        .onDisappear { onEditorFocusChanged(false) }
     }
 
     // MARK: - Left: notes list
@@ -69,11 +78,17 @@ struct NotepadScopeView: View {
                             systemImage: "macwindow")
                     }
                     Divider()
-                    Button(action: onUploadPhoto) { Label("Upload Photo", systemImage: "photo") }
-                    Button(action: onTakeScreenshot) {
-                        Label("Take Screenshot", systemImage: "camera.viewfinder")
+                    if let onUploadPhoto {
+                        Button(action: onUploadPhoto) { Label("Upload Photo", systemImage: "photo") }
                     }
-                    Button(action: onCaptureArea) { Label("Capture Area", systemImage: "crop") }
+                    if let onTakeScreenshot {
+                        Button(action: onTakeScreenshot) {
+                            Label("Take Screenshot", systemImage: "camera.viewfinder")
+                        }
+                    }
+                    if let onCaptureArea {
+                        Button(action: onCaptureArea) { Label("Capture Area", systemImage: "crop") }
+                    }
                     Button(action: onCaptureText) {
                         Label("Capture Text", systemImage: "text.viewfinder")
                     }
@@ -108,7 +123,9 @@ struct NotepadScopeView: View {
                         .foregroundStyle(accent)
                 }
                 .buttonStyle(.plain)
-                .help("New note")
+                // ⌘N from the editor too, where the host's key monitor stands aside.
+                .keyboardShortcut("n", modifiers: .command)
+                .help("New note (⌘N)")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -279,6 +296,8 @@ struct NotepadScopeView: View {
             VStack(spacing: 0) {
                 TextEditor(text: editorBinding(for: id))
                     .focused($editorFocused)
+                    // Esc lets go of the caret, back to the field that asks.
+                    .onExitCommand { editorFocused = false }
                     .font(.system(size: 14))
                     .scrollContentBackground(.hidden)
                     .padding(12)

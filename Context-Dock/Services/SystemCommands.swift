@@ -102,6 +102,12 @@ extension SystemCommand {
     /// Wi-Fi, Bluetooth, Volume and Process Monitor are extensions by this test; Sleep,
     /// Restart and Empty Trash are commands. Derived rather than hardcoded so a
     /// user-edited built-in lands in the right group automatically.
+    /// The `provider:` keyword's name — "notepad", "notifications" — or nil.
+    var provider: String? {
+        keywords.lazy.map { $0.lowercased() }.first { $0.hasPrefix("provider:") }
+            .map { String($0.dropFirst("provider:".count)) }
+    }
+
     var behavesAsPanel: Bool {
         if interaction != SystemCommandInteraction.none.rawValue { return true }
         return keywords.contains { keyword in
@@ -569,6 +575,25 @@ final class SystemCommandsRegistry {
             // provider:notepad scope renders a Save row plus saved notes.
             script: #"return"#,
             description: "Capture and search quick notes"
+        ),
+        SystemCommand(
+            name: "Notifications",
+            icon: "bell.badge",
+            keywords: ["notifications", "notification", "alerts", "inbox", "usage", "tokens", "provider:notifications"],
+            scriptType: "applescript",
+            // Enter opens the board; there is no single action. The Corner draws
+            // provider:notifications as DoraX's notifications beside AI provider usage.
+            script: #"return"#,
+            description: "DoraX notifications and AI provider usage"
+        ),
+        SystemCommand(
+            name: "Clipboard History",
+            icon: "doc.on.clipboard",
+            keywords: ["clipboard", "clip", "clips", "copied", "paste", "pasteboard", "history", "provider:clipboard"],
+            scriptType: "applescript",
+            // Enter opens the clipboard's board, as its hotkey does; there is no single action.
+            script: #"return"#,
+            description: "Search and paste what you copied"
         ),
         SystemCommand(
             name: "Keep Awake",

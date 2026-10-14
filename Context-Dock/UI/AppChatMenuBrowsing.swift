@@ -355,9 +355,7 @@ extension AppChatPromptModel {
     /// and the list underneath changes with it.
     func summonGlobalContext() {
         returnsToGlobalScope = false
-        scopedExtension = nil
-        scopedPlugin = nil
-        scopedCommand = nil
+        clearScopedPanel()
         _ = leaveSelectionScope()
         adoptScope(name: Self.globalScopeName, bundleID: "")
         adapterActions = []
@@ -628,6 +626,7 @@ extension AppChatPromptModel {
     /// chip's "−" has somewhere to go back to.
     func scopeIntoApp(name: String, bundleID: String) {
         returnsToGlobalScope = true
+        clearScopedPanel()
         let app = NSWorkspace.shared.runningApplications.first {
             $0.bundleIdentifier == bundleID && !$0.isTerminated
         }
@@ -685,6 +684,15 @@ extension AppChatPromptModel {
         updateGlobalTyping(for: "")
         syncListPhase()
         touch()
+    }
+
+    /// Whatever command, extension or plugin the board was showing belongs to the scope being
+    /// left. Every opener that points the field somewhere else calls this: one that did not
+    /// reopened on the front app with the last command's board still up (owner 2026-10-14).
+    func clearScopedPanel() {
+        scopedExtension = nil
+        scopedPlugin = nil
+        scopedCommand = nil
     }
 
     /// The board is showing an extension's, a command's or a plugin's own interface.
@@ -1593,7 +1601,14 @@ extension AppChatPromptModel {
                     $0.id == id
                 })
             {
-                scopeIntoCommand(command)
+                // Clipboard History is the clipboard's own board, the one its hotkey opens —
+                // not a command panel (owner 2026-10-14: find the clipboard in Global).
+                if command.provider == "clipboard" {
+                    query = ""
+                    ClipboardPanelController.shared.show()
+                } else {
+                    scopeIntoCommand(command)
+                }
             }
         case .global(let doc) where isUserExtensionAction(doc.action):
             // Stepping into the extension, in this field's board.
