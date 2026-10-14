@@ -24,7 +24,7 @@ What it does not have is a **product around the engine**:
 | Updates | Downloads a DMG from `main` and opens it — **no hash or signature check** | `Services/AppUpdateService.swift:88–105` |
 | CI | Builds only; the 1,167-test suite never runs on a PR | `.github/workflows/build.yml` |
 | Measurement | No crash reporting, no usage counts, no aggregate eval score | `10 §5` |
-| Codebase | 587 files / ~248k lines; three files over 8,000 lines each (two are settings) | `LegacySettingsContent.swift` 8,656 · `LauncherView+AIChat.swift` 8,220 · `AutomationSettingsView.swift` 8,128 |
+| Codebase | 587 files / ~248k lines; three files over 8,000 lines each (two are settings) | `LegacySettingsContent.swift` 8,656 · `DockCore+AIChat.swift` 8,220 · `AutomationSettingsView.swift` 8,128 |
 | Focus | 10 specs + 13 plans in 3 weeks (Aug 23 – Sep 15) | `docs/superpowers/` |
 
 **Product-ready means:** a stranger installs it without a warning, understands it in ten
@@ -118,7 +118,7 @@ waiting to happen.
 | File | Lines | Plan |
 |---|---|---|
 | `UI/LegacySettingsContent.swift` | 8,656 | "Legacy" — find what is still reachable, move it to the new settings pages, delete the rest |
-| `Search/LauncherView+AIChat.swift` | 8,220 | Split by job: send, render, attachments, approvals |
+| `Search/DockCore+AIChat.swift` | 8,220 | Split by job: send, render, attachments, approvals |
 | `Automation/AutomationSettingsView.swift` | 8,128 | One file per settings section |
 
 Rule: no new code in a file over 2,000 lines.

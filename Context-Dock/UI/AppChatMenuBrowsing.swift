@@ -8,7 +8,7 @@
 // dock has always shown when you type into an app scope, shown where the app actually is.
 //
 // The ranking is not reimplemented here. `FrontmostMenuMatcher` is the dock's rule, moved out
-// of LauncherView so both surfaces call it and neither can drift.
+// of DockCore so both surfaces call it and neither can drift.
 
 import AppKit
 import Combine
@@ -967,7 +967,7 @@ extension AppChatPromptModel {
         let generation = finderSearchGeneration
         let home = NSHomeDirectory()
         Task { @MainActor [weak self] in
-            let paths = await LauncherView.spotlightSearchPaths(
+            let paths = await DockCore.spotlightSearchPaths(
                 predicate: NSPredicate(format: "kMDItemFSName LIKE[cd] %@", "*\(typed)*"),
                 inDirectories: [home],
                 sortByLastUsed: true,

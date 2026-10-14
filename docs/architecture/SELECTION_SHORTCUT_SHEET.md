@@ -1,6 +1,6 @@
 # Selection Shortcut Sheet
 
-> **As built (2026-09-24).** Long-press ⌘ was removed — ⌘ only tap-toggles scope now (`Search/LauncherView+KeyboardNavigation.swift`). The selection opens in the corner as `SelectionScopeCard`; what that card still lacks is in `docs/master/00-DOCK-AND-CORNER.md` §4a.
+> **As built (2026-09-24).** Long-press ⌘ was removed — ⌘ only tap-toggles scope now (`Search/DockCore+KeyboardNavigation.swift`). The selection opens in the corner as `SelectionScopeCard`; what that card still lacks is in `docs/master/00-DOCK-AND-CORNER.md` §4a.
 
 Selection Shortcut Sheet is DoraX selection-aware action engine.
 

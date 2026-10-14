@@ -5,7 +5,7 @@
 //
 // The dock and the corner share one conversation and one engine. When the model proposes an
 // app action, the message carries `hasInstallButton` and the dock draws an Install card that
-// called `installFromProposal` — a method on `LauncherView`, reading `l2.*` for its scope and
+// called `installFromProposal` — a method on `DockCore`, reading `l2.*` for its scope and
 // appending its confirmation to `l2.chatMessages`. The corner constructed the same message
 // view with no install callback, so the same proposal, same message, same flag, had nowhere
 // to become an adapter action. The user created one in the corner and nothing offered to

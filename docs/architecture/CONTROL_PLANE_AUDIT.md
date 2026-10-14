@@ -320,7 +320,7 @@ Matched as whole words: a contains-check on `save` reads `"show me my saved note
 instruction.
 
 The classifier moved to `ReadOnlyDataRouter` to be testable at all. It had been a method on
-`LauncherView` — a view with four hundred `@State` properties — so the one decision that
+`DockCore` — a view with four hundred `@State` properties — so the one decision that
 routes a request between "read this" and "do this" could not be exercised without standing
 up the surface, and the only thing that could catch it deciding wrong was a person typing
 the sentence. Verified by removing the guard: two of the new tests fail without it.
@@ -573,9 +573,9 @@ signature says so. Any second surface routed into it inherits "already approved"
 
 It was worse than the comment suggested. The gate itself — check the standing grant, raise
 the card, honour a cancel — was **copy-pasted into four callers**, all of them in
-`LauncherView+GeneralAIActions.swift` (`:616`, `:785`, `:1061`, and a read-only variant at
+`DockCore+GeneralAIActions.swift` (`:616`, `:785`, `:1061`, and a read-only variant at
 `:1649`). The executor had no gate at all. And `GeneralAIActionApprovalCard()` is rendered
-at exactly one place, `LauncherView+AIChat.swift:1811`, inside the `aiMode` block — so a
+at exactly one place, `DockCore+AIChat.swift:1811`, inside the `aiMode` block — so a
 caller on any other surface would not merely skip the gate, it would have nowhere to draw
 the card even if it tried.
 
@@ -629,7 +629,7 @@ What is not mechanical, and would each be a regression if missed:
 1. **Approval.** Handled by 10a, but not automatically: `execute(_:approval:)` has no
    default, so the Context Dock call has to state a source. `.ask` is the right answer for
    a surface with no card of its own — and it obliges Context Dock's chat view to render
-   `GeneralAIActionApprovalCard()`, which today only `LauncherView+AIChat.swift:1811` does,
+   `GeneralAIActionApprovalCard()`, which today only `DockCore+AIChat.swift:1811` does,
    inside the `aiMode` block. Without that one line the request sits for 60 seconds and
    comes back cancelled.
 2. **The CLI terminal branch.** `ChatRouteResolver.run` diverts commands that need a TTY into

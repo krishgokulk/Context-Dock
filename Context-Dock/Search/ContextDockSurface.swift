@@ -1,5 +1,5 @@
 import SwiftUI
 
 
-extension LauncherView {
+extension DockCore {
 }

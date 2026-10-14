@@ -17,21 +17,21 @@ dock's copy of it. It follows the DoraX rule in CLAUDE.md: one job per surface, 
 ## Why the corner cannot just call the dock's code
 
 The dock's live menu filtering is ~150 lines of **local closures inside one function body**
-in `LauncherView+ContextualActions.swift` (`dedupeMenuItems` 5197, `menuItemMatchesQuery`
+in `DockCore+ContextualActions.swift` (`dedupeMenuItems` 5197, `menuItemMatchesQuery`
 5240, `frontmostLiveMenuMatches` 5265, `scopedRunningMenuMatches` 5279). They call eight
-helpers that are **methods on `LauncherView`** — a SwiftUI struct with 420+ `@State` vars —
+helpers that are **methods on `DockCore`** — a SwiftUI struct with 420+ `@State` vars —
 even though not one of them reads view state:
 
-| Helper | Lives on LauncherView at |
+| Helper | Lives on DockCore at |
 |---|---|
-| `normalizedDockPillText` | `LauncherView+ContextDockPills.swift:3199` |
-| `dockPillTokens` | `LauncherView+ContextDockPills.swift:3215` |
-| `pillEditDistance` | `LauncherView+ContextDockPills.swift:3542` |
-| `isRejectedTopMenuItem` | `LauncherView+ContextDockPills.swift:3280` |
-| `isGenericAppMenu` | `LauncherView+ContextDockPills.swift:3284` |
-| `shouldExposeCachedMenuItem` | `LauncherView.swift:1014` |
-| `rankedTextMatchScore` | `LauncherView+GlobalContextActions.swift:1110` |
-| `distributedMenuItems` | `LauncherView+ContextualActions.swift:4225` |
+| `normalizedDockPillText` | `DockCore+ContextDockPills.swift:3199` |
+| `dockPillTokens` | `DockCore+ContextDockPills.swift:3215` |
+| `pillEditDistance` | `DockCore+ContextDockPills.swift:3542` |
+| `isRejectedTopMenuItem` | `DockCore+ContextDockPills.swift:3280` |
+| `isGenericAppMenu` | `DockCore+ContextDockPills.swift:3284` |
+| `shouldExposeCachedMenuItem` | `DockCore.swift:1014` |
+| `rankedTextMatchScore` | `DockCore+GlobalContextActions.swift:1110` |
+| `distributedMenuItems` | `DockCore+ContextualActions.swift:4225` |
 
 Nothing outside that view can rank a menu item. That is the blocker, and it is also why
 the ranking has never had a direct test.
@@ -44,7 +44,7 @@ menu commands live, above the input, the way the clipboard preview sits above it
 1. **`FrontmostMenuMatcher`** — new file, pure, no view, no AX calls. Takes items + query +
    a policy, returns ranked matches. The eight helpers move here as static funcs; the text
    rules (normalize, tokens, edit distance, ranked score) come with them unchanged.
-2. **`LauncherView` forwards to it.** The methods above become one-line calls so the dock's
+2. **`DockCore` forwards to it.** The methods above become one-line calls so the dock's
    behaviour is provably identical — same ranking, same limits, same dedupe key.
 3. **Tests first**, against the matcher directly: exact title, prefix, substring, token
    overlap, the `>= 4` edit-distance rung, dedupe by path, shallower path wins ties,
@@ -72,7 +72,7 @@ useful ones never surface) is the same problem and gets fixed here.
 ## Phase 3 — retire the dock's frontmost path
 
 Delete the dock's app-scope menu route once the corner covers it. The dock keeps Global
-Context, Media and General chat. This is where `LauncherView` finally gets smaller.
+Context, Media and General chat. This is where `DockCore` finally gets smaller.
 
 ## Phase 4 — scope pills and keyboard
 

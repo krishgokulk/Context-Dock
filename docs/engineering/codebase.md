@@ -22,7 +22,7 @@ Source lives in `Context-Dock/Context-Dock/`, organised into 7 folders:
 
 ```
 App/            Entry point, window, hotkeys, AppSettings
-Search/         Main UI (LauncherView), search engine, result models
+Search/         Main UI (DockCore), search engine, result models
 AI/             L2 assistant stack (intent, workflow, execution, Claude API)
 Accessibility/  AX observer pipeline, context snapshots, event bus
 Automation/     Cross-app routing, menu intent, app-specific macros
@@ -35,7 +35,7 @@ Services/       All shared infrastructure — context, media, file, extensions
 ### Layer dependencies (top → bottom)
 
 ```
-App/  ──environmentObject──►  Search/LauncherView
+App/  ──environmentObject──►  Search/DockCore
                                   │
                ┌──────────────────┼──────────────────┐
                ▼                  ▼                  ▼
@@ -52,7 +52,7 @@ App/  ──environmentObject──►  Search/LauncherView
 `Services/ContextEngineProtocol.swift` defines:
 
 - **`ContextEngineProtocol`** — abstracts all 20 context-reading methods from `ContextDetector`. UI code that reads context should accept `any ContextEngineProtocol`, not `ContextDetector` directly.
-- **`ContextDockEnvironment: ObservableObject`** — injected into the view tree at `setupLauncherWindow()`. AppDelegate calls `userContextDidDetect(_:)` and `frontmostAppDidChange(name:bundleID:)` directly instead of posting NotificationCenter events. `LauncherView` subscribes via `.onReceive(contextEnv.userContextUpdates)` and `.onReceive(contextEnv.frontmostAppUpdates)`.
+- **`ContextDockEnvironment: ObservableObject`** — injected into the view tree at `setupLauncherWindow()`. AppDelegate calls `userContextDidDetect(_:)` and `frontmostAppDidChange(name:bundleID:)` directly instead of posting NotificationCenter events. `DockCore` subscribes via `.onReceive(contextEnv.userContextUpdates)` and `.onReceive(contextEnv.frontmostAppUpdates)`.
 
 `ContextDetector` conforms to `ContextEngineProtocol` via an extension at the bottom of `ContextDetector.swift`.
 
@@ -68,13 +68,13 @@ NC is reserved for **UI-scope coordination** only (hotkey changes, window open/c
 
 `Accessibility/AXEventBus.swift` is a Combine `PassthroughSubject<AXEvent, Never>`. `AXEvent` cases: `appActivated`, `focusedElementChanged`, `selectedTextChanged`, `menuItemsReady`. Consumers in `CrossAppRouter` and `AXTriggerRuleEngine` subscribe to this, not to NotificationCenter.
 
-### LauncherView state
+### DockCore state
 
-`Search/LauncherView.swift` declares the `LauncherView` struct — 3,899 lines, **105 stored properties** (74 `@State`, 14 `@ObservedObject`, 9 `@StateObject`, 4 `@Environment`, 2 `@EnvironmentObject`, 1 `@AppStorage`, 1 `@FocusState`). `Search/ContentView.swift` is a 14-line stub that renders `LauncherShell()` and declares none of this.
+`Search/DockCore.swift` declares the `DockCore` struct — 3,899 lines, **105 stored properties** (74 `@State`, 14 `@ObservedObject`, 9 `@StateObject`, 4 `@Environment`, 2 `@EnvironmentObject`, 1 `@AppStorage`, 1 `@FocusState`). `Search/ContentView.swift` is a 14-line stub that renders `LauncherShell()` and declares none of this.
 
-`Search/LauncherView+Search.swift` is a Swift extension on the same struct that adds the entire search engine (`performSearch`, `detectSmartQuery`, `handleSmartQueryResult`, `findApplications`, `SmartQueryType`). Extensions on a struct have full access to `@State` vars — this is the intended pattern for splitting the file.
+`Search/DockCore+Search.swift` is a Swift extension on the same struct that adds the entire search engine (`performSearch`, `detectSmartQuery`, `handleSmartQueryResult`, `findApplications`, `SmartQueryType`). Extensions on a struct have full access to `@State` vars — this is the intended pattern for splitting the file.
 
-**Adding to `body` has a ceiling.** Release aborted in SILGen for two months (#25) because `LauncherView.body`'s opaque type grew past what the compiler can finish substituting — a computed property returning `some View` is not a boundary, only a nominal type is. It builds again because eight view members became `struct`s. Two scripts exist so the next person does not rediscover this: `scripts/view-leaves.py` lists view members safe to extract (a leaf reachable from `body`), and `scripts/release-type-size.sh` measures the type. Prefer a `struct` over another `some View` property when adding UI here.
+**Adding to `body` has a ceiling.** Release aborted in SILGen for two months (#25) because `DockCore.body`'s opaque type grew past what the compiler can finish substituting — a computed property returning `some View` is not a boundary, only a nominal type is. It builds again because eight view members became `struct`s. Two scripts exist so the next person does not rediscover this: `scripts/view-leaves.py` lists view members safe to extract (a leaf reachable from `body`), and `scripts/release-type-size.sh` measures the type. Prefer a `struct` over another `some View` property when adding UI here.
 
 ### Extension system layers
 
@@ -102,8 +102,8 @@ The app has a 3-layer extension model:
 ## Large files
 
 Read only the relevant range (`awk 'NR>=X && NR<=Y'`):
-- `Search/LauncherView.swift` — 3,899 lines, 105 stored properties
-- `Search/LauncherView+ContextualActions.swift`
+- `Search/DockCore.swift` — 3,899 lines, 105 stored properties
+- `Search/DockCore+ContextualActions.swift`
 
 ## Apple documentation
 

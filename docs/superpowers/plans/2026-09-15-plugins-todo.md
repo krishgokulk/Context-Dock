@@ -128,7 +128,7 @@ with two skills contributes two summaries to a turn and one body when pinned.
 ## Phase 4 — hosts: dock sheet, corner panel, window  (L)
 
 Files: `Search/ScopedListPanel.swift` (retire `ScopedListPanelContent` in favour of
-`PluginRenderer`), `Search/LauncherView+LivePanel.swift`, corner panel host in
+`PluginRenderer`), `Search/DockCore+LivePanel.swift`, corner panel host in
 `UI/AppChat*`, new `UI/Plugins/PluginWindow.swift` (detached, shared shell),
 `Search/DockModels.swift` (row ▢ affordance).
 Tests: `CornerGlobalContextParityTests` extended; window sizing tiers; ▢ routing.
@@ -147,9 +147,9 @@ host has a written seam in #24.
 ## Phase 5 — search, Selection Sheet, clipboard scope  (M)
 
 Files: `Services/GlobalSearchService.swift` (`ActionSpec.plugin(id:)`),
-`Search/LauncherView+Search.swift` (`SearchCandidateEligibility`, scope entry),
+`Search/DockCore+Search.swift` (`SearchCandidateEligibility`, scope entry),
 `Services/SelectionScopeExtensionPolicy.swift`, `Services/ClipboardScopeService.swift`,
-`Search/LauncherView+ClipboardScope.swift`.
+`Search/DockCore+ClipboardScope.swift`.
 
 - [ ] Index plugins (name, description, keywords); merge-and-rank retained; usage learning and
       icon resolution switch cases handled (they are exhaustive by design).

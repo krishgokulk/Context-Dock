@@ -1,7 +1,7 @@
 # 00 — Dock and Corner: one product, two shells, one migration
 
 > **Status (2026-10-14): the Dock is retired (#257).** Its window and screen are deleted; the
-> Corner is the only shell. `Search/LauncherView*` survives only as the windowless engine
+> Corner is the only shell. `Search/DockCore*` survives only as the windowless engine
 > (`DockEngine`) behind the Corner's App Chat and Global results. The sections below are the
 > history of the migration; §5 records how it ended.
 >
@@ -32,7 +32,7 @@ a Corner home.
 | Size | Full sheet with rows and pills | One compact input that grows only as far as the task needs |
 | Look | Liquid Glass | Liquid Glass; **Glass Darkness** slider (0% = pure glass) applies to both `[code: glassDarkness]` |
 | States | Result sheet, pills, chat | Phases `hidden · mini · dock · prompt · suggesting · chat` (`UI/AppChatPromptModel.swift`, `AppChatPromptPhase`) `[code]` |
-| Code home | `Search/LauncherView*` (39 extension files) | `UI/Corner*`, `UI/AppChat*`, `UI/SelectionScope*`, `Search/ClipboardPanelWindow`, `UI/DropShelf*` `[code]` |
+| Code home | `Search/DockCore*` (39 extension files) | `UI/Corner*`, `UI/AppChat*`, `UI/SelectionScope*`, `Search/ClipboardPanelWindow`, `UI/DropShelf*` `[code]` |
 
 **What the Corner holds** (all along the bottom, beside each other — Settings text `[code]`):
 the chat, the clipboard, the selection card and the shelf. "Corner" is the historical name; with
@@ -71,7 +71,7 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | App Chat (ask the frontmost app) | ✅ | ✅ | **Moved** | `[code]` App Chat hotkey |
 | General Chat | ✅ | ✅ | **Moved** — parity tasks 1, 2, 3, 6, 8 done | `[code]` CLAUDE.md current sequence |
 | Frontmost app's menu commands + actions | ✅ | 🟡 | **In progress** — plan 2026-09-08 Phases 1–2 done (ranking extracted to `FrontmostMenuMatcher`; actions and menus ranked together by `AppChatRowRanker`). Phase 3 (retire the Dock's copy) and Phase 4 (scope pills) not started: the Dock still builds its own `contextMenuPills` | `[code]` checked 2026-09-24 |
-| Clipboard | ✅ | ✅ | **Moved** — a scope in the result board over the field, Raycast-style (owner 2026-10-07; replaced the ambient pill + corner card, which a copy no longer raises). The Dock still keeps its own copy of the pasteboard rules (`LauncherView+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardBoardCard` |
+| Clipboard | ✅ | ✅ | **Moved** — a scope in the result board over the field, Raycast-style (owner 2026-10-07; replaced the ambient pill + corner card, which a copy no longer raises). The Dock still keeps its own copy of the pasteboard rules (`DockCore+ClipboardScope`), GitHub #62 | `[code]` `ClipboardScopeService`, `ClipboardBoardCard` |
 | Selection | ✅ | ✅ | **Moved**, and beyond the Dock — see §4a (#84) | `[code]` `SelectionScopeCard`, `CornerSelectionActionsTests` |
 | Drop shelf | ✅ | ✅ | **Moved** — the Shelf is the last icon of every dock row, in both shells, in every scope (#147); click opens it in the shell, a drag over it drops onto it. The floating "Drop to Shelf" card is gone | `[code]` `DropShelfIcon`, `DockTools`; `DropShelfRowTests` |
 | Extensions as a scope (e.g. Currency Converter) | ✅ | ❌ | **Not moved** — the Corner finds the row, then hands it to the Dock | `[code]` corner rows run the Dock's `executeGlobalAppSearchResult` → `activateGlobalInlineScope`; `[plan]` 2026-09-10 scope stack, "plan only" |
@@ -117,7 +117,7 @@ surface lost its one job ("selection-aware action engine", `docs/architecture/SE
 3. An empty field + ↩ asks the question, as today.
 4. A visible ✕ closes the card; Esc still does too.
 5. Reuse the Dock's action source — do not write a second ranking (§3 rule 1). If it is locked inside
-   `LauncherView`, extract it first, as the 2026-09-08 plan did for menu matching.
+   `DockCore`, extract it first, as the 2026-09-08 plan did for menu matching.
    **Interim (owner 2026-09-25):** Corner uses the Dock's Selection rows through
    `SelectionActionProviding`; extraction tracked in #83, must land before the Dock retires.
 
@@ -128,7 +128,7 @@ Fix: the recorder must require ⌘, ⌥ or ⌃ (`UI/Settings/HotkeysSettingsPage
 ## 4b. Swipes — the Corner must match the Dock exactly (owner decision, 2026-09-24)
 
 The owner wants the Corner's trackpad swipes to behave **exactly** like the Dock's, over the input
-field only. Below is the Dock's behaviour read from `Search/LauncherView+InteractionLifecycle.swift`
+field only. Below is the Dock's behaviour read from `Search/DockCore+InteractionLifecycle.swift`
 (`setupSwipeGestureMonitor`) `[code]`, and what the Corner does today
 (`UI/CornerDockWindow.swift` `handleChatSwipe`, `UI/CornerChatPresentation.swift`) `[code]`.
 
@@ -173,9 +173,9 @@ When every Dock job has a Corner home:
    bottom dock are unchanged; the recorded custom launcher hotkey still opens the old Dock.
    **Done (#257, 2026-10-14):** the custom launcher hotkey and the menu bar item open the centred
    Corner too; the old Dock window no longer exists.
-2. **Retire `LauncherView`'s Dock paths** — **done (#257 E1–E4, 2026-10-14).** E1 moved its state
-   into `LauncherEngineState`, E2–E3a ran it windowless under `DockEngine`, E3b deleted the screen
-   (~35k lines), E4 the window leftovers. What remains of `LauncherView` is engine only: the L2
+2. **Retire `DockCore`'s Dock paths** — **done (#257 E1–E4, 2026-10-14).** E1 moved its state
+   into `DockCoreState`, E2–E3a ran it windowless under `DockEngine`, E3b deleted the screen
+   (~35k lines), E4 the window leftovers. What remains of `DockCore` is engine only: the L2
    chat pipeline and the Global result builders the Corner calls. Moving those into `Services/`
    and renaming the type is follow-up work.
 3. **Rename "Corner"?** With Centre as an option it is really "the bottom dock". Users see neither

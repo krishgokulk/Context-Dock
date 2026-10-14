@@ -16,6 +16,6 @@
 import AppKit
 import SwiftUI
 
-extension LauncherView {
+extension DockCore {
 
 }

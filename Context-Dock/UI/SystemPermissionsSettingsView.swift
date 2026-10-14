@@ -47,7 +47,7 @@ enum PermissionPrompt {
     static func openSettings(_ pane: String) {
         // `com.apple.preference.security?Privacy_X` is the pre-Ventura anchor. It still
         // opens System Settings and then lands nowhere, which reads to the user as the
-        // button doing nothing. LauncherView already uses the modern pane id; this one was
+        // button doing nothing. DockCore already uses the modern pane id; this one was
         // left behind.
         let modern = "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)"
         guard let url = URL(string: modern) else { return }

@@ -1,7 +1,7 @@
 // DockTextMatch.swift
 // Context-Dock
 //
-// The text rules the dock ranks with, taken off LauncherView so something other than that
+// The text rules the dock ranks with, taken off DockCore so something other than that
 // view can use them. Nothing here reads view state — it never did; the functions simply
 // lived on a SwiftUI struct with 420+ @State vars, which is why no test could reach them
 // and why the corner could not rank a menu item at all.

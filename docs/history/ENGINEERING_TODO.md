@@ -29,7 +29,7 @@ Track release work here. Keep each item small enough for one pull request.
 
 Final rule: UI and feature files never call OpenAI, Anthropic, Gemini, Ollama, or compatible endpoints directly. Every request routes through `AIProviderRouter`.
 
-- [x] Replace direct provider calls in `LauncherView+AIProviderCalls.swift` with `AIProviderRouter`.
+- [x] Replace direct provider calls in `DockCore+AIProviderCalls.swift` with `AIProviderRouter`.
 - [x] Move remaining provider-specific HTTP and response decoding into `AI/Providers/`.
 - [x] Delete obsolete direct provider helper methods after all callers migrate.
 - [x] Add routing assertions or debug logging to detect requests bypassing `AIProviderRouter`.

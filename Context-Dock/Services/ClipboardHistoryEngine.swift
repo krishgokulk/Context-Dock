@@ -20,7 +20,7 @@ import Vision
 final class ClipboardHistoryEngine {
     static let shared = ClipboardHistoryEngine()
 
-    typealias Entry = LauncherView.ClipboardEntry
+    typealias Entry = DockCore.ClipboardEntry
 
     /// Newest first.
     var history: [Entry] = []

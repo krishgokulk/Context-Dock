@@ -12,22 +12,22 @@ This is not a tuning problem. The dock animates **two independent geometries**
 towards the same target and hopes they arrive together:
 
 1. The **NSWindow frame**, set from `calculatedHeight`
-   (`LauncherView+DockHeight.swift`), which sums status bar + context row + dock
+   (`DockCore+DockHeight.swift`), which sums status bar + context row + dock
    row + input bar + list.
 2. The **SwiftUI card**, framed to `renderedDockHeight ?? calculatedHeight`
-   (`LauncherView+ContextLifecycle.swift:51`).
+   (`DockCore+ContextLifecycle.swift:51`).
 
 `calculatedHeight` depends on content that arrives asynchronously — search
 results, icons, a late menu group. So the height is a moving target: the window
 commits a frame, rows land, and it commits another. The code says this in its
 own comments:
 
-- `LauncherView+KeyboardNavigation.swift:1413` — *"A reveal in flight owns the
+- `DockCore+KeyboardNavigation.swift:1413` — *"A reveal in flight owns the
   frame. Row churn must not interrupt it with a second setFrame — that is the
   'expands, stops, expands again' stutter."*
 - `:1485` — *"The old implementation grew the transparent NSPanel first and then
   animated a shorter SwiftUI card inside it. That exposed an empty half-sheet."*
-- `LauncherView+ContextLifecycle.swift:61` — *"The window height lags the content
+- `DockCore+ContextLifecycle.swift:61` — *"The window height lags the content
   … the shorter card gets centered by the hosting view in a stale-tall window —
   the input visibly sinks for 'fewer results'."*
 

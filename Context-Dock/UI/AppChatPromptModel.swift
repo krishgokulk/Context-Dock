@@ -1379,7 +1379,7 @@ final class AppChatPromptModel: ObservableObject {
 
 extension Notification.Name {
     /// Corner prompt → Context Dock's app-scoped chat. Carried by notification because the
-    /// chat's state lives inside LauncherView and is not reachable from a window.
+    /// chat's state lives inside DockCore and is not reachable from a window.
     static let appChatPromptSubmitted = Notification.Name("appChatPromptSubmitted")
     static let appChatPromptScopeChanged = Notification.Name("appChatPromptScopeChanged")
     /// Corner prompt → the dock, asking it to empty the app-scoped transcript both of them

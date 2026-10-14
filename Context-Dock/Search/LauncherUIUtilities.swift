@@ -129,7 +129,7 @@ struct TwoFingerSwipeGestureView: NSViewRepresentable {
 
 // Preview commented out due to init parameter changes
 // #Preview {
-//     LauncherView(onClose: {})
+//     DockCore(onClose: {})
 //         .frame(width: 600)
 //         .padding()
 // }

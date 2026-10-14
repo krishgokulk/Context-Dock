@@ -6,7 +6,7 @@ import Testing
 
 // MARK: - The transcript rewrite loop (issue #145)
 //
-// `LauncherView.body` hands `.onReceive` a FRESH `x.$published.eraseToAnyPublisher()` on every
+// `DockCore.body` hands `.onReceive` a FRESH `x.$published.eraseToAnyPublisher()` on every
 // evaluation, and a `Published` publisher replays its current value to each new subscriber. A
 // handler that writes the transcript when the value is non-nil therefore writes it again every
 // time the transcript's own publish re-renders the view — an unbounded loop on the main thread.
@@ -23,7 +23,7 @@ private final class LoopBridge: ObservableObject {
     @Published var pending: UUID?
 }
 
-/// Same shape as `LauncherView`: observes the transcript, subscribes to a bridge's `Published`
+/// Same shape as `DockCore`: observes the transcript, subscribes to a bridge's `Published`
 /// through a freshly erased publisher, and appends to the transcript from the handler.
 private struct LoopProbe: View {
     @ObservedObject var transcript: LoopTranscript

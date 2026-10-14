@@ -70,7 +70,7 @@ Context-Dock/
 │
 ├── Shell/               ← the ONE Unified Dock Surface (shell, input, rows, size, animation)
 │   ├── UnifiedDockSurface · LauncherShell · LauncherSurfaceContainers
-│   ├── LauncherView.swift            ← becomes a thin router: which surface is showing
+│   ├── DockCore.swift            ← becomes a thin router: which surface is showing
 │   ├── Corner/          CornerDockWindow · CornerDockLayout · CornerKeyboardOwner ·
 │   │                    CornerDockKeyboardState
 │   ├── Layout/          DockMetrics · DockHeightPreset · DesignTokens · LiquidGlassArrow
@@ -81,7 +81,7 @@ Context-Dock/
 │   ├── Find/                                         (docs 01 + 02)
 │   │   ├── GlobalContext/  GlobalContextSurface · GlobalContextTypingModel · GlobalContextRow ·
 │   │   │                   PinnedAppsRow · CornerDockStrip · CornerWindowRow ·
-│   │   │                   FindModel.swift (NEW — owns the @State now in LauncherView+Search*)
+│   │   │                   FindModel.swift (NEW — owns the @State now in DockCore+Search*)
 │   │   ├── ContextDock/    ContextDockSurface · ContextDockPillCoordinator · FrontmostMenuMatcher ·
 │   │   │                   ContextDockModel.swift (NEW)
 │   │   └── Finder/         FinderContextViewModel · FinderSemanticModels
@@ -122,7 +122,7 @@ Context-Dock/
 └── Resources/              Assets.xcassets · Info.plist · ILauncher.entitlements
 ```
 
-**The 39 `LauncherView+*.swift` files** dissolve into the surface they serve. Mapping:
+**The 39 `DockCore+*.swift` files** dissolve into the surface they serve. Mapping:
 
 | Today | Goes to |
 |---|---|
@@ -137,13 +137,13 @@ Context-Dock/
 
 ---
 
-## 4. Packages — `Packages/` (no SwiftUI views, no `LauncherView`)
+## 4. Packages — `Packages/` (no SwiftUI views, no `DockCore`)
 
 ### 4.1 `DoraXCore` — shared vocabulary. Depends on nothing.
 ```
 Sources/DoraXCore/
 ├── Models/       UserContext · ContextSnapshot · DataSubject · ClipboardEntry (moved out of
-│                 LauncherView) · SearchResult models · DoraXActionReceipt
+│                 DockCore) · SearchResult models · DoraXActionReceipt
 ├── Storage/      ContextDockStore · StorageFacades · SettingsBackupManager
 ├── Security/     KeychainStore
 ├── Settings/     AppSettings (the stored values, not the UI)
@@ -247,7 +247,7 @@ If a file seems to need two answers, it is two files.
 | Engine/capability service | noun, no `Manager` for new code | `MenuExecutor`, not `MenuExecutionManager` |
 | Protocol at a package edge | `<Thing>Providing` | `ContextProviding` |
 | Test file | `<Type>Tests` / `<Area>EvalTests` | `CapabilityIndexTests` |
-| Retired prefixes | no new `ILauncher*`, `L2*`, `LauncherView+*` | — |
+| Retired prefixes | no new `ILauncher*`, `L2*`, `DockCore+*` | — |
 
 ---
 
