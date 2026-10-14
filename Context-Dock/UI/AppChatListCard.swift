@@ -657,10 +657,16 @@ struct AppChatListCard: View {
                 Text(doc.title)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
-                Text(GlobalContextRow.subtitle(for: doc))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary.opacity(0.75))
-                    .lineLimit(1)
+                // Said once, on the right (#258 G2): "Application" under the name repeated it.
+                let subtitle = GlobalContextRow.subtitle(for: doc)
+                let foot = model.foot(for: .global(doc))
+                // Highlighted, the right says ↩, so the line under the name stays.
+                if isFocused || (subtitle != foot.kind && !(foot.isRunningApp && subtitle == "Running")) {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary.opacity(0.75))
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
             // The dock hints "press Return" at whichever row the arrow keys land on; this
@@ -669,6 +675,8 @@ struct AppChatListCard: View {
                 Image(systemName: "return")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
+            } else {
+                RowStatus(foot: model.foot(for: .global(doc)), shortcut: menuShortcut(doc))
             }
         }
         .padding(.horizontal, 16)
@@ -679,6 +687,12 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.run(.global(doc)) }
+    }
+
+    /// A menu command's own shortcut, as its app's menu shows it.
+    private func menuShortcut(_ doc: GlobalSearchService.SearchDocument) -> String? {
+        guard case .cachedMenu(_, _, _, let char, let modifiers) = doc.action else { return nil }
+        return MenuShortcutFormatter.display(char: char, modifiers: modifiers)
     }
 
     private func pageURL(_ doc: GlobalSearchService.SearchDocument) -> URL? {
@@ -699,6 +713,8 @@ struct AppChatListCard: View {
             if isFocused {
                 Text(pill.sourceAppName).font(.system(size: 10)).foregroundStyle(.secondary)
                 Image(systemName: "return").font(.system(size: 10)).foregroundStyle(.secondary)
+            } else if model.isGlobalScope {
+                RowStatus(foot: model.foot(for: .dock(pill)))
             } else if let shortcut = pill.keyboardShortcutLabel {
                 Text(shortcut).font(.system(size: 10)).foregroundStyle(.secondary)
             }
@@ -796,6 +812,33 @@ private struct CornerResultIcon: View {
 
 /// The highlight behind a focused row in the corner's lists — one drawing for every card
 /// that lists rows (App Chat, Selection), so the two cannot drift apart.
+/// A Global row's right side when it is not highlighted (#258 G2): its kind, or ● Running
+/// for an open app — the foot's own words, so the row and the foot never disagree.
+struct RowStatus: View {
+    let foot: BoardFoot
+    /// A menu command's shortcut, after its kind: "Menu · ⌘Q".
+    var shortcut: String? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if foot.isRunningApp {
+                Circle().fill(Color.green).frame(width: 6, height: 6)
+                Text("Running")
+            } else {
+                Text(foot.kind)
+            }
+            if let shortcut {
+                Text("·")
+                Text(shortcut)
+            }
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .fixedSize()
+    }
+}
+
 struct CornerListRowBackground: View {
     let isFocused: Bool
 

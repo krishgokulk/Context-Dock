@@ -19,6 +19,12 @@ struct BoardFoot: Equatable {
     var fileURL: URL? = nil
     /// The symbol drawn when there is neither.
     var symbol: String = "sparkle"
+    /// An app that is open now: its row says ● Running instead of its kind.
+    var isRunningApp: Bool = false
+
+    /// The kind alone — "Menu", "Application", "Web page" — what a row says on its right
+    /// (#258 G2), the same word the foot ends with.
+    var kind: String { title.components(separatedBy: " · ").last ?? title }
 
     /// The foot for the row Return takes. Nil row: nothing will run but the question, so the
     /// foot names the scope and Return asks AI.
@@ -105,10 +111,10 @@ struct BoardFoot: Equatable {
 
     /// A running app comes forward, as its preview says; a closed one opens.
     private static func appFoot(_ bundleID: String) -> BoardFoot {
-        BoardFoot(
-            title: "Application",
-            verb: AppResultActions.runningApp(bundleID) == nil ? "Open" : "Bring forward",
-            bundleID: bundleID)
+        let running = AppResultActions.runningApp(bundleID) != nil
+        return BoardFoot(
+            title: "Application", verb: running ? "Bring forward" : "Open",
+            bundleID: bundleID, isRunningApp: running)
     }
 
     private static func fileFoot(_ url: URL) -> BoardFoot {
@@ -127,6 +133,14 @@ struct BoardFoot: Equatable {
 }
 
 extension AppChatPromptModel {
+    /// What one row is, in the foot's words — read by the row's status on its right.
+    func foot(for row: AppChatRow) -> BoardFoot {
+        BoardFoot.foot(
+            for: row, scopeName: isGlobalScope ? Self.globalScopeName : appName,
+            scopeBundleID: appBundleID, isGlobal: isGlobalScope, cliCommand: cliCommand,
+            lookup: searchDocumentLookup)
+    }
+
     /// The row Return takes — the highlighted one, else the top one (the list draws that
     /// row as chosen) — read by the board's foot.
     var boardFoot: BoardFoot {
