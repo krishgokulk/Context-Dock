@@ -686,6 +686,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Global search's index builds itself and stays fresh, whatever is on screen.
         if !Self.isHostingTests { GlobalSearchIndexBuilder.shared.start() }
 
+        // The engine the Corner's search and App Chat run on, window or not (#257 E2).
+        if !Self.isHostingTests { DockEngine.shared.start() }
+
         // Create the launcher window
         setupLauncherWindow()
 

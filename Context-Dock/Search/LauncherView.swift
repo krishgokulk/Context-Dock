@@ -75,7 +75,7 @@ struct LauncherView: View {
     }
     @ObservedObject var workerPool = BackgroundWorkerPool.shared
     @ObservedObject var miniPlayer = MiniPlayerController.shared
-    @StateObject var mediaDockEngine = MediaDockEngine.shared
+    @ObservedObject var mediaDockEngine = MediaDockEngine.shared
     /// The dock chat's messages live in an object now, so the view has to watch it: a
     /// mutation through `l2.chatMessages` no longer invalidates this view by itself.
     @ObservedObject var chatConversation = AppChatConversation.shared
@@ -89,13 +89,13 @@ struct LauncherView: View {
     @ObservedObject var notificationManager = ILauncherNotificationManager.shared
     @ObservedObject var usageStore = AIProviderUsageStore.shared
     @ObservedObject var mediaObserver = MediaPlayerObserver.shared
-    @StateObject var taskExecutor = L2AITaskExecutor.shared
-    @StateObject var selectionModel = SelectionObserverModel()
+    @ObservedObject var taskExecutor = L2AITaskExecutor.shared
+    @ObservedObject var selectionModel = LauncherEngineState.shared.selectionModel
     // Reserved height for L1 results panel. Resets to 0 when results clear and otherwise tracks
     // visible result count so short result sets do not keep a mostly empty sheet.
     // Preview, shortcut-sheet, and command-key state lives in LauncherViewModel.
     // AI chat mode
-    @EnvironmentObject var appState: AppState
+    @ObservedObject var appState = AppState.shared
     var aiMode: AIModeState {
         get { appState.aiChat.mode }
         nonmutating set { appState.aiChat.mode = newValue }
@@ -106,17 +106,17 @@ struct LauncherView: View {
             set: { appState.aiChat.mode.messages = $0 }
         )
     }
-    @EnvironmentObject var contextEnv: ContextDockEnvironment
+    @ObservedObject var contextEnv = ContextDockEnvironment.shared
     var frontmost: FrontmostAppState {
         get { appState.contextDock.frontmost }
         nonmutating set { appState.contextDock.frontmost = newValue }
     }
     @AppStorage("isMailContextAttached") var isMailContextAttached: Bool = false
-    @StateObject var launcherViewModel = LauncherViewModel()
-    @StateObject var globalContextViewModel = GlobalContextViewModel()
-    @StateObject var finderContext = FinderContextViewModel()
-    @StateObject var contextDockViewModel = ContextDockViewModel()
-    @StateObject var aiChatViewModel = AIChatViewModel()
+    @ObservedObject var launcherViewModel = LauncherEngineState.shared.launcherViewModel
+    @ObservedObject var globalContextViewModel = LauncherEngineState.shared.globalContextViewModel
+    @ObservedObject var finderContext = LauncherEngineState.shared.finderContext
+    @ObservedObject var contextDockViewModel = LauncherEngineState.shared.contextDockViewModel
+    @ObservedObject var aiChatViewModel = LauncherEngineState.shared.aiChatViewModel
     @FocusState var isSearchFieldFocused: Bool
     @Namespace var compactScopeFocusNamespace
     @ObservedObject var settings = AppSettings.shared
@@ -178,7 +178,7 @@ struct LauncherView: View {
     // User profile picture
 
     // Web research
-    @StateObject var webResearch = WebResearchSession.shared
+    @ObservedObject var webResearch = WebResearchSession.shared
 
 
     // Live menu-bar items loaded from frontmost app on dock open
