@@ -210,7 +210,7 @@ nonisolated enum ActivityStepNaming {
     /// through a stored result. A row for these made "set volume to 30" read as three
     /// things done when one was.
     static let plumbingTools: Set<String> = [
-        "find_capability", "find_route", "read_tool_result",
+        "find_capability", "find_route", "find_menu_command", "read_tool_result",
     ]
 
     /// Kind, title and one-line input for a DoraX tool call. `capabilityTitle` and

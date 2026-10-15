@@ -26,6 +26,37 @@ extension AgentToolRegistry {
     func registerRouteTools() {
         register(makeFindRouteTool())
         register(makeRunRouteTool())
+        register(makeFindMenuCommandTool())
+    }
+
+    /// The app a route or menu lookup should act on: the thread's own scope, an app the
+    /// user named that this chat was granted, or the single granted app when there is one.
+    /// Returns nil when the name was never granted or more than one app is in scope with no
+    /// name given — the caller turns that into "name one of these apps".
+    @MainActor
+    static func resolveScopedApp(
+        named: String, grantedApps: [String: String], chatScope: GeneralChatScope?
+    ) -> (id: String, name: String)? {
+        func displayName(for bundleID: String, fallback: String) -> String {
+            InstalledApplicationsCatalog.cachedInstalledApps()
+                .first { $0.bundleId.caseInsensitiveCompare(bundleID) == .orderedSame }?
+                .name ?? fallback
+        }
+        let trimmed = named.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            // Named an app: it must be one this chat was granted; otherwise we do not reach
+            // into an app the user has not agreed to.
+            guard let id = grantedApps[trimmed.lowercased()] else { return nil }
+            return (id, trimmed)
+        }
+        if let scoped = scopedBundleID(for: chatScope) {
+            return (scoped, displayName(for: scoped, fallback: scoped))
+        }
+        // One granted app and no name given is unambiguous.
+        if grantedApps.count <= 2, let only = grantedApps.first {
+            return (only.value, displayName(for: only.value, fallback: only.key))
+        }
+        return nil
     }
 
     /// Routes offered to the model this turn, by id, so run_route executes exactly what
@@ -73,30 +104,9 @@ extension AgentToolRegistry {
             // The grant is the scope, for that app, for this conversation.
             let named = (arguments["app"] as? String ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolved = await MainActor.run { () -> (id: String, name: String)? in
-                if !named.isEmpty {
-                    let key = named.lowercased()
-                    if let id = context.grantedApps[key] {
-                        return (id, named)
-                    }
-                    // Named an app that was never granted. Say which ones were, rather than
-                    // reaching into an app the user has not agreed to.
-                    return nil
-                }
-                if let scoped = AgentToolRegistry.scopedBundleID(for: context.chatScope) {
-                    let name = InstalledApplicationsCatalog.cachedInstalledApps()
-                        .first { $0.bundleId.caseInsensitiveCompare(scoped) == .orderedSame }?
-                        .name ?? scoped
-                    return (scoped, name)
-                }
-                // One granted app and no name given is unambiguous.
-                if context.grantedApps.count <= 2, let only = context.grantedApps.first {
-                    let name = InstalledApplicationsCatalog.cachedInstalledApps()
-                        .first { $0.bundleId.caseInsensitiveCompare(only.value) == .orderedSame }?
-                        .name ?? only.key
-                    return (only.value, name)
-                }
-                return nil
+            let resolved = await MainActor.run {
+                AgentToolRegistry.resolveScopedApp(
+                    named: named, grantedApps: context.grantedApps, chatScope: context.chatScope)
             }
             guard let resolved else {
                 let available = await MainActor.run {
@@ -181,6 +191,84 @@ extension AgentToolRegistry {
                         : "\(route.title) did not run.")
                     : result.output,
                 displayCommand: "run_route(\(route.title))")
+        }
+    }
+
+    /// Menus on demand (P2). The scoped prompt no longer dumps fifty menu paths; it names
+    /// this tool instead. Given a UI request it returns the few matching menu-bar paths from
+    /// `AppMenuCapabilityCache`, each ready to pass to run_menu_command. Read-only.
+    private func makeFindMenuCommandTool() -> AgentTool {
+        AgentTool(
+            name: "find_menu_command",
+            description: "Find the menu-bar commands in this app that match an interface "
+                + "request (minimize, new tab, export, close…). Menus are not listed in the "
+                + "prompt — ask here when the request is about the app's window or interface, "
+                + "or when no headless route fits, then run a returned path with "
+                + "run_menu_command. Read-only; nothing runs.",
+            properties: [
+                "query": [
+                    "type": "string",
+                    "description": "The interface command, in a word or two (e.g. \"minimize\").",
+                ],
+                "app": [
+                    "type": "string",
+                    "description": "Which app to look in. Needed only in a general conversation "
+                        + "with more than one app enabled; omit in an app's own thread.",
+                ],
+            ],
+            required: ["query"]
+        ) { arguments, context in
+            let query = (arguments["query"] as? String ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else {
+                return AgentToolResult(
+                    success: false, output: "find_menu_command needs 'query'.",
+                    displayCommand: "find_menu_command")
+            }
+            let named = (arguments["app"] as? String ?? "")
+            let resolved = await MainActor.run {
+                AgentToolRegistry.resolveScopedApp(
+                    named: named, grantedApps: context.grantedApps, chatScope: context.chatScope)
+            }
+            guard let resolved else {
+                let available = await MainActor.run {
+                    Set(context.grantedApps.values).sorted().joined(separator: ", ")
+                }
+                return AgentToolResult(
+                    success: false,
+                    output: available.isEmpty
+                        ? "This conversation has no app in scope. Name the app, or ask the "
+                            + "user to enable it."
+                        : "Pass 'app' as one of the apps this chat can reach: \(available).",
+                    displayCommand: "find_menu_command")
+            }
+            let items = AppMenuCapabilityCache.shared.menuItems(
+                bundleIdentifier: resolved.id, appName: resolved.name,
+                query: query, maxResults: 12)
+            let leaves = items.filter { $0.isLeaf && !$0.path.isEmpty }
+            guard !leaves.isEmpty else {
+                return AgentToolResult(
+                    success: true,
+                    output: "\(resolved.name) has no cached menu command matching "
+                        + "\"\(query)\". If it is a command the app builds only when a menu is "
+                        + "opened, operate_app reads the live menu bar.",
+                    displayCommand: "find_menu_command(\(query))")
+            }
+            var seen = Set<String>()
+            var paths: [String] = []
+            for item in leaves {
+                let path = item.path.joined(separator: " ▸ ")
+                guard seen.insert(path.lowercased()).inserted else { continue }
+                let shortcut = item.shortcutDisplay.map { " (\($0))" } ?? ""
+                paths.append("- \(path)\(shortcut)")
+                if paths.count >= 8 { break }
+            }
+            return AgentToolResult(
+                success: true,
+                output: "Menu commands in \(resolved.name) matching \"\(query)\" — run one "
+                    + "with run_menu_command, passing the full path:\n"
+                    + paths.joined(separator: "\n"),
+                displayCommand: "find_menu_command(\(query))")
         }
     }
 }

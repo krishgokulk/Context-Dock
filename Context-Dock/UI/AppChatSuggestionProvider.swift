@@ -18,18 +18,28 @@ enum AppChatSuggestionProvider {
     static func suggestions(for app: NSRunningApplication?, limit: Int = 3)
         -> [AppChatSuggestion]
     {
-        guard let app else { return [] }
-        let items = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: limit * 4)
-        var seen = Set<String>()
-        var result: [AppChatSuggestion] = []
-        for item in items where item.isEnabled {
-            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !title.isEmpty, seen.insert(title).inserted else { continue }
-            result.append(
-                AppChatSuggestion(icon: "bolt.fill", title: title, kind: .action))
-            if result.count == limit { break }
+        guard let app, let bundleID = app.bundleIdentifier else { return [] }
+        let commands = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: limit * 4)
+        let actions = AppAdapterManager.shared.adapter(for: bundleID)?
+            .actions.filter { !$0.name.isEmpty } ?? []
+        return suggestions(commands: commands, actions: actions, limit: limit)
+    }
+
+    /// The resting offer is the useful front page of an app scope, not the app's raw menu
+    /// order. Generic About/Help/Quit rows remain searchable after the user types, but they
+    /// should not consume one of the three opening suggestions.
+    static func suggestions(
+        commands: [AXMenuItem], actions: [AdapterAction], limit: Int
+    ) -> [AppChatSuggestion] {
+        AppChatRowRanker.rank(
+            commands: commands,
+            actions: actions,
+            query: "",
+            limit: limit,
+            policy: .globalContext
+        ).map { row in
+            AppChatSuggestion(icon: "bolt.fill", title: row.title, kind: .action)
         }
-        return result
     }
 
     /// "5 actions · 2 skills" — only the parts that were actually counted, and only about
@@ -41,14 +51,30 @@ enum AppChatSuggestionProvider {
     /// a measured fact and this is an absent one.
     static func summary(for app: NSRunningApplication?) -> String {
         guard let app, let bundleID = app.bundleIdentifier else { return "" }
+        let actions = AppAdapterManager.shared.actions(for: bundleID)
+            .filter { $0.type != .aiPrompt }.count
+        let skills = SkillStore.shared.skills(for: bundleID).filter(\.isEnabled).count
+        let builtInTools = CapabilityRegistry.shared.all.filter {
+            $0.appBundleID?.caseInsensitiveCompare(bundleID) == .orderedSame
+        }.count
+        let cliTools = ScopedGroundingBlocks.runnableCommandBinaries(
+            forBundleId: bundleID).count
+
+        return summary(
+            actions: actions,
+            skills: skills,
+            builtInTools: builtInTools,
+            cliTools: cliTools)
+    }
+
+    static func summary(
+        actions: Int, skills: Int, builtInTools: Int, cliTools: Int
+    ) -> String {
         var parts: [String] = []
-
-        if let record = AppMenuCapabilityCache.shared.summary(bundleIdentifier: bundleID),
-            record.recordCount > 0
-        {
-            parts.append(pluralised(record.recordCount, "action"))
-        }
-
+        if actions > 0 { parts.append(pluralised(actions, "action")) }
+        if skills > 0 { parts.append(pluralised(skills, "skill")) }
+        if builtInTools > 0 { parts.append(pluralised(builtInTools, "built-in tool")) }
+        if cliTools > 0 { parts.append(pluralised(cliTools, "CLI tool")) }
         return parts.joined(separator: " · ")
     }
 
