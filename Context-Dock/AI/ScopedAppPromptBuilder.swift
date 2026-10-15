@@ -34,6 +34,18 @@ enum ScopedAppPromptBuilder {
             || trimmed.hasPrefix("com.apple.Safari.WebApp")
     }
 
+    /// One tool order, on every surface and at every size (P2, plan §2a). It is the single
+    /// ranking the prompt states — and it follows `CapabilityRecord.Surface` cost: the
+    /// headless rungs (skill, adapter, dictionary/API, MCP, CLI, Shortcut) come first, then
+    /// the menu (opens the app), then the screen (`operate_app`) last. The rungs are named
+    /// once here so the prompt and the tests cannot drift apart.
+    static let toolOrderLine =
+        "Tool choice order, cheapest and most reliable first — do the job with the earliest "
+        + "rung that fits: saved skill → saved adapter action → dictionary/API → MCP tool → "
+        + "linked CLI → Shortcut → menu command (find_menu_command) → Computer Use "
+        + "(operate_app). Prefer a route that opens no window; the menu and the screen are the "
+        + "last rungs, taken only when nothing headless fits the request."
+
     /// `cli://tailscale` → `tailscale`. A CLI scope is an executable, not an app.
     static func cliCommand(forScopeBundleID bundleID: String) -> String? {
         guard bundleID.hasPrefix("cli://") else { return nil }
@@ -236,9 +248,8 @@ enum ScopedAppPromptBuilder {
         } else {
             lines.append(
                 "- Actions — RUN one with the run_adapter_action tool, passing the id below. "
-                + "When a request matches an action, CALL it immediately — do NOT describe it, "
-                + "do NOT ask \"would you like me to?\". Actions marked [approval] pop a native "
-                + "confirmation on their own, so still just call them. Available:")
+                + "When a request matches an action, run it rather than describing it. Actions "
+                + "marked [approval] pop a native confirmation on their own. Available:")
             for a in actions.prefix(30) {
                 lines.append(inventoryLine(for: a))
             }
@@ -269,30 +280,18 @@ enum ScopedAppPromptBuilder {
             lines.append("- Skills: \(skillCount) active (their instructions follow below)")
         }
 
-        // Verified menu commands — the universal control surface. Any app can be driven
-        // through its own menu bar even with zero linked adapters, so this is how the chat
-        // DOES things (Minimize, New Tab, Export, Close…) instead of narrating a shortcut.
+        // Menus are not dumped into the default prompt (P2, plan §2a): fifty menu paths
+        // crowded the reasoning and pushed the model to the interface before it had looked
+        // at the app's data. The menu bar is still the universal control surface — it is
+        // reached on demand with find_menu_command, which returns the few paths matching a
+        // request, instead of being listed up front.
         if !bundleId.isEmpty {
-            let menuItems = AppMenuCapabilityCache.shared.menuItems(
-                bundleIdentifier: bundleId, appName: appName, query: "",
-                maxResults: compact ? 14 : 60)
-            let leaves = menuItems.filter { $0.isLeaf && !$0.path.isEmpty }
-            if !leaves.isEmpty {
-                lines.append(
-                    "- Menu commands — RUN one with the run_menu_command tool, passing the FULL "
-                    + "path below. When a request maps to a menu command, CALL it immediately — "
-                    + "do NOT tell the user which keyboard shortcut to press, do NOT ask "
-                    + "permission (destructive commands like Close/Quit/Delete pop their own "
-                    + "confirmation). Available menu commands:")
-                var seen = Set<String>()
-                for item in leaves {
-                    let key = item.path.joined(separator: " > ").lowercased()
-                    guard seen.insert(key).inserted else { continue }
-                    let shortcut = item.shortcutDisplay.map { " (\($0))" } ?? ""
-                    lines.append("    • \(item.path.joined(separator: " ▸ "))\(shortcut)")
-                    if seen.count >= (compact ? 12 : 50) { break }
-                }
-            }
+            lines.append(
+                "- Menu commands: not listed here. For an interface command (Minimize, New "
+                + "Tab, Export, Close…) call find_menu_command with a short query to get the "
+                + "few matching menu paths, then run that path with run_menu_command. Menus are "
+                + "the UI lane, below every headless route — reach for them when the request is "
+                + "about the window, or when nothing headless fits.")
         }
 
         lines.append("")
@@ -301,17 +300,15 @@ enum ScopedAppPromptBuilder {
         lines.append(ReadabilityFacts.instruction)
         lines.append("")
         if compact {
-            lines.append(
-                "Tool choice order: exact saved adapter action → exact live app menu for visible "
-                + "UI commands → MCP/API for app data → Shortcut → linked CLI. Never propose a "
-                + "tool that is not listed above.")
+            lines.append(toolOrderLine)
+            lines.append("Never propose a tool that is not listed above.")
             return lines.joined(separator: "\n")
         }
+        lines.append(toolOrderLine)
         lines.append(
-            "Tool choice order: exact saved adapter action → verified live app menu for visible UI commands → MCP/API for app data → Shortcut → linked CLI fallback → answer from "
-            + "the live context. Terminal/CLI is last resort: use it only when this app has no adapter/native/MCP/API/Shortcut/menu route that fits the request. Never generate shell or AppleScript for an operation exposed by the scoped app's linked tools or live menu. If no linked integration or menu can do what the user asks, propose one exact read-only "
-            + "run_command that would answer it and let the user approve it — and say what "
-            + "IS possible now, and that linking the right tool in Settings → App Adapters → "
+            "If no linked integration or menu can do what the user asks, propose one exact "
+            + "read-only run_command that would answer it and let the user approve it — and say "
+            + "what IS possible now, and that linking the right tool in Settings → App Adapters → "
             + "\(appName) (Tools tab: MCP, API, Shortcuts, CLI) would make it one tap.")
         // Nothing linked is not the same as nothing possible.
         //
@@ -334,14 +331,14 @@ enum ScopedAppPromptBuilder {
         // not built its menus when that map was written, and `Code ▸ Check for Updates…` was
         // therefore invisible — so a working route was reported as impossible.
         lines.append(
-            "Last rung: operate_app. When no adapter action, MCP tool, API, Shortcut, CLI or "
-            + "listed menu command fits, and run_menu_command has already failed or found "
+            "Last rung: operate_app. When no adapter action, MCP tool, API, Shortcut or CLI "
+            + "fits, and find_menu_command then run_menu_command have already failed or found "
             + "nothing, call operate_app with the command in the app's own words — or, if you "
             + "were given no tools this turn, reply with ONLY "
             + "{\"operate_app\": {\"target\": \"Check for Updates\", \"reason\": \"why\"}}. "
             + "It reads the "
-            + "LIVE menu bar — including menus this app builds only when opened, which are "
-            + "absent from the list above — and the user approves the exact item before it is "
+            + "LIVE menu bar — including menus this app builds only when opened, which "
+            + "find_menu_command's cache may miss — and the user approves the exact item before it is "
             + "pressed. Try it before concluding a UI command cannot be reached; never use it "
             + "for something a listed route already does.")
         lines.append(
@@ -378,7 +375,8 @@ enum ScopedAppPromptBuilder {
         // one list it had — the menu bar — and recited it. "About, Check for Updates, Hide
         // Others" is true of every Mac app and says nothing about this one.
         lines.append(
-            "A MENU LIST IS NOT A DESCRIPTION. The commands above are how you DO things in "
+            "A MENU LIST IS NOT A DESCRIPTION. Menu commands (reached with find_menu_command) "
+            + "are how you DO things in "
             + "\(appName); they are not what \(appName) is for. If the user asks what the app "
             + "does or can do, answer from its documentation — read it with read_url if a link "
             + "is listed above and no summary was supplied — and if there is none, say you "
