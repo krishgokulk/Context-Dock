@@ -40,17 +40,5 @@ struct GeneralChatSurface: View {
     }
 }
 
-extension LauncherView {
-    @ViewBuilder
-    var generalChatSurface: some View {
-        GeneralChatSurface(
-            leadingInset: resultsPanelLeadingInset,
-            totalWidth: calculatedWidth,
-            panelWidth: resultsPanelWidth,
-            maxHeight: 450,
-            query: searchState.query
-        ) {
-            aiChatSection
-        }
-    }
+extension DockCore {
 }

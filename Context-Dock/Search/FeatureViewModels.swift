@@ -20,7 +20,7 @@ struct DockInlineFeedback: Identifiable, Equatable {
 }
 
 @MainActor
-final class LauncherViewModel: ObservableObject {
+final class DockCoreModel: ObservableObject {
     @Published var query = ""
     @Published var indexedFileResults: [SearchResult] = []
     @Published var lastQuery = ""
@@ -103,8 +103,8 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var cachedGroupedState: GlobalGroupedListNavigationState?
     var cachedGroupedFingerprint = ""
     var pendingGroupedQuery: String?
-    @Published var inlineAppScope: LauncherView.GlobalInlineAppScope?
-    @Published var additionalInlineAppScopes: [LauncherView.GlobalInlineAppScope] = []
+    @Published var inlineAppScope: DockCore.GlobalInlineAppScope?
+    @Published var additionalInlineAppScopes: [DockCore.GlobalInlineAppScope] = []
     @Published var pendingLaunchContextSwitch: (bundleId: String, appName: String)?
     @Published var suppressInlineAppScopeDetection = false
     @Published var dismissedInlineAppScopes: [String: String] = [:]
@@ -113,9 +113,6 @@ final class GlobalContextViewModel: ObservableObject {
     @Published var isHoveringFrontmostContextChip = false
     @Published var clipboardText = ""
     @Published var showClipboardPill = false
-    @Published var lastCheckedPasteboardCount = -1
-    @Published var suppressClipboardImportUntilChangeCount: Int?
-    @Published var clipboardHistory: [LauncherView.ClipboardEntry] = []
     @Published var showClipboardHistory = false
     @Published var clipboardHistoryExpanded = false
     @Published var clipboardDropTargetVisible = false
@@ -152,13 +149,7 @@ final class GlobalContextViewModel: ObservableObject {
     var expandWhenFastMatchesResolve = false
     var autoExpandTask: Task<Void, Never>?
     var idleCollapseTask: Task<Void, Never>?
-    var clipboardExpiryTimer: Timer?
-    /// Always-on pasteboard poll: the clipboard scope must record every copy, not just
-    /// the one that happened to be current when the dock was last opened.
-    var clipboardMonitorTimer: Timer?
     var clipboardIndicatorHideTask: Task<Void, Never>?
-    /// Debounces history writes — a burst of copies used to trigger one full encode each.
-    var clipboardSaveTask: Task<Void, Never>?
     /// Selection order for multi-clip paste (a Set alone loses "the order I picked them").
     var clipboardSelectionOrder: [UUID] = []
 }
@@ -194,7 +185,7 @@ final class ContextDockViewModel: ObservableObject {
     /// When set, the dock shows ONLY the live native share destinations (AirDrop,
     /// Mail, Notes, …) for the current content — DoraX's own inline Share Sheet.
     @Published var inlineShareActive = false
-    @Published var lockedFindToken: LauncherView.AppFindToken?
+    @Published var lockedFindToken: DockCore.AppFindToken?
     @Published var showFindTokenMenu = false
     var crossAppMenuTargetPID: pid_t = 0
     var crossAppMenuNeedsLiveLoad = false

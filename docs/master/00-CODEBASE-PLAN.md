@@ -14,12 +14,12 @@ every day. `[code]` Proof — the AI engine reaches into the UI:
 
 ```swift
 // AI/GeneralAIActionResolver.swift:496   (engine → UI view type)
-guard !LauncherView.isBrowserLibraryReadPhrase(lowered) else { return nil }
+guard !DockCore.isBrowserLibraryReadPhrase(lowered) else { return nil }
 // Services/ClipboardScopeService.swift:22 (service → UI view type)
-typealias Entry = LauncherView.ClipboardEntry
+typealias Entry = DockCore.ClipboardEntry
 ```
 
-12 files in `AI/` and `Services/` name `LauncherView`. CLAUDE.md says data flows *down*;
+12 files in `AI/` and `Services/` name `DockCore`. CLAUDE.md says data flows *down*;
 the code flows both ways.
 
 **The fix is not more rules. It is making the compiler enforce the rules you already have.**
@@ -41,7 +41,7 @@ Everything below serves that. `[judgment]`
 | `Preview/`, `Developer/` | 22 | 3,376 | previews, inspector | ✓ matches |
 
 Other measurements:
-- **One god view.** `LauncherView` is spread over **39** `LauncherView+*.swift` extensions — every
+- **One god view.** `DockCore` is spread over **39** `DockCore+*.swift` extensions — every
   surface shares one struct and its `@State`.
 - **21 files over 2,000 lines; 49 over 1,000.**
 - **247 `static let shared` singletons.**
@@ -81,7 +81,7 @@ Other measurements:
 ```
 
 Each box below the app target is a **local Swift package** (`Packages/DoraX*/`). A package
-cannot import anything above it — if `DoraXEngine` mentions `LauncherView`, **it does not
+cannot import anything above it — if `DoraXEngine` mentions `DockCore`, **it does not
 compile**. That single mechanism replaces most of the "never merge layers" prose. `[judgment]`
 
 Side benefits:
@@ -132,7 +132,7 @@ is deleted.
 | Lower layers never import upper layers | Swift packages (§2.1) — compile error |
 | No file over **1,500** lines; new files aim for < 500 | `scripts/check-file-size.sh` in CI — warns now, fails once the big files are split |
 | No new singleton | New types take dependencies through `init`. Existing singletons stay until touched |
-| One surface = one state owner | Each surface has its own `@Observable` model; `LauncherView` becomes only the shell router |
+| One surface = one state owner | Each surface has its own `@Observable` model; `DockCore` becomes only the shell router |
 | Tests run on every PR | `scripts/test.sh` in `build.yml`, required check on `main` |
 | AI quality can't silently drop | Golden-corpus pass-rate printed in CI (`00-PRODUCT-PLAN.md` §3.4) |
 | No binaries in git | DMG goes to GitHub Releases only; `.gitignore` `*.dmg` |
@@ -173,7 +173,7 @@ The app keeps working after every step. Nothing is a big-bang rewrite. `[judgmen
 8. `DoraXCore` first (models, store, keychain, logging) — it has no upward dependencies.
 9. `DoraXContext` (AX pipeline).
 10. `DoraXCapabilities`, `DoraXMemory`.
-11. `DoraXEngine` last — this is where the 12 `LauncherView` references break. Fix each by
+11. `DoraXEngine` last — this is where the 12 `DockCore` references break. Fix each by
     moving the shared thing *down* (e.g. `ClipboardEntry` → `DoraXCore`,
     `isBrowserLibraryReadPhrase` → `DoraXEngine`).
 
@@ -181,8 +181,8 @@ Each package extraction is its own PR. When the compiler complains, it is showin
 layering bug that already existed.
 
 ### Stage E — Break the god view (after v1.0, ongoing)
-12. One surface at a time: move its `@State` out of `LauncherView` into that surface's model;
-    delete the matching `LauncherView+*.swift` extension. Start with the smallest (Media
+12. One surface at a time: move its `@State` out of `DockCore` into that surface's model;
+    delete the matching `DockCore+*.swift` extension. Start with the smallest (Media
     Dock, clipboard) to learn the pattern; Ask (chat) last.
 13. Split the remaining >1,500-line files as each one is touched for a real reason. Then flip
     the file-size check from *warn* to *fail*.
@@ -203,7 +203,7 @@ proven what matters. `[judgment]`
 - **Docs next to code:** each package gets a short `README.md` (job, public API, what it must
   never import). `docs/master/` stays the product-level map.
 - **Weekly health line** at the top of this file:
-  `files >1,500 lines · singletons · LauncherView extensions · test count · corpus pass-rate`.
+  `files >1,500 lines · singletons · DockCore extensions · test count · corpus pass-rate`.
   If the first three go up in a week, stop and ask why.
 
 ---
@@ -213,7 +213,7 @@ proven what matters. `[judgment]`
 | Metric | Today `[code]` | After Stage C | After Stage E `[guess]` |
 |---|---:|---:|---:|
 | Files > 2,000 lines | 21 | ~18 | 0 |
-| `LauncherView+*` extensions | 39 | 39 | < 8 |
+| `DockCore+*` extensions | 39 | 39 | < 8 |
 | `static let shared` | 247 | ~235 | < 120 |
 | UI types named in `AI/` + `Services/` | 12 files | 12 | 0 (compiler-enforced) |
 | Tests run in CI | 0 | all | all + corpus score |

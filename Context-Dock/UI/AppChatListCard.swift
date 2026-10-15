@@ -33,10 +33,14 @@ enum AppChatListMetrics {
     /// board ends.
     static var footerHeight: CGFloat { BoardFooter.height }
 
-    static func size(rows: Int, output: Bool = false, width: CGFloat = width) -> CGSize {
+    /// `header`: the count line above the rows. Global's sections draw their headers as
+    /// slots in the list instead (#258), so every slot is a row tall and none shows cut.
+    static func size(
+        rows: Int, output: Bool = false, width: CGFloat = width, header: Bool = true
+    ) -> CGSize {
         CGSize(
             width: width,
-            height: headerHeight + CGFloat(rows) * rowHeight
+            height: (header ? headerHeight : 0) + CGFloat(rows) * rowHeight
                 + (output ? outputHeight : 0) + verticalPadding * 2 + footerHeight)
     }
 }
@@ -93,6 +97,7 @@ private struct MenuRowIcon: View {
 /// The commands matching what is typed, or — before anything is typed — what the app can do.
 struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     /// The board: the list, and the highlighted row's preview beside it in the same card
     /// (#191) — the same number the window reserves.
@@ -120,18 +125,22 @@ struct AppChatListCard: View {
 
     var body: some View {
         let preview = model.boardPreview
+        // Global's sections (#258 G1): the first one's header stands where the count did.
+        let sectionHeaders = model.globalSectionHeaders
         // One card, two columns, as Raycast and Claude lay a list beside its detail (#191):
         // the list on the left, what the highlighted row is on the right — and one foot
         // under both.
         VStack(spacing: 0) {
         HStack(alignment: .top, spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
-            Text(headerText)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary.opacity(0.7))
-                .lineLimit(1)
-                .padding(.horizontal, 16)
-                .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
+            if sectionHeaders.isEmpty {
+                Text(headerText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary.opacity(0.7))
+                    .lineLimit(1)
+                    .padding(.horizontal, 16)
+                    .frame(height: AppChatListMetrics.headerHeight, alignment: .leading)
+            }
 
             // A command's result belongs with what asked for it, above the rows that offered
             // it — the same board, the way a turn shows its own reasoning. A second card is
@@ -157,6 +166,14 @@ struct AppChatListCard: View {
                                     .id("ask-ai")
                             }
                             ForEach(Array(model.rows.enumerated()), id: \.element.id) { index, row in
+                                // A section's header and its first row are one item, scrolled to
+                                // as one: aimed at the row alone, a scroll to an item not yet
+                                // laid out stopped a slot short, the header showing and the
+                                // highlighted row under it hidden.
+                                VStack(spacing: 0) {
+                                if let title = sectionHeaders[index] {
+                                    sectionHeader(title)
+                                }
                                 Group {
                                     switch row {
                                     case .dock(let pill):
@@ -176,13 +193,29 @@ struct AppChatListCard: View {
                                     }
                                 }
                                 .contextMenu { pinMenu(for: row) }
+                                }
                                 .id(row.id)
                             }
                         }
+                        // The highlight jumps, as Raycast's does: the card's crossfade for the
+                        // preview caught the rows too, and at the list's end — nothing left to
+                        // scroll — two rows sat half-highlighted (owner 2026-10-14).
+                        .transaction { $0.animation = nil }
+                    }
+                    // ↑ opens the list already on its last row: no change to follow then,
+                    // so the list goes to it as it appears.
+                    .onAppear {
+                        guard let row = model.focusedRow else { return }
+                        DispatchQueue.main.async { proxy.scrollTo(row.id) }
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
-                        if let row = model.focusedRow {
-                            proxy.scrollTo(row.id)
+                        // The top row's section header comes into view with it.
+                        if model.focusedMenuIndex == 0, let first = model.rows.first {
+                            proxy.scrollTo(first.id, anchor: .top)
+                        } else if let row = model.focusedRow {
+                            // A beat later: rows that arrived with the highlight ("Show N
+                            // more") are not laid out yet, and the scroll stopped short.
+                            DispatchQueue.main.async { proxy.scrollTo(row.id) }
                         } else if model.showsAskAIRow {
                             proxy.scrollTo("ask-ai", anchor: .top)
                         }
@@ -222,6 +255,11 @@ struct AppChatListCard: View {
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .background {
+            // Inside the centred card the card is the glass; a hairline marks the sheet.
+            if sharesOneCard {
+                Rectangle().fill(Color.white.opacity(0.10)).frame(height: 1)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            } else {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .fill(Color.clear)
                 .background(GlassBackground(cornerRadius: 22, isDark: true))
@@ -231,43 +269,93 @@ struct AppChatListCard: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+            }
         }
         .onHover { _ in model.touch() }
     }
 
-    /// The board's foot: floating key pills, no bar (owner 2026-10-07). Return is not among
-    /// them — every highlighted row already shows its ↩ — but Tab is, when the row is a
-    /// scope Tab steps into (a CLI tool, a Global Command); then pin ⌘P and Settings ⌘,.
+    /// The board's foot, as Raycast's (owner 2026-10-14): on the left what Return is about to
+    /// act on, on the right one bar of what Return does and the row's other keys, then pin
+    /// and Settings as icons. Both sides follow the arrows (`boardFoot`). A folder walk keeps
+    /// its path pills on the left instead.
     private var footer: some View {
-        HStack(spacing: 8) {
+        let foot = model.boardFoot
+        return HStack(spacing: 8) {
             if model.finderPathTrail.isEmpty {
+                contextPill(foot)
                 Spacer(minLength: 0)
             } else {
                 finderPathPills
             }
-            if tabStepsIn {
-                BoardFooter.pill {
-                    BoardFooter.keycaps(["⇥"])
-                    Text("Tab").font(.system(size: 11.5, weight: .semibold))
+            BoardFooter.pill {
+                BoardFooter.action(foot.verb, keys: ["↩"])
+                if tabStepsIn {
+                    BoardFooter.divider
+                    BoardFooter.action("Step in", keys: ["⇥"])
+                }
+                // A running app's row: quit it (owner 2026-10-11).
+                if let app = model.focusedAppRow, AppResultActions.runningApp(app.bundleID) != nil {
+                    BoardFooter.divider
+                    Button { _ = model.quitFocusedApp() } label: {
+                        BoardFooter.action("Quit app", keys: ["⌘", "⌫"])
+                    }
+                    .buttonStyle(.plain)
+                    .help("Quit \(app.name) (⌘⌫)")
                 }
             }
+            .animation(.smooth(duration: 0.15), value: foot)
             BoardFooter.pill {
-                BoardFooter.button(
-                    model.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
-                    help: model.focusedRow != nil
-                        ? "Pin the chosen row (⌘P)"
-                        : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"),
-                    tinted: model.isPinned
-                ) { if !model.pinChosenRow() { model.togglePin() } }
-            }
-            BoardFooter.pill {
-                BoardFooter.button("gearshape", keys: ["⌘", ","], help: "Settings (⌘,)") {
-                    AppDelegate.shared?.showSettings()
+                Button {
+                    if !model.pinChosenRow() { model.togglePin() }
+                } label: {
+                    Image(systemName: model.isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(model.isPinned ? Color.accentColor : Color.secondary)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help(model.focusedRow != nil
+                    ? "Pin the chosen row (⌘P)"
+                    : (model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)"))
+                Button { AppDelegate.shared?.showSettings() } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings (⌘,)")
             }
         }
         .padding(.horizontal, 12)
         .frame(height: AppChatListMetrics.footerHeight)
+    }
+
+    /// What Return is about to act on: its icon and its kind, dimmed, as Raycast's foot names
+    /// the highlighted row's section.
+    private func contextPill(_ foot: BoardFoot) -> some View {
+        BoardFooter.pill {
+            Group {
+                if let icon = foot.icon {
+                    Image(nsImage: icon).resizable().frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: foot.symbol)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 14, height: 14)
+                }
+            }
+            Text(foot.title)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .id(foot.title + foot.bundleID)
+        .transition(.opacity)
+        .animation(.smooth(duration: 0.15), value: foot)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(foot.title). Return: \(foot.verb)")
     }
 
     /// The folder being walked, as Finder's path bar shows it: one clickable pill per folder
@@ -316,6 +404,20 @@ struct AppChatListCard: View {
     }
 
     /// Names what the list is: what the app can do at rest, what matched once typing starts.
+    /// A section's title over its first row, set as the count line was.
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary.opacity(0.8))
+            .lineLimit(1)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // A row's height: the list keeps one grid, so scrolling never leaves half a row.
+            .frame(height: AppChatListMetrics.rowHeight, alignment: .bottomLeading)
+            .accessibilityAddTraits(.isHeader)
+    }
+
     private var headerText: String {
         let app = model.appName.isEmpty ? "App" : model.appName
         if model.slashAppFilter != nil { return "Jump to an app, tool or command · ↩ steps in" }
@@ -561,10 +663,16 @@ struct AppChatListCard: View {
                 Text(doc.title)
                     .font(.system(size: 13, weight: .medium))
                     .lineLimit(1)
-                Text(GlobalContextRow.subtitle(for: doc))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary.opacity(0.75))
-                    .lineLimit(1)
+                // Said once, on the right (#258 G2): "Application" under the name repeated it.
+                let subtitle = GlobalContextRow.subtitle(for: doc)
+                let foot = model.foot(for: .global(doc))
+                // Highlighted, the right says ↩, so the line under the name stays.
+                if isFocused || (subtitle != foot.kind && !(foot.isRunningApp && subtitle == "Running")) {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary.opacity(0.75))
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
             // The dock hints "press Return" at whichever row the arrow keys land on; this
@@ -573,6 +681,8 @@ struct AppChatListCard: View {
                 Image(systemName: "return")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
+            } else {
+                RowStatus(foot: model.foot(for: .global(doc)), shortcut: menuShortcut(doc))
             }
         }
         .padding(.horizontal, 16)
@@ -583,6 +693,12 @@ struct AppChatListCard: View {
                 .padding(.horizontal, 8))
         .contentShape(Rectangle())
         .onTapGesture { model.run(.global(doc)) }
+    }
+
+    /// A menu command's own shortcut, as its app's menu shows it.
+    private func menuShortcut(_ doc: GlobalSearchService.SearchDocument) -> String? {
+        guard case .cachedMenu(_, _, _, let char, let modifiers) = doc.action else { return nil }
+        return MenuShortcutFormatter.display(char: char, modifiers: modifiers)
     }
 
     private func pageURL(_ doc: GlobalSearchService.SearchDocument) -> URL? {
@@ -603,6 +719,8 @@ struct AppChatListCard: View {
             if isFocused {
                 Text(pill.sourceAppName).font(.system(size: 10)).foregroundStyle(.secondary)
                 Image(systemName: "return").font(.system(size: 10)).foregroundStyle(.secondary)
+            } else if model.isGlobalScope {
+                RowStatus(foot: model.foot(for: .dock(pill)))
             } else if let shortcut = pill.keyboardShortcutLabel {
                 Text(shortcut).font(.system(size: 10)).foregroundStyle(.secondary)
             }
@@ -700,6 +818,33 @@ private struct CornerResultIcon: View {
 
 /// The highlight behind a focused row in the corner's lists — one drawing for every card
 /// that lists rows (App Chat, Selection), so the two cannot drift apart.
+/// A Global row's right side when it is not highlighted (#258 G2): its kind, or ● Running
+/// for an open app — the foot's own words, so the row and the foot never disagree.
+struct RowStatus: View {
+    let foot: BoardFoot
+    /// A menu command's shortcut, after its kind: "Menu · ⌘Q".
+    var shortcut: String? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if foot.isRunningApp {
+                Circle().fill(Color.green).frame(width: 6, height: 6)
+                Text("Running")
+            } else {
+                Text(foot.kind)
+            }
+            if let shortcut {
+                Text("·")
+                Text(shortcut)
+            }
+        }
+        .font(.system(size: 10.5))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .fixedSize()
+    }
+}
+
 struct CornerListRowBackground: View {
     let isFocused: Bool
 

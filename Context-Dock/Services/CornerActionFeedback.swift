@@ -18,7 +18,7 @@ import Combine
 import Foundation
 import SwiftUI
 
-/// The colour a result carries. The dock's rules, lifted out of `LauncherView` so the
+/// The colour a result carries. The dock's rules, lifted out of `DockCore` so the
 /// corner cannot drift from them: red for anything destructive whatever its phase, the
 /// acted-on app's own colour when there is one, else the phase.
 enum ActionFeedbackTint {
@@ -110,10 +110,18 @@ final class CornerActionFeedback: ObservableObject {
 
     /// The app the result was about, as an icon, when the result names one.
     func appIcon(for feedback: DockInlineFeedback) -> NSImage? {
-        guard let bundleID = feedback.bundleID, !bundleID.isEmpty,
+        if let bundleID = feedback.bundleID, !bundleID.isEmpty,
             let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        else { return nil }
-        return NSWorkspace.shared.icon(forFile: url.path)
+        {
+            return NSWorkspace.shared.icon(forFile: url.path)
+        }
+        // A result that names its app but not its bundle — an AI "quit Mail" — still draws
+        // the app, not a bare symbol: that mismatch is why some quits looked different.
+        guard let name = feedback.subject, !name.isEmpty else { return nil }
+        let candidates = ["/Applications", "/System/Applications", "/System/Applications/Utilities"]
+            .map { "\($0)/\(name).app" }
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+            .map { NSWorkspace.shared.icon(forFile: $0) }
     }
 
     private func handle(_ note: Notification) {

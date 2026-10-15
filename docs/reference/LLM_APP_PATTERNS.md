@@ -18,7 +18,7 @@ LangChain's value is not its Python classes, it is the shape it forces:
 | LangChain concept | DoraX equivalent today |
 |---|---|
 | `Runnable` — one interface every step implements | none; each surface hand-rolls its own call flow |
-| LCEL `\|` composition | ad-hoc `await` chains inside `LauncherView+AIChat`, `+RemPanelChat` |
+| LCEL `\|` composition | ad-hoc `await` chains inside `DockCore+AIChat`, `+RemPanelChat` |
 | Model-agnostic `init_chat_model("provider:model")` | `AIProviderRouter` / `AIProviderService` — we already have this |
 | Prompt templates as first-class, versioned objects | `AITerminalPrompts`, inline string building at call sites |
 | Output parsers (`StrOutputParser`, `PydanticOutputParser`) | manual string scraping + `parseL2AIResponse` |
@@ -46,7 +46,7 @@ Practical consequences, not history:
   quadratically at attention time — long, static preambles are not free even when they
   are cached, and they are *especially* not free on-device.
 - **Context is a hard window, not a soft preference.** Foundation Models (on-device)
-  has a small window; `LauncherView+AIChat.swift:4424` already trims history to 4 turns
+  has a small window; `DockCore+AIChat.swift:4424` already trims history to 4 turns
   and uses minimal context to dodge "Exceeded model context window size". That trimming
   should be a budget, not a magic number.
 - **Position matters.** Instructions the model must obey belong near the top (system) or
@@ -106,7 +106,7 @@ the code already learned the hard way:
 - Tool-calling loops need explicit, short tool lists. Long tool inventories crowd out
   the actual request.
 - Silent stalls are real: the code already guards with a 30 s timeout and a fallback
-  message (`LauncherView+AIChat.swift`, `ResumeOnceGuard`). Keep that pattern for every
+  message (`DockCore+AIChat.swift`, `ResumeOnceGuard`). Keep that pattern for every
   new on-device entry point.
 
 ---

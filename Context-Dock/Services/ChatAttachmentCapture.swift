@@ -3,10 +3,10 @@
 //
 // File picking, screenshots and OCR for any AI surface's "+" menu.
 //
-// These lived as methods on LauncherView, which meant the chat window could offer
+// These lived as methods on DockCore, which meant the chat window could offer
 // only a bare file picker while the dock offered five ways to attach — the same
 // button doing different things on different surfaces. Nothing here ever touched
-// LauncherView's state, so it is plain shared code and both surfaces call it.
+// DockCore's state, so it is plain shared code and both surfaces call it.
 
 import AppKit
 import UniformTypeIdentifiers

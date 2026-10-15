@@ -22,7 +22,9 @@ enum ExtensionScopeMetrics {
     static let verticalPadding: CGFloat = 8
 
     static var size: CGSize {
-        CGSize(width: width, height: headerHeight + bodyHeight + verticalPadding * 2)
+        CGSize(
+            width: width,
+            height: headerHeight + bodyHeight + BoardFooter.height + verticalPadding * 2)
     }
 }
 
@@ -45,6 +47,7 @@ struct ExtensionScopeCard: View {
                 .frame(
                     width: ExtensionScopeMetrics.width,
                     height: ExtensionScopeMetrics.bodyHeight)
+            footer
         }
         .padding(.vertical, ExtensionScopeMetrics.verticalPadding)
         .frame(
@@ -52,17 +55,7 @@ struct ExtensionScopeCard: View {
             height: ExtensionScopeMetrics.size.height,
             alignment: .topLeading)
         .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .background {
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(Color.clear)
-                .background(GlassBackground(cornerRadius: 22, isDark: true))
-                .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 22, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
-        }
+        .modifier(BoardGlass())
         .onHover { _ in model.touch() }
     }
 
@@ -125,8 +118,7 @@ struct ExtensionScopeCard: View {
         return icon.isEmpty ? "puzzlepiece.extension" : icon
     }
 
-    /// The name, and the controls that belong to the board rather than to the field: keep it
-    /// open, open it larger, leave it.
+    /// The name. The board's controls are floating pills at its foot, as every board's are.
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: symbol)
@@ -137,39 +129,41 @@ struct ExtensionScopeCard: View {
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             Spacer(minLength: 4)
-
-            Button { model.togglePin() } label: {
-                Image(systemName: model.isPinned ? "pin.fill" : "pin")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(model.isPinned ? Color.accentColor : .secondary)
-            }
-            .buttonStyle(.plain)
-            .help(model.isPinned ? "Unpin" : "Keep this open")
-
-            Button {
-                if let ext { ExtensionPanelManager.shared.open(ext) }
-                if let command { ScopedListPanelManager.shared.pin(command) }
-                // The window *is* the panel now. Leaving the board behind it was the same
-                // extension drawn twice, the small copy still holding the corner's field —
-                // and closing that copy looked like closing the window it had just opened.
-                model.leaveScopeForGlobal()
-            } label: {
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Open in its own window")
-
-            Button { model.leaveScopeForGlobal() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Back to Global Context")
         }
         .padding(.horizontal, 16)
         .frame(height: ExtensionScopeMetrics.headerHeight)
+    }
+
+    /// Keep it open, open it larger, leave it — floating key pills, as the result board's
+    /// foot draws them (owner 2026-10-12: they were small icons in the header).
+    private var footer: some View {
+        HStack(spacing: 8) {
+            Spacer(minLength: 0)
+            BoardFooter.pill {
+                BoardFooter.button(
+                    model.isPinned ? "pin.fill" : "pin", keys: ["⌘", "P"],
+                    help: model.isPinned ? "Unpin (⌘P)" : "Keep open (⌘P)",
+                    tinted: model.isPinned
+                ) { model.togglePin() }
+            }
+            BoardFooter.pill {
+                BoardFooter.button(
+                    "arrow.up.left.and.arrow.down.right", keys: [], help: "Open in its own window"
+                ) {
+                    if let ext { ExtensionPanelManager.shared.open(ext) }
+                    if let command { ScopedListPanelManager.shared.pin(command) }
+                    // The window *is* the panel now: leaving the board behind it drew the
+                    // extension twice.
+                    model.leaveScopeForGlobal()
+                }
+            }
+            BoardFooter.pill {
+                BoardFooter.button("xmark", keys: ["⌫"], help: "Back to Global Context (⌫)") {
+                    model.leaveScopeForGlobal()
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(height: BoardFooter.height)
     }
 }

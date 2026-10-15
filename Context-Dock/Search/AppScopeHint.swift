@@ -5,7 +5,7 @@
 // "Code — run tasks, commands, menu cmds".
 //
 // The dock has said this for a long time, from `dockScopeGhostPrompt` — another rule that
-// lived on `LauncherView` and so could not be read anywhere else. The corner scopes into an
+// lived on `DockCore` and so could not be read anywhere else. The corner scopes into an
 // app now too, and a placeholder that said something different there would be two answers to
 // "what can I do here".
 //

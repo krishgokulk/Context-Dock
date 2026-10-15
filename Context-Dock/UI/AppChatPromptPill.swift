@@ -448,6 +448,7 @@ struct AppChatPromptPill: View {
     @State private var pointerInside = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Namespace private var glassNamespace
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     private var size: CGSize { size(for: model.phase) }
 
@@ -532,6 +533,9 @@ struct AppChatPromptPill: View {
         // about the keyboard owner.
         .onChange(of: model.phase) { _, phase in
             syncFocus()
+            // ↓ opening the list moves the phase and can hand the field focus again, which
+            // selects its text — the typed "mes" came up selected (owner 2026-10-12).
+            if phase.showsInput { FieldCaret.collapseSelectionToEndAfterFocus() }
             // The app's card belongs to the open field; folding or starting a conversation
             // puts it away.
             if phase != .prompt, phase != .suggesting { model.isShowingScopeCard = false }
@@ -755,6 +759,8 @@ struct AppChatPromptPill: View {
         .animation(.smooth(duration: 0.22), value: drawnWidth)
         .clipShape(RoundedRectangle(cornerRadius: legacyRadius, style: .continuous))
         .background {
+            // Inside the centred card the card is the glass.
+            if !sharesOneCard {
             RoundedRectangle(cornerRadius: legacyRadius, style: .continuous)
                 .fill(Color.clear)
                 .background(GlassBackground(cornerRadius: legacyRadius, isDark: true))
@@ -764,6 +770,7 @@ struct AppChatPromptPill: View {
                         .strokeBorder(Color.white.opacity(0.16), lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
+            }
         }
     }
 
@@ -1126,12 +1133,14 @@ struct AppChatPromptPill: View {
                         // Finder's Ask AI row, and every app's composer: the question.
                         model.submit()
                     }
-                    .onKeyPress(.space) {
+                    // Space is always a space: the result sheet stays open while typing, so a
+                    // row is nearly always highlighted, and Space opened Quick Look mid-word
+                    // (owner 2026-10-12). Quick Look is ⌘Y, as in Spotlight.
+                    .onKeyPress(keys: ["y"]) { press in
                         if CornerDockController.shared.monitorConsumedCurrentKey { return .handled }
-                        // The clipboard filter's caret, not the scope's.
-                        if model.isClipboardScope { return .ignored }
-                        // Only once the user has arrowed into the list; with the caret in
-                        // the field, a space is a space.
+                        guard press.modifiers == .command, !model.isClipboardScope else {
+                            return .ignored
+                        }
                         return model.previewFocusedRow() ? .handled : .ignored
                     }
                     .onKeyPress(.tab) {
@@ -1313,13 +1322,6 @@ struct AppChatPromptPill: View {
                 selectionScopeButton
             }
 
-            // What the last action came to, beside the field for a few seconds — the
-            // dock's inline result, carried here so a result reaches the surface the user
-            // is on. Same transient lifetime as the clipboard's own icon.
-            if let result = actionFeedback.glyph, !model.isGlobalScope {
-                ActionFeedbackGlyph(feedback: result)
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-            }
 
             // What Return does, shown rather than left to the row below to explain: the
             // dock puts this same icon in its own search field once there is a match for

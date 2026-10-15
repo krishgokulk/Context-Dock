@@ -25,7 +25,7 @@ struct CornerGlobalContextParityTests {
         model.query = "safari history"
         model.updateMenuMatches()
         #expect(receivedQuery == "safari history")
-        #expect(model.rows.map(\.title) == expected.map(\.name))
+        #expect(matchTitles(model) == expected.map(\.name))
         #expect(model.listRowCount == 5)
         for _ in 0..<20 { #expect(model.moveMenuFocus(by: 1)) }
         #expect(model.focusedRow?.title == "Page 19")
@@ -48,7 +48,9 @@ struct CornerGlobalContextParityTests {
         model.query = "quit"
         model.updateMenuMatches()
 
-        #expect(model.rows.map(\.title) == ["Page 1", "Page 2"])
+        #expect(matchTitles(model) == ["Page 1", "Page 2"])
+        // The fallbacks close the list (#258 G3).
+        #expect(model.rows.last.map { GlobalResultSection.title(for: $0) } == "Fallbacks")
     }
 
     @Test func tabRunsTheDockActionAndDisabledRowsDoNotRun() {
@@ -102,5 +104,11 @@ struct CornerGlobalContextParityTests {
         #expect(model.isGlobalScope)
         #expect(!model.returnsToGlobalScope)
         #expect(!model.showsExtensionPanel)
+    }
+
+    /// The matches, without the fallback section that closes every typed Global list.
+    private func matchTitles(_ model: AppChatPromptModel) -> [String] {
+        model.rows.filter { GlobalResultSection.title(for: $0) != GlobalFallbacks.section }
+            .map(\.title)
     }
 }

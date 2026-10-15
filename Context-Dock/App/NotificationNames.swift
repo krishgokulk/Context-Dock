@@ -6,7 +6,6 @@ import Foundation
 extension Notification.Name {
 
     // MARK: - Window / launcher lifecycle
-    static let launcherWindowOpened      = Notification.Name("launcherWindowOpened")
     static let escapePressed             = Notification.Name("escapePressed")
     static let launcherBackspacePressed  = Notification.Name("launcherBackspacePressed")
     static let focusSearchField          = Notification.Name("focusSearchField")

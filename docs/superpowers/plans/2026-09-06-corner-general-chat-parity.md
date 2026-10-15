@@ -51,7 +51,7 @@ instead: the exact sentence in symptom 4.
 That is also symptom 2. "Open it in message" resolved to a Messages call, the model emitted it as
 text, and nothing carried it out. The adapter was never reached — not missing, never called.
 
-The dock has had the answer since `LauncherView+AIChat.swift:2343`:
+The dock has had the answer since `DockCore+AIChat.swift:2343`:
 
 ```swift
 func recoveredFromProtocolOnly(_ response: String, query: String) async -> String

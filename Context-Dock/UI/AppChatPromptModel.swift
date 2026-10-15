@@ -260,8 +260,13 @@ final class AppChatPromptModel: ObservableObject {
     /// for Finder's Context Dock (`finderFrontFolderRows`). Nil until the first read lands.
     var finderFrontFolder: URL?
     var finderFolderReadAt: Date = .distantPast
+    /// Global sections opened past their first rows with "Show N more"; a new query closes
+    /// them again (#258 G4).
+    var expandedGlobalSections: Set<String> = []
     /// Where the front folder is read from. A test swaps it; the app asks Finder.
     var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
+    /// Whether a Finder window is on screen (`finderShowsDesktopOnly`). A test swaps it.
+    var finderHasWindowOnScreen: () -> Bool = { FinderFrontFolder.hasWindowOnScreen() }
     /// Where a Dock row's search document is found (`scopeDocument(for:)`). A test swaps it.
     var searchDocumentLookup: (String) -> GlobalSearchService.SearchDocument? = {
         GlobalSearchService.shared.document(withID: $0)
@@ -404,6 +409,8 @@ final class AppChatPromptModel: ObservableObject {
     private var drafts: [String: String] = [:]
 
     var onPhaseChange: ((AppChatPromptPhase) -> Void)?
+    /// → on a file row: the corner opens that file's Selection card. Returns whether it did.
+    var onStepIntoFile: ((URL) -> Bool)?
     /// A Global Context row acted on an app, and that app appears to have taken the front a
     /// moment later — args are (name, bundleID). The corner reads this as "follow me there",
     /// not as an incidental background switch to ignore.
@@ -572,6 +579,7 @@ final class AppChatPromptModel: ObservableObject {
         // The app in front's own Context Dock, not one stepped into from Global: a flag left
         // from an earlier step-in swallowed every sideways swipe here (owner 2026-10-09).
         returnsToGlobalScope = false
+        clearScopedPanel()
         adoptScope(
             name: name, bundleID: bundleID, suggestions: suggestions, summary: summary)
         isShowingSelectionScope = false
@@ -678,10 +686,10 @@ final class AppChatPromptModel: ObservableObject {
         // Finder's typed list opens by itself, under its Ask AI row — Return still asks; the
         // arrows choose a file or command (owner 2026-10-09).
         if showsAskAIRow { return rows.isEmpty ? .prompt : .suggesting }
-        // Typed: the field alone, same as the dock. Typing never pops the sheet open by
-        // itself, and it closes right back down if a down-arrow peek was open when the next
-        // character landed — the arrow key is the only door in.
-        if typed { return .prompt }
+        // Typed: typing never pops the sheet open by itself — ↓ is the door in — but once it
+        // is open it stays open while anything is typed, its rows following each keystroke,
+        // as Spotlight's do (owner 2026-10-12). Clearing the field closes it (`queryChanged`).
+        if typed { return phase == .suggesting ? .suggesting : .prompt }
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
@@ -846,6 +854,12 @@ final class AppChatPromptModel: ObservableObject {
     /// brings it back if the field is cleared again.
     func queryChanged() {
         lastTypedAt = Date()
+        // Text → empty: the user cleared what they were looking for, so the sheet goes with
+        // it. Letting go of the highlighted row is what lets the resting phase close it.
+        let typedNow = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if hadTypedQuery, !typedNow { focusedMenuIndex = nil }
+        hadTypedQuery = typedNow
+        expandedGlobalSections = []
         // Typing is the caret's: the pills leave the field while anything is typed.
         focusedPillIndex = nil
         guard phase.isVisible else { return }
@@ -958,6 +972,9 @@ final class AppChatPromptModel: ObservableObject {
         // Kept open is kept on its app (owner 2026-09-26): the pin holds the dock awake and
         // on the app it was pinned in, whatever comes forward after.
         guard !isPinned else { return }
+        // A resting dock stays resting: it follows the new app without opening. The next app
+        // coming forward as one quits popped the field open (owner 2026-10-14).
+        let wasResting = phase == .dock
         query = ""
         attachments = []
         appName = name
@@ -969,6 +986,11 @@ final class AppChatPromptModel: ObservableObject {
         isShowingSelectionScope = false
         stopAwaitingAnswer()
         hasPresentedConversation = !messages.isEmpty
+        if wasResting {
+            cancel()
+            set(.dock)
+            return
+        }
         set(hasPresentedConversation ? .chat : restingInputPhase)
         if isPinned || isPointerInside {
             cancel()
@@ -984,8 +1006,14 @@ final class AppChatPromptModel: ObservableObject {
     /// any half-written question for whoever comes back for it.
     func standDown() {
         // The clipboard board is a deliberate ask, held until Back or a paste.
-        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope else { return }
+        guard !isPinned, !isPointerInside, !isAnswering, !isClipboardScope, !staysOpenWhenIdle
+        else { return }
         switch phase {
+        case .suggesting where !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
+            // Results for what is typed stay up while it is typed, as Spotlight's do: idling
+            // closed them mid-word, and the field rebuilt under the caret and selected the
+            // text (owner 2026-10-12). Emptying the field or Esc still closes them.
+            break
         case .suggesting:
             // The dock's own results sheet does not show at all until the arrow keys ask
             // for it; this offer is the same kind of thing, so idling closes it back to
@@ -1013,8 +1041,12 @@ final class AppChatPromptModel: ObservableObject {
     }
 
     /// An empty Global field with the setting on is the only thing that rests as a dock.
+    /// Centred like Spotlight: the field stays a field — no folding into a strip, no idle
+    /// shrink — until it is closed.
+    var staysOpenWhenIdle = false
+
     var canRestAsDock: Bool {
-        usesDockShell
+        !staysOpenWhenIdle && usesDockShell
             && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && autoShrinkEnabled()
     }
@@ -1181,6 +1213,9 @@ final class AppChatPromptModel: ObservableObject {
     /// `DockHoverFoldGate` asks before a hover folds it.
     private var fieldOpenedAt: Date?
     private var lastTypedAt: Date?
+    /// Whether the field held text at the last keystroke, to tell clearing it from an empty
+    /// field that was arrowed open.
+    private var hadTypedQuery = false
 
     var hoverMayFold: Bool {
         DockHoverFoldGate.allows(
@@ -1344,7 +1379,7 @@ final class AppChatPromptModel: ObservableObject {
 
 extension Notification.Name {
     /// Corner prompt → Context Dock's app-scoped chat. Carried by notification because the
-    /// chat's state lives inside LauncherView and is not reachable from a window.
+    /// chat's state lives inside DockCore and is not reachable from a window.
     static let appChatPromptSubmitted = Notification.Name("appChatPromptSubmitted")
     static let appChatPromptScopeChanged = Notification.Name("appChatPromptScopeChanged")
     /// Corner prompt → the dock, asking it to empty the app-scoped transcript both of them

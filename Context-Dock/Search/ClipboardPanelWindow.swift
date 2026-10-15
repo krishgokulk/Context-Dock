@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Ambient Clipboard surface: a pill that slides into the bottom-right corner on every
 /// copy and grows into a card of recent clips under the pointer. It deliberately does not
-/// participate in LauncherView's activeSmartQueryKey or dock layer state, so Context Dock
+/// participate in DockCore's activeSmartQueryKey or dock layer state, so Context Dock
 /// can be opened and used while this pill is on screen.
 ///
 /// The window is a *fixed-size transparent* panel: the pill/card morph is a pure SwiftUI
@@ -65,7 +65,7 @@ final class ClipboardPanelController: NSObject {
     /// the corner with the field, so every copy — and every ⌘⇧⌃4 screenshot is one — put a
     /// card on the edge of whatever the user was doing. What is left is the clipboard icon in
     /// the dock and the field for a few seconds, and not even that during a conversation.
-    func didCopy(_ entry: LauncherView.ClipboardEntry) {
+    func didCopy(_ entry: DockCore.ClipboardEntry) {
         guard !isSuppressed else { return }
         ensurePanel()
         model.reload()
@@ -177,14 +177,14 @@ final class ClipboardPanelController: NSObject {
 
     /// Put the selection on the pasteboard and leave it there. No paste, no dismissal —
     /// the user asked for a copy, which is a thing they will use somewhere else, later.
-    func copy(_ entries: [LauncherView.ClipboardEntry]) {
+    func copy(_ entries: [DockCore.ClipboardEntry]) {
         guard !entries.isEmpty else { return }
         ClipboardScopeService.writeToPasteboard(entries)
     }
 
     /// A drag is leaving with these clips, so the copy monitor must not treat the temporary
     /// file the drag wrote as something the user copied.
-    func beginDrag(_ entries: [LauncherView.ClipboardEntry]) {
+    func beginDrag(_ entries: [DockCore.ClipboardEntry]) {
         guard !entries.isEmpty else { return }
         setSuppressed(true)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -194,7 +194,7 @@ final class ClipboardPanelController: NSObject {
 
     /// ⌘↩ with several clips picked: ask where they go — the app the user came from first,
     /// then the other running apps.
-    func openTargetPicker(_ entries: [LauncherView.ClipboardEntry]) {
+    func openTargetPicker(_ entries: [DockCore.ClipboardEntry]) {
         let front = didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication
         let targets = ClipboardPasteTarget.running(frontPID: front?.processIdentifier)
         guard !targets.isEmpty else { return pasteMany(entries) }
@@ -208,7 +208,7 @@ final class ClipboardPanelController: NSObject {
             picker.entries, to: NSRunningApplication(processIdentifier: target.pid))
     }
 
-    func pasteMany(_ entries: [LauncherView.ClipboardEntry], to override: NSRunningApplication? = nil) {
+    func pasteMany(_ entries: [DockCore.ClipboardEntry], to override: NSRunningApplication? = nil) {
         guard let first = entries.first else { return }
         guard entries.count > 1 else { return paste(first) }
         let target = override ?? (didTakeFocus ? returnApplication : NSWorkspace.shared.frontmostApplication)
@@ -228,7 +228,7 @@ final class ClipboardPanelController: NSObject {
         }
     }
 
-    func paste(_ entry: LauncherView.ClipboardEntry) {
+    func paste(_ entry: DockCore.ClipboardEntry) {
         ClipboardScopeService.writeToPasteboard([entry])
 
         // The ambient pill never activated us, so the paste target is simply whatever is
@@ -313,7 +313,7 @@ final class ClipboardPanelModel: ObservableObject {
         var isAll: Bool { bundleID.isEmpty }
     }
 
-    @Published var entries: [LauncherView.ClipboardEntry] = []
+    @Published var entries: [DockCore.ClipboardEntry] = []
     @Published var query = ""
     @Published var sourceIndex = 0
     @Published var focusedEntryIndex: Int?
@@ -332,8 +332,8 @@ final class ClipboardPanelModel: ObservableObject {
 
     /// The clips an action applies to: the selection when there is one, otherwise whatever
     /// row is focused, otherwise the row acted on directly.
-    func actionableEntries(fallback entry: LauncherView.ClipboardEntry? = nil)
-        -> [LauncherView.ClipboardEntry]
+    func actionableEntries(fallback entry: DockCore.ClipboardEntry? = nil)
+        -> [DockCore.ClipboardEntry]
     {
         let visible = visibleEntries
         let selected = ClipboardScopeService.orderedSelection(
@@ -346,12 +346,12 @@ final class ClipboardPanelModel: ObservableObject {
         return []
     }
 
-    func isSelected(_ entry: LauncherView.ClipboardEntry) -> Bool {
+    func isSelected(_ entry: DockCore.ClipboardEntry) -> Bool {
         selectedIDs.contains(entry.id)
     }
 
     /// Plain click replaces, ⌘ adds or removes, ⇧ extends from the last plain click.
-    func selectEntry(_ entry: LauncherView.ClipboardEntry, extend: Bool, toggle: Bool) {
+    func selectEntry(_ entry: DockCore.ClipboardEntry, extend: Bool, toggle: Bool) {
         if toggle {
             if selectedIDs.contains(entry.id) {
                 selectedIDs.remove(entry.id)
@@ -398,7 +398,7 @@ final class ClipboardPanelModel: ObservableObject {
     /// The history file has one writer — the dock, which also owns the image blobs beside
     /// it — so this asks rather than rewriting it from here. The rows go immediately so the
     /// list answers the key press; the dock's own prune is what makes it durable.
-    func removeActionableEntries(fallback entry: LauncherView.ClipboardEntry? = nil) {
+    func removeActionableEntries(fallback entry: DockCore.ClipboardEntry? = nil) {
         let doomed = actionableEntries(fallback: entry)
         guard !doomed.isEmpty else { return }
         let ids = Set(doomed.map(\.id))
@@ -431,16 +431,16 @@ final class ClipboardPanelModel: ObservableObject {
     /// Clips handed straight over by the copy monitor. The history's disk write is
     /// debounced 600ms, so the very clip that raises the pill is not on disk yet; these
     /// are merged into every reload until the stored history catches up.
-    private var pendingIngest: [LauncherView.ClipboardEntry] = []
+    private var pendingIngest: [DockCore.ClipboardEntry] = []
 
-    func ingest(_ entry: LauncherView.ClipboardEntry) {
+    func ingest(_ entry: DockCore.ClipboardEntry) {
         pendingIngest.removeAll { sameClip($0, entry) }
         pendingIngest.insert(entry, at: 0)
         applyPendingIngest()
     }
 
     private func sameClip(
-        _ lhs: LauncherView.ClipboardEntry, _ rhs: LauncherView.ClipboardEntry
+        _ lhs: DockCore.ClipboardEntry, _ rhs: DockCore.ClipboardEntry
     ) -> Bool {
         // An empty hash is not an identity — falling back to it would collapse every
         // un-hashed clip into one row.
@@ -483,7 +483,7 @@ final class ClipboardPanelModel: ObservableObject {
         return choices.indices.contains(sourceIndex) ? choices[sourceIndex] : choices[0]
     }
 
-    var visibleEntries: [LauncherView.ClipboardEntry] {
+    var visibleEntries: [DockCore.ClipboardEntry] {
         let source = selectedSource.bundleID
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let kind = kindFilter
@@ -507,10 +507,10 @@ final class ClipboardPanelModel: ObservableObject {
 
     func reload(resetScope shouldReset: Bool = false) {
         if shouldReset { resetScope() }
-        let decoded: [LauncherView.ClipboardEntry] = {
+        let decoded: [DockCore.ClipboardEntry] = {
             guard let data = try? Data(contentsOf: storeURL),
                 let stored = try? JSONDecoder().decode(
-                    [LauncherView.ClipboardEntry].self, from: data)
+                    [DockCore.ClipboardEntry].self, from: data)
             else { return [] }
             return stored.sorted { $0.timestamp > $1.timestamp }
         }()
@@ -577,7 +577,7 @@ final class ClipboardPanelModel: ObservableObject {
         pickOrder = visibleEntries.map(\.id).filter { range.contains($0) }
     }
 
-    var focusedEntry: LauncherView.ClipboardEntry? {
+    var focusedEntry: DockCore.ClipboardEntry? {
         guard let focusedEntryIndex,
             visibleEntries.indices.contains(focusedEntryIndex)
         else { return nil }
@@ -1113,7 +1113,7 @@ struct ClipboardDockPill: View {
 
     /// A modifier means "pick this", a plain click still means "paste this" — the fast path
     /// stays one click.
-    private func activateRow(_ entry: LauncherView.ClipboardEntry, index: Int) {
+    private func activateRow(_ entry: DockCore.ClipboardEntry, index: Int) {
         model.focusedEntryIndex = index
         let flags = NSEvent.modifierFlags
         if flags.contains(.command) || flags.contains(.shift) {
@@ -1124,7 +1124,7 @@ struct ClipboardDockPill: View {
         }
     }
 
-    private func row(_ entry: LauncherView.ClipboardEntry, index: Int) -> some View {
+    private func row(_ entry: DockCore.ClipboardEntry, index: Int) -> some View {
         let selected = model.isSelected(entry)
         return Button {
             activateRow(entry, index: index)
@@ -1207,7 +1207,7 @@ struct ClipboardDockPill: View {
 
     /// A stack with a count, rather than the single-row screenshot macOS would use — a
     /// three-clip drag that looks like one clip is a drag the user cannot trust.
-    private func dragPreview(for entries: [LauncherView.ClipboardEntry]) -> some View {
+    private func dragPreview(for entries: [DockCore.ClipboardEntry]) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(Array(entries.prefix(3).enumerated()), id: \.element.id) { offset, entry in
                 thumbnail(entry, size: CGSize(width: 44, height: 34))
@@ -1364,7 +1364,7 @@ struct ClipboardDockPill: View {
     // MARK: - Shared bits
 
     @ViewBuilder
-    private func thumbnail(_ entry: LauncherView.ClipboardEntry?, size: CGSize) -> some View {
+    private func thumbnail(_ entry: DockCore.ClipboardEntry?, size: CGSize) -> some View {
         if let entry,
             let data = entry.imageData
                 ?? entry.imageFileName.flatMap({ ClipboardImageStore.read(fileName: $0) }),
@@ -1385,7 +1385,7 @@ struct ClipboardDockPill: View {
         }
     }
 
-    private func entryTitle(_ entry: LauncherView.ClipboardEntry) -> String {
+    private func entryTitle(_ entry: DockCore.ClipboardEntry) -> String {
         let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.isEmpty { return text }
         if !entry.filePaths.isEmpty {

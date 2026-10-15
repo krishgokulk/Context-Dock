@@ -29,6 +29,9 @@ final class SelectionScopeModel: ObservableObject {
     static let idleDwell: TimeInterval = 8
 
     @Published private(set) var phase: SelectionScopePhase = .hidden
+    /// Opened by → on a file row: the card stands in for the list and field, which keep
+    /// their query and highlight underneath for when it closes (owner 2026-10-11).
+    @Published var coversChat = false
     @Published var query = ""
     /// What was selected, captured at summon time.
     @Published private(set) var text = ""

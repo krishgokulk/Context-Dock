@@ -158,6 +158,7 @@ struct DockMagnifiedGlass: ViewModifier {
     let active: Bool
     let radius: CGFloat
     private let magnifier = DockMagnifier.shared
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     func body(content: Content) -> some View {
         let e = active ? magnifier.layout.extra / 2 : 0
@@ -176,7 +177,11 @@ struct DockMagnifiedGlass: ViewModifier {
                     }
             }
             .padding(.horizontal, e)
-            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: radius, style: .continuous))
+            // Inside the centred card the card is the glass (`CornerCombinedCard`). The style
+            // changes, not the view: a branch here rebuilt the field and selected its text.
+            .glassEffect(
+                sharesOneCard ? .identity : .regular.interactive(),
+                in: .rect(cornerRadius: radius, style: .continuous))
             .padding(.horizontal, -e)
             .animation(DockMagnifier.spring, value: e)
     }

@@ -10,8 +10,8 @@ struct ClipboardBoardTests {
     private func entry(
         _ text: String = "", files: [String] = [], image: Bool = false,
         app: String = "Notes", at date: Date = Date()
-    ) -> LauncherView.ClipboardEntry {
-        LauncherView.ClipboardEntry(
+    ) -> DockCore.ClipboardEntry {
+        DockCore.ClipboardEntry(
             text: text, timestamp: date, filePaths: files,
             imageFileName: image ? "clip.png" : nil,
             sourceAppName: app, sourceBundleId: "com.example.\(app.lowercased())")

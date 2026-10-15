@@ -23,6 +23,9 @@ struct DockPill: Identifiable {
     /// effects): what it may do, in the words the question uses.
     var runApproval: String? = nil
     var rankingKind: String = ""
+    /// The Global section this row is listed under (`GlobalResultSection`), when the engine
+    /// knows it; empty means the row's kind decides.
+    var resultSection: String = ""
     var trackingIdentifier: String = ""
     /// The Global search document this row came from, when it came from one. The Corner reads
     /// it to step into a command, extension or tool rather than run the Dock's closure
@@ -99,11 +102,6 @@ struct SharedResultRowModel: Identifiable {
     var copy: (() -> Void)? = nil
 }
 
-struct SharedResultSectionModel: Identifiable {
-    let id: String
-    let title: String
-    let rows: [SharedResultRowModel]
-}
 
 struct AIMenuProposal {
     var path: [String]

@@ -63,7 +63,7 @@ struct HotkeysSettingsPage: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Double-press Option")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Tap Option twice quickly from anywhere to show launcher.")
+                            Text("Tap Option twice quickly from anywhere to search, in the middle of the screen.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

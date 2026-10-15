@@ -3,7 +3,7 @@
 //
 // Whether a message is asking to read one of the user's personal data sources.
 //
-// Pure string work, and it used to sit on LauncherView — a view with four hundred @State
+// Pure string work, and it used to sit on DockCore — a view with four hundred @State
 // properties, which meant the one decision that routes a request between "read this" and
 // "do this" could not be exercised without standing up the whole surface. It decided wrong
 // for `create a reminder "call mum" today at 5pm`, answering "You have no open reminders",

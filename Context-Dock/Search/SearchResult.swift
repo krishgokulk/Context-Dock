@@ -165,15 +165,6 @@ struct ShortcutMetadata {
     }
 }
 
-// JSON decodable version
-struct ShortcutMetadataJSON: Codable {
-    let acceptsFiles: Bool
-    let acceptsText: Bool
-    let acceptsImages: Bool
-    let acceptsContacts: Bool
-    let acceptsPDFs: Bool
-    let fileExtensions: [String]
-}
 
 // MARK: - Result Grouping
 

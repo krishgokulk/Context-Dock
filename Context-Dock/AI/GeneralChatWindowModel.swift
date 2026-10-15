@@ -6,7 +6,7 @@
 // It is the SAME conversation the result sheet shows: both sides store to
 // `GeneralAIChatConversationStore`, and both use `AIChatMessage`, so a chat
 // started in the sheet continues in the window and vice versa. The window has its
-// own object only because the sheet's copy lives on LauncherView's @State, which
+// own object only because the sheet's copy lives on DockCore's @State, which
 // cannot be reached from another window.
 
 import AppKit

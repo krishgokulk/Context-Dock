@@ -86,7 +86,7 @@ The `hotkeyChanged` notification calls `unregisterGlobalHotkey()` then `register
 ---
 
 ### 5. Window resize fires on every search result update
-**File:** `Search/LauncherView+KeyboardNavigation.swift` `updateWindowSize()`  
+**File:** `Search/DockCore+KeyboardNavigation.swift` `updateWindowSize()`  
 `updateWindowSize()` is called from **17 different sites** in `ContextLifecycle` alone, and `scheduleDockPillRebuild` (called from 14+ sites) also triggers it. The 50ms debounce coalesces most rapid calls, but `window.animator().setFrame(newFrame, display: true)` with `display: true` forces a compositor flush on every resize — during active typing this causes the window to flicker/resize on each keystroke. Raycast's window is fixed-height during typing.
 
 **Fix:** Use `display: false` during typing. Only use `display: true` for deliberate mode transitions (L1 → L2, opening AI panel). Already partially done in the non-animated path — apply to the animated path too.
@@ -94,7 +94,7 @@ The `hotkeyChanged` notification calls `unregisterGlobalHotkey()` then `register
 ---
 
 ### 6. Global Context pill rebuild has no debounce floor for typing
-**File:** `Search/LauncherView+ContextLifecycle.swift`  
+**File:** `Search/DockCore+ContextLifecycle.swift`  
 `scheduleDockPillRebuild(query:delayNanoseconds: 0)` is called with **zero delay** from `onChange(of: axContext.selectedText)` and `onChange(of: axContext.selectedFilePaths)`. AX selection changes can fire 10–20 times per second during drag-selection. Each zero-delay call kicks off a pill rebuild on the main actor while the user is in the middle of a gesture. Add a minimum 80–120ms debounce on AX-triggered rebuilds.
 
 ---
@@ -106,7 +106,7 @@ This setting causes the window server to deliver **every mouse-moved event** to 
 ---
 
 ### 8. `@MainActor` Task sleep in `scheduleBackgroundScanRunningAppMenusAfterOpen`
-**File:** `Search/LauncherView+ContextLifecycle.swift` lines ~894, ~926  
+**File:** `Search/DockCore+ContextLifecycle.swift` lines ~894, ~926  
 Two `Task { @MainActor in ... try? await Task.sleep(...) }` blocks sleep **on the main actor** for 900ms and 1000ms after launcher open. While `await Task.sleep` yields the main thread (it does not block), the continuation is scheduled back on the main actor — competing with SwiftUI layout and user keystrokes during the critical first second of use. Move these to `Task.detached(priority: .background)` and only dispatch results back to main when ready.
 
 ---
@@ -129,7 +129,7 @@ The LRU pool of `AXSelectionObserver`s is never flushed on sleep. AX observer ru
 ---
 
 ### 11. Stale `searchState` not fully cleared on re-open in dock context mode
-**File:** `Search/LauncherView+ContextLifecycle.swift` `handleLauncherWindowOpened()`  
+**File:** `Search/DockCore+ContextLifecycle.swift` `handleLauncherWindowOpened()`  
 When `openingForDockContext == true`, the reset block is skipped — `aiMode.isActive`, `showMediaLayer`, `showFolderPreview`, and `searchState.isInSmartMode` are not cleared. If the user was in AI mode or media layer when they last dismissed, re-opening puts them back in that state unexpectedly. Raycast always opens clean.
 
 **Fix:** Reset transient UI state unconditionally on open, keep only the persistent context (frontmost app, AX selection).
@@ -149,7 +149,7 @@ The window level changes on every `showLauncher()` call depending on settings. L
 ---
 
 ### 14. Missing accessibility label on the search field
-**File:** `Search/LauncherView+SearchBar.swift`  
+**File:** `Search/DockCore+SearchBar.swift`  
 The search `TextField` has no `.accessibilityLabel()`. VoiceOver users hear "text field" with no context. Add `.accessibilityLabel("Search — Context Dock")`.
 
 ---
@@ -158,10 +158,10 @@ The search `TextField` has no `.accessibilityLabel()`. VoiceOver users hear "tex
 
 | Issue | File | Impact |
 |---|---|---|
-| `best!.score` / `best!.1` force-unwrap after `nil` guard | `LauncherView+GlobalContextActions.swift:2143`, `LauncherView+GlobalAppDock.swift:1356` | Crash if `best` somehow becomes nil between check and use — use `if let` |
+| `best!.score` / `best!.1` force-unwrap after `nil` guard | `DockCore+GlobalContextActions.swift:2143`, `DockCore+GlobalAppDock.swift:1356` | Crash if `best` somehow becomes nil between check and use — use `if let` |
 | `preconditionFailure` in `AIProviderRouter` | `AI/AIProviderRouter.swift:670` | Crashes in production if `.onDevice` path is hit — replace with `assertionFailure` + graceful return |
 | `LegacySettingsContent.swift` 700ms × 4 chained sleeps | `UI/LegacySettingsContent.swift:7077–7097` | 2.8s worst-case sleep chain in settings — use proper async state machine |
-| `LauncherView` has 420+ `@State` vars | `Search/LauncherView.swift` | SwiftUI equality check on every state change iterates all 420 vars — split into focused child view-models |
+| `DockCore` has 420+ `@State` vars | `Search/DockCore.swift` | SwiftUI equality check on every state change iterates all 420 vars — split into focused child view-models |
 | `DispatchQueue.main` used 120× in Search layer | `Search/` | Mix of `DispatchQueue.main` and `@MainActor Task` patterns — standardise on `@MainActor` for Swift 6 readiness |
 
 ---

@@ -39,15 +39,16 @@ enum DropShelfVisibility {
 }
 
 enum DockTools {
-    /// The row's tools, shelf last. An app's bar carries no action results, only the clipboard
-    /// for a copy's few seconds and the selection while there is one.
+    /// The row's tools, shelf last. Every scope's bar shows what the last action came to —
+    /// an app's bar too, since every app's Context Dock has one (owner 2026-10-12: a quit
+    /// from Calculator's own bar showed nothing).
     static func row(
         showsTabBar: Bool, clipboard: Bool, selection: Bool, feedback: Bool, shelf: Bool = true
     ) -> [DockToolKind] {
         var tools: [DockToolKind] = []
         if clipboard { tools.append(.clipboard) }
         if selection { tools.append(.selection) }
-        if feedback, !showsTabBar { tools.append(.feedback) }
+        if feedback { tools.append(.feedback) }
         if shelf { tools.append(.shelf) }
         return tools
     }

@@ -116,6 +116,9 @@ final class CornerChatPresentation: ObservableObject {
 
     @Published private(set) var mode: CornerChatMode = .frontmostApp
     @Published private(set) var isVisible = false
+    /// Opened by ⌥⌥: the same shell in the middle of the display, Spotlight's place, with
+    /// the field on top and its boards opening downward (owner 2026-10-12).
+    @Published var isCentred = false
     @Published private(set) var generalPhase: CornerGeneralPhase = .expanded
     @Published private(set) var isGeneralPinned = false
     private var latestTarget: CornerChatTarget?

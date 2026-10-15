@@ -187,7 +187,7 @@ final class UserGlobalExtensionStore: ObservableObject {
 // MARK: - Script runner
 
 /// Runs an extension's scripts off the main thread and hands back stdout. Deliberately
-/// separate from LauncherView's runner, which is bound to dock toast feedback.
+/// separate from DockCore's runner, which is bound to dock toast feedback.
 struct UserExtensionScriptError: LocalizedError {
     let message: String
     var errorDescription: String? { message }

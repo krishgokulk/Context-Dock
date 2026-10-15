@@ -627,7 +627,7 @@ struct ScopedListPanelContent: View {
 
 /// The same two-value card the dock renders, so a converter looks identical whether
 /// it is inline or pinned. Separate from the dock's copy because that one lives on
-/// LauncherView and reads its state.
+/// DockCore and reads its state.
 struct PanelCompareCard: View {
     let row: CustomListRow
     let command: SystemCommand

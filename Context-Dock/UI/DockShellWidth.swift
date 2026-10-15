@@ -16,7 +16,7 @@ import AppKit
 import CoreGraphics
 
 enum DockShellWidth {
-    /// The Dock's window: `LauncherView.expandedDockWidth` reads this.
+    /// The Dock's window: `DockCore.expandedDockWidth` reads this.
     static let dockWindowWidth: CGFloat = 660
     /// The Dock's input bar as drawn inside that window, its insets taken off (measured
     /// 600 × 56 on the owner's Mac, 2026-10-05): the open Corner is exactly this, so the

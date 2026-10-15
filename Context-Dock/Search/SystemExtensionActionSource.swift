@@ -19,34 +19,7 @@ private final class SelectionExtensionRunState: @unchecked Sendable {
     }
 }
 
-extension LauncherView {
-    func prewarmFinderContextualActionsForSelection(delayNanoseconds: UInt64 = 180_000_000) {
-        let selectedURLs = effectiveFinderSelectionURLsForPills()
-        guard !selectedURLs.isEmpty else { return }
-        guard !FinderContextualMenuActionSource.shared.hasFreshCache(for: selectedURLs) else {
-            return
-        }
-
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard self.isGlobalContextActive, self.hasActiveDockContextSelection else { return }
-
-            let currentURLs = self.effectiveFinderSelectionURLsForPills()
-            guard !currentURLs.isEmpty else { return }
-            guard !FinderContextualMenuActionSource.shared.hasFreshCache(for: currentURLs) else {
-                return
-            }
-
-            let actions = FinderContextualMenuActionSource.shared.actions(for: currentURLs)
-            guard !actions.isEmpty else { return }
-
-            self.scheduleDockPillRebuild(
-                query: self.searchState.query,
-                delayNanoseconds: 0,
-                refreshContext: false
-            )
-        }
-    }
+extension DockCore {
 
     func buildMacOSExtensionActionPills(
         query rawQuery: String,

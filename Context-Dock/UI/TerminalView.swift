@@ -132,28 +132,6 @@ extension TerminalHostController: LocalProcessTerminalViewDelegate {
     }
 }
 
-// MARK: - SwiftUI Wrapper
-struct TerminalNSViewRepresentable: NSViewRepresentable {
-    let terminalController: TerminalHostController
-
-    func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let view = terminalController.terminalView!
-        
-        // Make sure the terminal can accept first responder
-        DispatchQueue.main.async {
-            view.window?.makeFirstResponder(view)
-        }
-        
-        return view
-    }
-
-    func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
-        // Ensure terminal stays as first responder when view updates
-        if nsView.window?.firstResponder != nsView {
-            nsView.window?.makeFirstResponder(nsView)
-        }
-    }
-}
 
 // MARK: - Panel Embedded Terminal (per-panel PTY, doesn't steal first-responder)
 

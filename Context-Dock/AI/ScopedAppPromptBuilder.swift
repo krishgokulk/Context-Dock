@@ -5,7 +5,7 @@
 // what DoraX can actually drive in that app: adapter actions, verified menu commands,
 // linked MCP servers, API connections, Shortcuts, skills and CLI tools.
 //
-// It lived on LauncherView, which is why the chat window could not use it — LauncherView's
+// It lived on DockCore, which is why the chat window could not use it — DockCore's
 // state dies with the launcher and cannot be reached from another window. The dock passes
 // the few things only it knows (the live browser page, the AX window title, the typed
 // query); everything else is read from the same singletons either surface can reach. One
@@ -118,7 +118,7 @@ enum ScopedAppPromptBuilder {
             // given mentioned no such thing.
             if let package {
                 let subcommands = package.subcommands.filter {
-                    !LauncherView.helpNoiseTokens.contains($0.lowercased())
+                    !DockCore.helpNoiseTokens.contains($0.lowercased())
                 }
                 if !subcommands.isEmpty {
                     lines.append(

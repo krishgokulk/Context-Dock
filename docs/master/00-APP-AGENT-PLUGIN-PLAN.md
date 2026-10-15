@@ -14,7 +14,7 @@ Mail and every app scope in the Dock and the Corner gets it.
 
 Typed in Mail App Chat: *"check my recent mail from Gokula kannan J and do what it says"*.
 
-1. `LauncherView+AIChat.swift` (~4512) runs a Mail keyword shortcut **before any model**.
+1. `DockCore+AIChat.swift` (~4512) runs a Mail keyword shortcut **before any model**.
 2. `shouldExecuteMailMailboxSearch` sees the word **"from"** and treats the request as a sender search.
 3. It strips "mail" and "from", leaving "check my recent gokula kannan j and do what it says".
 4. `executeMailMailboxSearch` clicks Edit › Find › Mailbox Search, types that leftover text and presses Return.

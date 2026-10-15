@@ -24,7 +24,7 @@ enum ClipboardPreviewMetrics {
 
 struct ClipboardPreviewCard: View {
     @ObservedObject var model: ClipboardPanelModel
-    let entry: LauncherView.ClipboardEntry
+    let entry: DockCore.ClipboardEntry
     var isPinned: Bool
     var onTogglePin: () -> Void
 
@@ -128,7 +128,7 @@ struct ClipboardPreviewCard: View {
     /// The clip at a size worth calling a preview: the picture for an image, the text for
     /// text, the file's own icon and name for anything else.
     @ViewBuilder
-    private func body(for entry: LauncherView.ClipboardEntry) -> some View {
+    private func body(for entry: DockCore.ClipboardEntry) -> some View {
         if let data = ClipboardScopeService.imageData(for: entry),
             let image = NSImage(data: data)
         {

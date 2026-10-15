@@ -15,9 +15,9 @@ Coordinator: Desktop app (Mac), `/planner` session — since 2026-10-11 19:10 UT
 Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
 **State (2026-10-11):**
-- Done today: #232 (#234), #231, #237. #147 Drop Shelf is long merged (#174).
+- Done today: #232 (#234), #231, #237, #224, #210, #194, #240. #147 Drop Shelf is long merged (#174).
 - **#228** `ready` (fix is PR #230: retarget from `main` to `general-chat-agent`, fix the failing `build`). **#239** `ready`: make #230, #210, #194, #78, #124 mergeable into the head, in that order.
-- **#238** Edge reveal: draft, CI green, owner hand check, owner merges. **#224**, **#210**, **#194**: CI green, behind head, merge without hand check.
+- **#238** Edge reveal: owner hand-tested 2026-10-11, owner merges it. **#78** owner hand-tested; needs a rebase (conflicting) in #239 before it merges.
 - Next after #228/#239: **#196** P2, then #197 P3. #225 test-isolation fix queued.
 
 ## Next, in order (GitHub issues)
@@ -39,6 +39,10 @@ Study copy (diagrams, reasoning, interview notes; not the source of truth for ta
 
 Also open: cloud sessions must never merge their own PR (#114 merged before review).
 
+## Skipped hand checks (re-check in one pass before any `ship it`)
+
+- #224, #210, #194 — merged without a hand check on the owner's word, 2026-10-11 (none was `Hand check: required`).
+
 ## Hand-check queue
 
 - (none waiting; #175's injection test passed with #187 on 2026-10-06)
@@ -50,6 +54,10 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-11 | A `dorax_ask` inside a `dorax_ask` is refused, not recursed (Mail chat showed 6 stacked rows, each failing after ~60 s); hand check skipped | #224 |
+| 2026-10-11 | Spawned `claude`/`codex` CLIs drop the host Claude Code session's env ("Not logged in" in Mail chat when DoraX is launched from a Claude session); hand check skipped | #210 |
+| 2026-10-11 | A `[TERMINAL_COMMAND: …]` directive runs and is hidden in app scopes (Corner Finder chat "list the files in Downloads"); hand check skipped | #194 |
+| 2026-10-11 | Desktop planner takes the Coordinator line | #240 |
 | 2026-10-11 | #232 Corner dock magnification: continuous, unclipped, macOS-Dock smooth; search, clipboard, selection, shelf and feedback icons magnify too; owner hand-tested ("234 passed") | #234 |
 | 2026-10-11 | Clipboard board: ⌘↩ with several clips opens a paste-target picker; a mix of images with text or files pastes the images, not row labels; multi-clip drag to Finder; owner hand-tested ("237 passed"). The #232 session merged it itself — planners merge, builders never | #237 |
 | 2026-10-11 | Recovered from backup: MCP servers match bundle ids case-insensitively (Safari chats see `safari-mcp`); an app's name doing its ordinary job ("console", "notes") no longer offers that app; owner hand-tested ("231 passed"). Follow-ups: #233, #235 | #231 |
@@ -120,7 +128,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 | 2026-09-24 | Swipes in the Corner: exactly the Dock's, horizontal and vertical, over the input only (`00-DOCK-AND-CORNER.md` §4b). |
 | 2026-09-24 | Selection actions + swipes are one task (`corner-parity`). |
 | 2026-09-24 | Global Context lives on the ⌘⌘ row; no separate hotkey row. |
-| 2026-09-25 | Selection in the Corner: **B** — reuse the Dock's rows through a bridge now, extract later. Conditions: (1) behind a `SelectionActionProviding` protocol, the Corner never names LauncherView; (2) works cold, before ⌥⌥ was ever opened (verified: LauncherView is built at launch); (3) Corner-side tests for rows, order, close button, Esc; (4) GitHub issue "Extract SelectionActionSource out of LauncherView", must land before the Dock retires. |
+| 2026-09-25 | Selection in the Corner: **B** — reuse the Dock's rows through a bridge now, extract later. Conditions: (1) behind a `SelectionActionProviding` protocol, the Corner never names DockCore; (2) works cold, before ⌥⌥ was ever opened (verified: DockCore is built at launch); (3) Corner-side tests for rows, order, close button, Esc; (4) GitHub issue "Extract SelectionActionSource out of DockCore", must land before the Dock retires. |
 | 2026-09-25 | Selection AI rows (Ask AI, presets) run through the Corner's own ask path; the prompt lives only in `DockPill.selectionAIPrompt`, which the Dock also reads. |
 | 2026-09-25 | Selection Share rows left out of the Corner for now; D10 stays 🟡 ("Share missing") until they return. |
 | 2026-09-25 | The Corner captures the selection when it builds its list and runs every row on that copy, never on the live Dock payload. |

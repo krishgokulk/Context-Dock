@@ -13,7 +13,7 @@
 // question already sitting on an attached message needs only the first, because "who sent
 // this?" names no mail noun and is obviously about the message on screen.
 //
-// Pure string work, extracted from LauncherView for the reason ReadOnlyDataRouter was: a view
+// Pure string work, extracted from DockCore for the reason ReadOnlyDataRouter was: a view
 // with four hundred @State properties cannot be stood up in a test, so the decision that
 // silences the chat could not be exercised at all.
 
