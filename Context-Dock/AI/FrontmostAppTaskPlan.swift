@@ -148,7 +148,8 @@ struct FrontmostAppTaskPlan: Equatable {
         // not already found the setting ever learns the rung exists.
         if hasAction {
             tools.formUnion([
-                "run_menu_command", "send_keys", "window_control", "operate_app",
+                "find_menu_command", "run_menu_command", "send_keys", "window_control",
+                "operate_app",
             ])
         }
 

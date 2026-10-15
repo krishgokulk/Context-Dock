@@ -330,8 +330,8 @@ enum OutboundGate {
     /// carry data to another host.
     static let localTools: Set<String> = [
         "read_page", "read_file", "read_attachment", "read_selection", "read_tool_result",
-        "find_files", "find_capability", "find_route", "list_shortcuts", "verify_outcome",
-        "write_output_file", "search_messages", "get_messages_conversations",
+        "find_files", "find_capability", "find_route", "find_menu_command", "list_shortcuts",
+        "verify_outcome", "write_output_file", "search_messages", "get_messages_conversations",
     ]
 
     /// Built-in tools that can reach further than the table above judges, left ungated on
