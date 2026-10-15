@@ -779,14 +779,38 @@ enum AppScopedChatService {
             registry.endTurn(turn)
         }
 
-        let toolsBlock = await withTimeout(
-            seconds: 8, fallback: "", label: "scoped tool-less capability block"
-        ) {
-            await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
-                compact: provider == .onDevice,
-                query: query,
-                scope: conversationScope,
-                characterBudget: AIContextBudget.characterBudget(for: provider))
+        // Claude Code with the DoraX MCP server on reaches capabilities as real tools, so it
+        // gets them listed first and the prose "ask, run, re-ask" protocol is left out —
+        // two protocols for the same capability is how it ended up hand-writing osascript.
+        let mcpCapabilityBlock: String? = await MainActor.run {
+            guard provider == .claudeCode,
+                UserDefaults.standard.bool(forKey: DoraXMCPServer.enabledKey)
+            else { return nil }
+            let bundleID = routingBundleId.flatMap { $0.isEmpty ? nil : $0 }
+            DoraXMCPServer.shared.capabilityTurn = DoraXMCPServer.CapabilityTurn(
+                scope: bundleID.map { .app(bundleId: $0) }, userRequest: query,
+                onProgress: onStatus.map { report in { step in report(step) } })
+            return CapabilityRegistry.shared.cliPromptBlock(for: bundleID, appName: appName)
+        }
+        defer {
+            if mcpCapabilityBlock != nil {
+                Task { @MainActor in DoraXMCPServer.shared.capabilityTurn = nil }
+            }
+        }
+
+        let toolsBlock: String
+        if let mcpCapabilityBlock {
+            toolsBlock = mcpCapabilityBlock
+        } else {
+            toolsBlock = await withTimeout(
+                seconds: 8, fallback: "", label: "scoped tool-less capability block"
+            ) {
+                await GeneralChatCapabilityHub.shared.capabilityPromptBlock(
+                    compact: provider == .onDevice,
+                    query: query,
+                    scope: conversationScope,
+                    characterBudget: AIContextBudget.characterBudget(for: provider))
+            }
         }
         let promptWithTools = toolsBlock.isEmpty ? systemPrompt : systemPrompt + "\n\n" + toolsBlock
 

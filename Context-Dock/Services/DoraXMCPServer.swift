@@ -74,6 +74,18 @@ final class DoraXMCPServer: ObservableObject {
 
     private var listener: NWListener?
 
+    /// The app chat the connected CLI is currently answering, set by `ClaudeCodeCLIService`
+    /// around a turn. It is what scopes `dorax_run_capability` to that thread's app — the
+    /// same boundary the in-app tool loop enforces — without trusting the model to say so.
+    /// One turn at a time: a second concurrent CLI turn overwrites it.
+    struct CapabilityTurn {
+        var scope: GeneralChatScope?
+        var grantedApps: [String: String] = [:]
+        var userRequest: String = ""
+        var onProgress: (@Sendable (String) -> Void)?
+    }
+    var capabilityTurn: CapabilityTurn?
+
     /// Minted once and kept. Regenerating per launch would invalidate the command the user
     /// already registered with their agent.
     static var token: String {
@@ -472,6 +484,52 @@ final class DoraXMCPServer: ObservableObject {
 
     private static let baseToolDefinitions: [[String: Any]] = [
         [
+            "name": "dorax_list_capabilities",
+            "description":
+                "List the DoraX capabilities registered for an app (id, input fields, risk), "
+                + "e.g. mail.search(sender, subject, day, unreadOnly, limit). Call this FIRST "
+                + "when the user asks about an app's own data — mail, messages, notes, "
+                + "calendar — before reaching for a shell command or AppleScript.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "app": [
+                        "type": "string",
+                        "description": "App name or bundle id. Defaults to the chat's app, "
+                            + "else the frontmost app.",
+                    ]
+                ] as [String: Any],
+            ],
+        ],
+        [
+            "name": "dorax_run_capability",
+            "description":
+                "Run a DoraX capability from dorax_list_capabilities, e.g. capability_id "
+                + "\"mail.search\" with input {\"sender\": \"okula\"}. Reads run at once; "
+                + "anything that changes or sends shows the user an approval card first, so do "
+                + "not ask for permission yourself. Prefer this over dorax_run_command, "
+                + "osascript or any shell route whenever a capability fits.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "capability_id": ["type": "string", "description": "Exact id, e.g. mail.search."],
+                    "input": [
+                        "type": "object",
+                        "description": "Field values by the names dorax_list_capabilities gave. {} if none.",
+                    ],
+                    "explanation": [
+                        "type": "string",
+                        "description": "One line on why, shown on the approval card.",
+                    ],
+                    "app": [
+                        "type": "string",
+                        "description": "App name or bundle id; only needed outside an app chat.",
+                    ],
+                ] as [String: Any],
+                "required": ["capability_id"],
+            ],
+        ],
+        [
             "name": "dorax_frontmost_app",
             "description":
                 "What the user is looking at right now on their Mac: the frontmost app, its "
@@ -724,7 +782,7 @@ final class DoraXMCPServer: ObservableObject {
         return text
     }
 
-    private func callTool(
+    func callTool(
         named name: String, arguments: [String: Any], attended: Bool, turn: AgentTurnToken? = nil,
         nested: Bool = false
     ) async -> String {
@@ -851,6 +909,48 @@ final class DoraXMCPServer: ObservableObject {
                         command, purpose: purpose, modelRequiresApproval: approval)
                 })
 
+        case "dorax_list_capabilities":
+            let capabilityTurn = self.capabilityTurn
+            let (bundleID, appName) = Self.resolveCapabilityApp(
+                named: arguments["app"] as? String, capabilityTurn: capabilityTurn)
+            let lines = CapabilityRegistry.shared.cliCapabilityLines(for: bundleID)
+            guard !lines.isEmpty else { return "No DoraX capabilities registered for \(appName)." }
+            return "Capabilities for \(appName) — run with dorax_run_capability:\n"
+                + lines.joined(separator: "\n")
+
+        case "dorax_run_capability":
+            let capabilityTurn = self.capabilityTurn
+            // The in-app tool, dispatched through the same registry as the menu command below:
+            // scope check, read-only/question guards, undeclared-input check, and
+            // executeWithApproval (risk-based card, outbound gate) all come with it.
+            let capabilityID = (arguments["capability_id"] as? String ?? "")
+                .trimmingCharacters(in: .whitespaces)
+            guard !capabilityID.isEmpty else { return "capability_id is required, e.g. mail.search." }
+            let (bundleID, appName) = Self.resolveCapabilityApp(
+                named: arguments["app"] as? String, capabilityTurn: capabilityTurn)
+            var grantedApps = capabilityTurn?.grantedApps ?? [:]
+            if let bundleID { grantedApps[appName.lowercased()] = bundleID }
+            let context = AgentToolContext(
+                commandExecutor: { _, _, _ in
+                    (false, "Running shell commands is not available through the DoraX MCP server.", 1)
+                },
+                userRequest: capabilityTurn?.userRequest.isEmpty == false
+                    ? capabilityTurn!.userRequest
+                    : "Capability requested by a connected coding agent: \(capabilityID)",
+                grantedApps: grantedApps, turn: turn)
+            var scoped = context
+            scoped.chatScope = capabilityTurn?.scope ?? bundleID.map { .app(bundleId: $0) }
+            capabilityTurn?.onProgress?("\(appName) › \(capabilityID)")
+            var toolArguments: [String: Any] = ["capability_id": capabilityID]
+            toolArguments["input"] = arguments["input"] as? [String: Any] ?? [:]
+            if let explanation = arguments["explanation"] as? String {
+                toolArguments["explanation"] = explanation
+            }
+            let result = await AgentToolRegistry.shared.dispatch(
+                name: "run_capability", arguments: toolArguments, context: scoped)
+            guard let result else { return "Capabilities are unavailable in this build." }
+            return result.success ? result.output : "Did not run — \(result.output)"
+
         case "dorax_run_menu_command":
             // Deliberately the same tool the app's own chat uses, dispatched through the same
             // registry: the approval card, the cached-path check, the live verification and
@@ -973,6 +1073,31 @@ final class DoraXMCPServer: ObservableObject {
             context.selectedFilePaths = shared.selectedFilePaths
         }
         return context
+    }
+
+    /// The app a capability call is about: the chat's own, else the one named, else the
+    /// frontmost. Returns a display name alongside the bundle id for steps and messages.
+    private static func resolveCapabilityApp(named raw: String?, capabilityTurn: CapabilityTurn?) -> (String?, String) {
+        func name(of bundleID: String) -> String {
+            InstalledApplicationsCatalog.cachedInstalledApps()
+                .first { $0.bundleId.caseInsensitiveCompare(bundleID) == .orderedSame }?.name
+                ?? bundleID
+        }
+        if let bundleID = AgentToolRegistry.scopedBundleID(for: capabilityTurn?.scope) {
+            return (bundleID, name(of: bundleID))
+        }
+        let app = raw?.trimmingCharacters(in: .whitespaces) ?? ""
+        if !app.isEmpty {
+            if let match = InstalledApplicationsCatalog.cachedInstalledApps().first(where: {
+                $0.bundleId.caseInsensitiveCompare(app) == .orderedSame
+                    || $0.name.caseInsensitiveCompare(app) == .orderedSame
+            }) { return (match.bundleId, match.name) }
+            return (app, app)
+        }
+        if let front = NSWorkspace.shared.frontmostApplication, let id = front.bundleIdentifier {
+            return (id, front.localizedName ?? id)
+        }
+        return (nil, "this Mac")
     }
 
     /// Whole screen, no shutter sound, no interaction. An agent calling this is mid-task
