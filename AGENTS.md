@@ -81,6 +81,9 @@ edited by someone else **right now**, and that HEAD moves under you.
 
 - **One agent = one worktree = one branch = one issue.** Put work in `.claude/worktrees/`, not the
   shared tree.
+- **Clean up after a merge.** When your PR merges, remove its worktree (`git worktree remove <path>`;
+  it refuses if there are edits) and delete the merged branch. Never remove a worktree with
+  uncommitted edits, commits not on `general-chat-agent`, or a running app built from it.
 - **Claim before you build.** At the start of a task, list the open PRs (`gh pr list`). If one already
   covers your task, stop and tell the owner. Otherwise branch fresh from `origin/general-chat-agent`
   (never reuse a branch whose PR is merged) and open a **draft PR titled with the task number**
