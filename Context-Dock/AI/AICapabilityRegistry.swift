@@ -750,6 +750,10 @@ final class AIExecutionEngine {
                 throw AICapabilityError.missingInput(field.name)
             }
         }
+        // Data lane: a read never brings an app forward; a closed app starts hidden.
+        if capability.riskLevel == .low, let bundleID = capability.appBundleID, !bundleID.isEmpty {
+            await DataLane.prepare(bundleID: bundleID)
+        }
         return try await capability.executor(
             .init(
                 input: plan.input, context: context, chatScope: chatScope,
