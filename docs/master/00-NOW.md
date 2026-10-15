@@ -18,7 +18,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - Done: #230 (fixes #228: Claude Code in app chats runs `mail.search` through `dorax_run_capability`, no osascript; owner hand-tested "230 passed" 2026-10-15), #224, #210, #194, #238, #229, #234, #231, #237, #240, #241.
 - #78 and #124 are superseded by the head (selection actions live in `Services/SelectionActions.swift`; skills are in `.claude/skills`); the owner closes them. #239 is moot once they are closed.
 - Next: **#196** P2 (`ready`), then **#197** P3, then #180, #185, #198 P4, #199 P5. #225 test-isolation fix is queued. Nothing is `in-progress`.
-- Worktrees: remove a merged PR's clean worktree after it merges (`git worktree remove`; never a dirty or unmerged one).
+- **Owner rule (2026-10-15):** clean up worktrees after each PR merges, rather than letting them pile up (28 reached 17 GB). `git worktree remove <path>`; never a dirty or unmerged one, nor one a running app was built from. Written into `AGENTS.md`.
 
 ## Next, in order (GitHub issues)
 
