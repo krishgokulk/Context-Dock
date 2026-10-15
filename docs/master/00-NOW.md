@@ -10,15 +10,15 @@
 
 ## In progress
 
-Coordinator: Desktop app (Mac), `/planner` session — since 2026-10-11 19:10 UTC (owner: "takeover"). The previous cloud planner (2026-09-30 → 2026-10-10) was closed to cut token use. The Mac `/loop /builder` session is the **builder**; it takes GitHub issues labeled `ready`, oldest first, and never edits this file.
+Coordinator: Codex (owner's session) — since 2026-10-15. The Claude desktop app now runs only UI/UX fixes (owner's lane); Codex continues this file and the master docs. The Mac `/loop /builder` role, if started, takes GitHub issues labeled `ready` and never edits this file.
 
 Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
-**State (2026-10-11):**
-- Done today: #232 (#234), #231, #237, #224, #210, #194, #240. #147 Drop Shelf is long merged (#174).
-- **#228** `ready` (fix is PR #230: retarget from `main` to `general-chat-agent`, fix the failing `build`). **#239** `ready`: make #230, #210, #194, #78, #124 mergeable into the head, in that order.
-- **#238** Edge reveal: owner hand-tested 2026-10-11, owner merges it. **#78** owner hand-tested; needs a rebase (conflicting) in #239 before it merges.
-- Next after #228/#239: **#196** P2, then #197 P3. #225 test-isolation fix queued.
+**State (2026-10-15):**
+- Done: #230 (fixes #228: Claude Code in app chats runs `mail.search` through `dorax_run_capability`, no osascript; owner hand-tested "230 passed" 2026-10-15), #224, #210, #194, #238, #229, #234, #231, #237, #240, #241.
+- #78 and #124 are superseded by the head (selection actions live in `Services/SelectionActions.swift`; skills are in `.claude/skills`); the owner closes them. #239 is moot once they are closed.
+- Next: **#196** P2 (`ready`), then **#197** P3, then #180, #185, #198 P4, #199 P5. #225 test-isolation fix is queued. Nothing is `in-progress`.
+- Worktrees: remove a merged PR's clean worktree after it merges (`git worktree remove`; never a dirty or unmerged one).
 
 ## Next, in order (GitHub issues)
 
