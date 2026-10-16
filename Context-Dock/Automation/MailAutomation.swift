@@ -581,12 +581,19 @@ enum MailAutomation {
                     if totalCount < maxScan then set maxScan to totalCount
                     set matchedLines to {}
 
+                    if maxScan < 1 then return "MAILBOX:" & targetMailboxName & return & "NO_MATCHES"
+                    -- One Apple Event per property, not four per message: 250 messages took ~9 s.
+                    set msgRange to messages 1 thru maxScan of targetMailbox
+                    set senderList to sender of msgRange
+                    set subjectList to subject of msgRange
+                    set dateList to date received of msgRange
+                    set readList to read status of msgRange
+
                     repeat with i from 1 to maxScan
-                        set msg to item i of messages of targetMailbox
-                        set msgSender to (sender of msg) as string
-                        set msgSubject to (subject of msg) as string
-                        set msgDate to date received of msg
-                        set msgRead to read status of msg
+                        set msgSender to (item i of senderList) as string
+                        set msgSubject to (item i of subjectList) as string
+                        set msgDate to item i of dateList
+                        set msgRead to item i of readList
 
                         set senderMatches to (senderFilter is "")
                         if senderMatches is false then set senderMatches to (msgSender contains senderFilter)
