@@ -35,6 +35,9 @@ enum CornerBoardPreview: Hashable {
     /// The app's own card — what DoraX can do here, what it sees, what it may do — opened
     /// from the field's app chip, in the right half beside the list (owner 2026-10-08).
     case appScope(bundleID: String, name: String)
+    /// An app a "/" jump steps into: whether it runs, and that ↩ steps into it (owner
+    /// 2026-10-16: the jump list showed no status).
+    case appJump(bundleID: String, name: String)
 }
 
 enum CornerBoardLayout {
@@ -93,7 +96,9 @@ enum CornerBoardLayout {
             // A subcommand is only a subcommand inside its tool's scope.
             guard !cliCommand.isEmpty else { return nil }
             return .cliSubcommand(command: cliCommand, subcommand: word)
-        case .action, .app:
+        case .app(let entry):
+            return entry.bundleId.isEmpty ? nil : .appJump(bundleID: entry.bundleId, name: entry.name)
+        case .action:
             return nil
         }
     }

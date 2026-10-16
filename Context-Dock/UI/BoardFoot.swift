@@ -62,7 +62,10 @@ struct BoardFoot: Equatable {
                 title: cliCommand.isEmpty ? "Subcommand" : "\(cliCommand) · Subcommand",
                 verb: "Run", symbol: "terminal")
         case .app(let entry):
-            return appFoot(entry.bundleId)
+            // A "/" row steps into the app, running or not (`run(.app)`).
+            var foot = appFoot(entry.bundleId)
+            foot.verb = "Step in"
+            return foot
         case .global(let doc):
             return foot(for: CornerBoardLayout.preview(for: doc), fallbackTitle: doc.title)
         case .dock(let pill):
@@ -99,7 +102,7 @@ struct BoardFoot: Equatable {
         switch preview {
         case .file(let url):
             return fileFoot(url)
-        case .app(let bundleID, _), .appScope(let bundleID, _):
+        case .app(let bundleID, _), .appScope(let bundleID, _), .appJump(let bundleID, _):
             return appFoot(bundleID)
         case .command(_, _, let appName, let bundleID):
             return BoardFoot(

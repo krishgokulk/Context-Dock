@@ -47,7 +47,7 @@ enum GlobalResultSection {
     /// A search document's section, by what the preview beside it says it is.
     static func title(for doc: GlobalSearchService.SearchDocument) -> String {
         switch CornerBoardLayout.preview(for: doc) {
-        case .app, .appScope: return applications
+        case .app, .appScope, .appJump: return applications
         case .command: return menuCommands
         case .file: return files
         case .web: return web

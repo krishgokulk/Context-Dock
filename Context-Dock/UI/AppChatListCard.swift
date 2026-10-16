@@ -285,8 +285,8 @@ struct AppChatListCard: View {
                 contextPill(foot)
                 // This app's earlier chat, one click back, beside what the list is about
                 // (owner 2026-10-16) — the field's chip is the app's settings, not its chat.
-                if model.hasConversationToShow {
-                    Button { model.showConversation() } label: {
+                if model.hasConversationToShow || model.hasSavedChat {
+                    Button { model.openChat() } label: {
                         BoardFooter.pill {
                             Image(systemName: "bubble.left.and.bubble.right")
                                 .font(.system(size: 10.5, weight: .semibold))

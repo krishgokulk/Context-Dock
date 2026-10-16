@@ -798,6 +798,26 @@ final class AppChatPromptModel: ObservableObject {
         return !messages.isEmpty && (owner.isEmpty || owner == appBundleID)
     }
 
+    /// This app has a chat from earlier visits: the sheet shows only the visit it is in
+    /// (`AppPanelChatStore.beginSession`) and the chat window keeps the rest. Read from disk
+    /// once per app.
+    var hasSavedChat: Bool {
+        guard !isGlobalScope, !appBundleID.isEmpty else { return false }
+        if let cached = savedChatCache, cached.bundleID == appBundleID { return cached.exists }
+        let exists = !GeneralChatSessionStore.load(scope: .app(bundleId: appBundleID)).isEmpty
+        savedChatCache = (appBundleID, exists)
+        return exists
+    }
+    private var savedChatCache: (bundleID: String, exists: Bool)?
+
+    /// The sheet's Chat pill: this visit's conversation in place, else the app's whole
+    /// history in the chat window (owner 2026-10-16).
+    func openChat() {
+        if showConversation() { return }
+        GeneralChatWindowModel.shared.openSession(.app(bundleId: appBundleID), title: appName)
+        GeneralChatWindowController.shared.show()
+    }
+
     @discardableResult
     func showConversation() -> Bool {
         guard hasConversationToShow else { return false }
