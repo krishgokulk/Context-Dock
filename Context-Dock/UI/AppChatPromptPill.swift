@@ -499,7 +499,7 @@ struct AppChatPromptPill: View {
     private func arrow(up: Bool) -> KeyPress.Result {
         // On the empty field the chat's own arrows: ↓ puts it away, ↑ brings it back.
         if model.query.isEmpty,
-            up ? model.showConversation() : model.hideConversation()
+            up ? model.openChat() : model.hideConversation()
         {
             return .handled
         }
@@ -1652,6 +1652,8 @@ struct AppChatPromptPill: View {
                 model.hideConversation()
             } else {
                 model.isShowingScopeCard.toggle()
+                // Open or close the sheet the card is the right half of.
+                model.syncListPhase()
             }
         }
         .help(model.phase == .chat

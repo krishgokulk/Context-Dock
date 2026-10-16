@@ -181,7 +181,7 @@ enum CornerBoardLayout {
         guard let preview else { return list }
         // The app's card reads as a card of its own, so the board keeps its height for it.
         let floor: CGFloat
-        if case .appScope = preview { floor = AppScopeBoardMetrics.height } else {
+        if preview.appCard != nil { floor = AppScopeBoardMetrics.height } else {
             floor = minimumPreviewHeight
         }
         guard floor > list.height else { return list }
@@ -303,5 +303,18 @@ extension AppChatPromptModel {
         CornerLivePanelLayout.shows(
             isAppScope: !isGlobalScope, phase: phase, isOpen: livePanelOpen,
             hasConversation: isAnswering || !messages.isEmpty)
+    }
+}
+
+extension CornerBoardPreview {
+    /// The DoraX card drawn for an app (owner 2026-10-16): the field's own (its chip), or the
+    /// app an app row in Global or a "/" list stands for. Nil for anything else.
+    var appCard: (bundleID: String, name: String, isOwnScope: Bool)? {
+        switch self {
+        case .appScope(let bundleID, let name): return (bundleID, name, true)
+        case .app(let bundleID, let name), .appJump(let bundleID, let name):
+            return (bundleID, name, false)
+        default: return nil
+        }
     }
 }

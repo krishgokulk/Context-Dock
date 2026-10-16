@@ -693,6 +693,9 @@ final class AppChatPromptModel: ObservableObject {
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
+        // The chip's card is the sheet's right half, the app's commands its left: it opens
+        // and stays open while the card is up (owner 2026-10-16), rather than floating alone.
+        if isShowingScopeCard, !isGlobalScope, !rows.isEmpty { return .suggesting }
         // A scope stepped into from Global shows only what it found. With nothing found the
         // field rests alone rather than opening an empty board. An *app* stepped into from
         // Global never reaches this line — it answers with its window snapshot above — so
@@ -811,12 +814,24 @@ final class AppChatPromptModel: ObservableObject {
     }
     private var savedChatCache: (bundleID: String, exists: Bool)?
 
-    /// The sheet's Chat pill: this visit's conversation in place, else the app's whole
-    /// history in the chat window (owner 2026-10-16).
-    func openChat() {
-        if showConversation() { return }
-        GeneralChatWindowModel.shared.openSession(.app(bundleId: appBundleID), title: appName)
-        GeneralChatWindowController.shared.show()
+    /// The field's ⌃ and ↑: this visit's conversation, else the app's earlier one — both in
+    /// the sheet, never a window (owner 2026-10-16).
+    @discardableResult
+    func openChat() -> Bool {
+        showConversation() || showSavedChat()
+    }
+
+    /// The app's earlier conversation, brought into the sheet. The sheet normally holds one
+    /// visit (`AppPanelChatStore.beginSession`); this visit is made to span the whole history,
+    /// so saving the sheet keeps it whole instead of writing the older messages twice.
+    @discardableResult
+    func showSavedChat() -> Bool {
+        guard hasSavedChat,
+            let key = GeneralChatSessionStore.dockPanelKey(.app(bundleId: appBundleID))
+        else { return false }
+        AppPanelChatStore.shared.beginSession(for: key, at: .distantPast)
+        conversation.messages = AppPanelChatStore.shared.load(for: key)
+        return showConversation()
     }
 
     @discardableResult
