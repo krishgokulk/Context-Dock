@@ -387,10 +387,15 @@ private struct CommandPreview: View {
             else { return nil }
             return NSWorkspace.shared.icon(forFile: url.path)
         }()
+        // Whether its app is open, as the app's own card says (owner 2026-10-16): a command of
+        // an app that is not running is read from its cached menus.
+        let running = bundleID.isEmpty ? nil : AppResultActions.runningApp(bundleID) != nil
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
                 icon: appIcon, title: title,
-                subtitle: appName.isEmpty ? "Menu command" : "\(appName) menu command")
+                subtitle: (appName.isEmpty ? "Menu command" : "\(appName) menu command")
+                    + (running.map { $0 ? " · Running" : " · Not running" } ?? ""),
+                status: running.map { $0 ? Color.green : Color.secondary.opacity(0.5) })
             PanelDivider()
             // Where it lives: one row per menu level, the way the menu bar leads there.
             PanelSection(title: "Menu")
