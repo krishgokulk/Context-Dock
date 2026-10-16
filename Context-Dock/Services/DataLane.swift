@@ -56,7 +56,16 @@ struct WorkspaceDataLaneLauncher: DataLaneLauncher {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = false
         configuration.hides = true
-        _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: configuration)
+        guard
+            let app = try? await NSWorkspace.shared.openApplication(
+                at: url, configuration: configuration)
+        else { return }
+        // openApplication returns when the process exists, not when it answers Apple Events;
+        // the first event sent too early fails ("Mail context could not be read").
+        for _ in 0..<100 where !app.isFinishedLaunching && !app.isTerminated {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 800_000_000)
     }
 }
 
