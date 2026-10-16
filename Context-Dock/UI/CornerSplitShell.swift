@@ -451,6 +451,7 @@ private struct StripChrome: ViewModifier {
             content
                 .clipShape(Capsule())
                 .glassEffect(.regular.interactive(), in: Capsule())
+                .modifier(AppLaunchGlow(shape: Capsule()))
                 .shadow(color: .black.opacity(0.34), radius: 20, y: 10)
         }
     }
