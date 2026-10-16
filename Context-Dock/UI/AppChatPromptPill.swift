@@ -1369,10 +1369,8 @@ struct AppChatPromptPill: View {
                     surfaceControls
                         .transition(.opacity)
                 }
-                // The conversation its ⌄ put away, one click back.
-                if model.isConversationHidden, model.phase != .chat,
-                    model.isAnswering || !model.messages.isEmpty
-                {
+                // This app's conversation, when it is not on screen, one click back.
+                if model.hasConversationToShow {
                     Button { model.showConversation() } label: {
                         controlGlyph("chevron.up")
                     }

@@ -839,3 +839,32 @@ struct HiddenConversationTests {
         #expect(!model.isConversationHidden)
     }
 }
+
+/// This app's conversation, when not on screen, is always one ⌃ or ↑ away (owner 2026-10-16).
+@MainActor
+@Suite("Conversation to show")
+struct ConversationToShowTests {
+    @Test func aScopeWithHistoryOffersIt() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "No mail from Hitachi")]
+        conversation.scopeBundleId = "com.apple.mail"
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summonGlobalContext()
+        model.scopeIntoApp(name: "Mail", bundleID: "com.apple.mail")
+
+        #expect(model.hasConversationToShow)
+        #expect(model.showConversation())
+        #expect(model.phase == .chat)
+    }
+
+    @Test func anotherAppsMessagesAreNotThisOnes() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "about Safari")]
+        conversation.scopeBundleId = "com.apple.Safari"
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Mail", bundleID: "com.apple.mail")
+
+        #expect(!model.hasConversationToShow)
+        #expect(!model.showConversation())
+    }
+}

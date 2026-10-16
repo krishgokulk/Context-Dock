@@ -787,11 +787,20 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// This app has a conversation that is not on screen — put away, or there from before
+    /// (a scope reached by "/" or from Global): what the field's ⌃ and ↑ bring back, always
+    /// on offer (owner 2026-10-16). Another app's messages still in the shared conversation
+    /// for a moment after a switch are not this app's.
+    var hasConversationToShow: Bool {
+        guard phase.showsInput, phase != .chat, !isGlobalScope else { return false }
+        if isAnswering { return true }
+        let owner = conversation.scopeBundleId
+        return !messages.isEmpty && (owner.isEmpty || owner == appBundleID)
+    }
+
     @discardableResult
     func showConversation() -> Bool {
-        guard isConversationHidden, phase.showsInput, phase != .chat,
-            isAnswering || !messages.isEmpty
-        else { return false }
+        guard hasConversationToShow else { return false }
         isConversationHidden = false
         isShowingScopeCard = false
         hasPresentedConversation = true
