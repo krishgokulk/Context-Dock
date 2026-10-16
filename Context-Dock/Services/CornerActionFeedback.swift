@@ -163,9 +163,12 @@ final class CornerActionFeedback: ObservableObject {
 struct AppLaunchGlow<S: InsettableShape>: ViewModifier {
     let shape: S
     @ObservedObject private var feedback = CornerActionFeedback.shared
+    @Environment(\.sharesOneCard) private var sharesOneCard
 
     func body(content: Content) -> some View {
-        let glow = feedback.appGlow
+        // Inside the launcher's one card the card glows (`CornerCombinedCard`), not its pieces.
+        // A value, not a branch: the field must never be rebuilt (see `CornerCombinedCard`).
+        let glow = sharesOneCard ? nil : feedback.appGlow
         content
             .overlay {
                 shape.strokeBorder(glow ?? .clear, lineWidth: 1.5)

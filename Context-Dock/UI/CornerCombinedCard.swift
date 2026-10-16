@@ -41,6 +41,9 @@ struct CornerCombinedCard: ViewModifier {
                         RoundedRectangle(cornerRadius: Self.radius, style: .continuous)
                             .strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
                     .shadow(color: .black.opacity(0.34), radius: 24, y: 12)
+                    // An app opening or quitting glows the one card, as it glows the dock.
+                    .modifier(AppLaunchGlow(
+                        shape: RoundedRectangle(cornerRadius: Self.radius, style: .continuous)))
                     .opacity(active ? 1 : 0)
             }
     }
