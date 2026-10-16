@@ -675,6 +675,7 @@ struct AppChatPromptPill: View {
                 .opacity(feedbackTint == nil ? 0 : 0.85)
                 .allowsHitTesting(false)
         }
+        .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
         .animation(shellMorph, value: model.phase)
@@ -683,7 +684,8 @@ struct AppChatPromptPill: View {
     }
 
     private var feedbackTint: Color? {
-        guard let result = actionFeedback.current else { return nil }
+        // An app opening or quitting has its own glow (`AppLaunchGlow`).
+        guard let result = actionFeedback.current, actionFeedback.appGlow == nil else { return nil }
         return ActionFeedbackTint.color(
             for: result, appColor: actionFeedback.appIcon(for: result)?.dominantSwiftUIColor)
     }

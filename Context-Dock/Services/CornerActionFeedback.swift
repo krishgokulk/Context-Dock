@@ -91,8 +91,21 @@ final class CornerActionFeedback: ObservableObject {
     /// for a launch the user is watching happen adds nothing, and it reserved a slot in the
     /// strip for a badge that had nothing to say.
     var glyph: DockInlineFeedback? {
-        guard let current, current.phase != .progress else { return nil }
+        guard let current, current.phase != .progress, appGlow == nil else { return nil }
         return current
+    }
+
+    /// An app opening or quitting shows on the dock itself — green while it opens, red when
+    /// it quits — as a glow around it, not an icon at its end (owner 2026-10-16).
+    var appGlow: Color? {
+        guard let current else { return nil }
+        let namesApp = !(current.bundleID ?? "").isEmpty || !(current.subject ?? "").isEmpty
+        guard namesApp else { return nil }
+        if current.phase == .progress {
+            // `DockActionFeedback.appOpening`'s symbol: the one progress that is a launch.
+            return current.icon == DockActionFeedback.launchSymbol ? .green : nil
+        }
+        return ActionFeedbackTint.isDestructive(current) || current.phase == .failure ? .red : .green
     }
 
     /// What the field says while something is running: "Opening Messages…", in the place
@@ -142,5 +155,24 @@ final class CornerActionFeedback: ObservableObject {
                 id: id, title: title, icon: icon, phase: phase,
                 subject: subject?.isEmpty == false ? subject : nil,
                 bundleID: bundleID?.isEmpty == false ? bundleID : nil))
+    }
+}
+
+/// The dock's glow for an app opening or quitting (`CornerActionFeedback.appGlow`): a soft
+/// light around the shape and a line of the colour on its edge.
+struct AppLaunchGlow<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @ObservedObject private var feedback = CornerActionFeedback.shared
+
+    func body(content: Content) -> some View {
+        let glow = feedback.appGlow
+        content
+            .overlay {
+                shape.strokeBorder(glow ?? .clear, lineWidth: 1.5)
+                    .opacity(glow == nil ? 0 : 0.9)
+                    .allowsHitTesting(false)
+            }
+            .shadow(color: (glow ?? .clear).opacity(glow == nil ? 0 : 0.75), radius: 16)
+            .animation(.easeInOut(duration: 0.3), value: glow)
     }
 }

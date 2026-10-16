@@ -93,13 +93,17 @@ final class DockActionFeedback {
     /// colour. `AppActivation` owns the other end; the id it returns is how it lets go.
     @discardableResult
     static func appOpening(
-        _ name: String, bundleID: String?, id: String = UUID().uuidString
+        _ name: String, bundleID: String?, launching: Bool = true, id: String = UUID().uuidString
     ) -> String {
+        // The symbol says which: a launch glows the dock green (`CornerActionFeedback.appGlow`),
+        // bringing a running app forward does not.
         post(
-            id: id, title: "Opening \(name)…", icon: "arrow.up.forward.app",
+            id: id, title: "Opening \(name)…", icon: launching ? launchSymbol : "macwindow",
             phase: "progress", subject: name, bundleID: bundleID)
         return id
     }
+
+    static let launchSymbol = "arrow.up.forward.app"
 
     /// An app was asked to quit. "Quit" in the title is what makes the result read red
     /// wherever it lands (`ActionFeedbackTint.isDestructive`), so the wording is part of

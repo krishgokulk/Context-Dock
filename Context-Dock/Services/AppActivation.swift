@@ -34,10 +34,10 @@ enum AppActivation {
     /// there. A checkmark for something the user can see happen in front of them is a badge
     /// nobody needed.
     static func bringForward(bundleID: String, name: String) {
-        let feedbackID = DockActionFeedback.appOpening(name, bundleID: bundleID)
-
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .first(where: { !$0.isTerminated })
+        let feedbackID = DockActionFeedback.appOpening(
+            name, bundleID: bundleID, launching: running == nil)
         // A running app goes through LaunchServices too, the way the Dock does. The corner
         // panel is non-activating, so a click there leaves us inactive: `yieldActivation`
         // has nothing to yield and cooperative activation can drop `activate()`. And an app
@@ -82,7 +82,7 @@ enum AppActivation {
     /// Bring a running app forward, by the path a file or a URL took to get there.
     static func bringForward(_ app: NSRunningApplication, name: String) {
         let feedbackID = DockActionFeedback.appOpening(
-            name, bundleID: app.bundleIdentifier)
+            name, bundleID: app.bundleIdentifier, launching: false)
         raise(app, restoringWindows: true)
         settle(feedbackID, app: app)
     }

@@ -348,7 +348,8 @@ extension AppChatPromptModel {
                 icon: "xmark.circle",
                 badge: name,
                 execute: {
-                    app.terminate()
+                    // Said, so the dock glows red for it as for every other quit.
+                    DockActionFeedback.appQuit(name, bundleID: app.bundleIdentifier, succeeded: app.terminate())
                     GlobalContextResultSource.shared.refresh()
                 }
             )
