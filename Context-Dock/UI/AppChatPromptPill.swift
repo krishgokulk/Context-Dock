@@ -497,6 +497,12 @@ struct AppChatPromptPill: View {
     /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
+        // On the empty field the chat's own arrows: ↓ puts it away, ↑ brings it back.
+        if model.query.isEmpty,
+            up ? model.showConversation() : model.hideConversation()
+        {
+            return .handled
+        }
         // A command's list on screen takes the arrows: the field keeps the keyboard for
         // typing, so the list cannot hear them itself (owner 2026-10-08).
         if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {

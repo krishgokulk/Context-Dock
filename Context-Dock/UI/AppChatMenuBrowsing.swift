@@ -1175,7 +1175,9 @@ extension AppChatPromptModel {
             _ = leaveSelectionScope()
             dismiss()
             return true
-        case .leaveChat: return leaveChatForMenus()
+        // The chat is put away, not ended: a turn keeps running and the field's ⌃ (or ↑)
+        // brings it back (owner 2026-10-16).
+        case .leaveChat: return hideConversation()
         case .leaveScope: return leaveScopeForGlobal()
         case .pass: return false
         }

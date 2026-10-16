@@ -770,23 +770,8 @@ final class AppChatPromptModel: ObservableObject {
     /// The turn belongs to the dock's pipeline, so this asks for the same reason clearing
     /// does — and a request that arrives after the turn already finished is simply ignored
     /// on the other side.
-    /// Backspace on an empty field in the app chat (E4): the conversation is kept — it is the
-    /// dock's, and it is there next time — the chat steps aside, and the field is the app's
-    /// menu search again. A turn still running is stopped first, as the Dock's key does.
-    @discardableResult
-    func leaveChatForMenus() -> Bool {
-        guard phase == .chat, query.isEmpty else { return false }
-        cancelTurn()
-        stopAwaitingAnswer()
-        hasPresentedConversation = false
-        focusedMenuIndex = nil
-        set(restingInputPhase)
-        touch()
-        return true
-    }
-
-    /// The chat sheet put away by its ⌄ (owner 2026-10-08: "show a down arrow to hide the
-    /// chat sheet"): the conversation is kept, a turn keeps running, and the field's ⌃
+    /// The chat sheet put away — by its ⌄ (owner 2026-10-08), or ⌫ / ↓ on the empty field
+    /// (2026-10-16): the conversation is kept, a turn keeps running, and the field's ⌃ or ↑
     /// brings it back (`showConversation`).
     @Published private(set) var isConversationHidden = false
 
