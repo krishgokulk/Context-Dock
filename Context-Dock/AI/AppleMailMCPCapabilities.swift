@@ -38,7 +38,8 @@ enum AppleMailMCPCapabilities {
                     .init(name: "day", description: "Optional relative day: \"today\" or \"yesterday\"", required: false),
                     .init(name: "limit", description: "Maximum messages to return (default 20)", required: false),
                 ]),
-                riskLevel: .low
+                riskLevel: .low,
+                needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")
@@ -74,7 +75,8 @@ enum AppleMailMCPCapabilities {
                 title: "Read the selected or open email, body included",
                 appBundleID: "com.apple.mail",
                 inputSchema: .init(fields: []),
-                riskLevel: .low
+                riskLevel: .low,
+                needsRunningApp: true
             ) { _ in
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")
@@ -134,7 +136,8 @@ enum AppleMailMCPCapabilities {
                 inputSchema: .init(fields: [
                     .init(name: "limit", description: "How many recent inbox messages (default 10)", required: false)
                 ]),
-                riskLevel: .low
+                riskLevel: .low,
+                needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")
@@ -157,7 +160,8 @@ enum AppleMailMCPCapabilities {
                 inputSchema: .init(fields: [
                     .init(name: "id", description: "Message id from mail.recent; leave empty for the latest message", required: false)
                 ]),
-                riskLevel: .low
+                riskLevel: .low,
+                needsRunningApp: true
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")

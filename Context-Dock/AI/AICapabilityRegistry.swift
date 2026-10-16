@@ -148,6 +148,9 @@ struct AICapability {
     /// capability was not actually preferred until someone remembered to edit the gate.
     /// The capability declares it here instead, and the gate reads the registry.
     var supersedesShellVerbs: [String] = []
+    /// True only when the executor sends Apple Events to the running app (data lane: a closed
+    /// app is started hidden first). EventKit, shell and file routes leave it false.
+    var needsRunningApp: Bool = false
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 
@@ -749,6 +752,12 @@ final class AIExecutionEngine {
             guard let value = plan.input[field.name], !value.isEmpty else {
                 throw AICapabilityError.missingInput(field.name)
             }
+        }
+        // Data lane: a read never brings an app forward; a closed app starts hidden.
+        if capability.needsRunningApp, capability.riskLevel == .low, let bundleID = capability.appBundleID,
+            !bundleID.isEmpty
+        {
+            await DataLane.prepare(bundleID: bundleID)
         }
         return try await capability.executor(
             .init(
