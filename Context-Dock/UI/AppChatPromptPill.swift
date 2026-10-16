@@ -1369,9 +1369,11 @@ struct AppChatPromptPill: View {
                     surfaceControls
                         .transition(.opacity)
                 }
-                // This app's conversation, when it is not on screen, one click back.
-                if model.hasConversationToShow {
-                    Button { model.showConversation() } label: {
+                // This app's chat, when it is not on screen, one click back: this visit's in
+                // place, else its history in the chat window (owner 2026-10-16) — for any
+                // app, however the field reached it.
+                if model.hasConversationToShow || model.hasSavedChat {
+                    Button { model.openChat() } label: {
                         controlGlyph("chevron.up")
                     }
                     .buttonStyle(.plain)

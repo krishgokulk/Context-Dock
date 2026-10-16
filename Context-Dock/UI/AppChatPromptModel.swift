@@ -802,7 +802,8 @@ final class AppChatPromptModel: ObservableObject {
     /// (`AppPanelChatStore.beginSession`) and the chat window keeps the rest. Read from disk
     /// once per app.
     var hasSavedChat: Bool {
-        guard !isGlobalScope, !appBundleID.isEmpty else { return false }
+        // Not while a chat is on screen: there is nothing to bring back.
+        guard !isGlobalScope, !appBundleID.isEmpty, phase != .chat else { return false }
         if let cached = savedChatCache, cached.bundleID == appBundleID { return cached.exists }
         let exists = !GeneralChatSessionStore.load(scope: .app(bundleId: appBundleID)).isEmpty
         savedChatCache = (appBundleID, exists)

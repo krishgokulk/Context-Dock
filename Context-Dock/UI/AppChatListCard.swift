@@ -283,24 +283,6 @@ struct AppChatListCard: View {
         return HStack(spacing: 8) {
             if model.finderPathTrail.isEmpty {
                 contextPill(foot)
-                // This app's earlier chat, one click back, beside what the list is about
-                // (owner 2026-10-16) — the field's chip is the app's settings, not its chat.
-                if model.hasConversationToShow || model.hasSavedChat {
-                    Button { model.openChat() } label: {
-                        BoardFooter.pill {
-                            Image(systemName: "bubble.left.and.bubble.right")
-                                .font(.system(size: 10.5, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            Text("Chat")
-                                .font(.system(size: 11.5, weight: .medium))
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Show this app's chat")
-                    .accessibilityLabel("Show this app's chat")
-                }
                 Spacer(minLength: 0)
             } else {
                 finderPathPills
