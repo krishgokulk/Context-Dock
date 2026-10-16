@@ -35,6 +35,9 @@ enum CornerBoardPreview: Hashable {
     /// The app's own card — what DoraX can do here, what it sees, what it may do — opened
     /// from the field's app chip, in the right half beside the list (owner 2026-10-08).
     case appScope(bundleID: String, name: String)
+    /// An app a "/" jump steps into: whether it runs, and that ↩ steps into it (owner
+    /// 2026-10-16: the jump list showed no status).
+    case appJump(bundleID: String, name: String)
 }
 
 enum CornerBoardLayout {
@@ -93,7 +96,9 @@ enum CornerBoardLayout {
             // A subcommand is only a subcommand inside its tool's scope.
             guard !cliCommand.isEmpty else { return nil }
             return .cliSubcommand(command: cliCommand, subcommand: word)
-        case .action, .app:
+        case .app(let entry):
+            return entry.bundleId.isEmpty ? nil : .appJump(bundleID: entry.bundleId, name: entry.name)
+        case .action:
             return nil
         }
     }
@@ -176,7 +181,7 @@ enum CornerBoardLayout {
         guard let preview else { return list }
         // The app's card reads as a card of its own, so the board keeps its height for it.
         let floor: CGFloat
-        if case .appScope = preview { floor = AppScopeBoardMetrics.height } else {
+        if preview.appCard != nil { floor = AppScopeBoardMetrics.height } else {
             floor = minimumPreviewHeight
         }
         guard floor > list.height else { return list }
@@ -298,5 +303,18 @@ extension AppChatPromptModel {
         CornerLivePanelLayout.shows(
             isAppScope: !isGlobalScope, phase: phase, isOpen: livePanelOpen,
             hasConversation: isAnswering || !messages.isEmpty)
+    }
+}
+
+extension CornerBoardPreview {
+    /// The DoraX card drawn for an app (owner 2026-10-16): the field's own (its chip), or the
+    /// app an app row in Global or a "/" list stands for. Nil for anything else.
+    var appCard: (bundleID: String, name: String, isOwnScope: Bool)? {
+        switch self {
+        case .appScope(let bundleID, let name): return (bundleID, name, true)
+        case .app(let bundleID, let name), .appJump(let bundleID, let name):
+            return (bundleID, name, false)
+        default: return nil
+        }
     }
 }

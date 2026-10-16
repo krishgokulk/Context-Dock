@@ -693,6 +693,9 @@ final class AppChatPromptModel: ObservableObject {
         // A window snapshot occupies the board even with no rows to list, and so does an
         // extension's own interface.
         if showsWindowSnapshot || showsExtensionPanel { return .suggesting }
+        // The chip's card is the sheet's right half, the app's commands its left: it opens
+        // and stays open while the card is up (owner 2026-10-16), rather than floating alone.
+        if isShowingScopeCard, !isGlobalScope, !rows.isEmpty { return .suggesting }
         // A scope stepped into from Global shows only what it found. With nothing found the
         // field rests alone rather than opening an empty board. An *app* stepped into from
         // Global never reaches this line — it answers with its window snapshot above — so
@@ -770,23 +773,8 @@ final class AppChatPromptModel: ObservableObject {
     /// The turn belongs to the dock's pipeline, so this asks for the same reason clearing
     /// does — and a request that arrives after the turn already finished is simply ignored
     /// on the other side.
-    /// Backspace on an empty field in the app chat (E4): the conversation is kept — it is the
-    /// dock's, and it is there next time — the chat steps aside, and the field is the app's
-    /// menu search again. A turn still running is stopped first, as the Dock's key does.
-    @discardableResult
-    func leaveChatForMenus() -> Bool {
-        guard phase == .chat, query.isEmpty else { return false }
-        cancelTurn()
-        stopAwaitingAnswer()
-        hasPresentedConversation = false
-        focusedMenuIndex = nil
-        set(restingInputPhase)
-        touch()
-        return true
-    }
-
-    /// The chat sheet put away by its ⌄ (owner 2026-10-08: "show a down arrow to hide the
-    /// chat sheet"): the conversation is kept, a turn keeps running, and the field's ⌃
+    /// The chat sheet put away — by its ⌄ (owner 2026-10-08), or ⌫ / ↓ on the empty field
+    /// (2026-10-16): the conversation is kept, a turn keeps running, and the field's ⌃ or ↑
     /// brings it back (`showConversation`).
     @Published private(set) var isConversationHidden = false
 
@@ -802,11 +790,53 @@ final class AppChatPromptModel: ObservableObject {
         return true
     }
 
+    /// This app has a conversation that is not on screen — put away, or there from before
+    /// (a scope reached by "/" or from Global): what the field's ⌃ and ↑ bring back, always
+    /// on offer (owner 2026-10-16). Another app's messages still in the shared conversation
+    /// for a moment after a switch are not this app's.
+    var hasConversationToShow: Bool {
+        guard phase.showsInput, phase != .chat, !isGlobalScope else { return false }
+        if isAnswering { return true }
+        let owner = conversation.scopeBundleId
+        return !messages.isEmpty && (owner.isEmpty || owner == appBundleID)
+    }
+
+    /// This app has a chat from earlier visits: the sheet shows only the visit it is in
+    /// (`AppPanelChatStore.beginSession`) and the chat window keeps the rest. Read from disk
+    /// once per app.
+    var hasSavedChat: Bool {
+        // Not while a chat is on screen: there is nothing to bring back.
+        guard !isGlobalScope, !appBundleID.isEmpty, phase != .chat else { return false }
+        if let cached = savedChatCache, cached.bundleID == appBundleID { return cached.exists }
+        let exists = !GeneralChatSessionStore.load(scope: .app(bundleId: appBundleID)).isEmpty
+        savedChatCache = (appBundleID, exists)
+        return exists
+    }
+    private var savedChatCache: (bundleID: String, exists: Bool)?
+
+    /// The field's ⌃ and ↑: this visit's conversation, else the app's earlier one — both in
+    /// the sheet, never a window (owner 2026-10-16).
+    @discardableResult
+    func openChat() -> Bool {
+        showConversation() || showSavedChat()
+    }
+
+    /// The app's earlier conversation, brought into the sheet. The sheet normally holds one
+    /// visit (`AppPanelChatStore.beginSession`); this visit is made to span the whole history,
+    /// so saving the sheet keeps it whole instead of writing the older messages twice.
+    @discardableResult
+    func showSavedChat() -> Bool {
+        guard hasSavedChat,
+            let key = GeneralChatSessionStore.dockPanelKey(.app(bundleId: appBundleID))
+        else { return false }
+        AppPanelChatStore.shared.beginSession(for: key, at: .distantPast)
+        conversation.messages = AppPanelChatStore.shared.load(for: key)
+        return showConversation()
+    }
+
     @discardableResult
     func showConversation() -> Bool {
-        guard isConversationHidden, phase.showsInput, phase != .chat,
-            isAnswering || !messages.isEmpty
-        else { return false }
+        guard hasConversationToShow else { return false }
         isConversationHidden = false
         isShowingScopeCard = false
         hasPresentedConversation = true

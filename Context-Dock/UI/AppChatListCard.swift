@@ -107,16 +107,18 @@ struct AppChatListCard: View {
     /// right half of the result sheet"), the highlighted row's preview otherwise.
     @ViewBuilder
     private func previewPanel(_ preview: CornerBoardPreview) -> some View {
-        if case .appScope(let bundleID, _) = preview {
+        if let card = preview.appCard {
             let panelHeight = size.height - 2 * AppChatListMetrics.verticalPadding
                 - AppChatListMetrics.footerHeight
+            // The field's app (its chip), or an app row's own app (Global, "/").
             AppScopeCard(
                 model: model,
-                appIcon: NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                appIcon: NSWorkspace.shared.urlForApplication(withBundleIdentifier: card.bundleID)
                     .map { NSWorkspace.shared.icon(forFile: $0.path) },
                 close: { model.isShowingScopeCard = false },
                 width: CornerBoardLayout.panelWidth(board: size.width) - 10,
-                maxScrollHeight: max(panelHeight - 70, 120))
+                maxScrollHeight: max(panelHeight - 70, 120),
+                subject: card.isOwnScope ? nil : (card.bundleID, card.name))
                 .boardPanelCard()
         } else {
             CornerBoardPreviewPanel(preview: preview)

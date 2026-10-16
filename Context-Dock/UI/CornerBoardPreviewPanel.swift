@@ -36,6 +36,8 @@ struct CornerBoardPreviewPanel: View {
                 case .windowLayout(let command, let title, let appName, let bundleID):
                     WindowLayoutPreview(
                         command: command, title: title, appName: appName, bundleID: bundleID)
+                case .appJump(let bundleID, let name):
+                    AppPreview(bundleID: bundleID, name: name, stepsIn: true)
                 case .appScope(let bundleID, let name):
                     // The list draws the app's card itself (`AppChatListCard`); anywhere
                     // else the app's own preview says the same in brief.
@@ -302,6 +304,8 @@ private struct FolderListing: View {
 private struct AppPreview: View {
     let bundleID: String
     let name: String
+    /// A "/" row: its ↩ steps into the app's Context Dock rather than opening it.
+    var stepsIn = false
     @ObservedObject private var snapshots = AppWindowSnapshotService.shared
     /// Redraws on launch and quit, so ⌘⌫ turns the card into the closed app's at once.
     @State private var launchState = 0
@@ -319,7 +323,9 @@ private struct AppPreview: View {
                 status: running == nil ? Color.secondary.opacity(0.5) : .green)
             PanelDivider()
             PanelSection(title: "Actions")
-            if running != nil {
+            if stepsIn {
+                PanelRow(symbol: "return", value: "Step into its Context Dock", trailing: "↩")
+            } else if running != nil {
                 PanelRow(symbol: "return", value: "Bring forward", trailing: "↩")
                 PanelRow(symbol: "arrow.right", value: "Step into its Context Dock", trailing: "→")
             } else {
@@ -387,10 +393,15 @@ private struct CommandPreview: View {
             else { return nil }
             return NSWorkspace.shared.icon(forFile: url.path)
         }()
+        // Whether its app is open, as the app's own card says (owner 2026-10-16): a command of
+        // an app that is not running is read from its cached menus.
+        let running = bundleID.isEmpty ? nil : AppResultActions.runningApp(bundleID) != nil
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
                 icon: appIcon, title: title,
-                subtitle: appName.isEmpty ? "Menu command" : "\(appName) menu command")
+                subtitle: (appName.isEmpty ? "Menu command" : "\(appName) menu command")
+                    + (running.map { $0 ? " · Running" : " · Not running" } ?? ""),
+                status: running.map { $0 ? Color.green : Color.secondary.opacity(0.5) })
             PanelDivider()
             // Where it lives: one row per menu level, the way the menu bar leads there.
             PanelSection(title: "Menu")

@@ -1,3 +1,4 @@
+import ApplicationServices
 import Combine
 import Foundation
 import Testing
@@ -837,5 +838,64 @@ struct HiddenConversationTests {
 
         model.summon(app: "Safari", bundleID: "com.apple.Safari")
         #expect(!model.isConversationHidden)
+    }
+}
+
+/// This app's conversation, when not on screen, is always one ⌃ or ↑ away (owner 2026-10-16).
+@MainActor
+@Suite("Conversation to show")
+struct ConversationToShowTests {
+    @Test func aScopeWithHistoryOffersIt() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "No mail from Hitachi")]
+        conversation.scopeBundleId = "com.apple.mail"
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summonGlobalContext()
+        model.scopeIntoApp(name: "Mail", bundleID: "com.apple.mail")
+
+        #expect(model.hasConversationToShow)
+        #expect(model.showConversation())
+        #expect(model.phase == .chat)
+    }
+
+    @Test func anotherAppsMessagesAreNotThisOnes() {
+        let conversation = AppChatConversation()
+        conversation.messages = [AIChatMessage(role: .assistant, content: "about Safari")]
+        conversation.scopeBundleId = "com.apple.Safari"
+        let model = AppChatPromptModel(conversation: conversation)
+        model.summon(app: "Mail", bundleID: "com.apple.mail")
+
+        #expect(!model.hasConversationToShow)
+        #expect(!model.showConversation())
+    }
+}
+
+/// The app's DoraX card: the chip's in the sheet, and any app row's (owner 2026-10-16).
+@MainActor
+@Suite("App card flow")
+struct AppCardFlowTests {
+    @Test func everyAppPreviewDrawsTheCard() {
+        #expect(CornerBoardPreview.appScope(bundleID: "a", name: "A").appCard?.isOwnScope == true)
+        #expect(CornerBoardPreview.app(bundleID: "b", name: "B").appCard?.isOwnScope == false)
+        #expect(CornerBoardPreview.appJump(bundleID: "c", name: "C").appCard?.bundleID == "c")
+        #expect(CornerBoardPreview.file(URL(fileURLWithPath: "/tmp")).appCard == nil)
+    }
+
+    @Test func theChipOpensTheSheetWithItsCard() {
+        let model = AppChatPromptModel(conversation: AppChatConversation())
+        model.summon(app: "Calculator", bundleID: "com.apple.calculator")
+        model.rows = [.command(AXMenuItem(
+            title: "Copy", path: ["Edit", "Copy"], isEnabled: true,
+            element: AXUIElementCreateSystemWide(), children: []))]
+        model.set(.prompt)
+
+        model.isShowingScopeCard = true
+        model.syncListPhase()
+        #expect(model.phase == .suggesting)
+        #expect(model.boardPreview == .appScope(bundleID: "com.apple.calculator", name: "Calculator"))
+
+        model.isShowingScopeCard = false
+        model.syncListPhase()
+        #expect(model.phase == .prompt)
     }
 }

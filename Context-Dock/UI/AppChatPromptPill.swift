@@ -497,6 +497,12 @@ struct AppChatPromptPill: View {
     /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
+        // On the empty field the chat's own arrows: ↓ puts it away, ↑ brings it back.
+        if model.query.isEmpty,
+            up ? model.openChat() : model.hideConversation()
+        {
+            return .handled
+        }
         // A command's list on screen takes the arrows: the field keeps the keyboard for
         // typing, so the list cannot hear them itself (owner 2026-10-08).
         if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
@@ -1363,11 +1369,11 @@ struct AppChatPromptPill: View {
                     surfaceControls
                         .transition(.opacity)
                 }
-                // The conversation its ⌄ put away, one click back.
-                if model.isConversationHidden, model.phase != .chat,
-                    model.isAnswering || !model.messages.isEmpty
-                {
-                    Button { model.showConversation() } label: {
+                // This app's chat, when it is not on screen, one click back: this visit's in
+                // place, else its history in the chat window (owner 2026-10-16) — for any
+                // app, however the field reached it.
+                if model.hasConversationToShow || model.hasSavedChat {
+                    Button { model.openChat() } label: {
                         controlGlyph("chevron.up")
                     }
                     .buttonStyle(.plain)
@@ -1646,6 +1652,8 @@ struct AppChatPromptPill: View {
                 model.hideConversation()
             } else {
                 model.isShowingScopeCard.toggle()
+                // Open or close the sheet the card is the right half of.
+                model.syncListPhase()
             }
         }
         .help(model.phase == .chat
