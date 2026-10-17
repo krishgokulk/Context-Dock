@@ -98,6 +98,10 @@ private struct MenuRowIcon: View {
 struct AppChatListCard: View {
     @ObservedObject var model: AppChatPromptModel
     @Environment(\.sharesOneCard) private var sharesOneCard
+    /// The item at the top of the list as it scrolls, and when the arrows last moved the
+    /// highlight — so a hand scroll can keep the highlight in view without fighting the keys.
+    @State private var topItemID: String?
+    @State private var lastKeyMove = Date.distantPast
 
     /// The board: the list, and the highlighted row's preview beside it in the same card
     /// (#191) — the same number the window reserves.
@@ -203,14 +207,29 @@ struct AppChatListCard: View {
                         // preview caught the rows too, and at the list's end — nothing left to
                         // scroll — two rows sat half-highlighted (owner 2026-10-14).
                         .transaction { $0.animation = nil }
+                        .scrollTargetLayout()
+                    }
+                    // A hand scroll settles on whole rows, as the arrows do — never half a
+                    // row at an edge (owner 2026-10-17).
+                    .scrollTargetBehavior(.viewAligned)
+                    .scrollPosition(id: $topItemID, anchor: .top)
+                    // And the highlight comes with it: scrolled out of view, it moves to the
+                    // nearest row in view, so the foot never names a row nobody can see.
+                    .onChange(of: topItemID) { _, top in
+                        guard Date().timeIntervalSince(lastKeyMove) > 0.4 else { return }
+                        model.keepFocusInView(topItemID: top, slots: visibleSlots)
                     }
                     // ↑ opens the list already on its last row: no change to follow then,
                     // so the list goes to it as it appears.
                     .onAppear {
                         guard let row = model.focusedRow else { return }
-                        DispatchQueue.main.async { proxy.scrollTo(row.id) }
+                        // After the scroll position settles on the list's top, or it wins.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                            proxy.scrollTo(row.id, anchor: .bottom)
+                        }
                     }
                     .onChange(of: model.focusedMenuIndex) { _, _ in
+                        lastKeyMove = Date()
                         // The top row's section header comes into view with it.
                         if model.focusedMenuIndex == 0, let first = model.rows.first {
                             proxy.scrollTo(first.id, anchor: .top)
@@ -418,6 +437,15 @@ struct AppChatListCard: View {
             // A row's height: the list keeps one grid, so scrolling never leaves half a row.
             .frame(height: AppChatListMetrics.rowHeight, alignment: .bottomLeading)
             .accessibilityAddTraits(.isHeader)
+    }
+
+    /// How many row-high slots the list shows: the card less its padding, foot and the count
+    /// line when there are no sections.
+    private var visibleSlots: Int {
+        let height = size.height - 2 * AppChatListMetrics.verticalPadding
+            - AppChatListMetrics.footerHeight
+            - (model.globalSectionHeaders.isEmpty ? AppChatListMetrics.headerHeight : 0)
+        return max(Int(height / AppChatListMetrics.rowHeight), 1)
     }
 
     private var headerText: String {
@@ -709,16 +737,36 @@ struct AppChatListCard: View {
     }
 
     private func dockRow(_ pill: DockPill, isFocused: Bool) -> some View {
-        HStack(spacing: 10) {
-            CornerResultIcon(url: pill.resolvedURL, fallback: pill.menuItemImage, symbol: pill.icon)
-                .frame(width: 28, height: 28)
+        // "Show N more" is a control, not a result: a small chevron, quieter text, no status
+        // (owner 2026-10-17).
+        let isShowMore = pill.rankingKind == GlobalResultSection.showMoreKind
+        let subtitle = pill.menuContext ?? pill.badge ?? pill.sourceAppName
+        return HStack(spacing: 10) {
+            Group {
+                if isShowMore {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                } else {
+                    CornerResultIcon(url: pill.resolvedURL, fallback: pill.menuItemImage, symbol: pill.icon)
+                }
+            }
+            .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 1) {
-                Text(pill.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                Text(pill.menuContext ?? pill.badge ?? pill.sourceAppName)
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                Text(pill.name)
+                    .font(.system(size: isShowMore ? 12 : 13, weight: .medium))
+                    .foregroundStyle(isShowMore ? .secondary : .primary)
+                    .lineLimit(1)
+                // A row with no second line sits centred, not over an empty one.
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
             }
             Spacer(minLength: 4)
-            if isFocused {
+            if isShowMore {
+                EmptyView()
+            } else if isFocused {
                 Text(pill.sourceAppName).font(.system(size: 10)).foregroundStyle(.secondary)
                 Image(systemName: "return").font(.system(size: 10)).foregroundStyle(.secondary)
             } else if model.isGlobalScope {

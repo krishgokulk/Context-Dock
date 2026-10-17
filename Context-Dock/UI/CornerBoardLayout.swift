@@ -38,6 +38,10 @@ enum CornerBoardPreview: Hashable {
     /// An app a "/" jump steps into: whether it runs, and that ↩ steps into it (owner
     /// 2026-10-16: the jump list showed no status).
     case appJump(bundleID: String, name: String)
+    /// A row with nothing richer to show — a fallback, "Show N more", an adapter action: what
+    /// it is and what ↩ does, so the panel never comes and goes as the arrows move (owner
+    /// 2026-10-17).
+    case rowSummary(title: String, foot: BoardFoot)
 }
 
 enum CornerBoardLayout {
@@ -284,9 +288,13 @@ extension AppChatPromptModel {
         if isShowingScopeCard, !isGlobalScope, focusedRow == nil {
             return .appScope(bundleID: appBundleID, name: appName)
         }
+        // The row Return takes — the highlighted one, else the top one — as the foot reads
+        // it: the panel followed only an arrowed row, so it appeared and vanished.
+        guard let row = showsAskAIRow ? focusedRow : (focusedRow ?? rows.first) else { return nil }
         return CornerBoardLayout.preview(
-            for: focusedRow, appName: appName, appBundleID: appBundleID,
+            for: row, appName: appName, appBundleID: appBundleID,
             cliCommand: cliCommand, lookup: searchDocumentLookup)
+            ?? .rowSummary(title: row.title, foot: foot(for: row))
     }
 
     /// The list card and its panel together: the size the window reserves for the board.

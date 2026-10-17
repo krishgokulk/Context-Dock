@@ -51,7 +51,8 @@ enum GlobalResultSection {
         case .command: return menuCommands
         case .file: return files
         case .web: return web
-        case .cliTool, .cliSubcommand, .systemCommand, .windowLayout, nil: return commands
+        case .cliTool, .cliSubcommand, .systemCommand, .windowLayout, .rowSummary, nil:
+            return commands
         }
     }
 
@@ -71,7 +72,10 @@ enum GlobalResultSection {
 
     /// The rows gathered by section: each section where its first (best) row stood, its rows
     /// in their own order.
-    static func grouped(_ rows: [AppChatRow]) -> [AppChatRow] {
+    /// Within a section, the rows of the app the words name come first: "tailscale" put
+    /// Obsidian's and Preview's "Tailscale" windows above Tailscale's own "About Tailscale"
+    /// (owner 2026-10-17). Otherwise each row keeps its place.
+    static func grouped(_ rows: [AppChatRow], query: String = "") -> [AppChatRow] {
         var order: [String] = []
         var bySection: [String: [AppChatRow]] = [:]
         for row in rows {
@@ -79,7 +83,27 @@ enum GlobalResultSection {
             if bySection[title] == nil { order.append(title) }
             bySection[title, default: []].append(row)
         }
-        return order.flatMap { bySection[$0] ?? [] }
+        let typed = query.lowercased()
+        func isNamed(_ row: AppChatRow) -> Bool {
+            let app = appName(of: row).lowercased()
+            return !app.isEmpty && typed.contains(app)
+        }
+        return order.flatMap { section -> [AppChatRow] in
+            let rows = bySection[section] ?? []
+            return rows.filter(isNamed) + rows.filter { !isNamed($0) }
+        }
+    }
+
+    /// The app a row belongs to, by name; empty when it belongs to none.
+    static func appName(of row: AppChatRow) -> String {
+        switch row {
+        case .dock(let pill): return pill.sourceAppName
+        case .command(let item): return item.sourceAppName
+        case .global(let doc):
+            if case .command(_, _, let appName, _) = CornerBoardLayout.preview(for: doc) { return appName }
+            return ""
+        default: return ""
+        }
     }
 
     /// The header to draw above each row that starts a section, by row index. None when any
