@@ -388,6 +388,17 @@ private struct CommandPreview: View {
     let appName: String
     let bundleID: String
 
+    /// Live when the app runs and DoraX may read its menus; saved otherwise, with the reason.
+    private var menuSource: (symbol: String, label: String) {
+        guard !bundleID.isEmpty, AppResultActions.runningApp(bundleID) != nil else {
+            return ("tray.full", "Saved menu · \(appName.isEmpty ? "the app" : appName) isn't open")
+        }
+        guard AXIsProcessTrusted() else {
+            return ("lock", "Saved menu · Accessibility is off for DoraX")
+        }
+        return ("dot.radiowaves.left.and.right", "Live menu")
+    }
+
     var body: some View {
         let appIcon: NSImage? = {
             guard !bundleID.isEmpty,
@@ -412,7 +423,10 @@ private struct CommandPreview: View {
                     symbol: index == path.count - 1 ? "command" : "chevron.right",
                     value: step)
             }
+            // Where the command was read from (owner 2026-10-17: "show live menu status"):
+            // the app's own menus right now, or the copy DoraX saved, and why.
             PanelDivider()
+            PanelRow(symbol: menuSource.symbol, value: menuSource.label)
             PanelRow(symbol: "return", value: "Run it", trailing: "↩")
         }
     }

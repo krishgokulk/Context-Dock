@@ -71,7 +71,9 @@ enum GlobalQuery {
     /// The refined rows as two lists: what answers the query, and the destructive rows
     /// nobody asked for — which Global lists after its fallbacks, so Return never offers to
     /// clear or delete when nothing safe matched (owner 2026-10-17).
-    static func split(_ rows: [AppChatRow], query: String) -> (safe: [AppChatRow], risky: [AppChatRow]) {
+    static func split(
+        _ rows: [AppChatRow], query: String, dropsUnanswered: Bool = true
+    ) -> (safe: [AppChatRow], risky: [AppChatRow]) {
         let appNames = Set(rows.map(GlobalResultSection.appName(of:)).filter { !$0.isEmpty }
             + rows.compactMap { if case .app(let entry) = $0 { return entry.name } else { return nil } }
             + rows.compactMap { row -> String? in
@@ -86,7 +88,7 @@ enum GlobalQuery {
             let hay = haystack(of: row)
             return asked.contains { word in hay.contains { $0.hasPrefix(word) || word.hasPrefix($0) && $0.count >= 4 } }
         }
-        var kept = asked.isEmpty ? rows : rows.filter(answers)
+        var kept = asked.isEmpty || !dropsUnanswered ? rows : rows.filter(answers)
         if !kept.contains(where: { GlobalResultSection.title(for: $0) != GlobalResultSection.applications }) {
             kept = rows
         }

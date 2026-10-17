@@ -142,3 +142,21 @@ struct NamedAppCommandTests {
         #expect(GlobalQuery.namedAppCommands([doc], query: "safari history", besides: [.global(doc)]).isEmpty)
     }
 }
+
+/// In an app's own list a destructive row moves down, nothing is dropped (owner 2026-10-17).
+@Suite("App scope: destructive rows last")
+struct AppScopeDestructiveTests {
+    private func menu(_ title: String) -> AppChatRow {
+        var pill = DockPill(id: title, name: title, icon: "app", badge: nil, execute: {})
+        pill.rankingKind = "menu"
+        pill.sourceAppName = "Safari"
+        return .dock(pill)
+    }
+
+    @Test func clearHistoryFollowsShowHistoryAndFuzzyRowsStay() {
+        let rows = [menu("Clear History…"), menu("Show Personal History"), menu("New Session")]
+        let (safe, risky) = GlobalQuery.split(rows, query: "history", dropsUnanswered: false)
+        #expect(safe.map(\.title) == ["Show Personal History", "New Session"])
+        #expect(risky.map(\.title) == ["Clear History…"])
+    }
+}
