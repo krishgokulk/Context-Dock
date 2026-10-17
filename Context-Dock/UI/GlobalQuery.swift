@@ -96,4 +96,46 @@ enum GlobalQuery {
         }
         return (kept.filter { !isUnaskedDestructive($0) }, kept.filter(isUnaskedDestructive))
     }
+
+    static let topHitSection = "Top Hit"
+
+    /// The one row that plainly answers the query (S2): an app's own command — not a page,
+    /// not a file — whose app the words name and whose title holds every asked word, never a
+    /// destructive one nobody asked for. "safari history" → Show Personal History.
+    static func topHit(_ rows: [AppChatRow], query: String) -> AppChatRow? {
+        let typed = Set(words(query))
+        let appNames = Set(rows.map(GlobalResultSection.appName(of:)).filter { !$0.isEmpty })
+        let asked = askedWords(in: query, appNames: appNames)
+        guard !asked.isEmpty else { return nil }
+        return rows.first { row in
+            let app = words(GlobalResultSection.appName(of: row))
+            guard !app.isEmpty, app.allSatisfy(typed.contains) else { return false }
+            guard [GlobalResultSection.menuCommands, GlobalResultSection.commands]
+                .contains(GlobalResultSection.title(for: row) ?? "")
+            else { return false }
+            if let verb = destructiveVerb(of: row), !typed.contains(verb) { return false }
+            let title = words(row.title)
+            return asked.allSatisfy { word in title.contains { $0.hasPrefix(word) } }
+        }
+    }
+
+    /// A named app's menu commands that hold an asked word, from the index's documents, that
+    /// the rows do not already have.
+    static func namedAppCommands(
+        _ documents: [GlobalSearchService.SearchDocument], query: String, besides rows: [AppChatRow]
+    ) -> [AppChatRow] {
+        let typed = Set(words(query))
+        let have = Set(rows.map { "\(GlobalResultSection.appName(of: $0).lowercased())|\($0.title.lowercased())" })
+        return documents.compactMap { doc -> AppChatRow? in
+            guard case .cachedMenu(_, let appName, _, _, _) = doc.action else { return nil }
+            let app = words(appName)
+            guard !app.isEmpty, app.allSatisfy(typed.contains) else { return nil }
+            let asked = askedWords(in: query, appNames: [appName])
+            let title = words(doc.title)
+            guard !asked.isEmpty, asked.contains(where: { word in title.contains { $0.hasPrefix(word) } })
+            else { return nil }
+            guard !have.contains("\(appName.lowercased())|\(doc.title.lowercased())") else { return nil }
+            return .global(doc)
+        }
+    }
 }

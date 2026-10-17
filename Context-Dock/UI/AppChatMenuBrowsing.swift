@@ -151,9 +151,21 @@ extension AppChatPromptModel {
             // themselves last (G3).
             // Read against what is asked for first (S1), then in sections; destructive rows
             // nobody asked for come last, after the fallbacks.
+            // The engine can read "safari history" as the browser's pages alone; the named
+            // app's own commands for the asked words come too (S2), so its command can lead.
+            rows += GlobalQuery.namedAppCommands(
+                GlobalContextRow.documents(for: typed, limit: 48), query: typed, besides: rows)
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
+            var ordered = GlobalResultSection.grouped(safe, query: typed)
+            // The one row that plainly answers the query leads, under "Top Hit" (S2).
+            let topHit = GlobalQuery.topHit(ordered, query: typed)
+            globalTopHitID = topHit?.id
+            if let topHit {
+                ordered.removeAll { $0.id == topHit.id }
+                ordered.insert(topHit, at: 0)
+            }
             rows = GlobalResultSection.capped(
-                GlobalResultSection.grouped(safe, query: typed),
+                ordered,
                 expanded: expandedGlobalSections
             ) { section, hidden in
                 var pill = DockPill(
@@ -1450,7 +1462,17 @@ extension AppChatPromptModel {
     /// on an empty card.
     /// Global's section headers by the row they stand over (#258 G1); empty elsewhere.
     var globalSectionHeaders: [Int: String] {
-        if isGlobalScope { return GlobalResultSection.headers(for: rows) }
+        if isGlobalScope {
+            guard let top = globalTopHitID, rows.first?.id == top else {
+                return GlobalResultSection.headers(for: rows)
+            }
+            // The Top Hit stands alone; the rest keep their sections, the first one included.
+            var headers = [0: GlobalQuery.topHitSection]
+            for (index, title) in GlobalResultSection.headers(for: Array(rows.dropFirst())) {
+                headers[index + 1] = title
+            }
+            return headers
+        }
         // An app's Context Dock: headers once something is typed and the answer has more
         // than one kind — one kind is the whole answer, and the opening list keeps its
         // summary line (#258 G4).

@@ -263,6 +263,8 @@ final class AppChatPromptModel: ObservableObject {
     /// Global sections opened past their first rows with "Show N more"; a new query closes
     /// them again (#258 G4).
     var expandedGlobalSections: Set<String> = []
+    /// The row listed first under "Top Hit" (S2), when one plainly answers the query.
+    var globalTopHitID: String?
     /// Where the front folder is read from. A test swaps it; the app asks Finder.
     var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
     /// Whether a Finder window is on screen (`finderShowsDesktopOnly`). A test swaps it.
