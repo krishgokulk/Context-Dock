@@ -1804,6 +1804,15 @@ extension AppChatPromptModel {
     /// The name the scope goes by, in one place so the chip and the check cannot disagree.
     static let globalScopeName = "Global Context"
 
+    /// The app a menu command of a closed app opens before it runs: the scope's own, unless
+    /// the command is a quit — there is nothing running to quit.
+    static func launchFirst(_ bundleID: String, path: [String]) -> String? {
+        guard !bundleID.isEmpty, !bundleID.hasPrefix("cli://"),
+            !MenuExecutionCoordinator.isQuitMenuPath(path)
+        else { return nil }
+        return bundleID
+    }
+
     func runMenuItem(_ item: AXMenuItem) {
         // In Global Context the row carries its own app: the scope has no single one, and
         // sending a Safari command to whatever happens to be frontmost is how a global list
@@ -1813,10 +1822,14 @@ extension AppChatPromptModel {
                 ? $0.processIdentifier == item.sourcePID
                 : $0.bundleIdentifier == appBundleID
         }
-        guard let app = owner, !app.isTerminated else { return }
+        let running = owner.flatMap { $0.isTerminated ? nil : $0 }
+        // Not running: its cached menus listed the command, so the app is opened first and
+        // the command run once its menu bar is up (owner 2026-10-17). Nothing to quit, though.
+        let launchBundleID = running == nil ? Self.launchFirst(appBundleID, path: item.path) : nil
+        guard running != nil || launchBundleID != nil else { return }
 
-        let request = MenuExecutionCoordinator.DockMenuActionRequest(
-            sourcePID: app.processIdentifier,
+        var request = MenuExecutionCoordinator.DockMenuActionRequest(
+            sourcePID: running?.processIdentifier ?? 0,
             path: item.path,
             shortcutChar: item.shortcutChar,
             shortcutModifiers: item.shortcutModifiers,
@@ -1824,6 +1837,7 @@ extension AppChatPromptModel {
             isGlobalContextActive: false,
             hasActiveDockContextSelection: false,
             keepsDockFloating: true)
+        request.launchBundleId = launchBundleID
 
         MenuExecutionCoordinator.shared.executeDockMenuAction(
             request: request,
