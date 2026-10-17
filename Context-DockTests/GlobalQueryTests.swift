@@ -82,3 +82,63 @@ struct GlobalRowKindTests {
         if case .web = CornerBoardLayout.preview(for: .dock(pill)) {} else { Issue.record("not a web page") }
     }
 }
+
+/// S2: the row that plainly answers the query leads, under "Top Hit".
+@Suite("Global query: Top Hit")
+struct GlobalTopHitTests {
+    private func menu(_ title: String, app: String) -> AppChatRow {
+        var pill = DockPill(id: "\(app)-\(title)", name: title, icon: "app", badge: nil, execute: {})
+        pill.rankingKind = "menu"
+        pill.sourceAppName = app
+        return .dock(pill)
+    }
+
+    @Test func theNamedAppsCommandWithEveryAskedWordIsTheTopHit() {
+        let rows = [menu("Clear History…", app: "Safari"), menu("Show Personal History", app: "Safari"),
+                    menu("History", app: "Obsidian")]
+        #expect(GlobalQuery.topHit(rows, query: "safari history")?.title == "Show Personal History")
+    }
+
+    @Test func aQuitIsTheTopHitWhenItWasAskedFor() {
+        let rows = [menu("About Tailscale", app: "Tailscale"), menu("Quit Tailscale", app: "Tailscale")]
+        #expect(GlobalQuery.topHit(rows, query: "tailscale quit")?.title == "Quit Tailscale")
+    }
+
+    @Test func noTopHitWithoutAnAppOrAnAskedWord() {
+        let rows = [menu("Show Personal History", app: "Safari")]
+        #expect(GlobalQuery.topHit(rows, query: "safari") == nil)
+        #expect(GlobalQuery.topHit(rows, query: "history") == nil)
+    }
+
+    @Test func aBrowsersHistoryCommandsAreStable() {
+        #expect(BrowserStableMenuCommand.isStable(title: "Show Personal History"))
+        #expect(!BrowserStableMenuCommand.isStable(title: "New session - Claude"))
+    }
+}
+
+/// S2: a named app's own commands join a list the engine filled with its pages.
+@Suite("Global query: the named app's commands")
+struct NamedAppCommandTests {
+    private func menuDoc(_ title: String, app: String, path: [String]) -> GlobalSearchService.SearchDocument {
+        GlobalSearchService.SearchDocument(
+            id: "menu:\(app):\(title)", title: title, subtitle: app, bundleId: "b.\(app)",
+            filePath: nil, normalizedTitle: title.lowercased(), titleWords: [title.lowercased()],
+            acronym: "x", aliases: [], aliasWords: [], sourceKind: .runningMenu,
+            rankingBoost: 0, icon: nil, usageTrackingKey: title,
+            action: .cachedMenu(bundleId: "b.\(app)", appName: app, path: path,
+                                shortcutChar: "y", shortcutModifiers: 0))
+    }
+
+    @Test func theNamedAppsCommandsForTheAskedWordJoin() {
+        let docs = [menuDoc("Show Personal History", app: "Safari", path: ["History", "Show Personal History"]),
+                    menuDoc("History", app: "Obsidian", path: ["View", "History"]),
+                    menuDoc("New Tab", app: "Safari", path: ["File", "New Tab"])]
+        let added = GlobalQuery.namedAppCommands(docs, query: "safari history", besides: [])
+        #expect(added.map(\.title) == ["Show Personal History"])
+    }
+
+    @Test func aCommandAlreadyListedIsNotAddedTwice() {
+        let doc = menuDoc("Show Personal History", app: "Safari", path: ["History", "Show Personal History"])
+        #expect(GlobalQuery.namedAppCommands([doc], query: "safari history", besides: [.global(doc)]).isEmpty)
+    }
+}
