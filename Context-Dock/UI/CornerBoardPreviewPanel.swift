@@ -571,11 +571,24 @@ private struct WebPagePreview: View {
     let domain: String
     let browserName: String
 
+    /// Whether the page is open right now in one of Safari's tabs (owner 2026-10-17: "status,
+    /// if the page is open"). Only Safari's tabs are known.
+    private var isOpenInTab: Bool {
+        let address = url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return SafariTabManager.shared.cachedTabs(maxAge: .infinity).contains {
+            $0.url.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == address
+        }
+    }
+
     var body: some View {
+        let open = isOpenInTab
+        let host = domain.isEmpty ? (url.host ?? url.absoluteString) : domain
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
                 icon: NSImage(systemSymbolName: "globe", accessibilityDescription: nil),
-                title: title, subtitle: domain.isEmpty ? (url.host ?? url.absoluteString) : domain)
+                title: title,
+                subtitle: open ? "\(host) · Open in a Safari tab" : "\(host) · Not open",
+                status: open ? .green : Color.secondary.opacity(0.5))
             // The page itself, scaled down, loaded only once the row has been held a moment.
             WebPageThumbnail(url: url)
                 .frame(height: 170)
