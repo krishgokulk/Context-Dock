@@ -99,8 +99,12 @@ final class CornerActionFeedback: ObservableObject {
     /// it quits — as a glow around it, not an icon at its end (owner 2026-10-16).
     var appGlow: Color? {
         guard let current else { return nil }
+        // The launch symbol is a launch whatever else the result says: Global's "Opened X"
+        // for an app found by its path names no bundle, and showed as an icon at the
+        // dock's end instead (owner 2026-10-17).
+        let isLaunch = current.icon == DockActionFeedback.launchSymbol
         let namesApp = !(current.bundleID ?? "").isEmpty || !(current.subject ?? "").isEmpty
-        guard namesApp else { return nil }
+        guard namesApp || isLaunch else { return nil }
         if current.phase == .progress {
             // `DockActionFeedback.appOpening`'s symbol: the one progress that is a launch.
             return current.icon == DockActionFeedback.launchSymbol ? .green : nil

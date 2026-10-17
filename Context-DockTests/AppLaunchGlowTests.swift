@@ -41,4 +41,26 @@ struct AppLaunchGlowTests {
         #expect(copied.appGlow == nil)
         #expect(copied.glyph != nil)
     }
+
+    /// Global's "Opened X" for an app found by its path names no bundle — still a launch.
+    @Test func anOpenedResultWithoutItsBundleStillGlows() {
+        let opened = feedback("Opened Tailscale", icon: DockActionFeedback.launchSymbol, phase: .success, app: nil)
+        #expect(opened.appGlow == .green)
+        #expect(opened.glyph == nil)
+    }
+}
+
+/// ↩ on a closed app's menu command opens the app, then runs it (owner 2026-10-17).
+@MainActor
+@Suite("Run a closed app's command")
+struct LaunchFirstTests {
+    @Test func aClosedAppsCommandOpensItFirst() {
+        #expect(AppChatPromptModel.launchFirst("com.apple.mail", path: ["Mailbox", "New Mailbox…"]) == "com.apple.mail")
+    }
+
+    @Test func aQuitOrAToolOrNothingLaunchesNothing() {
+        #expect(AppChatPromptModel.launchFirst("com.apple.mail", path: ["Mail", "Quit Mail"]) == nil)
+        #expect(AppChatPromptModel.launchFirst("cli://brew", path: ["update"]) == nil)
+        #expect(AppChatPromptModel.launchFirst("", path: ["File", "New"]) == nil)
+    }
 }
