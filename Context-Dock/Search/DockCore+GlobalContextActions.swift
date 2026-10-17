@@ -3327,6 +3327,7 @@ extension DockCore {
         pill.sourceBundleId = bundleID
         pill.sourceAppName = descriptor.appName
         pill.menuContext = menuContextLabel(from: descriptor.path)
+        pill.menuPath = descriptor.path
         pill.rankingKind = "menu"
         pill.rankingScore = descriptor.rankingScore
         pill.trackingIdentifier =

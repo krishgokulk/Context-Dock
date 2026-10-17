@@ -90,6 +90,20 @@ enum CornerBoardLayout {
             if let id = pill.searchDocumentID, let doc = lookup(id) {
                 return preview(for: doc)
             }
+            // The engine's menu and history rows carry no search document: what they are is
+            // on the row itself (owner 2026-10-17: they read as "Command").
+            if let url = pill.resolvedURL {
+                if url.isFileURL { return .file(url) }
+                return .web(
+                    url: url, title: pill.name, domain: url.host ?? "",
+                    browserName: pill.sourceAppName)
+            }
+            if !pill.menuPath.isEmpty {
+                return .command(
+                    title: pill.name, path: pill.menuPath,
+                    appName: pill.sourceAppName.isEmpty ? appName : pill.sourceAppName,
+                    bundleID: pill.sourceBundleId.isEmpty ? appBundleID : pill.sourceBundleId)
+            }
             return nil
         case .command(let item):
             return .command(
