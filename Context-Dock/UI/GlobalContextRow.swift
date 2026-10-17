@@ -41,6 +41,11 @@ enum GlobalContextRow {
         // written underneath it; the row already answers "what is this" with the icon.
         if case .launchPath = doc.action { return "Application" }
         if case .launchBundleId = doc.action { return "Application" }
+        // A tool's subtitle is its scope id, "cli://tailscale" — an internal name, never the
+        // user's words (owner 2026-10-17). Where it lives says more, when it is known.
+        if case .cliScope = doc.action {
+            return doc.filePath.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Command-line tool"
+        }
         if !doc.subtitle.isEmpty { return doc.subtitle }
         switch doc.action {
         case .activatePID: return "Running app"

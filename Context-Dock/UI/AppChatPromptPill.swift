@@ -1337,19 +1337,30 @@ struct AppChatPromptPill: View {
             // at — says what is about to open. Whichever row the arrows landed on, or the
             // top one otherwise, same as the row hint and the ghost text agree with.
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                let icon = model.leadingResultIcon
+                !model.rows.isEmpty
             {
                 // At the field's end, not against the last typed letter (owner 2026-10-08:
                 // "while typing show app icons at the end of the search input pill").
                 Spacer(minLength: 8)
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 22, height: 22)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                    .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
+                Group {
+                    if let icon = model.leadingResultIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    } else {
+                        // A row with no image of its own (a fallback, "Show N more") keeps
+                        // the icon's place with its symbol, as the foot does — the icon came
+                        // and went as the arrows moved (owner 2026-10-17).
+                        Image(systemName: model.boardFoot.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
             }
 
             // Attaching and sending live in the field, always drawn, the way the dock's own

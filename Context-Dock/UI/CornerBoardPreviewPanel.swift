@@ -36,6 +36,8 @@ struct CornerBoardPreviewPanel: View {
                 case .windowLayout(let command, let title, let appName, let bundleID):
                     WindowLayoutPreview(
                         command: command, title: title, appName: appName, bundleID: bundleID)
+                case .rowSummary(let title, let foot):
+                    RowSummaryPreview(title: title, foot: foot)
                 case .appJump(let bundleID, let name):
                     AppPreview(bundleID: bundleID, name: name, stepsIn: true)
                 case .appScope(let bundleID, let name):
@@ -768,5 +770,20 @@ private struct WindowLayoutPreview: View {
                         Color.accentColor.opacity(index == 0 ? 0.9 : 0.5),
                         lineWidth: picture == nil ? 0 : 1.5))
             .animation(.easeOut(duration: 0.2), value: picture != nil)
+    }
+}
+
+/// A row with nothing richer to preview: its icon, its name, its kind, and what ↩ does — the
+/// foot's words, so the panel and the foot agree.
+private struct RowSummaryPreview: View {
+    let title: String
+    let foot: BoardFoot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PanelHeader(icon: foot.icon, title: title, subtitle: foot.title)
+            PanelDivider()
+            PanelRow(symbol: "return", value: foot.verb, trailing: "↩")
+        }
     }
 }

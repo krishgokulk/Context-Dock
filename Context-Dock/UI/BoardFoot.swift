@@ -8,7 +8,7 @@
 
 import AppKit
 
-struct BoardFoot: Equatable {
+struct BoardFoot: Hashable {
     /// What the row is: "Calculator · Menu", "Application", "Folder".
     var title: String
     /// What Return does: "Run", "Open", "Quit", "Ask AI".
@@ -100,6 +100,8 @@ struct BoardFoot: Equatable {
     /// The foot for what the preview panel shows, so the two say the same thing.
     private static func foot(for preview: CornerBoardPreview?, fallbackTitle: String) -> BoardFoot {
         switch preview {
+        case .rowSummary(_, let foot):
+            return foot
         case .file(let url):
             return fileFoot(url)
         case .app(let bundleID, _), .appScope(let bundleID, _), .appJump(let bundleID, _):

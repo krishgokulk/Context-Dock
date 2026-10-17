@@ -150,7 +150,7 @@ extension AppChatPromptModel {
             // In sections, best kind first (#258 G1), and what to do with the words
             // themselves last (G3).
             rows = GlobalResultSection.capped(
-                GlobalResultSection.grouped(rows), expanded: expandedGlobalSections
+                GlobalResultSection.grouped(rows, query: typed), expanded: expandedGlobalSections
             ) { section, hidden in
                 var pill = DockPill(
                     id: "show-more-\(section)", name: "Show \(hidden) more",
@@ -307,14 +307,17 @@ extension AppChatPromptModel {
         }
     }
 
-    func localGlobalQuitRows(for query: String) -> [DockPill]? {
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard normalized == "quit" || normalized.hasPrefix("quit ") else { return nil }
+    /// The app part of a quit: "quit", "quit mail" — or the app first, "mail quit", which
+    /// found nothing at all (owner 2026-10-17). Nil when the words are not a quit.
+    nonisolated static func quitAppQuery(_ query: String) -> String? {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.first == "quit" { return words.dropFirst().joined(separator: " ") }
+        if words.count > 1, words.last == "quit" { return words.dropLast().joined(separator: " ") }
+        return nil
+    }
 
-        let appQuery = normalized
-            .dropFirst("quit".count)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+    func localGlobalQuitRows(for query: String) -> [DockPill]? {
+        guard let appQuery = Self.quitAppQuery(query) else { return nil }
         let frontmostID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         var seen = Set<String>()
         let apps = NSWorkspace.shared.runningApplications.compactMap { app -> NSRunningApplication? in
@@ -835,6 +838,24 @@ extension AppChatPromptModel {
     /// reasoning, and no way for the two surfaces to agree. This hands the question to the
     /// same pipeline with the same `cli://` scope, so the corner behaves like the dock
     /// because it *is* the dock's behaviour.
+    /// A hand scroll took the highlighted row out of view: it moves to the nearest row in
+    /// view (owner 2026-10-17). `slots` is how many row-high slots show; a section header
+    /// takes one above its row.
+    func keepFocusInView(topItemID: String?, slots: Int) {
+        guard let focused = focusedMenuIndex, let topItemID,
+            let top = rows.firstIndex(where: { $0.id == topItemID })
+        else { return }
+        let headers = globalSectionHeaders
+        var used = 0
+        var last = top
+        for index in top..<rows.count {
+            used += headers[index] == nil ? 1 : 2
+            if used > slots { break }
+            last = index
+        }
+        if focused < top { focusedMenuIndex = top } else if focused > last { focusedMenuIndex = last }
+    }
+
     /// "Show N more": the section opens in place, the field keeps its words, and the
     /// highlight lands on the first row that was hidden — where "Show N more" stood.
     func showAllOfSection(_ section: String, at index: Int?) {
