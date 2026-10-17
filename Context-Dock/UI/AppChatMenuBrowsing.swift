@@ -149,8 +149,12 @@ extension AppChatPromptModel {
             }
             // In sections, best kind first (#258 G1), and what to do with the words
             // themselves last (G3).
+            // Read against what is asked for first (S1), then in sections; destructive rows
+            // nobody asked for come last, after the fallbacks.
+            let (safe, risky) = GlobalQuery.split(rows, query: typed)
             rows = GlobalResultSection.capped(
-                GlobalResultSection.grouped(rows, query: typed), expanded: expandedGlobalSections
+                GlobalResultSection.grouped(safe, query: typed),
+                expanded: expandedGlobalSections
             ) { section, hidden in
                 var pill = DockPill(
                     id: "show-more-\(section)", name: "Show \(hidden) more",
@@ -162,6 +166,7 @@ extension AppChatPromptModel {
                 + GlobalFallbacks.rows(for: typed) { [weak self] question in
                     self?.askFromGlobal(question)
                 }.map(AppChatRow.dock)
+                + GlobalResultSection.grouped(risky, query: typed)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
@@ -1400,7 +1405,9 @@ extension AppChatPromptModel {
         let row = focusedRow ?? rows.first
         switch row {
         case .dock(let pill):
+            // A menu command with no image of its own shows its app, as the foot does — not ⌘.
             return pill.resolvedURL.flatMap { FaviconStore.shared.icon(for: $0) } ?? pill.menuItemImage
+                ?? boardFoot.icon
         case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
         case .global(let doc): return doc.icon
         case .app(let entry): return entry.icon
@@ -1454,9 +1461,19 @@ extension AppChatPromptModel {
     }
 
     var listRowCount: Int {
-        // Global's section headers take a row's slot each.
-        let headers = globalSectionHeaders.count
-        if headers > 0 { return min(rows.count + headers, Self.menuRowLimit) }
+        // Global's section headers take a row's slot each — and the sheet never ends on a
+        // header with its rows below the edge (owner 2026-10-17: "Fallbacks" stood alone).
+        let headers = globalSectionHeaders
+        if !headers.isEmpty {
+            var slots: [Bool] = []  // true: a header
+            for index in rows.indices {
+                if headers[index] != nil { slots.append(true) }
+                slots.append(false)
+            }
+            var count = min(slots.count, Self.menuRowLimit)
+            if count > 1, slots[count - 1] { count -= 1 }
+            return count
+        }
         // A scope stepped into from Global answers with what was asked for — files in
         // Finder, a window elsewhere. Falling back to that app's menu list there filled the
         // board with "About Finder" and "AirDrop", which is not what the user came for.
