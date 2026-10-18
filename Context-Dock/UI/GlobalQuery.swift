@@ -44,6 +44,13 @@ enum GlobalQuery {
         switch row {
         case .dock(let pill):
             text += [pill.menuContext ?? "", pill.badge ?? ""] + pill.menuPath
+            // A clip, note or notification answers the name of where it was kept (S4).
+            switch pill.rankingKind {
+            case GlobalSources.clipKind: text.append("clipboard clip clips copied copy")
+            case GlobalSources.noteKind: text.append("note notes quick")
+            case GlobalSources.notificationKind: text.append("notification notifications alert alerts")
+            default: break
+            }
             if pill.rankingKind == "recentURL" || pill.resolvedURL.map({ !$0.isFileURL }) == true {
                 let label = (pill.menuContext ?? "").lowercased()
                 text.append(label.contains("bookmark") ? "bookmark bookmarks" : "history page site visited")

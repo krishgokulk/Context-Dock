@@ -165,6 +165,8 @@ extension AppChatPromptModel {
                 GlobalContextRow.documents(for: typed, limit: 48), query: typed, besides: rows)
             // Safari's open tabs that answer the words lead, in a section of their own.
             rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
+            // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
+            rows += globalSourceRows(for: typed)
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed)
             // The one row that plainly answers the query leads, under "Top Hit" (S2).
@@ -297,6 +299,40 @@ extension AppChatPromptModel {
         else { return [] }
         refreshTabCache {}
         return GlobalQuery.openTabRows(tabSource(), query: typed)
+    }
+
+    /// What DoraX keeps itself that answers the words (S4): ↩ copies a clip back, opens a
+    /// note in the Quick Note board, and opens a notification where it points — its own
+    /// action, else the Notifications board.
+    private func globalSourceRows(for typed: String) -> [AppChatRow] {
+        let board: (Bool) -> SystemCommand? = { quickNote in
+            SystemCommandsRegistry.shared.commands.first {
+                quickNote ? $0.isQuickNoteBoard : $0.isNotificationsBoard
+            }
+        }
+        return GlobalSources.rows(
+            query: typed,
+            clips: ClipboardHistoryEngine.shared.history,
+            notes: QuickNotesStore.shared.notes,
+            notifications: ILauncherNotificationManager.shared.notifications,
+            copy: { entry in
+                _ = ClipboardScopeService.writeToPasteboard([entry])
+                DockActionFeedback.showResult(
+                    "Copied", icon: "doc.on.clipboard", success: true, bundleID: nil)
+            },
+            openNote: { [weak self] note in
+                guard let command = board(true) else { return }
+                QuickNoteBoardModel.shared.selectedNoteID = note.id
+                self?.scopeIntoCommand(command)
+            },
+            openNotification: { [weak self] item in
+                ILauncherNotificationManager.shared.markRead(item.id)
+                if let action = item.action {
+                    action()
+                } else if let command = board(false) {
+                    self?.scopeIntoCommand(command)
+                }
+            })
     }
 
     // MARK: Safari's tabs, as pills beside the field (inventory D13)
