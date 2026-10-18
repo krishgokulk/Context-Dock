@@ -6,10 +6,16 @@
 set -u
 
 [ "$(jq -r '.stop_hook_active // false' 2>/dev/null)" = "true" ] && exit 0   # no loops
-command -v xcodebuild >/dev/null 2>&1 || exit 0
-
 root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [ -z "$root" ] && exit 0
+
+# Skill trees must not drift (a cheap diff, so it runs every turn, even after a commit, and on cloud).
+if ! out="$("$root/scripts/check-skills-parity.sh" 2>&1)"; then
+  printf '%s\n' "$out" >&2
+  exit 2
+fi
+
+command -v xcodebuild >/dev/null 2>&1 || exit 0
 [ -z "$(git -C "$root" status --porcelain -- '*.swift' 2>/dev/null | head -1)" ] && exit 0
 
 if ! out="$("$root/scripts/check.sh" 2>&1)"; then

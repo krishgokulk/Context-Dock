@@ -1,4 +1,7 @@
 {
+  "env": {
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+  },
   "permissions": {
     "allow": [
       "Bash(./scripts/dev-run.sh)",
