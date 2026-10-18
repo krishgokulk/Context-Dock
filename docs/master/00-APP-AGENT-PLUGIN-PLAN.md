@@ -141,6 +141,24 @@ minimized); **in front** (the user is looking at it, maybe typing in it).
    screen".
 8. **Same in Dock and Corner.** One lane decision, one executor.
 
+### Measured behaviour (owner hand check — #277)
+
+Two assumptions this lane design rests on need a measurement on the Mac. Record the answer here
+once taken; the code (`LaneCoordinator`, `DataLane.prepare`) already assumes the first "no" and
+the second "yes", so a different result is a bug to fix, not a doc edit.
+
+- **Does Mail show a window when started hidden?** *(TODO: owner measures)* — How: quit Mail, then
+  in a Mail-scoped chat ask a data read ("find mail from SBI today"). Watch whether any Mail window
+  appears. Expected: none — `WorkspaceDataLaneLauncher.launchHidden` sets `activates=false,
+  hides=true`. Confirm with ⌘-Tab that Mail is running but shows no window and never took focus.
+- **Does an AX menu press work without activating the app?** *(TODO: owner measures)* — How: with
+  Mail in the background (another app in front), trigger a path that presses a Mail menu item via
+  `AXMenuReader.clickMenuItem(path:in:activatesApp:false)` and check whether the item fires while
+  Mail stays in the background. Expected per the current code: a menu press lands only on the
+  frontmost app, so `activatesApp:false` is for the data lane (which does not press menus); the UI
+  lane keeps `activatesApp:true`. If a background AX press *does* land, record it — it would let a
+  UI-lane menu run without stealing focus.
+
 ### What the user sees, per state
 
 ```
