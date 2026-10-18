@@ -465,57 +465,33 @@ final class BrowserURLLibraryService: @unchecked Sendable {
     }
 
     nonisolated private static func loadSQLiteRows(path: String, sql: String) -> [SQLiteRow] {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: path) else { return [] }
-        // A copy of the database with its write-ahead log, read on its own: the browser's
-        // newest visits live in the -wal file until it checkpoints, which Safari does rarely,
-        // and an immutable open of the live file ignores it — "today" found nothing, the
-        // newest visit read being a day old (owner 2026-10-18). The copy never locks the
-        // browser's own file.
-        let folder = fm.temporaryDirectory.appendingPathComponent(
-            "browser-history-\(UUID().uuidString)", isDirectory: true)
-        defer { try? fm.removeItem(at: folder) }
-        let copy = folder.appendingPathComponent("history.db")
-        do {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
-            try fm.copyItem(atPath: path, toPath: copy.path)
-            if fm.fileExists(atPath: path + "-wal") {
-                try fm.copyItem(atPath: path + "-wal", toPath: copy.path + "-wal")
+        // The newest visits live in the -wal file; SQLiteSnapshot reads them.
+        SQLiteSnapshot.read(path) { db -> [SQLiteRow]? in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
+                let statement
+            else { return [] }
+            defer { sqlite3_finalize(statement) }
+
+            var rows: [SQLiteRow] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let urlText = sqlite3_column_text(statement, 0),
+                    let titleText = sqlite3_column_text(statement, 1)
+                else { continue }
+                var dateValue: Double?
+                if sqlite3_column_count(statement) > 2,
+                    sqlite3_column_type(statement, 2) != SQLITE_NULL
+                {
+                    dateValue = sqlite3_column_double(statement, 2)
+                }
+                rows.append(
+                    SQLiteRow(
+                        url: String(cString: urlText),
+                        title: String(cString: titleText),
+                        dateValue: dateValue))
             }
-        } catch {
-            return []
-        }
-
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(copy.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK,
-            let db
-        else { return [] }
-        defer { sqlite3_close(db) }
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
-            let statement
-        else { return [] }
-        defer { sqlite3_finalize(statement) }
-
-        var rows: [SQLiteRow] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let urlText = sqlite3_column_text(statement, 0),
-                let titleText = sqlite3_column_text(statement, 1)
-            else { continue }
-            var dateValue: Double?
-            if sqlite3_column_count(statement) > 2,
-                sqlite3_column_type(statement, 2) != SQLITE_NULL
-            {
-                dateValue = sqlite3_column_double(statement, 2)
-            }
-            rows.append(
-                SQLiteRow(
-                    url: String(cString: urlText),
-                    title: String(cString: titleText),
-                    dateValue: dateValue))
-        }
-        return rows
+            return rows
+        } ?? []
     }
 
     nonisolated private static func makeEntry(
