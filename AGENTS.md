@@ -9,6 +9,7 @@ multi-agent safety rules, and where the docs live. Everything else belongs in `d
 - **The plan:** `docs/master/DORAX-BLUEPRINT.md` — product, architecture, code, docs, workflow,
   the 15-week plan and the owner's decisions. Follow it; do not rewrite it.
 - **Now:** `docs/master/00-NOW.md` — the next few tasks in order, and the owner's decisions.
+- **Models and context:** `docs/master/00-MODEL-ROUTING.md` — which model per job, subagents in `.claude/agents/`.
 - **The queue:** GitHub Issues, milestone `1.0`. The milestone is the current order of work.
 - **How the code is laid out today:** `docs/engineering/codebase.md`.
 - **How work is done:** `docs/master/00-ENGINEERING-OPERATING-MODEL.md`.
