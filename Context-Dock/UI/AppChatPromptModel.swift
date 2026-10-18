@@ -265,6 +265,12 @@ final class AppChatPromptModel: ObservableObject {
     var expandedGlobalSections: Set<String> = []
     /// The row listed first under "Top Hit" (S2), when one plainly answers the query.
     var globalTopHitID: String?
+    /// What was typed and taken before (S5). Under tests each model starts empty and in
+    /// memory: no test writes the user's picks or sees another test's.
+    lazy var pickMemory: GlobalPickMemory = AppDelegate.isHostingTests ? GlobalPickMemory(file: nil) : .shared
+    /// Where a pick was made: Global, or the app whose list it was — so one app's pick never
+    /// reorders another's, even for an action two adapters share an id with.
+    var pickScope: String { isGlobalScope ? "global" : appBundleID }
     /// Where the front folder is read from. A test swaps it; the app asks Finder.
     var readFinderFrontFolder: @Sendable () async -> URL? = { await FinderFrontFolder.read() }
     /// Whether a Finder window is on screen (`finderShowsDesktopOnly`). A test swaps it.
