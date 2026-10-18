@@ -3,6 +3,7 @@
 #
 #   ./scripts/clean-worktrees.sh          # list only
 #   ./scripts/clean-worktrees.sh --pr     # also remove ../Context-Dock-pr-* test worktrees
+#   ./scripts/clean-worktrees.sh --merged # also remove worktrees whose branch is merged into general-chat-agent
 #
 # A worktree with uncommitted edits is never removed. Agent worktrees in .claude/worktrees/
 # are listed but left to their sessions. Each worktree carries its own .build (several GB),
@@ -13,6 +14,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MAIN_DIR="$(git -C "$ROOT_DIR" worktree list --porcelain | awk 'NR==1{print $2}')"
 REMOVE_PR=0
 [ "${1:-}" = "--pr" ] && REMOVE_PR=1
+REMOVE_MERGED=0
+[ "${1:-}" = "--merged" ] && REMOVE_MERGED=1
 
 git -C "$MAIN_DIR" worktree prune
 printf '%-8s %-12s %s\n' "SIZE" "LAST COMMIT" "WORKTREE (branch)"
@@ -34,4 +37,14 @@ git -C "$MAIN_DIR" worktree list --porcelain | awk '/^worktree /{print substr($0
       fi
       ;;
   esac
+
+  if [ "$REMOVE_MERGED" = 1 ] && [ -n "$BR" ] && [ "$BR" != "general-chat-agent" ]; then
+    if git -C "$MAIN_DIR" merge-base --is-ancestor "$BR" general-chat-agent 2>/dev/null; then
+      if [ -n "$(git -C "$WT" status --porcelain --untracked-files=no)" ]; then
+        echo "         kept: merged but has uncommitted edits"
+      else
+        git -C "$MAIN_DIR" worktree remove --force "$WT" && git -C "$MAIN_DIR" branch -d "$BR" 2>/dev/null && echo "         removed (merged)"
+      fi
+    fi
+  fi
 done

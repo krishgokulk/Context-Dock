@@ -10,7 +10,7 @@
 
 ## In progress
 
-Coordinator: Codex (owner's session) — since 2026-10-15. The Claude desktop app now runs only UI/UX fixes (owner's lane); Codex continues this file and the master docs. The Mac `/loop /builder` role, if started, takes GitHub issues labeled `ready` and never edits this file.
+Coordinator: Planner (desktop/cloud planner session) — since 2026-10-18.
 
 Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the planner merges once green); **no `ship it` while the Hand-check queue has entries**; the builder runs each PR's hand check itself first (`.claude/commands/builder.md`). Owner 2026-10-11: only #78 and #238 need the owner's hand check; #224, #210, #194, #230, #124 may merge without one (record under *Skipped hand checks*).
 
@@ -19,6 +19,13 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - #78 and #124 are superseded by the head (selection actions live in `Services/SelectionActions.swift`; skills are in `.claude/skills`); the owner closes them. #239 is moot once they are closed.
 - Next: **#196** P2 (`ready`), then **#197** P3, then #180, #185, #198 P4, #199 P5. #225 test-isolation fix is queued. Nothing is `in-progress`.
 - **Owner rule (2026-10-15):** clean up worktrees after each PR merges, rather than letting them pile up (28 reached 17 GB). `git worktree remove <path>`; never a dirty or unmerged one, nor one a running app was built from. Written into `AGENTS.md`.
+
+**State (2026-10-18):**
+- Merged today: #290 (Global S3 time-words + weekday fix), #292 (Messages/Safari WAL readers), #291 (Claude project setup), #294 (S5 learn-from-picks), #295 (P3b two lanes), plus ChatGPT Subscription #293. #247 closed (already shipped via #251–#256).
+- #279 (mail.search bulk) is CI-green but **held un-merged** pending the owner's "merge 279" (owner rule 2026-10-18: never merge before the owner's hand-check).
+- #296 filed: data-lane Mail search not wired on the ChatGPT provider + Mail scope.
+- App-agent lane: #197 P3 done (#276), #277 P3b done (#295), #198 P4 in review (#297, awaiting owner hand-check); next **#199** P5.
+- **Owner rule (2026-10-18):** never merge before the owner's hand-check — a CI-green PR waits for the owner's "merge N".
 
 ## Next, in order (GitHub issues)
 
@@ -54,6 +61,9 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-18 | P3b: the app agent's two lanes — data never takes the window, UI lane's last rung is Computer Use | #295 |
+| 2026-10-18 | S5: the router learns from the owner's picks | #294 |
+| 2026-10-18 | Claude project setup — connectors off, skills parity, model routing | #291 |
 | 2026-10-11 | A `dorax_ask` inside a `dorax_ask` is refused, not recursed (Mail chat showed 6 stacked rows, each failing after ~60 s); hand check skipped | #224 |
 | 2026-10-11 | Spawned `claude`/`codex` CLIs drop the host Claude Code session's env ("Not logged in" in Mail chat when DoraX is launched from a Claude session); hand check skipped | #210 |
 | 2026-10-11 | A `[TERMINAL_COMMAND: …]` directive runs and is hidden in app scopes (Corner Finder chat "list the files in Downloads"); hand check skipped | #194 |
