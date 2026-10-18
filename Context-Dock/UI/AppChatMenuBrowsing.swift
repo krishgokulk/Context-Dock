@@ -167,6 +167,12 @@ extension AppChatPromptModel {
             rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
             // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
             rows += globalSourceRows(for: typed)
+            // A time named — "today", "last week" — keeps only what happened then, with the
+            // history of that time looked up for it (S3). Apps and commands stay.
+            if let range = GlobalQuery.timeRange(in: typed) {
+                rows += datedHistoryRows(for: typed, range: range, bundleID: nil, besides: rows)
+                rows = GlobalQuery.within(range, rows)
+            }
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed)
             // The one row that plainly answers the query leads, under "Top Hit" (S2).
@@ -240,9 +246,14 @@ extension AppChatPromptModel {
         // History menu, which holds only the last few (owner 2026-10-17). "history" alone
         // lists the most recent.
         if !typed.isEmpty, BrowserTabList.listsTabs(bundleID: appBundleID) {
-            rows += BrowserURLLibraryService.shared
-                .entries(matching: typed, bundleId: appBundleID, limit: 12)
-                .map { AppChatRow.global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
+            if let range = GlobalQuery.timeRange(in: typed) {
+                rows += datedHistoryRows(for: typed, range: range, bundleID: appBundleID, besides: rows)
+                rows = GlobalQuery.within(range, rows)
+            } else {
+                rows += BrowserURLLibraryService.shared
+                    .entries(matching: typed, bundleId: appBundleID, limit: 12)
+                    .map { AppChatRow.global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
+            }
         }
         if !typed.isEmpty, appBundleID == BrowserTabList.safariBundleID {
             rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
@@ -315,6 +326,7 @@ extension AppChatPromptModel {
             clips: ClipboardHistoryEngine.shared.history,
             notes: QuickNotesStore.shared.notes,
             notifications: ILauncherNotificationManager.shared.notifications,
+            within: GlobalQuery.timeRange(in: typed),
             copy: { entry in
                 _ = ClipboardScopeService.writeToPasteboard([entry])
                 DockActionFeedback.showResult(
@@ -333,6 +345,19 @@ extension AppChatPromptModel {
                     self?.scopeIntoCommand(command)
                 }
             })
+    }
+
+    /// The history pages of the time named, beyond those the list has (S3): "safari
+    /// history today" is today's pages, read from the browsers' own files.
+    private func datedHistoryRows(
+        for typed: String, range: DateInterval, bundleID: String?, besides rows: [AppChatRow]
+    ) -> [AppChatRow] {
+        let have = Set(rows.compactMap(GlobalQuery.pageURL))
+        let entries = BrowserURLLibraryService.shared.entries(
+            matching: GlobalQuery.historySearchText(typed), bundleId: bundleID, limit: 2000)
+        return GlobalQuery.datedHistory(entries, query: typed, range: range)
+            .filter { !have.contains($0.url.absoluteString) }
+            .map { .global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
     }
 
     // MARK: Safari's tabs, as pills beside the field (inventory D13)

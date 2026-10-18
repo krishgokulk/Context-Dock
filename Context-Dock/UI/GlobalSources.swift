@@ -33,6 +33,7 @@ enum GlobalSources {
         notes quickNotes: [QuickNote],
         notifications sent: [ILauncherNotification],
         now: Date = Date(),
+        within range: DateInterval? = nil,
         copy: @escaping (DockCore.ClipboardEntry) -> Void,
         openNote: @escaping (QuickNote) -> Void,
         openNotification: @escaping (ILauncherNotification) -> Void
@@ -42,7 +43,11 @@ enum GlobalSources {
         let sourceWords = clipWords.union(noteWords).union(notificationWords)
         let asked = GlobalQuery.askedWords(in: query, appNames: []).filter { !sourceWords.contains($0) }
 
-        func matching<T>(_ items: [T], names: Set<String>, text: (T) -> String) -> [T] {
+        func matching<T>(
+            _ all: [T], names: Set<String>, date: (T) -> Date, text: (T) -> String
+        ) -> [T] {
+            // "copied yesterday": the time first, so the newest ten are yesterday's (S3).
+            let items = range.map { range in all.filter { range.contains(date($0)) } } ?? all
             if asked.isEmpty {
                 return typed.isDisjoint(with: names) ? [] : Array(items.prefix(limit))
             }
@@ -52,26 +57,27 @@ enum GlobalSources {
             }.prefix(limit))
         }
 
-        let clipRows = matching(clips, names: clipWords, text: clipText).map { entry in
+        let clipRows = matching(clips, names: clipWords, date: \.timestamp, text: clipText).map { entry in
             pill(
                 "clip-\(entry.id)", firstLine(clipText(entry)), "doc.on.clipboard", clipKind, clipboard,
                 context: ["Copied " + ago(entry.timestamp, now), entry.sourceAppName]
                     .filter { !$0.isEmpty }.joined(separator: " · "),
-                bundleID: entry.sourceBundleId
+                bundleID: entry.sourceBundleId, date: entry.timestamp
             ) { copy(entry) }
         }
-        let noteRows = matching(quickNotes, names: noteWords) { $0.text }.map { note in
+        let noteRows = matching(quickNotes, names: noteWords, date: \.createdAt) { $0.text }.map { note in
             pill(
                 "note-\(note.id)", firstLine(note.text), "note.text", noteKind, notes,
-                context: "Quick note · " + ago(note.createdAt, now)
+                context: "Quick note · " + ago(note.createdAt, now), date: note.createdAt
             ) { openNote(note) }
         }
-        let notificationRows = matching(sent, names: notificationWords) { "\($0.title) \($0.body)" }
+        let notificationRows = matching(sent, names: notificationWords, date: \.date) { "\($0.title) \($0.body)" }
             .map { item in
                 pill(
                     "notification-\(item.id)", item.title, item.icon, notificationKind, notifications,
                     context: [item.body, ago(item.date, now)].filter { !$0.isEmpty }
-                        .joined(separator: " · ")
+                        .joined(separator: " · "),
+                    date: item.date
                 ) { openNotification(item) }
             }
         return (clipRows + noteRows + notificationRows).map(AppChatRow.dock)
@@ -101,13 +107,14 @@ enum GlobalSources {
 
     private static func pill(
         _ id: String, _ name: String, _ symbol: String, _ kind: String, _ section: String,
-        context: String, bundleID: String = "", execute: @escaping () -> Void
+        context: String, bundleID: String = "", date: Date? = nil, execute: @escaping () -> Void
     ) -> DockPill {
         var pill = DockPill(id: id, name: name, icon: symbol, badge: nil, execute: execute)
         pill.rankingKind = kind
         pill.resultSection = section
         pill.menuContext = context
         pill.sourceBundleId = bundleID
+        pill.date = date
         return pill
     }
 }

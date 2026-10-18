@@ -194,4 +194,89 @@ enum GlobalQuery {
         }
         return nil
     }
+
+    // MARK: Time words (S3)
+
+    /// The time the words name, ending no later than now: "today", "yesterday", "this week",
+    /// "last week", "this month", "last month", "recent" (the last seven days). Nil when no
+    /// time is named, and the list is not filtered by time at all.
+    static func timeRange(
+        in query: String, now: Date = Date(), calendar: Calendar = .current
+    ) -> DateInterval? {
+        let words = words(query)
+        let isLast = words.contains("last")
+        func period(_ unit: Calendar.Component) -> DateInterval? {
+            guard let this = calendar.dateInterval(of: unit, for: now) else { return nil }
+            guard isLast else { return DateInterval(start: this.start, end: max(this.start, now)) }
+            guard let before = calendar.date(byAdding: unit, value: -1, to: this.start) else { return nil }
+            return calendar.dateInterval(of: unit, for: before)
+        }
+        if words.contains("today") || words.contains("tonight") { return period(.day) }
+        if words.contains("yesterday"),
+            let day = calendar.date(byAdding: .day, value: -1, to: now) {
+            return calendar.dateInterval(of: .day, for: day)
+        }
+        if words.contains("week") { return period(.weekOfYear) }
+        if words.contains("month") { return period(.month) }
+        if words.contains("recent") || words.contains("recently") {
+            return DateInterval(start: now.addingTimeInterval(-7 * 86_400), end: now)
+        }
+        return nil
+    }
+
+    /// When a row's item happened: a visit, a copy, a note, a file's last change. Nil for
+    /// what has no time of its own — an app, a menu command.
+    static func date(of row: AppChatRow) -> Date? {
+        func modified(_ path: String?) -> Date? {
+            guard let path, !path.isEmpty, !path.hasSuffix(".app") else { return nil }
+            return (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+        }
+        switch row {
+        case .dock(let pill): return pill.date ?? modified(pill.previewPath)
+        case .global(let doc): return doc.date ?? modified(doc.filePath)
+        case .file(let url): return modified(url.path)
+        default: return nil
+        }
+    }
+
+    /// The rows the time allows: a dated row only inside it; a web page with no date of its
+    /// own (a live History menu's item) only when it is an open tab, which is now. Apps and
+    /// commands are untouched — "today" never hides Safari or its menus.
+    static func within(_ range: DateInterval, _ rows: [AppChatRow]) -> [AppChatRow] {
+        rows.filter { row in
+            if let date = date(of: row) { return range.contains(date) }
+            if pageURL(row) != nil {
+                return GlobalResultSection.title(for: row) == GlobalResultSection.openTabs
+            }
+            return true
+        }
+    }
+
+    static let historyWords: Set<String> = ["history", "visited", "page", "pages", "site", "sites", "browsed"]
+    static let browserWords: Set<String> = [
+        "safari", "chrome", "google", "arc", "firefox", "brave", "edge", "opera", "vivaldi", "browser",
+    ]
+
+    /// What to look history up by when a time is named: the asked words without the time,
+    /// "history" or a browser's name — "safari history today" looks up everything, and the
+    /// time does the choosing.
+    static func historySearchText(_ query: String) -> String {
+        words(query).filter {
+            !glueWords.contains($0) && !timeWords.contains($0)
+                && !historyWords.contains($0) && !browserWords.contains($0)
+        }.joined(separator: " ")
+    }
+
+    /// History pages inside the time, from the named browser when one is named.
+    static func datedHistory(
+        _ entries: [BrowserURLLibraryEntry], query: String, range: DateInterval, limit: Int = 12
+    ) -> [BrowserURLLibraryEntry] {
+        let typed = Set(words(query))
+        let named = entries.contains { typed.contains($0.browserName.lowercased()) }
+        return Array(entries.filter { entry in
+            guard let visit = entry.visitDate, range.contains(visit) else { return false }
+            return !named || typed.contains(entry.browserName.lowercased())
+        }.prefix(limit))
+    }
 }

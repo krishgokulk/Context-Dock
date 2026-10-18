@@ -100,6 +100,8 @@ final class GlobalSearchService {
         let icon: NSImage?
         let usageTrackingKey: String
         let action: ActionSpec
+        /// When a history page was visited, for "today" and the like (S3).
+        var date: Date? = nil
     }
 
     // MARK: - Storage
@@ -906,6 +908,7 @@ extension GlobalSearchService.SearchDocument {
                 domain: entry.domain
             )
         )
+        date = entry.visitDate
     }
 
     // MARK: - Helpers
