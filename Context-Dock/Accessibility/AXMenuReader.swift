@@ -691,10 +691,20 @@ final class AXMenuReader {
             // browser history/bookmarks natively (BrowserURLLibraryService). The menu
             // item itself still appears; only its recursive contents are skipped. Other
             // apps may use History for their primary commands, so recurse normally there.
+            // Skipped, its pages are — but its fixed commands are read, one level and no
+            // deeper: "Show Personal History ⌘Y" was never searchable, so "safari history"
+            // led with "Clear History…" (owner 2026-10-17).
             let subItems: [AXMenuItem] =
                 Self.shouldSkipRecursion(
                     menuTitle: title, bundleIdentifier: bundleIdentifier)
-                ? []
+                ? (depth + 1 < maxDepth
+                    ? readChildren(of: submenuContainer(for: child) ?? child,
+                                   path: childPath,
+                                   depth: depth + 1,
+                                   maxDepth: depth + 2,
+                                   bundleIdentifier: bundleIdentifier)
+                        .filter { BrowserStableMenuCommand.isStable(title: $0.title) }
+                    : [])
                 : readChildren(of: submenuContainer(for: child) ?? child,
                                path: childPath,
                                depth: depth + 1,

@@ -2389,6 +2389,8 @@ extension DockCore {
                     action: {
                         recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         forceHideLauncherAfterResultExecution()
+                        if capturedBundleId == BrowserTabList.safariBundleID,
+                            SafariTabManager.shared.showOpenTab(for: capturedURL) { return }
                         if let appURL = NSWorkspace.shared.urlForApplication(
                             withBundleIdentifier: capturedBundleId)
                         {
@@ -3327,6 +3329,7 @@ extension DockCore {
         pill.sourceBundleId = bundleID
         pill.sourceAppName = descriptor.appName
         pill.menuContext = menuContextLabel(from: descriptor.path)
+        pill.menuPath = descriptor.path
         pill.rankingKind = "menu"
         pill.rankingScore = descriptor.rankingScore
         pill.trackingIdentifier =

@@ -90,7 +90,8 @@ struct BoardFootTests {
             scopeName: "Global Context", scopeBundleID: "", isGlobal: true)
         #expect(!closed.isRunningApp)
         #expect(closed.kind == "Application")
-        #expect(closed.verb == "Open")
+        // A "/" row steps into the app (owner 2026-10-16).
+        #expect(closed.verb == "Step in")
     }
 
     /// "Switch to Safari" in an app's dock is an app, not a command (#258 G4).

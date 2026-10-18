@@ -23,6 +23,8 @@ struct DockPill: Identifiable {
     /// effects): what it may do, in the words the question uses.
     var runApproval: String? = nil
     var rankingKind: String = ""
+    /// A menu command's path in its app's menus, for the Corner's panel and foot.
+    var menuPath: [String] = []
     /// The Global section this row is listed under (`GlobalResultSection`), when the engine
     /// knows it; empty means the row's kind decides.
     var resultSection: String = ""

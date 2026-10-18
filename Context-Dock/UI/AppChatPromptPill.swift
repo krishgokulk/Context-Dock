@@ -497,6 +497,12 @@ struct AppChatPromptPill: View {
     /// unreachable by key (inventory F2). Where there is no layer that way (below the app,
     /// until the Media Dock moves in) the list opens as before.
     private func arrow(up: Bool) -> KeyPress.Result {
+        // On the empty field the chat's own arrows: ↓ puts it away, ↑ brings it back.
+        if model.query.isEmpty,
+            up ? model.openChat() : model.hideConversation()
+        {
+            return .handled
+        }
         // A command's list on screen takes the arrows: the field keeps the keyboard for
         // typing, so the list cannot hear them itself (owner 2026-10-08).
         if model.scopedCommand != nil, ScopedListKeyBridge.shared.move?(!up) == true {
@@ -675,6 +681,7 @@ struct AppChatPromptPill: View {
                 .opacity(feedbackTint == nil ? 0 : 0.85)
                 .allowsHitTesting(false)
         }
+        .modifier(AppLaunchGlow(shape: RoundedRectangle(cornerRadius: shellRadius, style: .continuous)))
         .animation(.easeInOut(duration: 0.3), value: actionFeedback.current?.id)
         .animation(.easeInOut(duration: 0.25), value: actionFeedback.progressTitle)
         .animation(shellMorph, value: model.phase)
@@ -683,7 +690,8 @@ struct AppChatPromptPill: View {
     }
 
     private var feedbackTint: Color? {
-        guard let result = actionFeedback.current else { return nil }
+        // An app opening or quitting has its own glow (`AppLaunchGlow`).
+        guard let result = actionFeedback.current, actionFeedback.appGlow == nil else { return nil }
         return ActionFeedbackTint.color(
             for: result, appColor: actionFeedback.appIcon(for: result)?.dominantSwiftUIColor)
     }
@@ -1329,19 +1337,30 @@ struct AppChatPromptPill: View {
             // at — says what is about to open. Whichever row the arrows landed on, or the
             // top one otherwise, same as the row hint and the ghost text agree with.
             if model.isSearchField, !model.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                let icon = model.leadingResultIcon
+                !model.rows.isEmpty
             {
                 // At the field's end, not against the last typed letter (owner 2026-10-08:
                 // "while typing show app icons at the end of the search input pill").
                 Spacer(minLength: 8)
-                Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 22, height: 22)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    .transition(.opacity.combined(with: .scale(scale: 0.85)))
-                    .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
+                Group {
+                    if let icon = model.leadingResultIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    } else {
+                        // A row with no image of its own (a fallback, "Show N more") keeps
+                        // the icon's place with its symbol, as the foot does — the icon came
+                        // and went as the arrows moved (owner 2026-10-17).
+                        Image(systemName: model.boardFoot.symbol)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .transition(.opacity.combined(with: .scale(scale: 0.85)))
+                .animation(.easeOut(duration: 0.1), value: model.focusedMenuIndex)
             }
 
             // Attaching and sending live in the field, always drawn, the way the dock's own
@@ -1361,11 +1380,11 @@ struct AppChatPromptPill: View {
                     surfaceControls
                         .transition(.opacity)
                 }
-                // The conversation its ⌄ put away, one click back.
-                if model.isConversationHidden, model.phase != .chat,
-                    model.isAnswering || !model.messages.isEmpty
-                {
-                    Button { model.showConversation() } label: {
+                // This app's chat, when it is not on screen, one click back: this visit's in
+                // place, else its history in the chat window (owner 2026-10-16) — for any
+                // app, however the field reached it.
+                if model.hasConversationToShow || model.hasSavedChat {
+                    Button { model.openChat() } label: {
                         controlGlyph("chevron.up")
                     }
                     .buttonStyle(.plain)
@@ -1644,6 +1663,8 @@ struct AppChatPromptPill: View {
                 model.hideConversation()
             } else {
                 model.isShowingScopeCard.toggle()
+                // Open or close the sheet the card is the right half of.
+                model.syncListPhase()
             }
         }
         .help(model.phase == .chat

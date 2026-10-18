@@ -413,7 +413,7 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(!model.previewFocusedRow())
     }
 
-    @Test("Backspace on an empty app chat keeps the conversation and goes back to the menus (E4)")
+    @Test("Backspace on an empty app chat puts it away, kept, for ⌃ to bring back (E4)")
     func backspaceLeavesTheChat() {
         let conversation = AppChatConversation()
         let model = AppChatPromptModel(conversation: conversation)
@@ -427,7 +427,9 @@ struct CornerDockKeyRulesPart2Tests {
         #expect(model.applyEmptyBackspace())
         #expect(model.phase != .chat)
         #expect(model.phase.showsInput)
+        #expect(model.isConversationHidden)
         #expect(conversation.messages.count == 1)
+        #expect(model.showConversation())
     }
 
     @Test("Backspace with something typed is a deletion, not a way out")

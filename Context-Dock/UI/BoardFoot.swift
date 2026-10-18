@@ -8,7 +8,7 @@
 
 import AppKit
 
-struct BoardFoot: Equatable {
+struct BoardFoot: Hashable {
     /// What the row is: "Calculator · Menu", "Application", "Folder".
     var title: String
     /// What Return does: "Run", "Open", "Quit", "Ask AI".
@@ -62,7 +62,10 @@ struct BoardFoot: Equatable {
                 title: cliCommand.isEmpty ? "Subcommand" : "\(cliCommand) · Subcommand",
                 verb: "Run", symbol: "terminal")
         case .app(let entry):
-            return appFoot(entry.bundleId)
+            // A "/" row steps into the app, running or not (`run(.app)`).
+            var foot = appFoot(entry.bundleId)
+            foot.verb = "Step in"
+            return foot
         case .global(let doc):
             return foot(for: CornerBoardLayout.preview(for: doc), fallbackTitle: doc.title)
         case .dock(let pill):
@@ -71,6 +74,14 @@ struct BoardFoot: Equatable {
                 return appFoot(pill.sourceBundleId)
             case GlobalResultSection.showMoreKind:
                 return BoardFoot(title: pill.resultSection, verb: "Show all", symbol: "chevron.down")
+            case GlobalSources.clipKind:
+                return BoardFoot(
+                    title: "Clipboard", verb: "Copy", bundleID: pill.sourceBundleId,
+                    symbol: "doc.on.clipboard")
+            case GlobalSources.noteKind:
+                return BoardFoot(title: "Quick note", verb: "Open", symbol: "note.text")
+            case GlobalSources.notificationKind:
+                return BoardFoot(title: "Notification", verb: "Open", symbol: "bell")
             case GlobalFallbacks.askKind:
                 return BoardFoot(title: "Ask AI", verb: "Ask", symbol: "sparkles")
             case GlobalFallbacks.webKind:
@@ -97,9 +108,11 @@ struct BoardFoot: Equatable {
     /// The foot for what the preview panel shows, so the two say the same thing.
     private static func foot(for preview: CornerBoardPreview?, fallbackTitle: String) -> BoardFoot {
         switch preview {
+        case .rowSummary(_, let foot):
+            return foot
         case .file(let url):
             return fileFoot(url)
-        case .app(let bundleID, _), .appScope(let bundleID, _):
+        case .app(let bundleID, _), .appScope(let bundleID, _), .appJump(let bundleID, _):
             return appFoot(bundleID)
         case .command(_, _, let appName, let bundleID):
             return BoardFoot(
@@ -111,9 +124,13 @@ struct BoardFoot: Equatable {
             return BoardFoot(title: "\(command) · Subcommand", verb: "Run", symbol: "terminal")
         case .systemCommand:
             return BoardFoot(title: "Command", verb: "Run", symbol: "command")
-        case .web(_, _, let domain, _):
+        case .web(let url, _, let domain, let browserName):
+            // A page open in a Safari tab says so, and Return shows that tab (owner 2026-10-18).
+            let open = browserName == "Safari"
+                && SafariTabManager.shared.openTab(for: url.absoluteString) != nil
+            let kind = open ? "Open tab" : "Web page"
             return BoardFoot(
-                title: domain.isEmpty ? "Web page" : "\(domain) · Web page", verb: "Open",
+                title: domain.isEmpty ? kind : "\(domain) · \(kind)", verb: open ? "Show" : "Open",
                 symbol: "safari")
         case .windowLayout(_, _, let appName, let bundleID):
             return BoardFoot(

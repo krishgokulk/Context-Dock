@@ -35,6 +35,13 @@ enum CornerBoardPreview: Hashable {
     /// The app's own card — what DoraX can do here, what it sees, what it may do — opened
     /// from the field's app chip, in the right half beside the list (owner 2026-10-08).
     case appScope(bundleID: String, name: String)
+    /// An app a "/" jump steps into: whether it runs, and that ↩ steps into it (owner
+    /// 2026-10-16: the jump list showed no status).
+    case appJump(bundleID: String, name: String)
+    /// A row with nothing richer to show — a fallback, "Show N more", an adapter action: what
+    /// it is and what ↩ does, so the panel never comes and goes as the arrows move (owner
+    /// 2026-10-17).
+    case rowSummary(title: String, foot: BoardFoot)
 }
 
 enum CornerBoardLayout {
@@ -83,6 +90,20 @@ enum CornerBoardLayout {
             if let id = pill.searchDocumentID, let doc = lookup(id) {
                 return preview(for: doc)
             }
+            // The engine's menu and history rows carry no search document: what they are is
+            // on the row itself (owner 2026-10-17: they read as "Command").
+            if let url = pill.resolvedURL {
+                if url.isFileURL { return .file(url) }
+                return .web(
+                    url: url, title: pill.name, domain: url.host ?? "",
+                    browserName: pill.sourceAppName)
+            }
+            if !pill.menuPath.isEmpty {
+                return .command(
+                    title: pill.name, path: pill.menuPath,
+                    appName: pill.sourceAppName.isEmpty ? appName : pill.sourceAppName,
+                    bundleID: pill.sourceBundleId.isEmpty ? appBundleID : pill.sourceBundleId)
+            }
             return nil
         case .command(let item):
             return .command(
@@ -93,7 +114,9 @@ enum CornerBoardLayout {
             // A subcommand is only a subcommand inside its tool's scope.
             guard !cliCommand.isEmpty else { return nil }
             return .cliSubcommand(command: cliCommand, subcommand: word)
-        case .action, .app:
+        case .app(let entry):
+            return entry.bundleId.isEmpty ? nil : .appJump(bundleID: entry.bundleId, name: entry.name)
+        case .action:
             return nil
         }
     }
@@ -176,7 +199,7 @@ enum CornerBoardLayout {
         guard let preview else { return list }
         // The app's card reads as a card of its own, so the board keeps its height for it.
         let floor: CGFloat
-        if case .appScope = preview { floor = AppScopeBoardMetrics.height } else {
+        if preview.appCard != nil { floor = AppScopeBoardMetrics.height } else {
             floor = minimumPreviewHeight
         }
         guard floor > list.height else { return list }
@@ -279,9 +302,13 @@ extension AppChatPromptModel {
         if isShowingScopeCard, !isGlobalScope, focusedRow == nil {
             return .appScope(bundleID: appBundleID, name: appName)
         }
+        // The row Return takes — the highlighted one, else the top one — as the foot reads
+        // it: the panel followed only an arrowed row, so it appeared and vanished.
+        guard let row = showsAskAIRow ? focusedRow : (focusedRow ?? rows.first) else { return nil }
         return CornerBoardLayout.preview(
-            for: focusedRow, appName: appName, appBundleID: appBundleID,
+            for: row, appName: appName, appBundleID: appBundleID,
             cliCommand: cliCommand, lookup: searchDocumentLookup)
+            ?? .rowSummary(title: row.title, foot: foot(for: row))
     }
 
     /// The list card and its panel together: the size the window reserves for the board.
@@ -298,5 +325,18 @@ extension AppChatPromptModel {
         CornerLivePanelLayout.shows(
             isAppScope: !isGlobalScope, phase: phase, isOpen: livePanelOpen,
             hasConversation: isAnswering || !messages.isEmpty)
+    }
+}
+
+extension CornerBoardPreview {
+    /// The DoraX card drawn for an app (owner 2026-10-16): the field's own (its chip), or the
+    /// app an app row in Global or a "/" list stands for. Nil for anything else.
+    var appCard: (bundleID: String, name: String, isOwnScope: Bool)? {
+        switch self {
+        case .appScope(let bundleID, let name): return (bundleID, name, true)
+        case .app(let bundleID, let name), .appJump(let bundleID, let name):
+            return (bundleID, name, false)
+        default: return nil
+        }
     }
 }

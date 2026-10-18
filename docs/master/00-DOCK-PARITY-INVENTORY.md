@@ -97,7 +97,7 @@ The Mac agent must also correct any row it finds wrong — this list is a starti
 | E1 | General Chat: ↩ sends, whoever holds focus; never sends twice | ✅ | `CornerGeneralChatTests` (12) |
 | E2 | "/app" + ↩ picks the app without sending text | ✅ | `pickingSlashAppScopesWithoutSendingText`, `slashMatchesReserveOneRowEach` |
 | E3 | Provider picker menu | ❓ | Dock ~l.249–271 (AppKit menu focus quirk) |
-| E4 | Frontmost-app chat: Backspace on empty saves, hides chat, returns to the app's menu search | ✅ | #98: `leaveChatForMenus` via `DockKeyRules.emptyBackspace` — the conversation is kept (it is the Dock's), a running turn is stopped, the field is the app's menu search again: `backspaceLeavesTheChat`. The Dock also unpins the launcher; the Corner's pin only holds off the idle shrink, so it is left alone. Hand check owed |
+| E4 | Frontmost-app chat: Backspace on empty saves, hides chat, returns to the app's menu search | ✅ | #98, changed 2026-10-16 (owner): `hideConversation` via `DockKeyRules.emptyBackspace` — the chat is put away, kept, and a running turn keeps running; the field's ⌃ (or ↑) brings it back, and ↓ on the empty field puts it away too: `backspaceLeavesTheChat`. The Dock also unpins the launcher; the Corner's pin only holds off the idle shrink, so it is left alone. Hand check owed |
 | E5 | Attachments (file, image, Finder folder, Mail context) | 🟡 | `anAttachmentAddsItsRowAndNothingElse`; Finder-folder & Mail attach ❓ |
 | E6 | Approvals shown in the composer | ✅ | `anApprovalIsReservedInTheComposerNotTheBoard` |
 | E7 | Live progress / result feedback | ✅ | `CornerActionFeedbackTests` (11) |

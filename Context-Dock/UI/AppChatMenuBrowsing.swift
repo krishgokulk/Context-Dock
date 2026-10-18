@@ -62,6 +62,10 @@ extension AppChatPromptModel {
 
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
+        // A browser's pages are read from its history files; fresh ones re-list.
+        if BrowserTabList.listsTabs(bundleID: appBundleID) {
+            BrowserURLLibraryService.shared.refreshIfNeeded { [weak self] in self?.updateMenuMatches() }
+        }
 
         // Finder not in front (stepped into from Global) or walking a folder keeps the
         // cached menus above and skips the live read. Finder is the app whose menus the AX
@@ -81,7 +85,11 @@ extension AppChatPromptModel {
             // read here runs on the main thread (see `liveAXMenuItems`).
             let live = AXMenuReader.shared.liveAXMenuItems(for: pid, maxDepth: 7)
             guard let self, self.appBundleID == bundleID, !live.isEmpty else { return }
-            self.allMenuItems = live + self.allMenuItems
+            // The live menus are the truth: a saved row the live ones have under the same
+            // name is an old place for it ("Clear History…" moved from Safari to History and
+            // showed twice, owner 2026-10-17). Saved rows the live read did not reach stay.
+            let liveTitles = Set(live.map { $0.title.lowercased() })
+            self.allMenuItems = live + self.allMenuItems.filter { !liveTitles.contains($0.title.lowercased()) }
             self.updateMenuMatches()
         }
     }
@@ -149,8 +157,28 @@ extension AppChatPromptModel {
             }
             // In sections, best kind first (#258 G1), and what to do with the words
             // themselves last (G3).
+            // Read against what is asked for first (S1), then in sections; destructive rows
+            // nobody asked for come last, after the fallbacks.
+            // The engine can read "safari history" as the browser's pages alone; the named
+            // app's own commands for the asked words come too (S2), so its command can lead.
+            rows += GlobalQuery.namedAppCommands(
+                GlobalContextRow.documents(for: typed, limit: 48), query: typed, besides: rows)
+            // Safari's open tabs that answer the words lead, in a section of their own.
+            rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
+            // The clipboard, quick notes and DoraX's notifications, after the rest (S4).
+            rows += globalSourceRows(for: typed)
+            let (safe, risky) = GlobalQuery.split(rows, query: typed)
+            var ordered = GlobalResultSection.grouped(safe, query: typed)
+            // The one row that plainly answers the query leads, under "Top Hit" (S2).
+            let topHit = GlobalQuery.topHit(ordered, query: typed)
+            globalTopHitID = topHit?.id
+            if let topHit {
+                ordered.removeAll { $0.id == topHit.id }
+                ordered.insert(topHit, at: 0)
+            }
             rows = GlobalResultSection.capped(
-                GlobalResultSection.grouped(rows), expanded: expandedGlobalSections
+                ordered,
+                expanded: expandedGlobalSections
             ) { section, hidden in
                 var pill = DockPill(
                     id: "show-more-\(section)", name: "Show \(hidden) more",
@@ -162,6 +190,7 @@ extension AppChatPromptModel {
                 + GlobalFallbacks.rows(for: typed) { [weak self] question in
                     self?.askFromGlobal(question)
                 }.map(AppChatRow.dock)
+                + GlobalResultSection.grouped(risky, query: typed)
             menuMatches = []
             focusedMenuIndex = nil
             updateGlobalTyping(for: typed)
@@ -206,6 +235,26 @@ extension AppChatPromptModel {
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
+        // A browser's pages come from its own history and bookmark files, read directly
+        // (`BrowserURLLibraryService`: Safari, Chromium browsers, Firefox) — never its
+        // History menu, which holds only the last few (owner 2026-10-17). "history" alone
+        // lists the most recent.
+        if !typed.isEmpty, BrowserTabList.listsTabs(bundleID: appBundleID) {
+            rows += BrowserURLLibraryService.shared
+                .entries(matching: typed, bundleId: appBundleID, limit: 12)
+                .map { AppChatRow.global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
+        }
+        if !typed.isEmpty, appBundleID == BrowserTabList.safariBundleID {
+            rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
+        }
+        // One row per command: Safari keeps Clear History… in both its Safari and History
+        // menus, and the same command listed twice is noise.
+        var seenCommands = Set<String>()
+        rows = rows.filter { row in
+            guard case .command(let item) = row else { return true }
+            return seenCommands.insert(item.title.lowercased()).inserted
+        }
+
         // Finder: the files and folders of its front window — the Desktop when none is
         // open — lead its commands, filtered by what is typed; with none of those matching,
         // the disk's files follow the commands (owner 2026-10-09). The Ask AI row stands
@@ -225,7 +274,13 @@ extension AppChatPromptModel {
         }
         // An app's Context Dock lists what is typed in Global's sections, best kind first
         // (#258 G4); the opening list, before anything is typed, stays as it is.
-        if !typed.isEmpty { rows = GlobalResultSection.grouped(rows) }
+        // A command that destroys something comes after every section unless its verb was
+        // typed, as in Global (S1): "history" in Safari led with Clear History…. Moved, never
+        // dropped — the app's own list is fuzzy, and a fuzzy match is a match.
+        if !typed.isEmpty {
+            let (safe, risky) = GlobalQuery.split(rows, query: typed, dropsUnanswered: false)
+            rows = GlobalResultSection.grouped(safe) + GlobalResultSection.grouped(risky)
+        }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -234,6 +289,50 @@ extension AppChatPromptModel {
         // A new list is a new offer: nothing is chosen until the user arrows into it.
         focusedMenuIndex = nil
         syncListPhase()
+    }
+
+    /// Safari's open tabs that answer the words, from the last read. While Safari runs a
+    /// fresh read is asked for, and the next keystroke has it; a quit Safari is never woken.
+    private func openTabRows(for typed: String) -> [AppChatRow] {
+        guard !NSRunningApplication.runningApplications(
+            withBundleIdentifier: BrowserTabList.safariBundleID).isEmpty
+        else { return [] }
+        refreshTabCache {}
+        return GlobalQuery.openTabRows(tabSource(), query: typed)
+    }
+
+    /// What DoraX keeps itself that answers the words (S4): ↩ copies a clip back, opens a
+    /// note in the Quick Note board, and opens a notification where it points — its own
+    /// action, else the Notifications board.
+    private func globalSourceRows(for typed: String) -> [AppChatRow] {
+        let board: (Bool) -> SystemCommand? = { quickNote in
+            SystemCommandsRegistry.shared.commands.first {
+                quickNote ? $0.isQuickNoteBoard : $0.isNotificationsBoard
+            }
+        }
+        return GlobalSources.rows(
+            query: typed,
+            clips: ClipboardHistoryEngine.shared.history,
+            notes: QuickNotesStore.shared.notes,
+            notifications: ILauncherNotificationManager.shared.notifications,
+            copy: { entry in
+                _ = ClipboardScopeService.writeToPasteboard([entry])
+                DockActionFeedback.showResult(
+                    "Copied", icon: "doc.on.clipboard", success: true, bundleID: nil)
+            },
+            openNote: { [weak self] note in
+                guard let command = board(true) else { return }
+                QuickNoteBoardModel.shared.selectedNoteID = note.id
+                self?.scopeIntoCommand(command)
+            },
+            openNotification: { [weak self] item in
+                ILauncherNotificationManager.shared.markRead(item.id)
+                if let action = item.action {
+                    action()
+                } else if let command = board(false) {
+                    self?.scopeIntoCommand(command)
+                }
+            })
     }
 
     // MARK: Safari's tabs, as pills beside the field (inventory D13)
@@ -307,14 +406,17 @@ extension AppChatPromptModel {
         }
     }
 
-    func localGlobalQuitRows(for query: String) -> [DockPill]? {
-        let normalized = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard normalized == "quit" || normalized.hasPrefix("quit ") else { return nil }
+    /// The app part of a quit: "quit", "quit mail" — or the app first, "mail quit", which
+    /// found nothing at all (owner 2026-10-17). Nil when the words are not a quit.
+    nonisolated static func quitAppQuery(_ query: String) -> String? {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.first == "quit" { return words.dropFirst().joined(separator: " ") }
+        if words.count > 1, words.last == "quit" { return words.dropLast().joined(separator: " ") }
+        return nil
+    }
 
-        let appQuery = normalized
-            .dropFirst("quit".count)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
+    func localGlobalQuitRows(for query: String) -> [DockPill]? {
+        guard let appQuery = Self.quitAppQuery(query) else { return nil }
         let frontmostID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
         var seen = Set<String>()
         let apps = NSWorkspace.shared.runningApplications.compactMap { app -> NSRunningApplication? in
@@ -348,7 +450,8 @@ extension AppChatPromptModel {
                 icon: "xmark.circle",
                 badge: name,
                 execute: {
-                    app.terminate()
+                    // Said, so the dock glows red for it as for every other quit.
+                    DockActionFeedback.appQuit(name, bundleID: app.bundleIdentifier, succeeded: app.terminate())
                     GlobalContextResultSource.shared.refresh()
                 }
             )
@@ -834,6 +937,24 @@ extension AppChatPromptModel {
     /// reasoning, and no way for the two surfaces to agree. This hands the question to the
     /// same pipeline with the same `cli://` scope, so the corner behaves like the dock
     /// because it *is* the dock's behaviour.
+    /// A hand scroll took the highlighted row out of view: it moves to the nearest row in
+    /// view (owner 2026-10-17). `slots` is how many row-high slots show; a section header
+    /// takes one above its row.
+    func keepFocusInView(topItemID: String?, slots: Int) {
+        guard let focused = focusedMenuIndex, let topItemID,
+            let top = rows.firstIndex(where: { $0.id == topItemID })
+        else { return }
+        let headers = globalSectionHeaders
+        var used = 0
+        var last = top
+        for index in top..<rows.count {
+            used += headers[index] == nil ? 1 : 2
+            if used > slots { break }
+            last = index
+        }
+        if focused < top { focusedMenuIndex = top } else if focused > last { focusedMenuIndex = last }
+    }
+
     /// "Show N more": the section opens in place, the field keeps its words, and the
     /// highlight lands on the first row that was hidden — where "Show N more" stood.
     func showAllOfSection(_ section: String, at index: Int?) {
@@ -1174,7 +1295,9 @@ extension AppChatPromptModel {
             _ = leaveSelectionScope()
             dismiss()
             return true
-        case .leaveChat: return leaveChatForMenus()
+        // The chat is put away, not ended: a turn keeps running and the field's ⌃ (or ↑)
+        // brings it back (owner 2026-10-16).
+        case .leaveChat: return hideConversation()
         case .leaveScope: return leaveScopeForGlobal()
         case .pass: return false
         }
@@ -1376,7 +1499,9 @@ extension AppChatPromptModel {
         let row = focusedRow ?? rows.first
         switch row {
         case .dock(let pill):
+            // A menu command with no image of its own shows its app, as the foot does — not ⌘.
             return pill.resolvedURL.flatMap { FaviconStore.shared.icon(for: $0) } ?? pill.menuItemImage
+                ?? boardFoot.icon
         case .file(let url): return NSWorkspace.shared.icon(forFile: url.path)
         case .global(let doc): return doc.icon
         case .app(let entry): return entry.icon
@@ -1419,7 +1544,17 @@ extension AppChatPromptModel {
     /// on an empty card.
     /// Global's section headers by the row they stand over (#258 G1); empty elsewhere.
     var globalSectionHeaders: [Int: String] {
-        if isGlobalScope { return GlobalResultSection.headers(for: rows) }
+        if isGlobalScope {
+            guard let top = globalTopHitID, rows.first?.id == top else {
+                return GlobalResultSection.headers(for: rows)
+            }
+            // The Top Hit stands alone; the rest keep their sections, the first one included.
+            var headers = [0: GlobalQuery.topHitSection]
+            for (index, title) in GlobalResultSection.headers(for: Array(rows.dropFirst())) {
+                headers[index + 1] = title
+            }
+            return headers
+        }
         // An app's Context Dock: headers once something is typed and the answer has more
         // than one kind — one kind is the whole answer, and the opening list keeps its
         // summary line (#258 G4).
@@ -1430,9 +1565,19 @@ extension AppChatPromptModel {
     }
 
     var listRowCount: Int {
-        // Global's section headers take a row's slot each.
-        let headers = globalSectionHeaders.count
-        if headers > 0 { return min(rows.count + headers, Self.menuRowLimit) }
+        // Global's section headers take a row's slot each — and the sheet never ends on a
+        // header with its rows below the edge (owner 2026-10-17: "Fallbacks" stood alone).
+        let headers = globalSectionHeaders
+        if !headers.isEmpty {
+            var slots: [Bool] = []  // true: a header
+            for index in rows.indices {
+                if headers[index] != nil { slots.append(true) }
+                slots.append(false)
+            }
+            var count = min(slots.count, Self.menuRowLimit)
+            if count > 1, slots[count - 1] { count -= 1 }
+            return count
+        }
         // A scope stepped into from Global answers with what was asked for — files in
         // Finder, a window elsewhere. Falling back to that app's menu list there filled the
         // board with "About Finder" and "AirDrop", which is not what the user came for.
@@ -1801,6 +1946,15 @@ extension AppChatPromptModel {
     /// The name the scope goes by, in one place so the chip and the check cannot disagree.
     static let globalScopeName = "Global Context"
 
+    /// The app a menu command of a closed app opens before it runs: the scope's own, unless
+    /// the command is a quit — there is nothing running to quit.
+    static func launchFirst(_ bundleID: String, path: [String]) -> String? {
+        guard !bundleID.isEmpty, !bundleID.hasPrefix("cli://"),
+            !MenuExecutionCoordinator.isQuitMenuPath(path)
+        else { return nil }
+        return bundleID
+    }
+
     func runMenuItem(_ item: AXMenuItem) {
         // In Global Context the row carries its own app: the scope has no single one, and
         // sending a Safari command to whatever happens to be frontmost is how a global list
@@ -1810,10 +1964,14 @@ extension AppChatPromptModel {
                 ? $0.processIdentifier == item.sourcePID
                 : $0.bundleIdentifier == appBundleID
         }
-        guard let app = owner, !app.isTerminated else { return }
+        let running = owner.flatMap { $0.isTerminated ? nil : $0 }
+        // Not running: its cached menus listed the command, so the app is opened first and
+        // the command run once its menu bar is up (owner 2026-10-17). Nothing to quit, though.
+        let launchBundleID = running == nil ? Self.launchFirst(appBundleID, path: item.path) : nil
+        guard running != nil || launchBundleID != nil else { return }
 
-        let request = MenuExecutionCoordinator.DockMenuActionRequest(
-            sourcePID: app.processIdentifier,
+        var request = MenuExecutionCoordinator.DockMenuActionRequest(
+            sourcePID: running?.processIdentifier ?? 0,
             path: item.path,
             shortcutChar: item.shortcutChar,
             shortcutModifiers: item.shortcutModifiers,
@@ -1821,6 +1979,7 @@ extension AppChatPromptModel {
             isGlobalContextActive: false,
             hasActiveDockContextSelection: false,
             keepsDockFloating: true)
+        request.launchBundleId = launchBundleID
 
         MenuExecutionCoordinator.shared.executeDockMenuAction(
             request: request,

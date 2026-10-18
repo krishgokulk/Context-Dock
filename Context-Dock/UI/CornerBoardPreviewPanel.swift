@@ -36,6 +36,10 @@ struct CornerBoardPreviewPanel: View {
                 case .windowLayout(let command, let title, let appName, let bundleID):
                     WindowLayoutPreview(
                         command: command, title: title, appName: appName, bundleID: bundleID)
+                case .rowSummary(let title, let foot):
+                    RowSummaryPreview(title: title, foot: foot)
+                case .appJump(let bundleID, let name):
+                    AppPreview(bundleID: bundleID, name: name, stepsIn: true)
                 case .appScope(let bundleID, let name):
                     // The list draws the app's card itself (`AppChatListCard`); anywhere
                     // else the app's own preview says the same in brief.
@@ -302,6 +306,8 @@ private struct FolderListing: View {
 private struct AppPreview: View {
     let bundleID: String
     let name: String
+    /// A "/" row: its ↩ steps into the app's Context Dock rather than opening it.
+    var stepsIn = false
     @ObservedObject private var snapshots = AppWindowSnapshotService.shared
     /// Redraws on launch and quit, so ⌘⌫ turns the card into the closed app's at once.
     @State private var launchState = 0
@@ -319,7 +325,9 @@ private struct AppPreview: View {
                 status: running == nil ? Color.secondary.opacity(0.5) : .green)
             PanelDivider()
             PanelSection(title: "Actions")
-            if running != nil {
+            if stepsIn {
+                PanelRow(symbol: "return", value: "Step into its Context Dock", trailing: "↩")
+            } else if running != nil {
                 PanelRow(symbol: "return", value: "Bring forward", trailing: "↩")
                 PanelRow(symbol: "arrow.right", value: "Step into its Context Dock", trailing: "→")
             } else {
@@ -380,6 +388,17 @@ private struct CommandPreview: View {
     let appName: String
     let bundleID: String
 
+    /// Live when the app runs and DoraX may read its menus; saved otherwise, with the reason.
+    private var menuSource: (symbol: String, label: String) {
+        guard !bundleID.isEmpty, AppResultActions.runningApp(bundleID) != nil else {
+            return ("tray.full", "Saved menu · \(appName.isEmpty ? "the app" : appName) isn't open")
+        }
+        guard AXIsProcessTrusted() else {
+            return ("lock", "Saved menu · Accessibility is off for DoraX")
+        }
+        return ("dot.radiowaves.left.and.right", "Live menu")
+    }
+
     var body: some View {
         let appIcon: NSImage? = {
             guard !bundleID.isEmpty,
@@ -387,10 +406,15 @@ private struct CommandPreview: View {
             else { return nil }
             return NSWorkspace.shared.icon(forFile: url.path)
         }()
+        // Whether its app is open, as the app's own card says (owner 2026-10-16): a command of
+        // an app that is not running is read from its cached menus.
+        let running = bundleID.isEmpty ? nil : AppResultActions.runningApp(bundleID) != nil
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
                 icon: appIcon, title: title,
-                subtitle: appName.isEmpty ? "Menu command" : "\(appName) menu command")
+                subtitle: (appName.isEmpty ? "Menu command" : "\(appName) menu command")
+                    + (running.map { $0 ? " · Running" : " · Not running" } ?? ""),
+                status: running.map { $0 ? Color.green : Color.secondary.opacity(0.5) })
             PanelDivider()
             // Where it lives: one row per menu level, the way the menu bar leads there.
             PanelSection(title: "Menu")
@@ -399,7 +423,10 @@ private struct CommandPreview: View {
                     symbol: index == path.count - 1 ? "command" : "chevron.right",
                     value: step)
             }
+            // Where the command was read from (owner 2026-10-17: "show live menu status"):
+            // the app's own menus right now, or the copy DoraX saved, and why.
             PanelDivider()
+            PanelRow(symbol: menuSource.symbol, value: menuSource.label)
             PanelRow(symbol: "return", value: "Run it", trailing: "↩")
         }
     }
@@ -544,11 +571,21 @@ private struct WebPagePreview: View {
     let domain: String
     let browserName: String
 
+    /// Whether the page is open right now in one of Safari's tabs (owner 2026-10-17: "status,
+    /// if the page is open"). Only Safari's tabs are known.
+    private var isOpenInTab: Bool {
+        SafariTabManager.shared.openTab(for: url.absoluteString) != nil
+    }
+
     var body: some View {
+        let open = isOpenInTab
+        let host = domain.isEmpty ? (url.host ?? url.absoluteString) : domain
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
                 icon: NSImage(systemSymbolName: "globe", accessibilityDescription: nil),
-                title: title, subtitle: domain.isEmpty ? (url.host ?? url.absoluteString) : domain)
+                title: title,
+                subtitle: open ? "\(host) · Open in a Safari tab" : "\(host) · Not open",
+                status: open ? .green : Color.secondary.opacity(0.5))
             // The page itself, scaled down, loaded only once the row has been held a moment.
             WebPageThumbnail(url: url)
                 .frame(height: 170)
@@ -565,7 +602,12 @@ private struct WebPagePreview: View {
                 PanelRow(label: "From", value: browserName)
             }
             PanelDivider()
-            PanelRow(symbol: "return", value: "Open in \(browserName.isEmpty ? "the browser" : browserName)", trailing: "↩")
+            PanelRow(
+                symbol: "return",
+                value: open && browserName == "Safari"
+                    ? "Show its Safari tab"
+                    : "Open in \(browserName.isEmpty ? "the browser" : browserName)",
+                trailing: "↩")
         }
     }
 }
@@ -757,5 +799,20 @@ private struct WindowLayoutPreview: View {
                         Color.accentColor.opacity(index == 0 ? 0.9 : 0.5),
                         lineWidth: picture == nil ? 0 : 1.5))
             .animation(.easeOut(duration: 0.2), value: picture != nil)
+    }
+}
+
+/// A row with nothing richer to preview: its icon, its name, its kind, and what ↩ does — the
+/// foot's words, so the panel and the foot agree.
+private struct RowSummaryPreview: View {
+    let title: String
+    let foot: BoardFoot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            PanelHeader(icon: foot.icon, title: title, subtitle: foot.title)
+            PanelDivider()
+            PanelRow(symbol: "return", value: foot.verb, trailing: "↩")
+        }
     }
 }

@@ -121,13 +121,19 @@ struct AppScopeCard: View {
     /// The card's width: the board's, now that it opens in the result board.
     var width: CGFloat = 300
     var maxScrollHeight: CGFloat = 420
+    /// Another app's card — an app row in Global or a "/" list (owner 2026-10-16) — rather
+    /// than the field's own app. What only the field's app has (its actions to run and pin,
+    /// what it sees now) is left out; its inventory and permissions are any app's.
+    var subject: (bundleID: String, name: String)? = nil
 
     @State private var expanded: Set<String> = []
 
-    private var bundleID: String { model.appBundleID }
+    private var bundleID: String { subject?.bundleID ?? model.appBundleID }
+    private var name: String { subject?.name ?? model.appName }
+    private var isOtherApp: Bool { subject != nil && subject?.bundleID != model.appBundleID }
 
     private var inventory: ScopeInventory {
-        ScopeInventory.app(bundleId: bundleID, appName: model.appName)
+        ScopeInventory.app(bundleId: bundleID, appName: name)
     }
 
     var body: some View {
@@ -142,7 +148,9 @@ struct AppScopeCard: View {
                             AppScopeInventoryGroups(groups: inventory.knowsGroups, expanded: $expanded)
                         }
                     }
-                    AppScopeSection("Sees now") { AppScopeSeesNowList(lines: seesNowLines) }
+                    if !isOtherApp {
+                        AppScopeSection("Sees now") { AppScopeSeesNowList(lines: seesNowLines) }
+                    }
                     AppScopeSection("Allowed") { AppScopeAllowedList(bundleID: bundleID) }
                 }
             }
@@ -159,8 +167,15 @@ struct AppScopeCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(model.appName).font(.system(size: 13, weight: .semibold))
-                Text("What DoraX can do here").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(name).font(.system(size: 13, weight: .semibold))
+                // Whether it is open, as every app panel says (owner 2026-10-16).
+                let running = AppResultActions.runningApp(bundleID) != nil
+                HStack(spacing: 5) {
+                    Circle().fill(running ? Color.green : Color.secondary.opacity(0.5))
+                        .frame(width: 6, height: 6)
+                    Text(running ? "Running · What DoraX can do here" : "Not running · What DoraX can do here")
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
         }
@@ -170,11 +185,12 @@ struct AppScopeCard: View {
 
     private func canDo(_ inventory: ScopeInventory) -> some View {
         AppScopeSection("Can do") {
-            if model.adapterActions.isEmpty && inventory.canDoGroups.isEmpty {
-                Text("Nothing for \(model.appName) yet — its menus are searchable from the field.")
+            let actions = isOtherApp ? [] : model.adapterActions
+            if actions.isEmpty && inventory.canDoGroups.isEmpty {
+                Text("Nothing for \(name) yet — its menus are searchable from the field.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
             }
-            if !model.adapterActions.isEmpty {
+            if !actions.isEmpty {
                 AppScopeDisclosure(
                     id: "actions", symbol: "bolt.fill", title: "Actions",
                     count: model.adapterActions.count, expanded: $expanded
@@ -184,9 +200,11 @@ struct AppScopeCard: View {
                     }
                 }
             }
-            // Everything else the Dock's panel lists, but actions (drawn above, runnable).
+            // Everything else the Dock's panel lists, but actions (drawn above, runnable) —
+            // another app's actions are listed with the rest, not run from here.
             AppScopeInventoryGroups(
-                groups: inventory.canDoGroups.filter { $0.title != "Actions" }, expanded: $expanded)
+                groups: inventory.canDoGroups.filter { isOtherApp || $0.title != "Actions" },
+                expanded: $expanded)
         }
     }
 
