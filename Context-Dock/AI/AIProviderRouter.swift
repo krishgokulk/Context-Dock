@@ -646,12 +646,11 @@ final class AIProviderRouter {
         }
         // The subscription is reached by running the CLI the user has already signed in to,
         // so it takes its own path rather than an adapter with no endpoint to point at.
-        if provider == .claudeCode {
-            return try await ClaudeCodeCLIService.send(
-                prompt: ClaudeCodeCLIService.promptWithHistory(
-                    message: request.text, history: request.history),
+        if provider.isSubscriptionCLI {
+            return try await SubscriptionCLIProvider.send(
+                provider: provider, message: request.text,
                 systemPrompt: contextPrompt + liveContextPrompt + attachmentPrompt,
-                model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
+                history: request.history)
         }
 
         let configuration = try configuration(for: provider, apiKeyOverride: nil)
@@ -704,12 +703,11 @@ final class AIProviderRouter {
                 history: conversationHistory, imageURLs: imageURLs
             )
         }
-        if provider == .claudeCode {
-            return try await ClaudeCodeCLIService.send(
-                prompt: ClaudeCodeCLIService.promptWithHistory(
-                    message: message, history: conversationHistory),
+        if provider.isSubscriptionCLI {
+            return try await SubscriptionCLIProvider.send(
+                provider: provider, message: message,
                 systemPrompt: contextPrompt + attachmentPrompt,
-                model: settings.claudeCodeModel.isEmpty ? nil : settings.claudeCodeModel)
+                history: conversationHistory)
         }
         let configuration = try configuration(for: provider, apiKeyOverride: apiKeyOverride)
         return try await adapter(for: provider).send(
@@ -721,6 +719,10 @@ final class AIProviderRouter {
     /// Public capability lookup so UI can show vision/file support and gate attachments.
     /// On-device is treated as image-capable because it OCRs images into text.
     func capabilities(for provider: AIProvider) -> AIProviderCapabilities {
+        if provider.isSubscriptionCLI {
+            return AIProviderCapabilities(
+                supportsImages: false, supportsFiles: false, supportsToolCalls: false, runsLocally: false)
+        }
         if provider == .onDevice {
             return AIProviderCapabilities(
                 supportsImages: true, supportsFiles: false,
@@ -738,7 +740,7 @@ final class AIProviderRouter {
     /// subscription answered from AIProviderService and failed with "Provider does not use an
     /// HTTP adapter" from the router — the same question working or not depending on which
     /// surface asked it.
-    static let localProviders: Set<AIProvider> = [.onDevice, .claudeCode]
+    static let localProviders: Set<AIProvider> = [.onDevice, .claudeCode, .chatGPTSubscription]
 
     /// Internal rather than private so a test can assert every other provider actually has an
     /// endpoint to call. A provider added without one is otherwise only discovered by a person
@@ -808,7 +810,7 @@ final class AIProviderRouter {
             return .init(apiKey: "", endpoint: settings.chatGPTBridgeEndpoint, modelID: settings.chatGPTBridgeModelID)
         case .shortcuts:
             return .init(apiKey: "", endpoint: "", modelID: settings.shortcutsProviderShortcut)
-        case .onDevice, .claudeCode:
+        case .onDevice, .claudeCode, .chatGPTSubscription:
             throw AIServiceError.unsupportedProvider("Provider does not use an HTTP adapter")
         }
     }
@@ -822,7 +824,7 @@ final class AIProviderRouter {
         case .openAICompatible, .kimi: return OpenAICompatibleProviderAdapter()
         case .claudeBridge, .chatGPTBridge: return OpenAICompatibleProviderAdapter()
         case .shortcuts: return ShortcutsProviderAdapter()
-        case .claudeCode: return ShortcutsProviderAdapter()
+        case .claudeCode, .chatGPTSubscription: return ShortcutsProviderAdapter()
         case .onDevice:
             assertionFailure("Provider does not use an adapter")
             return OpenAICompatibleProviderAdapter()

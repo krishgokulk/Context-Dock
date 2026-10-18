@@ -107,7 +107,7 @@ final class AISafetyPolicy {
             return ["localhost", "127.0.0.1", "::1"].contains(host)
         // The binary runs here; the question does not stay here. Treating Claude Code as
         // local would hand it private context that is meant never to leave the Mac.
-        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode:
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode, .chatGPTSubscription:
             return false
         }
     }

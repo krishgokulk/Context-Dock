@@ -86,6 +86,11 @@ enum CodexCLIService {
         else { return .ignored }
 
         switch type {
+        case "error":
+            return .failure(object["message"] as? String ?? "Codex reported an error.")
+        case "turn.failed":
+            let error = object["error"] as? [String: Any]
+            return .failure(error?["message"] as? String ?? "Codex could not finish the turn.")
         case "turn.completed":
             return .completed
         case "item.started", "item.completed":
@@ -190,100 +195,20 @@ enum CodexCLIService {
         binary: String, arguments: [String], workingDirectory: URL?, timeout: TimeInterval,
         onLine: @escaping @Sendable (String) -> Void
     ) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: binary)
-            process.arguments = arguments
-            process.currentDirectoryURL = workingDirectory ?? FileManager.default.temporaryDirectory
-
-            process.environment = CLIChildEnvironment.make()
-
-            // Closed stdin: `codex exec` otherwise waits on "Reading additional input from
-            // stdin…" and the run never begins.
-            process.standardInput = FileHandle.nullDevice
-            let output = Pipe()
-            process.standardOutput = output
-            // Diagnostics stay off the event stream; a parser fed log lines has to skip them
-            // and a user shown them has to read them.
-            process.standardError = FileHandle.nullDevice
-
-            let buffer = CodexLineBuffer()
-            let resumed = OSAllocatedUnfairLock(initialState: false)
-            func finish(_ result: Result<String, Error>) {
-                let first = resumed.withLock { done -> Bool in
-                    if done { return false }
-                    done = true
-                    return true
-                }
-                guard first else { return }
-                continuation.resume(with: result)
-            }
-
-            output.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
-                for line in buffer.append(data) {
-                    Task { @MainActor in onLine(line) }
-                }
-            }
-            process.terminationHandler = { _ in
-                output.fileHandleForReading.readabilityHandler = nil
-                for line in buffer.drain() {
-                    Task { @MainActor in onLine(line) }
-                }
-                finish(.success(buffer.transcript))
-            }
-            do {
-                try process.run()
-            } catch {
-                finish(.failure(Failure.failed(error.localizedDescription)))
-                return
-            }
-            // The task's own budget, applied as a fact: past it the process is gone, and the
-            // transcript so far is what there is.
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                guard process.isRunning else { return }
-                process.terminate()
-                DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                }
-                finish(.success(buffer.transcript + "\nCodex timed out after \(Int(timeout)) s."))
-            }
+        let result = try await CLIProcess.run(
+            binary: binary, arguments: arguments, directory: workingDirectory,
+            environment: CLIChildEnvironment.make(), timeout: timeout,
+            onLine: { line in
+                Task { @MainActor in onLine(line) }
+                return false
+            })
+        guard result.status == 0 else {
+            let detail = result.stdout.split(separator: "\n").compactMap { line -> String? in
+                if case .failure(let message) = parse(streamLine: String(line)) { return message }
+                return nil
+            }.last
+            throw Failure.failed(detail ?? "Codex failed. Run `codex login` and try again.")
         }
-    }
-}
-
-/// Whole lines out of whatever chunks the pipe delivers; the tail waits for its newline.
-private final class CodexLineBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pending = ""
-    private var everything = ""
-
-    var transcript: String {
-        lock.lock()
-        defer { lock.unlock() }
-        return everything
-    }
-
-    func append(_ data: Data) -> [String] {
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        lock.lock()
-        defer { lock.unlock() }
-        everything += text
-        pending += text
-        var lines: [String] = []
-        while let newline = pending.firstIndex(of: "\n") {
-            lines.append(String(pending[..<newline]))
-            pending = String(pending[pending.index(after: newline)...])
-        }
-        return lines
-    }
-
-    func drain() -> [String] {
-        lock.lock()
-        defer { lock.unlock() }
-        let rest = pending
-        pending = ""
-        return rest.isEmpty ? [] : [rest]
+        return result.stdout
     }
 }

@@ -5,7 +5,7 @@
 // Messages AppleScript dictionary (name of chat / content of message return
 // `missing value`), so AppleScript can no longer read conversations — that's the
 // "missing value | snippet:" bug. chat.db is the reliable source used by every
-// working Messages tool. Read-only, immutable open, no writes. Requires Full Disk
+// working Messages tool. Reads a snapshot copy, never writes the live file. Requires Full Disk
 // Access (the same permission the rest of DoraX's local readers use).
 
 import Foundation
@@ -78,16 +78,20 @@ enum MessagesChatDBReader {
             .max(by: { $0.count < $1.count }) ?? ""
     }
 
-    /// Run a SQL query against a read-only, immutable open of chat.db via the
-    /// system sqlite3 CLI. Rows are `|`-separated. Returns nil when unreadable.
+    /// Run a SQL query against a snapshot copy of chat.db plus its -wal (see
+    /// SQLiteSnapshot — an immutable open of the live file missed every message
+    /// Messages had not checkpointed yet) via the system sqlite3 CLI. Rows are
+    /// `\u{1}`-separated. Returns nil when unreadable.
     private static func query(_ sql: String) -> [[String]]? {
         guard isAccessible else { return nil }
+        return SQLiteSnapshot.withCopy(of: databaseURL.path) { run(sql, on: $0) }
+    }
+
+    private static func run(_ sql: String, on path: String) -> [[String]]? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [
-            "-readonly", "-separator", "\u{1}",
-            "file:\(databaseURL.path)?immutable=1", sql,
-        ]
+        // Not -readonly: the copy must open read-write for SQLite to apply its WAL.
+        process.arguments = ["-separator", "\u{1}", path, sql]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()

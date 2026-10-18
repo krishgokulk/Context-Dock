@@ -74,6 +74,10 @@ struct BoardFoot: Hashable {
                 return appFoot(pill.sourceBundleId)
             case GlobalResultSection.showMoreKind:
                 return BoardFoot(title: pill.resultSection, verb: "Show all", symbol: "chevron.down")
+            case GlobalQuery.historyDayKind:
+                return BoardFoot(
+                    title: "\(pill.sourceAppName) · History", verb: "Show",
+                    bundleID: pill.sourceBundleId, symbol: "clock.arrow.circlepath")
             case GlobalSources.clipKind:
                 return BoardFoot(
                     title: "Clipboard", verb: "Copy", bundleID: pill.sourceBundleId,

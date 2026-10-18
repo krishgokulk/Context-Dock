@@ -702,6 +702,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     case openAI = "openAI"
     case anthropic = "anthropic"
     case claudeCode = "claudeCode"
+    case chatGPTSubscription = "chatGPTSubscription"
     case claudeBridge = "claudeBridge"
     case chatGPTBridge = "chatGPTBridge"
     case ollama = "ollama"
@@ -715,9 +716,10 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .onDevice: return "On-Device Intelligence"
         case .googleGemini: return "Google Gemini"
-        case .openAI: return "ChatGPT (OpenAI)"
+        case .openAI: return "OpenAI API"
         case .anthropic: return "Claude (Anthropic)"
         case .claudeCode: return "Claude Subscription"
+        case .chatGPTSubscription: return "ChatGPT Subscription"
         case .claudeBridge: return "Claude Pro (via Bridge)"
         case .chatGPTBridge: return "ChatGPT Plus (via Bridge)"
         case .ollama: return "Ollama (Local)"
@@ -744,7 +746,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
             return true
         // The CLI is an agent with its own tools, and DoraX deliberately runs it with none.
         // It answers; the app acts. Tool calls take the plain path.
-        case .claudeCode:
+        case .claudeCode, .chatGPTSubscription:
             return false
         }
     }
@@ -756,6 +758,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .openAI: return "ChatGPT"
         case .anthropic: return "Claude"
         case .claudeCode: return "Claude"
+        case .chatGPTSubscription: return "ChatGPT Plan"
         case .claudeBridge: return "Claude Pro"
         case .chatGPTBridge: return "ChatGPT Plus"
         case .ollama: return "Ollama"
@@ -776,6 +779,8 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .claudeCode:
             return
                 "Sign in once with the Claude app on this Mac. Uses your Pro or Max subscription directly — no proxy, no API key, no extra billing."
+        case .chatGPTSubscription:
+            return "Use ChatGPT sign-in through Codex CLI. Cloud-backed, covered by your plan limits; no API key."
         case .claudeBridge:
             return
                 "Route a subscription through a local OpenAI-compatible bridge you run yourself. Advanced."
@@ -797,6 +802,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         case .openAI: return "bubble.left.and.bubble.right"
         case .anthropic: return "brain.head.profile"
         case .claudeCode: return "sparkle"
+        case .chatGPTSubscription: return "bubble.left.and.bubble.right"
         case .claudeBridge: return "arrow.triangle.2.circlepath.circle.fill"
         case .chatGPTBridge: return "arrow.triangle.2.circlepath.circle"
         case .ollama: return "server.rack"
@@ -809,7 +815,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
     var requiresAPIKey: Bool {
         switch self {
         case .onDevice, .ollama, .openAICompatible, .shortcuts,
-            .claudeBridge, .chatGPTBridge, .claudeCode:
+            .claudeBridge, .chatGPTBridge, .claudeCode, .chatGPTSubscription:
             return false
         case .googleGemini, .openAI, .anthropic, .kimi: return true
         }
@@ -830,7 +836,7 @@ enum AIProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .openAI, .anthropic, .googleGemini, .kimi:
             return .official
-        case .claudeCode, .claudeBridge, .chatGPTBridge:
+        case .claudeCode, .chatGPTSubscription, .claudeBridge, .chatGPTBridge:
             return .bridge
         case .onDevice, .ollama, .shortcuts:
             return .local
@@ -1131,6 +1137,7 @@ class AppSettings: ObservableObject {
     /// Model alias handed to the Claude CLI: "opus", "sonnet", "haiku", or empty for the
     /// plan's default. An alias rather than an id, so a retired model cannot strand it.
     @AppStorage("claudeCodeModel") var claudeCodeModel: String = ""
+    @AppStorage("chatGPTSubscriptionModel") var chatGPTSubscriptionModel: String = ""
 
     /// How much of the Claude CLI's own agent DoraX turns on. Stored as a string so a value
     /// written by a newer build cannot crash an older one — an unknown level reads as the
@@ -2340,6 +2347,8 @@ class AppSettings: ObservableObject {
             return !openAICompatibleEndpoint.isEmpty && !openAICompatibleModelID.isEmpty
         case .kimi:
             return !kimiAPIKey.isEmpty && !selectedKimiModel.isEmpty
+        case .chatGPTSubscription:
+            return CodexCLIService.binaryPath() != nil
         case .claudeCode:
             // Nothing to configure: it is ready exactly when the CLI is on the machine.
             return ClaudeCodeCLIService.isInstalled
