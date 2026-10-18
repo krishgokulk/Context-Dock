@@ -33,7 +33,7 @@ enum AIContextBudget {
             // Local and bring-your-own endpoints: unknown window, frequently 8k or less.
             return 4_000
         case .anthropic, .openAI, .googleGemini, .kimi, .claudeBridge, .chatGPTBridge,
-            .claudeCode:
+            .claudeCode, .chatGPTSubscription:
             return 12_000
         }
     }

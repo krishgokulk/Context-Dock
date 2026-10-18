@@ -21,7 +21,7 @@ struct ProviderDispatchTests {
     /// The two that run something on this Mac. A third arriving without being added here —
     /// and intercepted in every send path — is the bug this test exists to catch.
     @Test func onlyTheLocalProvidersSkipTheHTTPPath() {
-        #expect(AIProviderRouter.localProviders == [.onDevice, .claudeCode])
+        #expect(AIProviderRouter.localProviders == [.onDevice, .claudeCode, .chatGPTSubscription])
     }
 
     /// Every other provider must reach a real endpoint. Missing credentials or an unset
