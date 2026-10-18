@@ -1177,6 +1177,8 @@ struct AIProviderSettingsView: View {
             }
         case .claudeCode:
             ClaudeSubscriptionConfigView()
+        case .chatGPTSubscription:
+            ChatGPTSubscriptionConfigView()
         case .claudeBridge:
             bridgeConfigView(
                 title: "Claude via Local Bridge",
@@ -1396,7 +1398,7 @@ struct AIProviderSettingsView: View {
         case .chatGPTBridge: return settings.chatGPTBridgeModelID
         // Claude Code bills nothing per token — the subscription already paid. A rate
         // card for it would invite a number that is not a cost.
-        case .onDevice, .shortcuts, .claudeCode: return ""
+        case .onDevice, .shortcuts, .claudeCode, .chatGPTSubscription: return ""
         }
     }
 
@@ -4405,7 +4407,7 @@ struct AIProviderRow: View {
         switch provider {
         case .onDevice:     return .blue
         case .googleGemini: return .indigo
-        case .openAI:       return .teal
+        case .openAI, .chatGPTSubscription: return .teal
         case .anthropic:    return .orange
         case .claudeCode:   return .orange
         case .claudeBridge: return .purple

@@ -705,7 +705,7 @@ struct AIChatMessageView: View {
         switch settings.selectedAIProvider {
         case .onDevice: return .purple
         case .googleGemini: return .blue
-        case .openAI: return .green
+        case .openAI, .chatGPTSubscription: return .green
         case .anthropic: return .orange
         case .claudeCode: return .orange
         case .claudeBridge: return .purple
@@ -1910,7 +1910,7 @@ struct AILoadingView: View {
         switch settings.selectedAIProvider {
         case .onDevice: return .purple
         case .googleGemini: return .blue
-        case .openAI: return .green
+        case .openAI, .chatGPTSubscription: return .green
         case .anthropic: return .orange
         case .claudeCode: return .orange
         case .claudeBridge: return .purple

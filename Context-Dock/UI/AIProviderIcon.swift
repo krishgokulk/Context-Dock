@@ -35,7 +35,7 @@ struct AIProviderIcon: View {
     /// The vendor app that carries this provider's mark, if the user has it.
     private static func bundleID(for provider: AIProvider) -> String? {
         switch provider {
-        case .openAI, .chatGPTBridge: return "com.openai.chat"
+        case .openAI, .chatGPTBridge, .chatGPTSubscription: return "com.openai.chat"
         case .anthropic, .claudeBridge, .claudeCode:
             return "com.anthropic.claudefordesktop"
         case .googleGemini: return "com.google.Gemini"
