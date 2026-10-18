@@ -14,7 +14,8 @@ import Foundation
 
 enum GlobalQuery {
     static let glueWords: Set<String> = ["in", "on", "the", "a", "an", "my", "for", "of", "from", "to", "at", "with", "and"]
-    static let timeWords: Set<String> = ["today", "yesterday", "tonight", "week", "month", "recent", "recently", "last"]
+    static let weekdayWords = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+    static let timeWords: Set<String> = Set(["today", "yesterday", "tonight", "week", "month", "recent", "recently", "last"] + weekdayWords)
     static let destructiveVerbs: Set<String> = ["clear", "delete", "erase", "remove", "quit", "reset", "empty", "trash"]
 
     static func words(_ text: String) -> [String] {
@@ -215,6 +216,16 @@ enum GlobalQuery {
         if words.contains("yesterday"),
             let day = calendar.date(byAdding: .day, value: -1, to: now) {
             return calendar.dateInterval(of: .day, for: day)
+        }
+        // "monday": the latest Monday — today when it is Monday; "last monday" a week
+        // before that when today is Monday (owner 2026-10-18: "monday" listed nothing).
+        if let target = weekdayWords.firstIndex(where: words.contains) {
+            var back = (calendar.component(.weekday, from: now) - (target + 1) + 7) % 7
+            if back == 0, isLast { back = 7 }
+            guard let day = calendar.date(byAdding: .day, value: -back, to: now),
+                let interval = calendar.dateInterval(of: .day, for: day)
+            else { return nil }
+            return DateInterval(start: interval.start, end: min(interval.end, max(interval.start, now)))
         }
         if words.contains("week") { return period(.weekOfYear) }
         if words.contains("month") { return period(.month) }

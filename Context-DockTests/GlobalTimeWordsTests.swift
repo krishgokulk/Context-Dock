@@ -30,6 +30,14 @@ struct GlobalTimeWordsTests {
         let thisWeek = try #require(GlobalQuery.timeRange(in: "this week", now: now, calendar: calendar))
         #expect(thisWeek.contains(day(-1)) && !thisWeek.contains(day(-3)))
         #expect(GlobalQuery.timeRange(in: "safari history", now: now, calendar: calendar) == nil)
+        // Wednesday now: "monday" is two days back, "wednesday" today, "last wednesday" a week back.
+        let monday = try #require(GlobalQuery.timeRange(in: "monday", now: now, calendar: calendar))
+        #expect(monday.contains(day(-2)) && !monday.contains(day(-1)) && !monday.contains(day(-9)))
+        let wednesday = try #require(GlobalQuery.timeRange(in: "safari wednesday", now: now, calendar: calendar))
+        #expect(wednesday.contains(day(0, hour: 9)))
+        let lastWednesday = try #require(GlobalQuery.timeRange(in: "last wednesday", now: now, calendar: calendar))
+        #expect(lastWednesday.contains(day(-7)))
+        #expect(GlobalQuery.askedWords(in: "monday github", appNames: []) == ["github"])
     }
 
     private func page(_ title: String, visited: Date?) -> AppChatRow {
