@@ -100,4 +100,20 @@ struct GlobalTimeWordsTests {
         #expect(GlobalQuery.datedHistory(entries, query: "edge today", range: range).map(\.title) == ["e"])
         #expect(GlobalQuery.datedHistory(entries, query: "google today", range: range).count == 3)
     }
+
+    @Test func aBrowsersDaysAreRowsLikeItsHistoryMenu() {
+        let entries = [
+            BrowserURLLibraryEntry(title: "a", url: URL(string: "https://a.com")!, visitDate: day(0, hour: 9), kind: .history, browserName: "Safari", browserBundleId: "com.apple.Safari"),
+            BrowserURLLibraryEntry(title: "b", url: URL(string: "https://b.com")!, visitDate: day(-1), kind: .history, browserName: "Safari", browserBundleId: "com.apple.Safari"),
+            BrowserURLLibraryEntry(title: "c", url: URL(string: "https://c.com")!, visitDate: day(-4), kind: .history, browserName: "Safari", browserBundleId: "com.apple.Safari"),
+            BrowserURLLibraryEntry(title: "d", url: URL(string: "https://d.com")!, visitDate: day(-4, hour: 15), kind: .history, browserName: "Safari", browserBundleId: "com.apple.Safari"),
+        ]
+        let all = GlobalQuery.historyDayRows(entries, query: "history", now: now, calendar: calendar)
+        #expect(all.map(\.title) == ["Today", "Yesterday", "Saturday, 10 October"])
+        guard case .dock(let saturday) = all[2] else { Issue.record("not a pill"); return }
+        #expect(saturday.menuItemName == "saturday" && saturday.menuContext == "2 pages")
+        #expect(GlobalQuery.historyDayRows(entries, query: "sat", now: now, calendar: calendar).map(\.title) == ["Saturday, 10 October"])
+        #expect(GlobalQuery.historyDayRows(entries, query: "saturday", now: now, calendar: calendar).isEmpty)
+        #expect(GlobalQuery.historyDayRows(entries, query: "github", now: now, calendar: calendar).isEmpty)
+    }
 }

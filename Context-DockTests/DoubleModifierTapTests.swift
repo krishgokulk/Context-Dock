@@ -44,4 +44,13 @@ struct DoubleModifierTapTests {
         #expect(!pressed && !chord && !chordReleased && !released)
         #expect(!tap(&detector, at: 1.4))
     }
+
+    /// A relaxed double press — 0.45 s between releases — opens with the Mac's default
+    /// double-click speed; it missed under the old 0.4 s (owner 2026-10-18).
+    @Test func aRelaxedDoublePressFires() {
+        var detector = DoubleModifierTap()
+        detector.pairWindow = 0.5
+        #expect(!tap(&detector, at: 1, duration: 0.15))
+        #expect(tap(&detector, at: 1.45, duration: 0.15))
+    }
 }

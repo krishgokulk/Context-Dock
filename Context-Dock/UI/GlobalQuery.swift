@@ -302,4 +302,53 @@ enum GlobalQuery {
             return !named || isNamed(entry)
         }.prefix(limit))
     }
+
+    // MARK: History by day (owner 2026-10-18)
+
+    static let historyDayKind = "historyDay"
+    static let historyDaySection = "History by day"
+
+    /// A browser's last seven days as rows, as its History menu lists them — "Today",
+    /// "Yesterday", "Friday, 16 October" — each with how many pages it holds, read from the
+    /// browser's own history rather than its menu. Shown for "history" or words that name a
+    /// day ("sat", "october"); not once a time is typed, when the day's pages are the list.
+    /// Return fills the field with the day ("friday"), and its pages follow.
+    static func historyDayRows(
+        _ entries: [BrowserURLLibraryEntry], query: String,
+        now: Date = Date(), calendar: Calendar = .current
+    ) -> [AppChatRow] {
+        guard timeRange(in: query, now: now, calendar: calendar) == nil else { return [] }
+        let typed = words(query)
+        let asked = typed.filter { !glueWords.contains($0) && !browserWords.contains($0) }
+        guard !asked.isEmpty else { return [] }
+        let listsAll = asked.contains { ["history", "day", "days"].contains($0) }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.dateFormat = "EEEE, d MMMM"
+        let today = calendar.startOfDay(for: now)
+        return (0..<7).compactMap { back -> AppChatRow? in
+            guard let start = calendar.date(byAdding: .day, value: -back, to: today),
+                let end = calendar.date(byAdding: .day, value: 1, to: start)
+            else { return nil }
+            let pages = entries.filter { $0.kind == .history && $0.visitDate.map { $0 >= start && $0 < end } == true }
+            guard !pages.isEmpty else { return nil }
+            let weekday = weekdayWords[calendar.component(.weekday, from: start) - 1]
+            let fill = back == 0 ? "today" : back == 1 ? "yesterday" : weekday
+            let title = back == 0 ? "Today" : back == 1 ? "Yesterday" : formatter.string(from: start)
+            let hay = words("\(fill) \(weekday) \(formatter.string(from: start))")
+            guard listsAll || asked.allSatisfy({ word in hay.contains { $0.hasPrefix(word) } }) else { return nil }
+            var pill = DockPill(
+                id: "history-day-\(fill)", name: title, icon: "clock.arrow.circlepath",
+                badge: nil, execute: {})
+            pill.rankingKind = historyDayKind
+            pill.resultSection = historyDaySection
+            pill.menuItemName = fill
+            pill.menuContext = pages.count == 1 ? "1 page" : "\(pages.count) pages"
+            pill.sourceBundleId = pages[0].browserBundleId
+            pill.sourceAppName = pages[0].browserName
+            return .dock(pill)
+        }
+    }
 }

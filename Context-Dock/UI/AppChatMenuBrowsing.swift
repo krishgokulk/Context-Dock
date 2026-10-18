@@ -256,6 +256,10 @@ extension AppChatPromptModel {
                 rows += BrowserURLLibraryService.shared
                     .entries(matching: typed, bundleId: appBundleID, limit: 12)
                     .map { AppChatRow.global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
+                // Its days, as its History menu lists them (owner 2026-10-18).
+                rows = GlobalQuery.historyDayRows(
+                    BrowserURLLibraryService.shared.entries(matching: "", bundleId: appBundleID, limit: 2000),
+                    query: typed) + rows
             }
         }
         if !typed.isEmpty, appBundleID == BrowserTabList.safariBundleID {
@@ -1785,6 +1789,13 @@ extension AppChatPromptModel {
         switch row {
         case .dock(let pill):
             guard pill.isEnabled else { return }
+            // A day of history fills the field with it, and the day's pages follow.
+            if pill.rankingKind == GlobalQuery.historyDayKind {
+                query = pill.menuItemName
+                queryChanged()
+                touch()
+                return
+            }
             if pill.rankingKind == GlobalResultSection.showMoreKind {
                 showAllOfSection(pill.resultSection, at: rows.firstIndex { $0.id == "dock:" + pill.id })
                 return
