@@ -286,13 +286,10 @@ class AIProviderService: ObservableObject {
         // Not an HTTP provider: the subscription is reached by running the CLI the user has
         // already signed in, so it takes its own path rather than an adapter with no
         // endpoint to point at.
-        if provider == .claudeCode {
-            let response = try await ClaudeCodeCLIService.send(
-                prompt: ClaudeCodeCLIService.promptWithHistory(
-                    message: message, history: conversationHistory),
-                systemPrompt: contextPrompt,
-                model: AppSettings.shared.claudeCodeModel.isEmpty
-                    ? nil : AppSettings.shared.claudeCodeModel,
+        if provider.isSubscriptionCLI {
+            let response = try await SubscriptionCLIProvider.send(
+                provider: provider, message: message,
+                systemPrompt: contextPrompt, history: conversationHistory,
                 onProgress: onStatus.map { report in { step in report(step) } })
             currentResponse = response
             return response
@@ -335,7 +332,7 @@ class AIProviderService: ObservableObject {
                   let host = components.host?.lowercased()
             else { return false }
             return host == "localhost" || host == "127.0.0.1" || host == "::1"
-        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode:
+        case .openAI, .anthropic, .googleGemini, .kimi, .shortcuts, .claudeCode, .chatGPTSubscription:
             return false
         }
     }
@@ -1304,16 +1301,13 @@ class AIProviderService: ObservableObject {
         // "onDevice_fallback" at every caller that reaches for tools without first checking
         // supportsNativeTools. Most of them do, and a chat that only says hello should not
         // depend on which of them asked.
-        if provider == .claudeCode {
+        if provider.isSubscriptionCLI {
             // The CLI's own steps go to the same live list DoraX fills for its own turns, so
             // a subscription turn reads like every other one instead of sitting silent until
             // it finishes.
-            let answer = try await ClaudeCodeCLIService.send(
-                prompt: ClaudeCodeCLIService.promptWithHistory(
-                    message: effectiveMessage, history: conversationHistory),
-                systemPrompt: contextPrompt,
-                model: AppSettings.shared.claudeCodeModel.isEmpty
-                    ? nil : AppSettings.shared.claudeCodeModel,
+            let answer = try await SubscriptionCLIProvider.send(
+                provider: provider, message: effectiveMessage,
+                systemPrompt: contextPrompt, history: conversationHistory,
                 onProgress: onStatus.map { report in { step in report(step) } })
             return (answer, [])
         }

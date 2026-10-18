@@ -38,7 +38,7 @@ enum AIProviderStreaming {
         case .anthropic, .openAI, .kimi, .openAICompatible, .claudeBridge, .chatGPTBridge,
             .googleGemini, .ollama:
             return true
-        case .onDevice, .shortcuts, .claudeCode:
+        case .onDevice, .shortcuts, .claudeCode, .chatGPTSubscription:
             // On-device streams through FoundationModels' own API, not SSE. Shortcuts runs a
             // shortcut and returns its result; there is nothing to stream. Claude Code is a
             // process that prints one JSON object when it is done.

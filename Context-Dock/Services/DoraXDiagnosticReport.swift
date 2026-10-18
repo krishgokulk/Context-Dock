@@ -92,6 +92,9 @@ struct DoraXDiagnosticReport: Identifiable {
             "Native tools: \(provider.supportsNativeTools)",
         ]
         switch provider {
+        case .chatGPTSubscription:
+            lines.append("CLI: \(CodexCLIService.binaryPath() ?? "NOT FOUND")")
+            lines.append("Model: \(settings.chatGPTSubscriptionModel.isEmpty ? "(plan default)" : settings.chatGPTSubscriptionModel)")
         case .claudeCode:
             lines.append("CLI: \(ClaudeCodeCLIService.binaryPath() ?? "NOT FOUND")")
             lines.append(

@@ -91,7 +91,7 @@ struct ScopedPromptAssembler {
         case .onDevice: return 3_200
         case .ollama, .openAICompatible, .shortcuts: return 24_000
         case .anthropic, .openAI, .googleGemini, .kimi, .claudeBridge, .chatGPTBridge,
-            .claudeCode:
+            .claudeCode, .chatGPTSubscription:
             // A cloud window is large enough that trimming costs more in answer quality than
             // it saves. The per-block budgets upstream already keep any one section sane.
             return nil
