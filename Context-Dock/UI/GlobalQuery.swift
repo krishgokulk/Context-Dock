@@ -50,7 +50,10 @@ enum GlobalQuery {
             }
         case .global(let doc):
             text.append(doc.subtitle)
-            if case .browserURL = doc.action { text.append("history bookmark page site visited") }
+            if case .browserURL(_, _, _, let kind, _) = doc.action {
+                text.append(kind == BrowserURLLibraryEntry.Kind.tab.rawValue
+                    ? "tab tabs open page site" : "history bookmark page site visited")
+            }
             if case .cachedMenu(_, _, let path, _, _) = doc.action { text += path }
         case .command(let item): text += item.path
         case .file(let url): text.append(url.deletingLastPathComponent().lastPathComponent)
@@ -139,5 +142,49 @@ enum GlobalQuery {
             guard !have.contains("\(appName.lowercased())|\(doc.title.lowercased())") else { return nil }
             return .global(doc)
         }
+    }
+
+    /// Safari's open tabs that hold every asked word, as rows, one per page (owner
+    /// 2026-10-18: "if safari is running filter opened tabs"). "tabs" alone lists them all;
+    /// "safari" alone lists none, so the app itself still leads.
+    static func openTabRows(_ tabs: [SafariTab], query: String) -> [AppChatRow] {
+        let typed = Set(words(query))
+        let asked = askedWords(in: query, appNames: ["Safari"])
+            .filter { !["tab", "tabs", "open"].contains($0) }
+        if asked.isEmpty, typed.isDisjoint(with: ["tab", "tabs"]) { return [] }
+        var seen = Set<String>()
+        return tabs.compactMap { tab -> AppChatRow? in
+            guard let url = URL(string: tab.url),
+                seen.insert(SafariTabManager.normalizedURLKey(tab.url)).inserted
+            else { return nil }
+            let hay = words("\(tab.title) \(tab.url)")
+            guard asked.allSatisfy({ word in hay.contains { $0.hasPrefix(word) } }) else { return nil }
+            return .global(GlobalSearchService.SearchDocument(
+                browserURL: BrowserURLLibraryEntry(
+                    title: tab.title, url: url, visitDate: nil, kind: .tab,
+                    browserName: "Safari", browserBundleId: BrowserTabList.safariBundleID),
+                icon: nil))
+        }
+        .prefix(8).map { $0 }
+    }
+
+    /// The open tabs first, and the same pages' history and bookmark rows dropped.
+    static func leadingOpenTabs(_ tabs: [AppChatRow], _ rows: [AppChatRow]) -> [AppChatRow] {
+        let open = Set(tabs.compactMap(pageURL).map(SafariTabManager.normalizedURLKey))
+        return tabs + rows.filter { row in
+            pageURL(row).map { !open.contains(SafariTabManager.normalizedURLKey($0)) } ?? true
+        }
+    }
+
+    /// The web page a row opens, if it opens one.
+    static func pageURL(_ row: AppChatRow) -> String? {
+        switch row {
+        case .global(let doc):
+            if case .browserURL(let url, _, _, _, _) = doc.action { return url.absoluteString }
+        case .dock(let pill):
+            if let url = pill.resolvedURL, !url.isFileURL { return url.absoluteString }
+        default: break
+        }
+        return nil
     }
 }

@@ -159,4 +159,32 @@ struct AppScopeDestructiveTests {
         #expect(safe.map(\.title) == ["Show Personal History", "New Session"])
         #expect(risky.map(\.title) == ["Clear History…"])
     }
+
+    private let tabs = [
+        SafariTab(title: "Home · fmhy/FMHY Wiki", url: "https://github.com/fmhy/FMHY/wiki", windowIndex: 1, tabIndex: 1),
+        SafariTab(title: "Wikipedia", url: "https://www.wikipedia.org/", windowIndex: 1, tabIndex: 2),
+        SafariTab(title: "Wikipedia", url: "https://www.wikipedia.org", windowIndex: 2, tabIndex: 1),
+        SafariTab(title: "ATTIK for Mac", url: "https://attikapp.com/", windowIndex: 1, tabIndex: 3),
+    ]
+
+    /// Safari's open tabs that answer the words lead, one row per page (owner 2026-10-18).
+    @Test func openTabsAreFilteredByTheWords() {
+        #expect(GlobalQuery.openTabRows(tabs, query: "wiki").map(\.title) == ["Home · fmhy/FMHY Wiki", "Wikipedia"])
+        #expect(GlobalQuery.openTabRows(tabs, query: "safari tabs").count == 3)
+        #expect(GlobalQuery.openTabRows(tabs, query: "safari").isEmpty)
+        #expect(GlobalResultSection.title(for: GlobalQuery.openTabRows(tabs, query: "attik")[0]) == GlobalResultSection.openTabs)
+    }
+
+    @Test func anOpenTabReplacesTheSamePageFromHistory() {
+        let open = GlobalQuery.openTabRows(tabs, query: "wikipedia")
+        let fromHistory = AppChatRow.global(GlobalSearchService.SearchDocument(
+            browserURL: BrowserURLLibraryEntry(
+                title: "Wikipedia", url: URL(string: "https://www.wikipedia.org/")!, visitDate: nil,
+                kind: .history, browserName: "Safari", browserBundleId: "com.apple.Safari"),
+            icon: nil))
+        let other = AppChatRow.dock(DockPill(id: "o", name: "Other", icon: "clock", badge: nil, execute: {}))
+        let rows = GlobalQuery.leadingOpenTabs(open, [fromHistory, other])
+        #expect(rows.map(\.title) == ["Wikipedia", "Other"])
+        #expect(rows.first?.id == open.first?.id)
+    }
 }

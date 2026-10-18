@@ -116,9 +116,13 @@ struct BoardFoot: Hashable {
             return BoardFoot(title: "\(command) · Subcommand", verb: "Run", symbol: "terminal")
         case .systemCommand:
             return BoardFoot(title: "Command", verb: "Run", symbol: "command")
-        case .web(_, _, let domain, _):
+        case .web(let url, _, let domain, let browserName):
+            // A page open in a Safari tab says so, and Return shows that tab (owner 2026-10-18).
+            let open = browserName == "Safari"
+                && SafariTabManager.shared.openTab(for: url.absoluteString) != nil
+            let kind = open ? "Open tab" : "Web page"
             return BoardFoot(
-                title: domain.isEmpty ? "Web page" : "\(domain) · Web page", verb: "Open",
+                title: domain.isEmpty ? kind : "\(domain) · \(kind)", verb: open ? "Show" : "Open",
                 symbol: "safari")
         case .windowLayout(_, _, let appName, let bundleID):
             return BoardFoot(

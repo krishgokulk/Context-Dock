@@ -574,10 +574,7 @@ private struct WebPagePreview: View {
     /// Whether the page is open right now in one of Safari's tabs (owner 2026-10-17: "status,
     /// if the page is open"). Only Safari's tabs are known.
     private var isOpenInTab: Bool {
-        let address = url.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return SafariTabManager.shared.cachedTabs(maxAge: .infinity).contains {
-            $0.url.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == address
-        }
+        SafariTabManager.shared.openTab(for: url.absoluteString) != nil
     }
 
     var body: some View {
@@ -605,7 +602,12 @@ private struct WebPagePreview: View {
                 PanelRow(label: "From", value: browserName)
             }
             PanelDivider()
-            PanelRow(symbol: "return", value: "Open in \(browserName.isEmpty ? "the browser" : browserName)", trailing: "↩")
+            PanelRow(
+                symbol: "return",
+                value: open && browserName == "Safari"
+                    ? "Show its Safari tab"
+                    : "Open in \(browserName.isEmpty ? "the browser" : browserName)",
+                trailing: "↩")
         }
     }
 }

@@ -163,6 +163,8 @@ extension AppChatPromptModel {
             // app's own commands for the asked words come too (S2), so its command can lead.
             rows += GlobalQuery.namedAppCommands(
                 GlobalContextRow.documents(for: typed, limit: 48), query: typed, besides: rows)
+            // Safari's open tabs that answer the words lead, in a section of their own.
+            rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed)
             // The one row that plainly answers the query leads, under "Top Hit" (S2).
@@ -240,6 +242,9 @@ extension AppChatPromptModel {
                 .entries(matching: typed, bundleId: appBundleID, limit: 12)
                 .map { AppChatRow.global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
         }
+        if !typed.isEmpty, appBundleID == BrowserTabList.safariBundleID {
+            rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
+        }
         // One row per command: Safari keeps Clear History… in both its Safari and History
         // menus, and the same command listed twice is noise.
         var seenCommands = Set<String>()
@@ -282,6 +287,16 @@ extension AppChatPromptModel {
         // A new list is a new offer: nothing is chosen until the user arrows into it.
         focusedMenuIndex = nil
         syncListPhase()
+    }
+
+    /// Safari's open tabs that answer the words, from the last read. While Safari runs a
+    /// fresh read is asked for, and the next keystroke has it; a quit Safari is never woken.
+    private func openTabRows(for typed: String) -> [AppChatRow] {
+        guard !NSRunningApplication.runningApplications(
+            withBundleIdentifier: BrowserTabList.safariBundleID).isEmpty
+        else { return [] }
+        refreshTabCache {}
+        return GlobalQuery.openTabRows(tabSource(), query: typed)
     }
 
     // MARK: Safari's tabs, as pills beside the field (inventory D13)
