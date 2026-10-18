@@ -264,6 +264,13 @@ enum GlobalQuery {
         }
     }
 
+    /// The words to look things up by when a time is named: the query without its time
+    /// words ("pdf today" → "pdf"). The query itself when no time is named.
+    static func searchText(_ query: String) -> String {
+        guard timeRange(in: query) != nil else { return query }
+        return words(query).filter { !timeWords.contains($0) && $0 != "this" }.joined(separator: " ")
+    }
+
     static let historyWords: Set<String> = ["history", "visited", "page", "pages", "site", "sites", "browsed"]
     static let browserWords: Set<String> = [
         "safari", "chrome", "google", "arc", "firefox", "brave", "edge", "opera", "vivaldi", "browser",
@@ -284,10 +291,15 @@ enum GlobalQuery {
         _ entries: [BrowserURLLibraryEntry], query: String, range: DateInterval, limit: Int = 12
     ) -> [BrowserURLLibraryEntry] {
         let typed = Set(words(query))
-        let named = entries.contains { typed.contains($0.browserName.lowercased()) }
+        // Any word of the browser's name names it: "chrome" is Google Chrome, "edge"
+        // Microsoft Edge.
+        func isNamed(_ entry: BrowserURLLibraryEntry) -> Bool {
+            !Set(words(entry.browserName)).subtracting(["google", "microsoft"]).isDisjoint(with: typed)
+        }
+        let named = entries.contains(where: isNamed)
         return Array(entries.filter { entry in
             guard let visit = entry.visitDate, range.contains(visit) else { return false }
-            return !named || typed.contains(entry.browserName.lowercased())
+            return !named || isNamed(entry)
         }.prefix(limit))
     }
 }

@@ -82,4 +82,22 @@ struct GlobalTimeWordsTests {
             within: range, copy: { _ in }, openNote: { _ in }, openNotification: { _ in })
         #expect(rows.map(\.title) == ["from yesterday"])
     }
+
+    @Test func thingsAreLookedUpWithoutTheTimeWords() {
+        #expect(GlobalQuery.searchText("pdf today") == "pdf")
+        #expect(GlobalQuery.searchText("Safari this week") == "safari")
+        #expect(GlobalQuery.searchText("safari history") == "safari history")
+    }
+
+    @Test func aBrowserIsNamedByAnyWordOfItsName() {
+        let entries = [
+            BrowserURLLibraryEntry(title: "s", url: URL(string: "https://s.com")!, visitDate: day(0, hour: 9), kind: .history, browserName: "Safari", browserBundleId: "com.apple.Safari"),
+            BrowserURLLibraryEntry(title: "c", url: URL(string: "https://c.com")!, visitDate: day(0, hour: 10), kind: .history, browserName: "Google Chrome", browserBundleId: "com.google.Chrome"),
+            BrowserURLLibraryEntry(title: "e", url: URL(string: "https://e.com")!, visitDate: day(0, hour: 11), kind: .history, browserName: "Microsoft Edge", browserBundleId: "com.microsoft.edgemac"),
+        ]
+        let range = GlobalQuery.timeRange(in: "today", now: now, calendar: calendar)!
+        #expect(GlobalQuery.datedHistory(entries, query: "chrome history today", range: range).map(\.title) == ["c"])
+        #expect(GlobalQuery.datedHistory(entries, query: "edge today", range: range).map(\.title) == ["e"])
+        #expect(GlobalQuery.datedHistory(entries, query: "google today", range: range).count == 3)
+    }
 }

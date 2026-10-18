@@ -146,14 +146,17 @@ extension AppChatPromptModel {
         // Global Context is the dock's index, queried through the same coordinator the dock
         // uses — apps, running apps, CLI tools, system commands, tabs and menus together.
         if isGlobalScope {
-            if let global = globalResultSource.pureGlobalResults?(typed), !global.isEmpty {
+            // Looked up without its time words: "pdf today" finds PDFs, and the time then
+            // keeps today's (S3). The rest reads the words as typed.
+            let lookup = GlobalQuery.searchText(typed)
+            if let global = globalResultSource.pureGlobalResults?(lookup), !global.isEmpty {
                 rows = global.map(AppChatRow.dock)
-            } else if let local = localGlobalQuitRows(for: typed), !local.isEmpty {
+            } else if let local = localGlobalQuitRows(for: lookup), !local.isEmpty {
                 rows = local.map(AppChatRow.dock)
-            } else if let scoped = globalResultSource.scopedResults?(typed, nil, nil) {
+            } else if let scoped = globalResultSource.scopedResults?(lookup, nil, nil) {
                 rows = scoped.map(AppChatRow.dock)
             } else {
-                rows = GlobalContextRow.documents(for: typed, limit: 48).map(AppChatRow.global)
+                rows = GlobalContextRow.documents(for: lookup, limit: 48).map(AppChatRow.global)
             }
             // In sections, best kind first (#258 G1), and what to do with the words
             // themselves last (G3).
