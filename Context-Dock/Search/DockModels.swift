@@ -57,6 +57,8 @@ struct DockPill: Identifiable {
     var keyboardShortcutLabel: String? = nil
     var quickLookURL: URL? = nil
     var resolvedURL: URL? = nil
+    /// When the row's item happened — a visit, a copy, a note — for "today" and the like (S3).
+    var date: Date? = nil
     var dragProvider: (() -> NSItemProvider?)? = nil
 }
 
