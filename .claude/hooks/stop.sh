@@ -9,12 +9,10 @@ set -u
 root="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null)}"
 [ -z "$root" ] && exit 0
 
-# Skill trees must not drift (cheap; runs on cloud too). Only when a skill file changed.
-if [ -n "$(git -C "$root" status --porcelain -- .claude/skills .agents/skills 2>/dev/null | head -1)" ]; then
-  if ! out="$("$root/scripts/check-skills-parity.sh" 2>&1)"; then
-    printf '%s\n' "$out" >&2
-    exit 2
-  fi
+# Skill trees must not drift (a cheap diff, so it runs every turn, even after a commit, and on cloud).
+if ! out="$("$root/scripts/check-skills-parity.sh" 2>&1)"; then
+  printf '%s\n' "$out" >&2
+  exit 2
 fi
 
 command -v xcodebuild >/dev/null 2>&1 || exit 0
