@@ -520,6 +520,9 @@ enum MailAutomation {
         return false
     }
 
+    /// `maxScan` is kept for callers but no longer bounds the search: Mail filters with `whose`
+    /// across the whole mailbox in about a second, and rejects `whose` on a message range.
+    /// `limit` still caps the rows returned.
     nonisolated static func mailboxSnapshot(
         senderContains: String = "",
         subjectContains: String = "",
