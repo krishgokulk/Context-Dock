@@ -178,8 +178,10 @@ extension AppChatPromptModel {
             }
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed)
-            // The one row that plainly answers the query leads, under "Top Hit" (S2).
-            let topHit = GlobalQuery.topHit(ordered, query: typed)
+            // The one row that plainly answers the query leads, under "Top Hit" (S2) — the
+            // row these words were answered with before first (S5).
+            let topHit = pickMemory.favourite(in: ordered, query: typed)
+                ?? GlobalQuery.topHit(ordered, query: typed)
             globalTopHitID = topHit?.id
             if let topHit {
                 ordered.removeAll { $0.id == topHit.id }
@@ -298,6 +300,11 @@ extension AppChatPromptModel {
         if !typed.isEmpty {
             let (safe, risky) = GlobalQuery.split(rows, query: typed, dropsUnanswered: false)
             rows = GlobalResultSection.grouped(safe) + GlobalResultSection.grouped(risky)
+            // The row these words were answered with before leads (S5).
+            if let learned = pickMemory.favourite(in: rows, query: typed) {
+                rows.removeAll { $0.id == learned.id }
+                rows.insert(learned, at: 0)
+            }
         }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
@@ -1781,6 +1788,10 @@ extension AppChatPromptModel {
     }
 
     func run(_ row: AppChatRow) {
+        // What was typed, and the row it was answered with, lead next time (S5).
+        if !query.trimmingCharacters(in: .whitespaces).isEmpty {
+            pickMemory.record(query: query, row: row)
+        }
         // Taking a row is done with the list: most of these clear the field, and a list
         // left standing over a cleared field refills with everything the app can do.
         focusedMenuIndex = nil
