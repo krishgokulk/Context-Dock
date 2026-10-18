@@ -53,3 +53,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-10-05 (cloud): #191 part 2 started — Context Dock live panel (CornerLivePanel) beside the app chat while a turn runs; stacked on #192.
 - 2026-10-09 (cloud, claude/wizardly-mayer-2lmpxc): Finder from Global = Finder's own Context Dock; Ask AI row leads Finder's typed list; disk-file fallback.
 - 2026-10-10 (cloud, claude/wizardly-mayer-2lmpxc): "/" in Global or a Context Dock jumps to an app scope — running first, then installed, never launched.
+- 2026-10-18 (claude/issue-198-shortcut-steps): P4 — every pre-model keyword shortcut in handleL2Query appends "Shortcut: <name> — matched '<rule>'" via DockShortcut/dockShortcutStep to the shared routerTrace→liveSteps, so CornerLivePanel/Dock say why a shortcut fired (no more "Answered without running anything"). 15 families, DockShortcutTests.
