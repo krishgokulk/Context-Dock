@@ -556,9 +556,15 @@ final class AXMenuReader {
     /// Click a menu item identified by its path (case-insensitive).
     /// Example: ["File", "New Tab"]  or  ["Develop", "Show Web Inspector"]
     /// Must be called from a background thread — uses Thread.sleep for menu open timing.
+    ///
+    /// `activatesApp` brings the app forward first. A menu press only lands on the frontmost
+    /// app, so the UI lane (the default) must activate. The data lane never steals focus
+    /// (plan §2a rule 1), so its callers pass `false`.
     @discardableResult
-    func clickMenuItem(path: [String], in pid: pid_t) -> Bool {
-        if let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid }) {
+    func clickMenuItem(path: [String], in pid: pid_t, activatesApp: Bool = true) -> Bool {
+        if activatesApp,
+            let app = NSWorkspace.shared.runningApplications.first(where: { $0.processIdentifier == pid })
+        {
             _ = app.activate(options: [.activateIgnoringOtherApps])
             Thread.sleep(forTimeInterval: 0.08)
         }
@@ -648,8 +654,8 @@ final class AXMenuReader {
         }
     }
 
-    func clickMenuItemReliably(path: [String], in pid: pid_t) -> Bool {
-        if clickMenuItem(path: path, in: pid) { return true }
+    func clickMenuItemReliably(path: [String], in pid: pid_t, activatesApp: Bool = true) -> Bool {
+        if clickMenuItem(path: path, in: pid, activatesApp: activatesApp) { return true }
         return clickMenuItemViaSystemEvents(path: path, in: pid)
     }
 

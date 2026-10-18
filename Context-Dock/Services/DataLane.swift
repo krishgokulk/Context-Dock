@@ -34,6 +34,11 @@ extension RequestLane {
     private static let uiPhrases = [
         "mailbox list", "show the mailbox", "hide the mailbox", "full screen", "split view",
     ]
+
+    /// A menu press lands only on the frontmost app, so the UI lane activates it before the
+    /// click; the data lane never does (plan §2a rule 1). Pass to
+    /// `AXMenuReader.clickMenuItem(activatesApp:)`.
+    var activatesAppForMenuClick: Bool { self == .ui }
 }
 
 /// The two things the data lane may do to an app. Nothing here can bring an app forward.
