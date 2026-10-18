@@ -59,6 +59,10 @@ struct AICapabilityExecutionResult {
     /// The value the executor read back after writing it, when it could. Set only by an
     /// executor that actually re-read the setting — never inferred from its output.
     var readBack: String? = nil
+    /// Turn steps the executor produced around the capability: the lane decision ("Lane: data"),
+    /// "Mail wasn't running — started it in the background", a UI-lane plan card. Shown in the
+    /// progress panel; empty for a pure data read that moved nothing (plan §3).
+    var laneSteps: [String] = []
 }
 
 /// Whether a capability's entire authority comes from the user's explicit selection.
@@ -151,6 +155,10 @@ struct AICapability {
     /// True only when the executor sends Apple Events to the running app (data lane: a closed
     /// app is started hidden first). EventKit, shell and file routes leave it false.
     var needsRunningApp: Bool = false
+    /// True only for a UI-lane capability that needs the app's window or menu bar in front (a
+    /// menu command). The executor brings the app forward only then and returns focus after;
+    /// a data capability never does (plan §2a). Most capabilities leave it false.
+    var bringsAppForward: Bool = false
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 
@@ -753,16 +761,19 @@ final class AIExecutionEngine {
                 throw AICapabilityError.missingInput(field.name)
             }
         }
-        // Data lane: a read never brings an app forward; a closed app starts hidden.
-        if capability.needsRunningApp, capability.riskLevel == .low, let bundleID = capability.appBundleID,
-            !bundleID.isEmpty
-        {
-            await DataLane.prepare(bundleID: bundleID)
-        }
-        return try await capability.executor(
+        // Lane (data vs UI) decided once, at understanding, then the app is made ready without
+        // disturbing the user: a data read never activates or moves focus (a closed app starts
+        // hidden); only a UI-lane menu command brings the app forward, and focus returns after.
+        // One decision, one executor — same in Dock and Corner (plan §2a).
+        let laneOutcome = await LaneCoordinator.prepare(
+            capability: capability, userRequest: userRequest)
+        var result = try await capability.executor(
             .init(
                 input: plan.input, context: context, chatScope: chatScope,
                 userRequest: userRequest))
+        await laneOutcome.restoreFocus()
+        result.laneSteps = laneOutcome.steps + result.laneSteps
+        return result
     }
 
     func executeWithApproval(

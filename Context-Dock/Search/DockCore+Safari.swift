@@ -106,6 +106,7 @@ extension DockCore {
             pill.menuStatusBadge = entry.kind.rawValue
             pill.menuContext = entry.dateGroupTitle
             pill.resolvedURL = entry.url
+            pill.date = entry.visitDate
             pill.quickLookURL = BrowserURLLibraryService.shared.quickLookURL(for: entry)
             pill.trackingIdentifier = "browser-url:\(entry.id)"
             pill.searchTerms = [

@@ -53,3 +53,4 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-10-05 (cloud): #191 part 2 started — Context Dock live panel (CornerLivePanel) beside the app chat while a turn runs; stacked on #192.
 - 2026-10-09 (cloud, claude/wizardly-mayer-2lmpxc): Finder from Global = Finder's own Context Dock; Ask AI row leads Finder's typed list; disk-file fallback.
 - 2026-10-10 (cloud, claude/wizardly-mayer-2lmpxc): "/" in Global or a Context Dock jumps to an app scope — running first, then installed, never launched.
+- 2026-10-18: Task 277 (P3b) — two-lane finish: lane step, UI-lane plan card + focus return, AXMenuReader.clickMenuItem(activatesApp:) UI-only, Messages/Terminal invariants, parity D15, plan §2a measure-TODOs. Draft PR #295.

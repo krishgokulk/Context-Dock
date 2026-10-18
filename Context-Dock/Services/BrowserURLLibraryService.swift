@@ -465,47 +465,33 @@ final class BrowserURLLibraryService: @unchecked Sendable {
     }
 
     nonisolated private static func loadSQLiteRows(path: String, sql: String) -> [SQLiteRow] {
-        guard FileManager.default.fileExists(atPath: path),
-            var components = URLComponents(
-                url: URL(fileURLWithPath: path), resolvingAgainstBaseURL: false)
-        else { return [] }
-        components.scheme = "file"
-        components.queryItems = [
-            URLQueryItem(name: "immutable", value: "1"),
-            URLQueryItem(name: "mode", value: "ro"),
-        ]
-        guard let uri = components.url?.absoluteString else { return [] }
+        // The newest visits live in the -wal file; SQLiteSnapshot reads them.
+        SQLiteSnapshot.read(path) { db -> [SQLiteRow]? in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
+                let statement
+            else { return [] }
+            defer { sqlite3_finalize(statement) }
 
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
-            let db
-        else { return [] }
-        defer { sqlite3_close(db) }
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK,
-            let statement
-        else { return [] }
-        defer { sqlite3_finalize(statement) }
-
-        var rows: [SQLiteRow] = []
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard let urlText = sqlite3_column_text(statement, 0),
-                let titleText = sqlite3_column_text(statement, 1)
-            else { continue }
-            var dateValue: Double?
-            if sqlite3_column_count(statement) > 2,
-                sqlite3_column_type(statement, 2) != SQLITE_NULL
-            {
-                dateValue = sqlite3_column_double(statement, 2)
+            var rows: [SQLiteRow] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let urlText = sqlite3_column_text(statement, 0),
+                    let titleText = sqlite3_column_text(statement, 1)
+                else { continue }
+                var dateValue: Double?
+                if sqlite3_column_count(statement) > 2,
+                    sqlite3_column_type(statement, 2) != SQLITE_NULL
+                {
+                    dateValue = sqlite3_column_double(statement, 2)
+                }
+                rows.append(
+                    SQLiteRow(
+                        url: String(cString: urlText),
+                        title: String(cString: titleText),
+                        dateValue: dateValue))
             }
-            rows.append(
-                SQLiteRow(
-                    url: String(cString: urlText),
-                    title: String(cString: titleText),
-                    dateValue: dateValue))
-        }
-        return rows
+            return rows
+        } ?? []
     }
 
     nonisolated private static func makeEntry(

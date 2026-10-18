@@ -6,8 +6,8 @@
 //
 // Why History.db and not the web extension: Safari extensions have no
 // recently-closed-tabs API, but every recently closed page is in history.
-// The database is opened read-only with immutable=1 (safe while Safari holds
-// its own locks) and loaded off the main thread; until the map is warm,
+// The database is read from a snapshot copy with its -wal (SQLiteSnapshot) so the
+// newest visits are in it, and loaded off the main thread; until the map is warm,
 // callers fall back to the regular menu-click path.
 
 import AppKit
@@ -179,46 +179,31 @@ final class SafariLinkResolver {
         return paths
     }
 
-    /// Generic read-only title→URL loader for a SQLite DB whose query yields
-    /// (url, title) rows. Opens immutable so it is safe while the browser holds locks.
+    /// Generic title→URL loader for a SQLite DB whose query yields (url, title) rows.
+    /// Reads a snapshot copy with its -wal, so the newest visits are in it and the
+    /// browser's own file is never locked.
     nonisolated private static func loadSQLiteTitleMap(path: String, sql: String) -> [String: URL] {
-        guard FileManager.default.fileExists(atPath: path) else { return [:] }
-        guard
-            var components = URLComponents(
-                url: URL(fileURLWithPath: path), resolvingAgainstBaseURL: false)
-        else { return [:] }
-        components.scheme = "file"
-        components.queryItems = [
-            URLQueryItem(name: "immutable", value: "1"),
-            URLQueryItem(name: "mode", value: "ro"),
-        ]
-        guard let uri = components.url?.absoluteString else { return [:] }
+        SQLiteSnapshot.read(path) { db -> [String: URL]? in
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement
+            else { return [:] }
+            defer { sqlite3_finalize(statement) }
 
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(uri, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_URI, nil) == SQLITE_OK,
-            let db
-        else { return [:] }
-        defer { sqlite3_close(db) }
-
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement
-        else { return [:] }
-        defer { sqlite3_finalize(statement) }
-
-        var mapping: [String: URL] = [:]
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard
-                let urlText = sqlite3_column_text(statement, 0),
-                let titleText = sqlite3_column_text(statement, 1)
-            else { continue }
-            let key = normalizeTitle(String(cString: titleText))
-            guard !key.isEmpty, mapping[key] == nil,
-                let url = URL(string: String(cString: urlText)),
-                url.scheme == "https" || url.scheme == "http"
-            else { continue }
-            mapping[key] = url
-        }
-        return mapping
+            var mapping: [String: URL] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard
+                    let urlText = sqlite3_column_text(statement, 0),
+                    let titleText = sqlite3_column_text(statement, 1)
+                else { continue }
+                let key = normalizeTitle(String(cString: titleText))
+                guard !key.isEmpty, mapping[key] == nil,
+                    let url = URL(string: String(cString: urlText)),
+                    url.scheme == "https" || url.scheme == "http"
+                else { continue }
+                mapping[key] = url
+            }
+            return mapping
+        } ?? [:]
     }
 
     nonisolated private static func normalizeTitle(_ title: String) -> String {
@@ -229,26 +214,6 @@ final class SafariLinkResolver {
     /// without Full Disk Access — callers keep their menu-click fallback.
     nonisolated private static func loadHistoryTitleMap() -> [String: URL] {
         let path = NSHomeDirectory() + "/Library/Safari/History.db"
-        guard FileManager.default.fileExists(atPath: path) else { return [:] }
-
-        guard
-            var components = URLComponents(
-                url: URL(fileURLWithPath: path), resolvingAgainstBaseURL: false)
-        else { return [:] }
-        components.scheme = "file"
-        components.queryItems = [
-            URLQueryItem(name: "immutable", value: "1"),
-            URLQueryItem(name: "mode", value: "ro"),
-        ]
-        guard let uri = components.url?.absoluteString else { return [:] }
-
-        var db: OpaquePointer?
-        let openFlags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI
-        guard sqlite3_open_v2(uri, &db, openFlags, nil) == SQLITE_OK, let db else {
-            return [:]
-        }
-        defer { sqlite3_close(db) }
-
         let sql = """
             SELECT items.url, visits.title
             FROM history_visits visits
@@ -257,25 +222,7 @@ final class SafariLinkResolver {
             ORDER BY visits.visit_time DESC
             LIMIT 4000
             """
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement
-        else { return [:] }
-        defer { sqlite3_finalize(statement) }
-
-        var mapping: [String: URL] = [:]
-        while sqlite3_step(statement) == SQLITE_ROW {
-            guard
-                let urlText = sqlite3_column_text(statement, 0),
-                let titleText = sqlite3_column_text(statement, 1)
-            else { continue }
-            let key = normalizeTitle(String(cString: titleText))
-            guard !key.isEmpty, mapping[key] == nil,
-                let url = URL(string: String(cString: urlText)),
-                url.scheme == "https" || url.scheme == "http"
-            else { continue }
-            mapping[key] = url
-        }
-        return mapping
+        return loadSQLiteTitleMap(path: path, sql: sql)
     }
 }
 

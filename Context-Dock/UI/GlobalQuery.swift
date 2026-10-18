@@ -14,7 +14,8 @@ import Foundation
 
 enum GlobalQuery {
     static let glueWords: Set<String> = ["in", "on", "the", "a", "an", "my", "for", "of", "from", "to", "at", "with", "and"]
-    static let timeWords: Set<String> = ["today", "yesterday", "tonight", "week", "month", "recent", "recently", "last"]
+    static let weekdayWords = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+    static let timeWords: Set<String> = Set(["today", "yesterday", "tonight", "week", "month", "recent", "recently", "last"] + weekdayWords)
     static let destructiveVerbs: Set<String> = ["clear", "delete", "erase", "remove", "quit", "reset", "empty", "trash"]
 
     static func words(_ text: String) -> [String] {
@@ -193,5 +194,161 @@ enum GlobalQuery {
         default: break
         }
         return nil
+    }
+
+    // MARK: Time words (S3)
+
+    /// The time the words name, ending no later than now: "today", "yesterday", "this week",
+    /// "last week", "this month", "last month", "recent" (the last seven days). Nil when no
+    /// time is named, and the list is not filtered by time at all.
+    static func timeRange(
+        in query: String, now: Date = Date(), calendar: Calendar = .current
+    ) -> DateInterval? {
+        let words = words(query)
+        let isLast = words.contains("last")
+        func period(_ unit: Calendar.Component) -> DateInterval? {
+            guard let this = calendar.dateInterval(of: unit, for: now) else { return nil }
+            guard isLast else { return DateInterval(start: this.start, end: max(this.start, now)) }
+            guard let before = calendar.date(byAdding: unit, value: -1, to: this.start) else { return nil }
+            return calendar.dateInterval(of: unit, for: before)
+        }
+        if words.contains("today") || words.contains("tonight") { return period(.day) }
+        if words.contains("yesterday"),
+            let day = calendar.date(byAdding: .day, value: -1, to: now) {
+            return calendar.dateInterval(of: .day, for: day)
+        }
+        // "monday": the latest Monday — today when it is Monday; "last monday" a week
+        // before that when today is Monday (owner 2026-10-18: "monday" listed nothing).
+        if let target = weekdayWords.firstIndex(where: words.contains) {
+            var back = (calendar.component(.weekday, from: now) - (target + 1) + 7) % 7
+            if back == 0, isLast { back = 7 }
+            guard let day = calendar.date(byAdding: .day, value: -back, to: now),
+                let interval = calendar.dateInterval(of: .day, for: day)
+            else { return nil }
+            return DateInterval(start: interval.start, end: min(interval.end, max(interval.start, now)))
+        }
+        if words.contains("week") { return period(.weekOfYear) }
+        if words.contains("month") { return period(.month) }
+        if words.contains("recent") || words.contains("recently") {
+            return DateInterval(start: now.addingTimeInterval(-7 * 86_400), end: now)
+        }
+        return nil
+    }
+
+    /// When a row's item happened: a visit, a copy, a note, a file's last change. Nil for
+    /// what has no time of its own — an app, a menu command.
+    static func date(of row: AppChatRow) -> Date? {
+        func modified(_ path: String?) -> Date? {
+            guard let path, !path.isEmpty, !path.hasSuffix(".app") else { return nil }
+            return (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate
+        }
+        switch row {
+        case .dock(let pill): return pill.date ?? modified(pill.previewPath)
+        case .global(let doc): return doc.date ?? modified(doc.filePath)
+        case .file(let url): return modified(url.path)
+        default: return nil
+        }
+    }
+
+    /// The rows the time allows: a dated row only inside it; a web page with no date of its
+    /// own (a live History menu's item) only when it is an open tab, which is now. Apps and
+    /// commands are untouched — "today" never hides Safari or its menus.
+    static func within(_ range: DateInterval, _ rows: [AppChatRow]) -> [AppChatRow] {
+        rows.filter { row in
+            if let date = date(of: row) { return range.contains(date) }
+            if pageURL(row) != nil {
+                return GlobalResultSection.title(for: row) == GlobalResultSection.openTabs
+            }
+            return true
+        }
+    }
+
+    /// The words to look things up by when a time is named: the query without its time
+    /// words ("pdf today" → "pdf"). The query itself when no time is named.
+    static func searchText(_ query: String) -> String {
+        guard timeRange(in: query) != nil else { return query }
+        return words(query).filter { !timeWords.contains($0) && $0 != "this" }.joined(separator: " ")
+    }
+
+    static let historyWords: Set<String> = ["history", "visited", "page", "pages", "site", "sites", "browsed"]
+    static let browserWords: Set<String> = [
+        "safari", "chrome", "google", "arc", "firefox", "brave", "edge", "opera", "vivaldi", "browser",
+    ]
+
+    /// What to look history up by when a time is named: the asked words without the time,
+    /// "history" or a browser's name — "safari history today" looks up everything, and the
+    /// time does the choosing.
+    static func historySearchText(_ query: String) -> String {
+        words(query).filter {
+            !glueWords.contains($0) && !timeWords.contains($0)
+                && !historyWords.contains($0) && !browserWords.contains($0)
+        }.joined(separator: " ")
+    }
+
+    /// History pages inside the time, from the named browser when one is named.
+    static func datedHistory(
+        _ entries: [BrowserURLLibraryEntry], query: String, range: DateInterval, limit: Int = 12
+    ) -> [BrowserURLLibraryEntry] {
+        let typed = Set(words(query))
+        // Any word of the browser's name names it: "chrome" is Google Chrome, "edge"
+        // Microsoft Edge.
+        func isNamed(_ entry: BrowserURLLibraryEntry) -> Bool {
+            !Set(words(entry.browserName)).subtracting(["google", "microsoft"]).isDisjoint(with: typed)
+        }
+        let named = entries.contains(where: isNamed)
+        return Array(entries.filter { entry in
+            guard let visit = entry.visitDate, range.contains(visit) else { return false }
+            return !named || isNamed(entry)
+        }.prefix(limit))
+    }
+
+    // MARK: History by day (owner 2026-10-18)
+
+    static let historyDayKind = "historyDay"
+    static let historyDaySection = "History by day"
+
+    /// A browser's last seven days as rows, as its History menu lists them — "Today",
+    /// "Yesterday", "Friday, 16 October" — each with how many pages it holds, read from the
+    /// browser's own history rather than its menu. Shown for "history" or words that name a
+    /// day ("sat", "october"); not once a time is typed, when the day's pages are the list.
+    /// Return fills the field with the day ("friday"), and its pages follow.
+    static func historyDayRows(
+        _ entries: [BrowserURLLibraryEntry], query: String,
+        now: Date = Date(), calendar: Calendar = .current
+    ) -> [AppChatRow] {
+        guard timeRange(in: query, now: now, calendar: calendar) == nil else { return [] }
+        let typed = words(query)
+        let asked = typed.filter { !glueWords.contains($0) && !browserWords.contains($0) }
+        guard !asked.isEmpty else { return [] }
+        let listsAll = asked.contains { ["history", "day", "days"].contains($0) }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = Locale(identifier: "en_GB")
+        formatter.dateFormat = "EEEE, d MMMM"
+        let today = calendar.startOfDay(for: now)
+        return (0..<7).compactMap { back -> AppChatRow? in
+            guard let start = calendar.date(byAdding: .day, value: -back, to: today),
+                let end = calendar.date(byAdding: .day, value: 1, to: start)
+            else { return nil }
+            let pages = entries.filter { $0.kind == .history && $0.visitDate.map { $0 >= start && $0 < end } == true }
+            guard !pages.isEmpty else { return nil }
+            let weekday = weekdayWords[calendar.component(.weekday, from: start) - 1]
+            let fill = back == 0 ? "today" : back == 1 ? "yesterday" : weekday
+            let title = back == 0 ? "Today" : back == 1 ? "Yesterday" : formatter.string(from: start)
+            let hay = words("\(fill) \(weekday) \(formatter.string(from: start))")
+            guard listsAll || asked.allSatisfy({ word in hay.contains { $0.hasPrefix(word) } }) else { return nil }
+            var pill = DockPill(
+                id: "history-day-\(fill)", name: title, icon: "clock.arrow.circlepath",
+                badge: nil, execute: {})
+            pill.rankingKind = historyDayKind
+            pill.resultSection = historyDaySection
+            pill.menuItemName = fill
+            pill.menuContext = pages.count == 1 ? "1 page" : "\(pages.count) pages"
+            pill.sourceBundleId = pages[0].browserBundleId
+            pill.sourceAppName = pages[0].browserName
+            return .dock(pill)
+        }
     }
 }

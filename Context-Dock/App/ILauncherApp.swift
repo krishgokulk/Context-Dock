@@ -1165,8 +1165,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// by auto-hide), it puts the corner away, as the other scope hotkeys do.
     func activateContextDockFromDoubleCommand() {
         let presentation = CornerDockController.shared.chatPresentation
+        // Only an open field is put away: the resting bar at the bottom is not open, and ⌘⌘
+        // hid it instead of opening it (owner 2026-10-18).
         if presentation.isVisible, presentation.mode == .frontmostApp,
-            !CornerDockController.shared.isAutoHidden
+            !CornerDockController.shared.isAutoHidden,
+            CornerDockController.shared.prompt.phase.showsInput
         {
             presentation.dismiss()
             return
@@ -1395,6 +1398,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 time: event.timestamp), self.settings.useDoubleCommandGlobalContext {
                 // ⌘⌘ opens the Context Dock of the app in front; a single ⌘ tap switches to
                 // Global, and Backspace on its empty field goes there too (owner 2026-10-08).
+                DoraXTurnLog.record("hotkey ⌘⌘")
                 DispatchQueue.main.async { self.activateContextDockFromDoubleCommand() }
             }
             if optionTap.update(
@@ -1403,6 +1407,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 time: event.timestamp), self.settings.useDoubleOptionLaunch {
                 // ⌥⌥: the Corner's Global Context in the middle of the display, like
                 // Spotlight — the Corner's own UI, not the old launcher (owner 2026-10-12).
+                DoraXTurnLog.record("hotkey ⌥⌥")
                 DispatchQueue.main.async { self.toggleCentredCorner() }
             }
         }

@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Recognizes two short, isolated presses. A shortcut chord or hold cancels the gesture.
 struct DoubleModifierTap {
@@ -11,6 +11,11 @@ struct DoubleModifierTap {
         releasedAt = nil
     }
 
+    /// The longest gap between the two releases: the Mac's own double-click speed (System
+    /// Settings › Mouse), held to 0.3–0.6 s. A fixed 0.4 s missed a relaxed double press
+    /// (owner 2026-10-18: "sometimes it doesn't work").
+    var pairWindow: TimeInterval = min(max(NSEvent.doubleClickInterval, 0.3), 0.6)
+
     mutating func update(isDown: Bool, hasOtherModifiers: Bool, time: TimeInterval) -> Bool {
         if hasOtherModifiers { cancel() }
         if isDown {
@@ -22,12 +27,12 @@ struct DoubleModifierTap {
         }
         guard let started = downAt else { return false }
         downAt = nil
-        guard !contaminated, time - started < 0.35 else {
+        guard !contaminated, time - started < 0.45 else {
             releasedAt = nil
             return false
         }
         defer { contaminated = false }
-        if let previous = releasedAt, time - previous > 0.04, time - previous < 0.40 {
+        if let previous = releasedAt, time - previous > 0.04, time - previous < pairWindow {
             releasedAt = nil
             return true
         }
