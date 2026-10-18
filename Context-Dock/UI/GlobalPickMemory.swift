@@ -45,10 +45,10 @@ final class GlobalPickMemory {
         return [whole] + starts
     }
 
-    /// A row as it is remembered: its app and its own id, so Safari's and Chrome's "New
-    /// Window" are not one row.
-    static func rowKey(_ row: AppChatRow) -> String {
-        "\(GlobalResultSection.appName(of: row))|\(row.id)"
+    /// A row as it is remembered: where it was picked, its app and its own id, so Safari's
+    /// and Chrome's "New Window" are not one row, nor two apps' adapter actions that share an id.
+    static func rowKey(_ row: AppChatRow, scope: String = "") -> String {
+        "\(scope)|\(GlobalResultSection.appName(of: row))|\(row.id)"
     }
 
     /// Rows that are controls, not answers — Show more, the fallbacks, a day of history
@@ -61,9 +61,9 @@ final class GlobalPickMemory {
         ].contains(pill.rankingKind)
     }
 
-    func record(query: String, row: AppChatRow, now: Date = Date()) {
+    func record(query: String, row: AppChatRow, scope: String = "", now: Date = Date()) {
         guard Self.isLearnable(row) else { return }
-        let key = Self.rowKey(row)
+        let key = Self.rowKey(row, scope: scope)
         for queryKey in Self.queryKeys(query) {
             var pick = picks[queryKey]?[key] ?? Pick(count: 0, last: now)
             pick.count += 1
@@ -82,7 +82,9 @@ final class GlobalPickMemory {
 
     /// The row these words were answered with before, among the rows offered now — the most
     /// taken, recent picks counting more. Never a destructive row whose verb was not typed.
-    func favourite(in rows: [AppChatRow], query: String, now: Date = Date()) -> AppChatRow? {
+    func favourite(
+        in rows: [AppChatRow], query: String, scope: String = "", now: Date = Date()
+    ) -> AppChatRow? {
         guard let whole = Self.queryKeys(query).first, let taken = picks[whole] else { return nil }
         let typed = Set(GlobalQuery.words(query))
         func score(_ pick: Pick) -> Double {
@@ -90,17 +92,21 @@ final class GlobalPickMemory {
         }
         return rows
             .compactMap { row -> (AppChatRow, Double)? in
-                guard let pick = taken[Self.rowKey(row)] else { return nil }
+                guard let pick = taken[Self.rowKey(row, scope: scope)] else { return nil }
                 if let verb = GlobalQuery.destructiveVerb(of: row), !typed.contains(verb) { return nil }
                 return (row, score(pick))
             }
             .max { $0.1 < $1.1 }?.0
     }
 
+    /// Writes one after another, in the order the picks were made: two detached writes could
+    /// land out of order and a stale snapshot erase the newer pick.
+    private let writer = DispatchQueue(label: "GlobalPickMemory.writer", qos: .utility)
+
     private func save() {
         guard let file else { return }
         let snapshot = picks
-        Task.detached(priority: .utility) {
+        writer.async {
             guard let data = try? JSONEncoder().encode(snapshot) else { return }
             try? FileManager.default.createDirectory(
                 at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

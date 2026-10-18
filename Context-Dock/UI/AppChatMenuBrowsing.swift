@@ -180,7 +180,7 @@ extension AppChatPromptModel {
             var ordered = GlobalResultSection.grouped(safe, query: typed)
             // The one row that plainly answers the query leads, under "Top Hit" (S2) — the
             // row these words were answered with before first (S5).
-            let topHit = pickMemory.favourite(in: ordered, query: typed)
+            let topHit = pickMemory.favourite(in: ordered, query: typed, scope: pickScope)
                 ?? GlobalQuery.topHit(ordered, query: typed)
             globalTopHitID = topHit?.id
             if let topHit {
@@ -211,6 +211,11 @@ extension AppChatPromptModel {
         if returnsToGlobalScope, !typed.isEmpty, !isFinderScope,
             let scoped = globalResultSource.scopedResults?(typed, appBundleID, appName) {
             rows = scoped.map(AppChatRow.dock)
+            // An app stepped into from Global learns as its own list does (S5).
+            if let learned = pickMemory.favourite(in: rows, query: typed, scope: pickScope) {
+                rows.removeAll { $0.id == learned.id }
+                rows.insert(learned, at: 0)
+            }
             menuMatches = []
             focusedMenuIndex = nil
             syncListPhase()
@@ -301,7 +306,7 @@ extension AppChatPromptModel {
             let (safe, risky) = GlobalQuery.split(rows, query: typed, dropsUnanswered: false)
             rows = GlobalResultSection.grouped(safe) + GlobalResultSection.grouped(risky)
             // The row these words were answered with before leads (S5).
-            if let learned = pickMemory.favourite(in: rows, query: typed) {
+            if let learned = pickMemory.favourite(in: rows, query: typed, scope: pickScope) {
                 rows.removeAll { $0.id == learned.id }
                 rows.insert(learned, at: 0)
             }
@@ -1790,7 +1795,7 @@ extension AppChatPromptModel {
     func run(_ row: AppChatRow) {
         // What was typed, and the row it was answered with, lead next time (S5).
         if !query.trimmingCharacters(in: .whitespaces).isEmpty {
-            pickMemory.record(query: query, row: row)
+            pickMemory.record(query: query, row: row, scope: pickScope)
         }
         // Taking a row is done with the list: most of these clear the field, and a list
         // left standing over a cleared field refills with everything the app can do.

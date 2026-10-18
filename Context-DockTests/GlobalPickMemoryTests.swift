@@ -59,8 +59,18 @@ struct GlobalPickMemoryTests {
             .appendingPathComponent("picks-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: file) }
         let row = menu("Show Personal History", app: "Safari")
-        let picks = ["history": [GlobalPickMemory.rowKey(row): GlobalPickMemory.Pick(count: 2, last: now)]]
+        let picks = ["history": [GlobalPickMemory.rowKey(row, scope: "global"): GlobalPickMemory.Pick(count: 2, last: now)]]
         try JSONEncoder().encode(picks).write(to: file)
-        #expect(GlobalPickMemory(file: file).favourite(in: [row], query: "history", now: now)?.id == row.id)
+        #expect(GlobalPickMemory(file: file).favourite(in: [row], query: "history", scope: "global", now: now)?.id == row.id)
+    }
+
+    /// One app's pick never reorders another app's list, even for an action two adapters
+    /// share an id with.
+    @Test func aPickBelongsToTheScopeItWasMadeIn() {
+        let memory = GlobalPickMemory(file: nil)
+        let assist = menu("Assist", app: "")
+        memory.record(query: "assist", row: assist, scope: "com.apple.Notes", now: now)
+        #expect(memory.favourite(in: [assist], query: "assist", scope: "com.apple.Notes", now: now)?.id == assist.id)
+        #expect(memory.favourite(in: [assist], query: "assist", scope: "com.apple.Mail", now: now) == nil)
     }
 }
