@@ -14,6 +14,7 @@ enum GlobalResultSection {
     static let menuCommands = "Menu commands"
     static let files = "Files & Folders"
     static let web = "Web"
+    static let openTabs = "Open tabs"
     static let windowLayouts = "Window layouts"
     static let actions = "Actions"
 
@@ -46,6 +47,9 @@ enum GlobalResultSection {
 
     /// A search document's section, by what the preview beside it says it is.
     static func title(for doc: GlobalSearchService.SearchDocument) -> String {
+        if case .browserURL(_, _, _, BrowserURLLibraryEntry.Kind.tab.rawValue, _) = doc.action {
+            return openTabs
+        }
         switch CornerBoardLayout.preview(for: doc) {
         case .app, .appScope, .appJump: return applications
         case .command: return menuCommands

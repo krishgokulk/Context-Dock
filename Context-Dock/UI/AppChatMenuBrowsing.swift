@@ -62,6 +62,10 @@ extension AppChatPromptModel {
 
         allMenuItems = AppMenuCapabilityCache.shared.menuItems(for: app, maxResults: 400)
         updateMenuMatches()
+        // A browser's pages are read from its history files; fresh ones re-list.
+        if BrowserTabList.listsTabs(bundleID: appBundleID) {
+            BrowserURLLibraryService.shared.refreshIfNeeded { [weak self] in self?.updateMenuMatches() }
+        }
 
         // Finder not in front (stepped into from Global) or walking a folder keeps the
         // cached menus above and skips the live read. Finder is the app whose menus the AX
@@ -81,7 +85,11 @@ extension AppChatPromptModel {
             // read here runs on the main thread (see `liveAXMenuItems`).
             let live = AXMenuReader.shared.liveAXMenuItems(for: pid, maxDepth: 7)
             guard let self, self.appBundleID == bundleID, !live.isEmpty else { return }
-            self.allMenuItems = live + self.allMenuItems
+            // The live menus are the truth: a saved row the live ones have under the same
+            // name is an old place for it ("Clear History…" moved from Safari to History and
+            // showed twice, owner 2026-10-17). Saved rows the live read did not reach stay.
+            let liveTitles = Set(live.map { $0.title.lowercased() })
+            self.allMenuItems = live + self.allMenuItems.filter { !liveTitles.contains($0.title.lowercased()) }
             self.updateMenuMatches()
         }
     }
@@ -155,6 +163,8 @@ extension AppChatPromptModel {
             // app's own commands for the asked words come too (S2), so its command can lead.
             rows += GlobalQuery.namedAppCommands(
                 GlobalContextRow.documents(for: typed, limit: 48), query: typed, besides: rows)
+            // Safari's open tabs that answer the words lead, in a section of their own.
+            rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
             let (safe, risky) = GlobalQuery.split(rows, query: typed)
             var ordered = GlobalResultSection.grouped(safe, query: typed)
             // The one row that plainly answers the query leads, under "Top Hit" (S2).
@@ -223,6 +233,26 @@ extension AppChatPromptModel {
         if let switchRow = runningAppSwitchRow(for: typed) {
             rows.insert(switchRow, at: 0)
         }
+        // A browser's pages come from its own history and bookmark files, read directly
+        // (`BrowserURLLibraryService`: Safari, Chromium browsers, Firefox) — never its
+        // History menu, which holds only the last few (owner 2026-10-17). "history" alone
+        // lists the most recent.
+        if !typed.isEmpty, BrowserTabList.listsTabs(bundleID: appBundleID) {
+            rows += BrowserURLLibraryService.shared
+                .entries(matching: typed, bundleId: appBundleID, limit: 12)
+                .map { AppChatRow.global(GlobalSearchService.SearchDocument(browserURL: $0, icon: nil)) }
+        }
+        if !typed.isEmpty, appBundleID == BrowserTabList.safariBundleID {
+            rows = GlobalQuery.leadingOpenTabs(openTabRows(for: typed), rows)
+        }
+        // One row per command: Safari keeps Clear History… in both its Safari and History
+        // menus, and the same command listed twice is noise.
+        var seenCommands = Set<String>()
+        rows = rows.filter { row in
+            guard case .command(let item) = row else { return true }
+            return seenCommands.insert(item.title.lowercased()).inserted
+        }
+
         // Finder: the files and folders of its front window — the Desktop when none is
         // open — lead its commands, filtered by what is typed; with none of those matching,
         // the disk's files follow the commands (owner 2026-10-09). The Ask AI row stands
@@ -242,7 +272,13 @@ extension AppChatPromptModel {
         }
         // An app's Context Dock lists what is typed in Global's sections, best kind first
         // (#258 G4); the opening list, before anything is typed, stays as it is.
-        if !typed.isEmpty { rows = GlobalResultSection.grouped(rows) }
+        // A command that destroys something comes after every section unless its verb was
+        // typed, as in Global (S1): "history" in Safari led with Clear History…. Moved, never
+        // dropped — the app's own list is fuzzy, and a fuzzy match is a match.
+        if !typed.isEmpty {
+            let (safe, risky) = GlobalQuery.split(rows, query: typed, dropsUnanswered: false)
+            rows = GlobalResultSection.grouped(safe) + GlobalResultSection.grouped(risky)
+        }
         // Kept for the surfaces that still ask specifically about commands.
         menuMatches = rows.compactMap {
             if case .command(let item) = $0 { return item }
@@ -251,6 +287,16 @@ extension AppChatPromptModel {
         // A new list is a new offer: nothing is chosen until the user arrows into it.
         focusedMenuIndex = nil
         syncListPhase()
+    }
+
+    /// Safari's open tabs that answer the words, from the last read. While Safari runs a
+    /// fresh read is asked for, and the next keystroke has it; a quit Safari is never woken.
+    private func openTabRows(for typed: String) -> [AppChatRow] {
+        guard !NSRunningApplication.runningApplications(
+            withBundleIdentifier: BrowserTabList.safariBundleID).isEmpty
+        else { return [] }
+        refreshTabCache {}
+        return GlobalQuery.openTabRows(tabSource(), query: typed)
     }
 
     // MARK: Safari's tabs, as pills beside the field (inventory D13)

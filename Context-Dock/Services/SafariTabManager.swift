@@ -201,6 +201,33 @@ final class SafariTabManager {
         }
     }
 
+    /// The open tab showing this page while Safari runs; fragment and trailing slash ignored.
+    func openTab(for urlString: String) -> SafariTab? {
+        guard !NSRunningApplication.runningApplications(
+            withBundleIdentifier: BrowserTabList.safariBundleID).isEmpty
+        else { return nil }
+        let key = Self.normalizedURLKey(urlString)
+        return cachedTabs(maxAge: .infinity).first { Self.normalizedURLKey($0.url) == key }
+    }
+
+    /// Shows the tab already holding this page, re-read first so a moved tab is not missed.
+    /// False when no tab holds it, and the caller opens the page as usual.
+    @discardableResult
+    func showOpenTab(for url: URL) -> Bool {
+        guard openTab(for: url.absoluteString) != nil else { return false }
+        refreshCachedTabsIfNeeded(force: true) { [weak self] _ in
+            guard let self else { return }
+            if let tab = self.openTab(for: url.absoluteString) {
+                self.switchTo(tab)
+            } else if let safari = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: BrowserTabList.safariBundleID) {
+                NSWorkspace.shared.open(
+                    [url], withApplicationAt: safari, configuration: NSWorkspace.OpenConfiguration())
+            }
+        }
+        return true
+    }
+
     func switchToOpenTabOrOpenURL(_ urlString: String) {
         let normalized = Self.normalizedURLKey(urlString)
         if let tab = cachedTabs(maxAge: 45).first(where: {
@@ -212,7 +239,7 @@ final class SafariTabManager {
         openURL(urlString)
     }
 
-    private static func normalizedURLKey(_ value: String) -> String {
+    static func normalizedURLKey(_ value: String) -> String {
         guard var comps = URLComponents(string: value) else {
             return value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         }

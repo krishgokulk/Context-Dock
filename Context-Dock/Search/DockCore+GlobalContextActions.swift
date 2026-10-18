@@ -2389,6 +2389,8 @@ extension DockCore {
                     action: {
                         recordGlobalSearchDocumentUse(capturedDoc, query: query)
                         forceHideLauncherAfterResultExecution()
+                        if capturedBundleId == BrowserTabList.safariBundleID,
+                            SafariTabManager.shared.showOpenTab(for: capturedURL) { return }
                         if let appURL = NSWorkspace.shared.urlForApplication(
                             withBundleIdentifier: capturedBundleId)
                         {

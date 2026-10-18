@@ -388,6 +388,17 @@ private struct CommandPreview: View {
     let appName: String
     let bundleID: String
 
+    /// Live when the app runs and DoraX may read its menus; saved otherwise, with the reason.
+    private var menuSource: (symbol: String, label: String) {
+        guard !bundleID.isEmpty, AppResultActions.runningApp(bundleID) != nil else {
+            return ("tray.full", "Saved menu · \(appName.isEmpty ? "the app" : appName) isn't open")
+        }
+        guard AXIsProcessTrusted() else {
+            return ("lock", "Saved menu · Accessibility is off for DoraX")
+        }
+        return ("dot.radiowaves.left.and.right", "Live menu")
+    }
+
     var body: some View {
         let appIcon: NSImage? = {
             guard !bundleID.isEmpty,
@@ -412,7 +423,10 @@ private struct CommandPreview: View {
                     symbol: index == path.count - 1 ? "command" : "chevron.right",
                     value: step)
             }
+            // Where the command was read from (owner 2026-10-17: "show live menu status"):
+            // the app's own menus right now, or the copy DoraX saved, and why.
             PanelDivider()
+            PanelRow(symbol: menuSource.symbol, value: menuSource.label)
             PanelRow(symbol: "return", value: "Run it", trailing: "↩")
         }
     }
@@ -557,11 +571,21 @@ private struct WebPagePreview: View {
     let domain: String
     let browserName: String
 
+    /// Whether the page is open right now in one of Safari's tabs (owner 2026-10-17: "status,
+    /// if the page is open"). Only Safari's tabs are known.
+    private var isOpenInTab: Bool {
+        SafariTabManager.shared.openTab(for: url.absoluteString) != nil
+    }
+
     var body: some View {
+        let open = isOpenInTab
+        let host = domain.isEmpty ? (url.host ?? url.absoluteString) : domain
         VStack(alignment: .leading, spacing: 0) {
             PanelHeader(
                 icon: NSImage(systemSymbolName: "globe", accessibilityDescription: nil),
-                title: title, subtitle: domain.isEmpty ? (url.host ?? url.absoluteString) : domain)
+                title: title,
+                subtitle: open ? "\(host) · Open in a Safari tab" : "\(host) · Not open",
+                status: open ? .green : Color.secondary.opacity(0.5))
             // The page itself, scaled down, loaded only once the row has been held a moment.
             WebPageThumbnail(url: url)
                 .frame(height: 170)
@@ -578,7 +602,12 @@ private struct WebPagePreview: View {
                 PanelRow(label: "From", value: browserName)
             }
             PanelDivider()
-            PanelRow(symbol: "return", value: "Open in \(browserName.isEmpty ? "the browser" : browserName)", trailing: "↩")
+            PanelRow(
+                symbol: "return",
+                value: open && browserName == "Safari"
+                    ? "Show its Safari tab"
+                    : "Open in \(browserName.isEmpty ? "the browser" : browserName)",
+                trailing: "↩")
         }
     }
 }

@@ -124,6 +124,8 @@ enum GlobalContextRow {
             }
 
         case .browserURL(let url, let browserBundleId, _, _, _):
+            if browserBundleId == BrowserTabList.safariBundleID,
+                SafariTabManager.shared.showOpenTab(for: url) { break }
             if let browser = NSWorkspace.shared.urlForApplication(
                 withBundleIdentifier: browserBundleId)
             {

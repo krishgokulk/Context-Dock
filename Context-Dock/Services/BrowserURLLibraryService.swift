@@ -6,6 +6,8 @@ struct BrowserURLLibraryEntry: Identifiable, Equatable {
     enum Kind: String {
         case history = "History"
         case bookmark = "Bookmark"
+        /// A page open in one of Safari's tabs right now (`GlobalQuery.openTabRows`).
+        case tab = "Open tab"
     }
 
     let title: String
@@ -26,6 +28,8 @@ struct BrowserURLLibraryEntry: Identifiable, Equatable {
         switch kind {
         case .bookmark:
             return "\(browserName) Bookmarks"
+        case .tab:
+            return "\(browserName) Tabs"
         case .history:
             return BrowserURLLibraryService.dateGroupTitle(for: visitDate)
         }

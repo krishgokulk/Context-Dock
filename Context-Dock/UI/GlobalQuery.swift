@@ -50,7 +50,10 @@ enum GlobalQuery {
             }
         case .global(let doc):
             text.append(doc.subtitle)
-            if case .browserURL = doc.action { text.append("history bookmark page site visited") }
+            if case .browserURL(_, _, _, let kind, _) = doc.action {
+                text.append(kind == BrowserURLLibraryEntry.Kind.tab.rawValue
+                    ? "tab tabs open page site" : "history bookmark page site visited")
+            }
             if case .cachedMenu(_, _, let path, _, _) = doc.action { text += path }
         case .command(let item): text += item.path
         case .file(let url): text.append(url.deletingLastPathComponent().lastPathComponent)
@@ -71,7 +74,9 @@ enum GlobalQuery {
     /// The refined rows as two lists: what answers the query, and the destructive rows
     /// nobody asked for — which Global lists after its fallbacks, so Return never offers to
     /// clear or delete when nothing safe matched (owner 2026-10-17).
-    static func split(_ rows: [AppChatRow], query: String) -> (safe: [AppChatRow], risky: [AppChatRow]) {
+    static func split(
+        _ rows: [AppChatRow], query: String, dropsUnanswered: Bool = true
+    ) -> (safe: [AppChatRow], risky: [AppChatRow]) {
         let appNames = Set(rows.map(GlobalResultSection.appName(of:)).filter { !$0.isEmpty }
             + rows.compactMap { if case .app(let entry) = $0 { return entry.name } else { return nil } }
             + rows.compactMap { row -> String? in
@@ -86,7 +91,7 @@ enum GlobalQuery {
             let hay = haystack(of: row)
             return asked.contains { word in hay.contains { $0.hasPrefix(word) || word.hasPrefix($0) && $0.count >= 4 } }
         }
-        var kept = asked.isEmpty ? rows : rows.filter(answers)
+        var kept = asked.isEmpty || !dropsUnanswered ? rows : rows.filter(answers)
         if !kept.contains(where: { GlobalResultSection.title(for: $0) != GlobalResultSection.applications }) {
             kept = rows
         }
@@ -137,5 +142,49 @@ enum GlobalQuery {
             guard !have.contains("\(appName.lowercased())|\(doc.title.lowercased())") else { return nil }
             return .global(doc)
         }
+    }
+
+    /// Safari's open tabs that hold every asked word, as rows, one per page (owner
+    /// 2026-10-18: "if safari is running filter opened tabs"). "tabs" alone lists them all;
+    /// "safari" alone lists none, so the app itself still leads.
+    static func openTabRows(_ tabs: [SafariTab], query: String) -> [AppChatRow] {
+        let typed = Set(words(query))
+        let asked = askedWords(in: query, appNames: ["Safari"])
+            .filter { !["tab", "tabs", "open"].contains($0) }
+        if asked.isEmpty, typed.isDisjoint(with: ["tab", "tabs"]) { return [] }
+        var seen = Set<String>()
+        return tabs.compactMap { tab -> AppChatRow? in
+            guard let url = URL(string: tab.url),
+                seen.insert(SafariTabManager.normalizedURLKey(tab.url)).inserted
+            else { return nil }
+            let hay = words("\(tab.title) \(tab.url)")
+            guard asked.allSatisfy({ word in hay.contains { $0.hasPrefix(word) } }) else { return nil }
+            return .global(GlobalSearchService.SearchDocument(
+                browserURL: BrowserURLLibraryEntry(
+                    title: tab.title, url: url, visitDate: nil, kind: .tab,
+                    browserName: "Safari", browserBundleId: BrowserTabList.safariBundleID),
+                icon: nil))
+        }
+        .prefix(8).map { $0 }
+    }
+
+    /// The open tabs first, and the same pages' history and bookmark rows dropped.
+    static func leadingOpenTabs(_ tabs: [AppChatRow], _ rows: [AppChatRow]) -> [AppChatRow] {
+        let open = Set(tabs.compactMap(pageURL).map(SafariTabManager.normalizedURLKey))
+        return tabs + rows.filter { row in
+            pageURL(row).map { !open.contains(SafariTabManager.normalizedURLKey($0)) } ?? true
+        }
+    }
+
+    /// The web page a row opens, if it opens one.
+    static func pageURL(_ row: AppChatRow) -> String? {
+        switch row {
+        case .global(let doc):
+            if case .browserURL(let url, _, _, _, _) = doc.action { return url.absoluteString }
+        case .dock(let pill):
+            if let url = pill.resolvedURL, !url.isFileURL { return url.absoluteString }
+        default: break
+        }
+        return nil
     }
 }
