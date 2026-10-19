@@ -22,7 +22,7 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 
 **State (2026-10-18):**
 - Merged today: #290 (Global S3 time-words + weekday fix), #292 (Messages/Safari WAL readers), #291 (Claude project setup), #294 (S5 learn-from-picks), #295 (P3b two lanes), plus ChatGPT Subscription #293. #247 closed (already shipped via #251–#256).
-- #279 (mail.search bulk) is CI-green but **held un-merged** pending the owner's "merge 279" (owner rule 2026-10-18: never merge before the owner's hand-check).
+- #279 (mail.search bulk) merged 2026-10-19 on the owner's "merge 279".
 - #296 filed: data-lane Mail search not wired on the ChatGPT provider + Mail scope.
 - App-agent lane: #197 P3 done (#276), #277 P3b done (#295), #198 P4 in review (#297, awaiting owner hand-check); next **#199** P5.
 - **Owner rule (2026-10-18):** never merge before the owner's hand-check — a CI-green PR waits for the owner's "merge N".
@@ -61,6 +61,7 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-19 | Fix: mail.search scans in bulk (was 9-28 s per call); owner hand-tested ("merge 279") | #279 |
 | 2026-10-18 | P3b: the app agent's two lanes — data never takes the window, UI lane's last rung is Computer Use | #295 |
 | 2026-10-18 | S5: the router learns from the owner's picks | #294 |
 | 2026-10-18 | Claude project setup — connectors off, skills parity, model routing | #291 |
