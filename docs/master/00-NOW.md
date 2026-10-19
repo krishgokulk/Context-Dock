@@ -35,8 +35,8 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 
 > **Integration branch — read this before catching up or cutting a worktree.** The live branch is
 > **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a
-> stale release base, ~788 commits behind** — its tip is still PR #8; it only advances at `ship it`
-> (`scripts/ship.sh`). Therefore: catch up from `general-chat-agent`'s `00-NOW.md`, never main; cut
+> stale release base, ~788 commits behind** — its tip is still PR #8; it only advances when a release PR
+> (`scripts/release-prep.sh`) merges at `ship it`; `scripts/ship.sh` then only publishes. Therefore: catch up from `general-chat-agent`'s `00-NOW.md`, never main; cut
 > every worktree with `source_branch general-chat-agent`; open PRs with base `general-chat-agent`. A
 > build cut from main shows **old UI** and yields bug reports for things already fixed — exactly what
 > made #302/#296/#211 phantoms.

@@ -77,7 +77,7 @@ never run `ship.sh` on their own.
 
 ## Integration branch
 
-**The live integration branch is `general-chat-agent`, not `main`.** Every builder/fix PR bases on `general-chat-agent` (e.g. #276/#295/#297/#299/#301). `main` is a stale release base, ~788 commits behind (tip still PR #8); it only advances at `ship it` (`scripts/ship.sh`). So: catch up from `general-chat-agent`'s `docs/master/00-NOW.md`, never main; cut every worktree with `source_branch general-chat-agent`; open PRs with base `general-chat-agent`. A build cut from main shows old UI and produces bug reports for things already fixed.
+**The live integration branch is `general-chat-agent`, not `main`.** Every builder/fix PR bases on `general-chat-agent` (e.g. #276/#295/#297/#299/#301). `main` is a stale release base, ~788 commits behind (tip still PR #8); it only advances when a release PR (`scripts/release-prep.sh`) merges at `ship it`; `scripts/ship.sh` then publishes what `main` says and pushes nothing. So: catch up from `general-chat-agent`'s `docs/master/00-NOW.md`, never main; cut every worktree with `source_branch general-chat-agent`; open PRs with base `general-chat-agent`. A build cut from main shows old UI and produces bug reports for things already fixed.
 
 ## Working alongside other agents
 
