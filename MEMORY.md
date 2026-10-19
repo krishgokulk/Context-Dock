@@ -53,5 +53,6 @@ Format: `YYYY-MM-DD · agent/branch · did · next · blocked`
 - 2026-10-05 (cloud): #191 part 2 started — Context Dock live panel (CornerLivePanel) beside the app chat while a turn runs; stacked on #192.
 - 2026-10-09 (cloud, claude/wizardly-mayer-2lmpxc): Finder from Global = Finder's own Context Dock; Ask AI row leads Finder's typed list; disk-file fallback.
 - 2026-10-10 (cloud, claude/wizardly-mayer-2lmpxc): "/" in Global or a Context Dock jumps to an app scope — running first, then installed, never launched.
+- 2026-10-18 (claude/issue-198-shortcut-steps): P4 — every pre-model keyword shortcut in handleL2Query appends "Shortcut: <name> — matched '<rule>'" via DockShortcut/dockShortcutStep to the shared routerTrace→liveSteps, so CornerLivePanel/Dock say why a shortcut fired (no more "Answered without running anything"). 15 families, DockShortcutTests.
 - 2026-10-18: Task 277 (P3b) — two-lane finish: lane step, UI-lane plan card + focus return, AXMenuReader.clickMenuItem(activatesApp:) UI-only, Messages/Terminal invariants, parity D15, plan §2a measure-TODOs. Draft PR #295.
 - 2026-10-18 — Planner coordinator: merged #290/#291/#292/#294/#295 + ChatGPT sub (#293), closed #247; #279 green & held for owner's merge; filed #296 (Mail data-lane on ChatGPT+Mail scope); app-agent #277/P3b shipped (#295), #198/P4 in review (#297); next #199/P5.
