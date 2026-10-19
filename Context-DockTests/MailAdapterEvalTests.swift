@@ -98,4 +98,47 @@ struct MailAdapterEvalTests {
             #expect(!EvidenceSufficiency.admitsDefeat(output), "\"\(output)\" is a finding")
         }
     }
+
+    // MARK: - "read my latest mail" gets a body, not just a header (#302)
+
+    /// The regression this issue is about: mail.recent used to return only subject/sender, so
+    /// "read my latest mail" could only ever report the header. The newest message now carries
+    /// its body through.
+    @Test func recentReadsTheLatestMessageBody() {
+        let out = AppleMailMCPCapabilities.formatRecent([
+            ["subject": "Invoice #42", "sender": "billing@acme.com", "date": "Mon",
+             "read": false, "body": "Your payment of $120 is due Friday. Thanks."],
+            ["subject": "Lunch?", "sender": "sam@x.com", "date": "Sun", "read": true],
+        ])
+        #expect(out.contains("Your payment of $120 is due Friday."),
+                "the latest message's body must be in the output")
+        #expect(out.contains("Invoice #42") && out.contains("billing@acme.com"))
+        #expect(out.contains("Lunch?"), "the rest stay as a header list")
+    }
+
+    /// Honesty: when the body genuinely didn't come back, say so — never invent one and never
+    /// pretend the header is the whole message.
+    @Test func recentAdmitsWhenBodyIsMissing() {
+        let out = AppleMailMCPCapabilities.formatRecent([
+            ["subject": "No body here", "sender": "a@b.com", "date": "Tue", "read": false],
+        ])
+        #expect(out.contains("No body here"))
+        #expect(out.contains("no readable body"),
+                "a missing body is reported as a limit, not hidden")
+    }
+
+    /// A newsletter can't blow the turn's token budget.
+    @Test func recentTruncatesAnOversizeBody() {
+        let huge = String(repeating: "x", count: AppleMailMCPCapabilities.recentBodyCap + 500)
+        let out = AppleMailMCPCapabilities.formatRecent([
+            ["subject": "Big", "sender": "n@news.com", "date": "Wed", "read": true, "body": huge],
+        ])
+        #expect(out.contains("body truncated"))
+        #expect(out.count < huge.count, "the oversize body was capped")
+    }
+
+    @Test func recentEmptyStaysTheKnownFinding() {
+        #expect(AppleMailMCPCapabilities.formatRecent([])
+            == "No recent inbox messages (or Mail isn't running).")
+    }
 }

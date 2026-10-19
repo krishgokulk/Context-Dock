@@ -1006,7 +1006,32 @@ class AppleAppsAPI {
                 }
             }
         }
+        // Attach the newest message's body so "read my latest mail" has something to read.
+        // Fetched on its own below so arbitrary body text never collides with the list's
+        // "|||"/"^^^" delimiters.
+        if !emails.isEmpty, let body = latestInboxBody() {
+            emails[0]["body"] = body
+        }
         return emails
+    }
+
+    /// The body of the newest inbox message, or nil when Mail isn't running or the body can't
+    /// be read. Never launches Mail — the same rule getRecentEmails/getSelectedEmail follow.
+    private func latestInboxBody() -> String? {
+        guard Self.isRunning("com.apple.mail") else { return nil }
+        let script = """
+            tell application "Mail"
+                if (count of messages of inbox) is 0 then return ""
+                set m to item 1 of (messages of inbox)
+                try
+                    return content of m
+                end try
+                return ""
+            end tell
+            """
+        guard let body = runAppleScript(script) else { return nil }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// The message the user currently has selected, or nil when Mail is not running, no

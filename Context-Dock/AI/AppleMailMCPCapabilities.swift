@@ -157,20 +157,51 @@ enum AppleMailMCPCapabilities {
                         continuation.resume(returning: AppleAppsAPI.shared.getRecentEmails(limit: limit))
                     }
                 }
-                if emails.isEmpty {
-                    return .init(success: true, output: "No recent inbox messages (or Mail isn't running).")
-                }
-                let lines = emails.prefix(30).map { m -> String in
-                    let subject = (m["subject"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "(no subject)"
-                    let sender = (m["sender"] as? String) ?? "?"
-                    let unread = (m["read"] as? Bool) == false ? "● " : ""
-                    let date = (m["date"] as? String) ?? ""
-                    return "\(unread)\(subject) — \(sender)\(date.isEmpty ? "" : " · \(date)")"
-                }
-                return .init(
-                    success: true,
-                    output: "Recent inbox (\(emails.count)):\n" + lines.joined(separator: "\n"))
+                return .init(success: true, output: formatRecent(emails))
             }
         )
+    }
+
+    /// Largest body we hand the model for the latest message — enough for a real email, bounded
+    /// so a newsletter can't blow the turn's token budget.
+    static let recentBodyCap = 8000
+
+    /// Render recent inbox for the model: the newest message in full (so "read my latest mail"
+    /// has a body), the rest as a header list. Pure and fixture-testable — the AppleScript that
+    /// fills `body` lives in AppleAppsAPI.getRecentEmails.
+    static func formatRecent(_ emails: [[String: Any]]) -> String {
+        guard let latest = emails.first else {
+            return "No recent inbox messages (or Mail isn't running)."
+        }
+        let subject = (latest["subject"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "(no subject)"
+        let sender = (latest["sender"] as? String) ?? "?"
+        let date = (latest["date"] as? String) ?? ""
+        let rawBody = (latest["body"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let bodyBlock: String
+        if rawBody.isEmpty {
+            // Honest limit, not a lie: the header is here, the body genuinely didn't come back.
+            bodyBlock = "(Mail returned no readable body for this message.)"
+        } else if rawBody.count > recentBodyCap {
+            bodyBlock = String(rawBody.prefix(recentBodyCap)) + "\n… (body truncated)"
+        } else {
+            bodyBlock = rawBody
+        }
+
+        var out = "Latest message:\nSubject: \(subject)\nFrom: \(sender)"
+        if !date.isEmpty { out += "\nDate: \(date)" }
+        out += "\n\n\(bodyBlock)"
+
+        let rest = emails.dropFirst().prefix(29).map { m -> String in
+            let s = (m["subject"] as? String)?.trimmingCharacters(in: .whitespaces) ?? "(no subject)"
+            let sn = (m["sender"] as? String) ?? "?"
+            let unread = (m["read"] as? Bool) == false ? "● " : ""
+            let d = (m["date"] as? String) ?? ""
+            return "\(unread)\(s) — \(sn)\(d.isEmpty ? "" : " · \(d)")"
+        }
+        if !rest.isEmpty {
+            out += "\n\nMore recent inbox (\(rest.count)):\n" + rest.joined(separator: "\n")
+        }
+        return out
     }
 }
