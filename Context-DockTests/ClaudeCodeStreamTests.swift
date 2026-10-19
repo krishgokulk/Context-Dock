@@ -113,6 +113,9 @@ struct ClaudeCodeStreamTests {
         #expect(ClaudeCodeCLIService.label(forCLITool: "Bash") == "Running a command…")
         #expect(ClaudeCodeCLIService.label(forCLITool: "Edit") == "Editing a file…")
         #expect(ClaudeCodeCLIService.label(forCLITool: "Klaxon").contains("Klaxon"))
+        #expect(
+            ClaudeCodeCLIService.label(
+                forCLITool: "mcp__dorax__dorax_screenshot") == "Took a screenshot")
     }
 
     // MARK: - Flags

@@ -312,6 +312,34 @@ nonisolated enum ActivityNarration {
     }
 }
 
+// MARK: - Progress trace
+
+/// Which trace lines are *reasoning* — the decisions §3 of the app-agent plan shows beside
+/// the steps that ran: Understood → Lane → Chose → Shortcut → Gate. The rest of a turn's
+/// trace is present-tense plumbing ("Checking linked actions…", "Looking through adapters…",
+/// "Matching 31 actions…", "Reading Mail menus…") that only says the app is busy. The tool
+/// steps already carry the work itself; these carry *why* it was done, so the Progress panel
+/// shows one and not the other.
+nonisolated enum ProgressTraceRules {
+    /// A reasoning line begins with one of these. Kept deliberately small: a line earns its
+    /// place by naming a decision, not by narrating a stage.
+    static let reasoningPrefixes = [
+        "Understood", "Lane:", "Scope:", "Chose", "Best path:", "Shortcut:", "Gate",
+        "Untrusted", "Tools:",
+    ]
+
+    /// The reasoning lines in a trace, in order, each once. Built from the trace, never
+    /// generated prose — a line DoraX did not record never appears.
+    static func reasoning(_ lines: [String]) -> [String] {
+        var seen: Set<String> = []
+        return lines.filter { line in
+            let text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard reasoningPrefixes.contains(where: text.hasPrefix) else { return false }
+            return seen.insert(text.lowercased()).inserted
+        }
+    }
+}
+
 // MARK: - Header and result line
 
 enum ActivitySummary {

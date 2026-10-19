@@ -14,6 +14,15 @@ struct DoraXMCPCapabilityToolTests {
         #expect(names.contains("dorax_list_capabilities"))
     }
 
+    @Test func screenshotIsDocumentedAsTextLastResort() {
+        let tool = DoraXMCPServer.toolDefinitions(attended: true).first {
+            $0["name"] as? String == "dorax_screenshot"
+        }
+        let description = tool?["description"] as? String ?? ""
+        #expect(description.contains("Prefer dorax_ask and app text capabilities"))
+        #expect(description.contains("only when text tools return nothing useful"))
+    }
+
     @Test func thePromptNamesTheScopedAppsCapabilitiesAheadOfTheShell() {
         let block = CapabilityRegistry.shared.cliPromptBlock(
             for: "com.apple.mail", appName: "Mail")

@@ -70,6 +70,7 @@ nonisolated enum TurnFileExtractor {
         func take(_ text: String, allowDirectories: Bool) {
             for path in paths(in: text, homeDirectory: homeDirectory, probe: counted) {
                 guard found.count < limit else { return }
+                if isTemporaryNoise(path) { continue }
                 if !allowDirectories, isSystemNoise(path, homeDirectory: homeDirectory) { continue }
                 guard !seen.contains(path), let kind = counted(path) else { continue }
                 if kind == .directory, !allowDirectories { continue }
@@ -94,6 +95,14 @@ nonisolated enum TurnFileExtractor {
         func isInside(_ root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
         if isInside(home + "/Library/Mobile Documents") { return false }
         return [home + "/Library", "/Library", "/System", "/private"].contains(where: isInside)
+    }
+
+    /// A temp path DoraX wrote itself — a `dorax-mcp-*.png` screenshot under `/var/folders`
+    /// ($TMPDIR). It is machinery, never a file the user would open, so it is never a result
+    /// card even when the answer names it (#185, as #138 did for `~/Library`).
+    static func isTemporaryNoise(_ path: String) -> Bool {
+        path == "/var/folders" || path.hasPrefix("/var/folders/")
+            || path == "/private/var/folders" || path.hasPrefix("/private/var/folders/")
     }
 
     static func diskProbe(_ path: String) -> Probe? {

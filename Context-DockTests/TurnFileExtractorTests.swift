@@ -172,6 +172,11 @@ struct TurnFileExtractorTests {
         #expect(files("Done.", steps: steps) == ["/Users/me/Documents/Travel/passport.pdf"])
     }
 
+    @Test func temporaryPathsNeverBecomeCards() {
+        #expect(files("Screenshot: /private/var/folders/x/b.pdf").isEmpty)
+        #expect(files("Screenshot: /var/folders/x/b.pdf").isEmpty)
+    }
+
     @Test func iCloudDriveUnderLibraryIsKept() {
         let path = "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/passport.pdf"
         #expect(files("Done.", steps: ["~/Library/Mobile Documents/com~apple~CloudDocs/passport.pdf"])

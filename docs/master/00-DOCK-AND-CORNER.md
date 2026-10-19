@@ -78,6 +78,7 @@ The Corner is **not a different product** — it is the same surfaces in a small
 | CLI tools as a scope (+ terminal) | ✅ | ❌ | **Not moved** — same hand-off | `[plan]` 2026-09-10 Phases 3–4 |
 | Media Dock | ✅ | ❌ | **Not moved** — and Labs in v1 | `[code]` `MediaDockSurface` |
 | Full-window chat | Chat Window (separate) | — | Stays a separate window by design | `[code]` Chat Window hotkey |
+| Live Progress panel (reasoning + steps beside an App Chat) | ✅ | ✅ | **Moved** — one panel for both positions (`CornerLivePanel`, drawn once in `AppChatPromptPill`). P5/#199: the panel renders the turn's whole trace from the step list — reasoning (Understood → Lane → Chose → Shortcut → Gate) above the tool steps that ran, built by `CornerLivePanelLayout.progressRows` from `ProgressTraceRules.reasoning` + the recorded `ActivityStep`s — not model prose, so a turn that reasoned but ran no registered tool no longer reads "No steps recorded". Folds in #185 (one trace, no raw JSON, no temp-screenshot card) | `[code]` `CornerLivePanel`, `CornerBoardLayout`, `ActivityStep`; `ProgressPanelStepsTests` |
 
 **Keep this table current.** Each PR that moves a job updates its row. When the last Dock-only row
 reads "Moved", the Dock can retire (§5).

@@ -548,9 +548,10 @@ final class DoraXMCPServer: ObservableObject {
         [
             "name": "dorax_screenshot",
             "description":
-                "Takes a screenshot of the user's screen and returns the file path. Read the "
-                + "returned path to see it. Call this to check what an app is actually "
-                + "displaying — a rendering bug, a crash dialog, whether a fix worked.",
+                "Last-resort visual fallback. Prefer dorax_ask and app text capabilities for "
+                + "readable content such as mail bodies; call this only when text tools return "
+                + "nothing useful or the task is inherently visual. Takes a screenshot and "
+                + "returns its path for rendering bugs, crash dialogs, or visual verification.",
             "inputSchema": ["type": "object", "properties": [:] as [String: Any]],
         ],
         [

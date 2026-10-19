@@ -15,6 +15,21 @@ import Foundation
 
 enum ChatAnswerSanitizer {
 
+    /// The user-facing text of an answer. A DoraX turn result is a JSON envelope
+    /// (`answer`, `scope`, `steps`, `toolChips`, `receipts`) — the panel and the steps
+    /// draw from its parts, but the chat bubble must show only `answer`, never the whole
+    /// object rendered as prose (#185).
+    static func userFacingText(_ text: String) -> String {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = body.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let answer = object["answer"] as? String,
+            object["scope"] != nil, object["steps"] != nil,
+            object["toolChips"] != nil, object["receipts"] != nil
+        else { return text }
+        return answer
+    }
+
     /// Tool-call syntax the model may emit as prose. Kept in one place so a new call
     /// shape is hidden everywhere at once.
     private static let patterns = [
@@ -59,6 +74,10 @@ enum ChatAnswerSanitizer {
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             !object.isEmpty
         else { return false }
+        // The DoraX turn envelope: a lone object carrying the whole result. It is never an
+        // answer on its own — `userFacingText` lifts `answer` out of it (#185).
+        let doraxPayloadKeys: Set<String> = ["answer", "scope", "steps", "toolChips", "receipts"]
+        if doraxPayloadKeys.isSubset(of: Set(object.keys)) { return true }
         // Not every bare JSON object is protocol — "give me the config as JSON" is a real
         // request with a real answer. What marks an invocation is the shape of its keys:
         // a `*_call` envelope, or a dotted capability id. Both are structural, so a shape
