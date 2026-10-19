@@ -27,6 +27,7 @@ struct TurnFileExtractorTests {
         "/private/var/folders/x/b.pdf": .file,
         "/var/folders/x/T/dorax-mcp-123.png": .file,
         "/var/folders/x/T/filesearch-abc/Documents/out.pdf": .file,
+        "/Users/me/Documents/dorax-mcp-report.pdf": .file,
         "/System/Library/c.pdf": .file,
         "/Library/Preferences/d.pdf": .file,
     ]
@@ -179,6 +180,9 @@ struct TurnFileExtractorTests {
         // A real deliverable under the same temp root still becomes a card.
         #expect(files("Saved: /var/folders/x/T/filesearch-abc/Documents/out.pdf")
             == ["/var/folders/x/T/filesearch-abc/Documents/out.pdf"])
+        // A real user file that merely shares the name is left alone (not temp, not .png).
+        #expect(files("See /Users/me/Documents/dorax-mcp-report.pdf")
+            == ["/Users/me/Documents/dorax-mcp-report.pdf"])
     }
 
     @Test func iCloudDriveUnderLibraryIsKept() {

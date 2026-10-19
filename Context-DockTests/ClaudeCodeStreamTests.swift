@@ -62,6 +62,20 @@ struct ClaudeCodeStreamTests {
                 == .failure("Claude requested permissions to use WebFetch"))
     }
 
+    /// The finished screenshot step reads in plain past tense, not "Ran dorax_screenshot via
+    /// dorax" (#185 item 5).
+    @Test func theFinishedScreenshotStepReadsTookAScreenshot() {
+        let line = """
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", \
+            "id": "toolu_9", "name": "mcp__dorax__dorax_screenshot", "input": {}}]}}
+            """
+        let events = CLIActivityEvent.claudeCode(streamLine: line)
+        guard case .started(_, _, let title, _) = events.first else {
+            Issue.record("a tool_use should start a step"); return
+        }
+        #expect(title == "Took a screenshot")
+    }
+
     // MARK: - The noise
 
     /// Most of the stream is the CLI talking to itself. Showing any of it would bury the two
@@ -113,9 +127,11 @@ struct ClaudeCodeStreamTests {
         #expect(ClaudeCodeCLIService.label(forCLITool: "Bash") == "Running a command…")
         #expect(ClaudeCodeCLIService.label(forCLITool: "Edit") == "Editing a file…")
         #expect(ClaudeCodeCLIService.label(forCLITool: "Klaxon").contains("Klaxon"))
+        // Live label runs in the present — it fires before the tool returns, so it cannot
+        // claim the shot was taken (#199 review). The finished step reads "Took a screenshot".
         #expect(
             ClaudeCodeCLIService.label(
-                forCLITool: "mcp__dorax__dorax_screenshot") == "Took a screenshot")
+                forCLITool: "mcp__dorax__dorax_screenshot") == "Taking a screenshot…")
     }
 
     // MARK: - Flags

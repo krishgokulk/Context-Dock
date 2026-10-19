@@ -23,11 +23,19 @@ enum ChatAnswerSanitizer {
         let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let data = body.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let answer = object["answer"] as? String,
-            object["scope"] != nil, object["steps"] != nil,
-            object["toolChips"] != nil, object["receipts"] != nil
+            isDoraXTurnEnvelope(object), let answer = object["answer"] as? String
         else { return text }
         return answer
+    }
+
+    /// The exact shape of a DoraX turn result, down to the field types. Checking the types —
+    /// not just that the keys are present — keeps a user's own JSON that happens to use these
+    /// words (`{"answer": …, "scope": …}` as plain values) from being mistaken for the
+    /// envelope and silently reduced to its `answer` (#199 review).
+    static func isDoraXTurnEnvelope(_ object: [String: Any]) -> Bool {
+        object["answer"] is String && object["scope"] is String
+            && object["steps"] is [Any] && object["toolChips"] is [Any]
+            && object["receipts"] is [Any]
     }
 
     /// Tool-call syntax the model may emit as prose. Kept in one place so a new call
@@ -76,8 +84,7 @@ enum ChatAnswerSanitizer {
         else { return false }
         // The DoraX turn envelope: a lone object carrying the whole result. It is never an
         // answer on its own — `userFacingText` lifts `answer` out of it (#185).
-        let doraxPayloadKeys: Set<String> = ["answer", "scope", "steps", "toolChips", "receipts"]
-        if doraxPayloadKeys.isSubset(of: Set(object.keys)) { return true }
+        if isDoraXTurnEnvelope(object) { return true }
         // Not every bare JSON object is protocol — "give me the config as JSON" is a real
         // request with a real answer. What marks an invocation is the shape of its keys:
         // a `*_call` envelope, or a dotted capability id. Both are structural, so a shape

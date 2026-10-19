@@ -493,6 +493,9 @@ nonisolated enum CLIActivityEvent: Equatable, Sendable {
                 let parts = name.dropFirst(5).components(separatedBy: "__")
                 let tool = parts.count > 1 ? parts.dropFirst().joined(separator: "__") : name
                 let server = parts.count > 1 ? parts[0] : ""
+                // "Took a screenshot", not "Ran dorax_screenshot via dorax" (#185 item 5):
+                // the finished step reads in plain past tense.
+                if tool == "dorax_screenshot" { return (.read, "Took a screenshot", "") }
                 return (.mcp, server.isEmpty ? "Ran \(tool)" : "Ran \(tool) via \(server)",
                     ActivityStepNaming.inputLine(input))
             }

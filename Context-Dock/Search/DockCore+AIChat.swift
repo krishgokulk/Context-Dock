@@ -5758,6 +5758,11 @@ extension DockCore {
                         return await recoveredFromProtocolOnly(response, query: query)
                     }
                     toolChips.append(call.label)
+                    // The lane decision ("Lane: data") into the trace for the Progress panel
+                    // (plan §3, #199).
+                    await MainActor.run {
+                        for step in call.laneSteps { self.setGeneralAIProgress(step) }
+                    }
                     await MainActor.run { aiMode.loadingStatus = "Running \(call.label)…" }
                     loopHistory.append(ChatMessage(role: .user, content: loopQuery))
                     loopHistory.append(ChatMessage(role: .assistant, content: response))

@@ -867,7 +867,8 @@ final class AIExecutionEngine {
                         output: result.output)
                     : .verified,
                 error: result.success ? nil : result.output,
-                readBack: result.readBack
+                readBack: result.readBack,
+                laneSteps: result.laneSteps
             )
         } catch {
             return AIUnifiedExecutionResult(

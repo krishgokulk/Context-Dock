@@ -99,11 +99,17 @@ nonisolated enum TurnFileExtractor {
 
     /// A temp file DoraX wrote itself — the `dorax-mcp-<timestamp>.png` screenshot
     /// (`DoraXMCPServer`, under $TMPDIR). It is machinery, never a file the user would open,
-    /// so it is never a result card even when the answer names it (#185). Scoped to that one
-    /// name on purpose: real deliverables (file-search hits, `OutputFileWriter` exports) also
-    /// live under `/var/folders/.../T` and must still become cards.
+    /// so it is never a result card even when the answer names it (#185). Matched by the
+    /// generated shape *and* a temporary location, so a real user file that merely shares the
+    /// name (`~/Documents/dorax-mcp-report.pdf`) is left alone; other deliverables under
+    /// `/var/folders/.../T` (file-search hits, `OutputFileWriter` exports) still become cards.
     static func isTemporaryNoise(_ path: String) -> Bool {
-        (path as NSString).lastPathComponent.hasPrefix("dorax-mcp-")
+        let name = (path as NSString).lastPathComponent
+        guard name.hasPrefix("dorax-mcp-"), name.hasSuffix(".png") else { return false }
+        let stamp = name.dropFirst("dorax-mcp-".count).dropLast(".png".count)
+        guard !stamp.isEmpty, stamp.allSatisfy(\.isNumber) else { return false }
+        return path.contains("/var/folders/") || path.hasPrefix("/tmp/")
+            || path.hasPrefix(NSTemporaryDirectory())
     }
 
     static func diskProbe(_ path: String) -> Probe? {

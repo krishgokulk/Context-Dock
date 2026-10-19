@@ -78,6 +78,10 @@ struct AIUnifiedExecutionResult: Equatable, Sendable {
     let error: String?
     /// What the executor read back after writing, when it did.
     var readBack: String? = nil
+    /// Turn steps the executor produced around the capability — the lane decision
+    /// ("Lane: data"), an app it had to start, a UI-lane plan. Carried up so the turn trace,
+    /// and the Progress panel built from it, show why it acted (plan §3, #199).
+    var laneSteps: [String] = []
 
     /// The line the chat is handed: the result, with a verification note only when a check
     /// failed or could not run, and the read-back value when there is one.

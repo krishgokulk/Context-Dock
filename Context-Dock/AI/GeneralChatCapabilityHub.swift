@@ -612,6 +612,9 @@ final class GeneralChatCapabilityHub {
         let output: String
         /// Human-readable chip label, e.g. "search_items via Artifacts"
         let label: String
+        /// The lane decision and any setup the capability reported ("Lane: data"), for the
+        /// caller to fold into the turn trace (#199). Empty for non-capability calls.
+        var laneSteps: [String] = []
     }
 
     /// Dispatch a tool command the model emitted through the tool loop.
@@ -684,7 +687,8 @@ final class GeneralChatCapabilityHub {
                         ? result.resultLine(
                             isWrite: CapabilityRegistry.shared.capability(id: tool)?.riskLevel != .low)
                         : "Tool \(tool) failed: \(result.error ?? "Unknown error")",
-                    label: "\(tool) via built-in")
+                    label: "\(tool) via built-in",
+                    laneSteps: result.laneSteps)
             }
             guard let bundleId = resolveBundleId(appRef: appRef, serverName: server) else {
                 return ToolCallResult(
