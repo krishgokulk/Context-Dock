@@ -2002,6 +2002,13 @@ extension DockCore {
         l2.routerTrace.append(text)
     }
 
+    /// A pre-model keyword shortcut claiming the turn. One line in the same trace the tool loop
+    /// uses, so the panel can say why something ran instead of "Answered without running
+    /// anything" (issue #198). Not a new mechanism — `DockShortcut` only labels the claim.
+    func dockShortcutStep(_ shortcut: DockShortcut) {
+        dockTraceStep(shortcut.step)
+    }
+
     @MainActor
     func setGeneralAIProgress(_ status: String?) {
         aiMode.loadingStatus = status
@@ -2540,9 +2547,13 @@ extension DockCore {
             scopedHasLinkedCLI: scopedHasLinkedCLI),
             tryExecuteTriggerRuleByName(query)
         {
+            dockShortcutStep(.triggerRule)
             return
         }
-        if !isSelectionQuestion, trySystemCommand(query) { return }
+        if !isSelectionQuestion, trySystemCommand(query) {
+            dockShortcutStep(.systemCommand)
+            return
+        }
         if let existingTask = l2.currentTask {
             existingTask.cancel()
             l2.currentTask = nil
@@ -2551,10 +2562,12 @@ extension DockCore {
         }
 
         if tryHandleNotesMCPQuery(query, scopedBundleId: scopedBundleId) {
+            dockShortcutStep(.notes)
             return
         }
 
         if tryHandleGitHubInstallRequest(query, scopedBundleId: scopedBundleId) {
+            dockShortcutStep(.githubInstall)
             return
         }
 
@@ -2572,6 +2585,7 @@ extension DockCore {
             dockScope: dockScope,
             rawScopedQuery: rawScopedSearchQuery
         ) {
+            dockShortcutStep(.appFind)
             executeAppFindIntent(findIntent)
             return
         }
@@ -2647,6 +2661,7 @@ extension DockCore {
                 if let matchedItem = matched {
                     await MainActor.run {
                         l2.isLoading = false
+                        dockShortcutStep(.menuCommand)
                         dockTraceStep(
                             runningApp == nil
                                 ? "Best path: \(matchedItem.pathString) · cached menu, will launch \(capturedTarget.appName)"
@@ -2687,6 +2702,7 @@ extension DockCore {
         }
 
         if !shouldStayInScopedAIChat, let transformIntent = transformShareIntent(for: query) {
+            dockShortcutStep(.transformShare)
             executeTransformShareIntent(transformIntent, userMessage: query)
             return
         }
@@ -2703,6 +2719,7 @@ extension DockCore {
                     && !dockScope.scopedSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
                         .isEmpty))
         {
+            dockShortcutStep(.finder)
             handleFinderAIQuery(query: query)
             return
         }
@@ -2710,6 +2727,7 @@ extension DockCore {
         if dockScope.scopedBundleId == "com.apple.MobileSMS",
             let intent = messagesScopedSemanticIntent(for: rawScopedSearchQuery)
         {
+            dockShortcutStep(.messages)
             executeCrossAppIntent(
                 intent,
                 userMessage: query,
@@ -2743,6 +2761,7 @@ extension DockCore {
             }
 
             if isMailQuestion, let answer = answerAttachedMailQuestion(for: rawScopedSearchQuery) {
+                dockShortcutStep(.mailQuestion)
                 l2.chatMessages.append(AIChatMessage(role: .user, content: query))
                 l2.chatMessages.append(AIChatMessage(role: .assistant, content: answer))
                 searchState.query = ""
@@ -2755,6 +2774,7 @@ extension DockCore {
             // mail.search and mail.read (issue #195, Task 17's rule). Corner app chat runs
             // this same function. It runs headless (mail.search); Mail's window is not touched.
             if let intent = shouldExecuteMailMailboxSearch(for: rawScopedSearchQuery) {
+                dockShortcutStep(.mailboxSearch)
                 executeMailMailboxSearch(intent: intent, userMessage: query)
                 return
             }
@@ -2770,6 +2790,7 @@ extension DockCore {
             !shouldSkipCrossAppMailRouting,
             let intent = CrossAppNLHandler.shared.parse(normalizedQuery)
         {
+            dockShortcutStep(.crossApp)
             executeCrossAppIntent(intent, userMessage: query)
             return
         }
@@ -2780,6 +2801,7 @@ extension DockCore {
                 ?? resolveGlobalActionQuery(query),
             !resolution.primary.usedFrontmostFallback
         {
+            dockShortcutStep(.appAction)
             executeResolvedAppAction(resolution, userMessage: query)
             return
         }
@@ -2788,6 +2810,7 @@ extension DockCore {
             let target = L2AppActionRouter.shared.appScopeTarget(for: normalizedQuery),
             target.actionQuery.isEmpty
         {
+            dockShortcutStep(.appLaunch)
             executeGlobalAppLaunch(
                 bundleId: target.bundleId,
                 appName: target.appName,
@@ -3114,6 +3137,7 @@ extension DockCore {
             safariCommandScopeAllowed,
             let directCmd = SafariCommandBridge.shared.parseIntent(query)
         {
+            dockShortcutStep(.safariCommand)
             l2.chatMessages.append(AIChatMessage(role: .user, content: query))
             finishL2AIRequest(l2RequestID)
             Task {
