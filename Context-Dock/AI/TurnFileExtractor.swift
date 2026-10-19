@@ -97,12 +97,13 @@ nonisolated enum TurnFileExtractor {
         return [home + "/Library", "/Library", "/System", "/private"].contains(where: isInside)
     }
 
-    /// A temp path DoraX wrote itself — a `dorax-mcp-*.png` screenshot under `/var/folders`
-    /// ($TMPDIR). It is machinery, never a file the user would open, so it is never a result
-    /// card even when the answer names it (#185, as #138 did for `~/Library`).
+    /// A temp file DoraX wrote itself — the `dorax-mcp-<timestamp>.png` screenshot
+    /// (`DoraXMCPServer`, under $TMPDIR). It is machinery, never a file the user would open,
+    /// so it is never a result card even when the answer names it (#185). Scoped to that one
+    /// name on purpose: real deliverables (file-search hits, `OutputFileWriter` exports) also
+    /// live under `/var/folders/.../T` and must still become cards.
     static func isTemporaryNoise(_ path: String) -> Bool {
-        path == "/var/folders" || path.hasPrefix("/var/folders/")
-            || path == "/private/var/folders" || path.hasPrefix("/private/var/folders/")
+        (path as NSString).lastPathComponent.hasPrefix("dorax-mcp-")
     }
 
     static func diskProbe(_ path: String) -> Probe? {

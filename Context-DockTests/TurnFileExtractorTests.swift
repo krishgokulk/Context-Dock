@@ -25,6 +25,8 @@ struct TurnFileExtractorTests {
         "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/passport.pdf": .file,
         "/Users/me/LibraryNotes/a.pdf": .file,
         "/private/var/folders/x/b.pdf": .file,
+        "/var/folders/x/T/dorax-mcp-123.png": .file,
+        "/var/folders/x/T/filesearch-abc/Documents/out.pdf": .file,
         "/System/Library/c.pdf": .file,
         "/Library/Preferences/d.pdf": .file,
     ]
@@ -172,9 +174,11 @@ struct TurnFileExtractorTests {
         #expect(files("Done.", steps: steps) == ["/Users/me/Documents/Travel/passport.pdf"])
     }
 
-    @Test func temporaryPathsNeverBecomeCards() {
-        #expect(files("Screenshot: /private/var/folders/x/b.pdf").isEmpty)
-        #expect(files("Screenshot: /var/folders/x/b.pdf").isEmpty)
+    @Test func doraxScreenshotTempNeverBecomesACard() {
+        #expect(files("Screenshot: /var/folders/x/T/dorax-mcp-123.png").isEmpty)
+        // A real deliverable under the same temp root still becomes a card.
+        #expect(files("Saved: /var/folders/x/T/filesearch-abc/Documents/out.pdf")
+            == ["/var/folders/x/T/filesearch-abc/Documents/out.pdf"])
     }
 
     @Test func iCloudDriveUnderLibraryIsKept() {
