@@ -24,4 +24,8 @@ fi
 
 git -C "$MAIN_DIR" pull --quiet --ff-only origin general-chat-agent
 echo "main: $(git -C "$MAIN_DIR" log --oneline -1)"
+# Keep the knowledge graph current with the code we just pulled (AST-only, no API cost).
+if command -v graphify >/dev/null 2>&1; then
+  (cd "$MAIN_DIR" && graphify update . >/dev/null 2>&1) && echo "main: graphify updated" || echo "main: graphify update skipped"
+fi
 "$MAIN_DIR/scripts/dev-run.sh"
