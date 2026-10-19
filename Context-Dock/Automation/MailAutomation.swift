@@ -520,6 +520,9 @@ enum MailAutomation {
         return false
     }
 
+    /// `maxScan` is kept for callers but no longer bounds the search: Mail filters with `whose`
+    /// across the whole mailbox in about a second, and rejects `whose` on a message range.
+    /// `limit` still caps the rows returned.
     nonisolated static func mailboxSnapshot(
         senderContains: String = "",
         subjectContains: String = "",
@@ -532,6 +535,17 @@ enum MailAutomation {
         let wantsYesterday = normalize(relativeDay) == "yesterday"
         let safeLimit = max(1, min(limit, 50))
         let safeMaxScan = max(1, min(maxScan, 500))
+
+        var conditions: [String] = []
+        if !senderContains.isEmpty { conditions.append("sender contains senderFilter") }
+        if !subjectContains.isEmpty { conditions.append("subject contains subjectFilter") }
+        if unreadOnly { conditions.append("read status is false") }
+        if wantsToday { conditions.append("(date received ≥ todayStart and date received < todayEnd)") }
+        if wantsYesterday {
+            conditions.append("(date received ≥ yesterdayStart and date received < yesterdayEnd)")
+        }
+        let whoseClause =
+            conditions.isEmpty ? "read status is true or read status is false" : conditions.joined(separator: " and ")
 
         let script = """
             tell application "Mail"
@@ -577,37 +591,14 @@ enum MailAutomation {
                         set targetMailboxName to (name of targetMailbox) as string
                     end try
 
-                    set totalCount to count of messages of targetMailbox
-                    if totalCount < maxScan then set maxScan to totalCount
                     set matchedLines to {}
-
-                    repeat with i from 1 to maxScan
-                        set msg to item i of messages of targetMailbox
-                        set msgSender to (sender of msg) as string
-                        set msgSubject to (subject of msg) as string
-                        set msgDate to date received of msg
-                        set msgRead to read status of msg
-
-                        set senderMatches to (senderFilter is "")
-                        if senderMatches is false then set senderMatches to (msgSender contains senderFilter)
-
-                        set subjectMatches to (subjectFilter is "")
-                        if subjectMatches is false then set subjectMatches to (msgSubject contains subjectFilter)
-
-                        set dateMatches to true
-                        if wantsToday then
-                            set dateMatches to (msgDate ≥ todayStart and msgDate < todayEnd)
-                        else if wantsYesterday then
-                            set dateMatches to (msgDate ≥ yesterdayStart and msgDate < yesterdayEnd)
-                        end if
-
-                        set unreadMatches to true
-                        if wantsUnread then set unreadMatches to (msgRead is false)
-
-                        if senderMatches and subjectMatches and dateMatches and unreadMatches then
-                            set end of matchedLines to "- " & msgSubject & " | From: " & msgSender & " | " & (msgDate as text) & " | Read: " & (msgRead as string)
-                            if (count of matchedLines) ≥ resultLimit then exit repeat
-                        end if
+                    -- Mail filters server-side; scanning the mailbox property by property took ~10 s.
+                    set found to (messages of targetMailbox whose \(whoseClause))
+                    set foundCount to count of found
+                    if foundCount > resultLimit then set foundCount to resultLimit
+                    repeat with i from 1 to foundCount
+                        set msg to item i of found
+                        set end of matchedLines to "- " & (subject of msg) & " | From: " & (sender of msg) & " | " & ((date received of msg) as text) & " | Read: " & ((read status of msg) as string)
                     end repeat
 
                     if (count of matchedLines) = 0 then return "MAILBOX:" & targetMailboxName & return & "NO_MATCHES"
