@@ -71,4 +71,12 @@ struct ProtocolOnlyAnswerTests {
         #expect(!ChatAnswerSanitizer.isProtocolOnly(
             #"To run it, reply with {"capability_call": {"capability": "x"}} and nothing else."#))
     }
+
+    /// The DoraX turn envelope is never shown whole — the bubble lifts out `answer` and the
+    /// object itself is protocol, not an answer (#185).
+    @Test func doraxTurnPayloadShowsOnlyItsAnswer() {
+        let payload = #"{"answer":"Mail says hello.","scope":"Mail","steps":["Read mail"],"toolChips":["Observed Message"],"receipts":[]}"#
+        #expect(ChatAnswerSanitizer.userFacingText(payload) == "Mail says hello.")
+        #expect(ChatAnswerSanitizer.isProtocolOnly(payload))
+    }
 }

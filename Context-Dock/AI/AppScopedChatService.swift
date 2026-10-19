@@ -853,6 +853,10 @@ enum AppScopedChatService {
             }
             let call = await GeneralChatCapabilityHub.shared.execute(
                 raw, scope: conversationScope, turn: turn, chatScope: chat)
+            // The lane decision ("Lane: data") into the trace, so the Progress panel shows
+            // why the turn acted (plan §3, #199). Before the result line, in the order it
+            // happened.
+            for step in call.laneSteps { onStatus?(step) }
             guard call.handled else {
                 var text = ChatAnswerSanitizer.clean(raw)
                 // The last rung, offered by DoraX rather than asked for by the model. Three

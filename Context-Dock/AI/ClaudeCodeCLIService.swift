@@ -163,6 +163,7 @@ enum ClaudeCodeCLIService {
         case "WebSearch": return "Searching the web…"
         case "Task": return "Starting a sub-task…"
         case "TodoWrite": return "Planning the steps…"
+        case "mcp__\(DoraXMCPServer.serverName)__dorax_screenshot": return "Taking a screenshot…"
         case "mcp__\(DoraXMCPServer.serverName)__dorax_run_capability": return "Running an app capability…"
         case "mcp__\(DoraXMCPServer.serverName)__dorax_list_capabilities": return "Looking up app capabilities…"
         default: return "Using \(tool)…"

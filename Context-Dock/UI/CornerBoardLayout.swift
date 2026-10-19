@@ -217,6 +217,21 @@ enum CornerBoardLayout {
 /// app — the steps as they run, a command's output — and what the turn left behind: the
 /// files it made or named, the uploads it was given, the connectors and the adapter it can
 /// reach. A toggle in the header hides it; it stays put across turns.
+/// One row of the Progress panel: a tool step that ran, or a reasoning line from the trace
+/// that tells why (Understood / Lane / Chose / Shortcut / Gate). One model for every surface
+/// — the Corner and the bottom dock draw the same panel, so they cannot drift (#199).
+enum PanelProgressRow: Identifiable, Equatable {
+    case reasoning(String)
+    case step(ActivityStep)
+
+    var id: String {
+        switch self {
+        case .reasoning(let line): "reason:" + line
+        case .step(let step): "step:" + step.id.uuidString
+        }
+    }
+}
+
 enum CornerLivePanelLayout {
     /// The panel's share of the chat card. The conversation keeps the larger part, as in
     /// Claude.
@@ -241,6 +256,24 @@ enum CornerLivePanelLayout {
         isAnswering: Bool, live: [ActivityStep], finished: [ActivityStep]
     ) -> [ActivityStep] {
         isAnswering ? live : finished
+    }
+
+    /// The Progress panel's one list (#199, plan §3): the reasoning a turn recorded — why it
+    /// acted (Understood / Lane / Chose / Shortcut / Gate) — above the tool steps that ran —
+    /// what it did. Built from the turn's trace, not generated prose, so the panel shows the
+    /// same reasoning the chat does rather than "No steps recorded". A reasoning line a step
+    /// already states is dropped so nothing reads twice.
+    static func progressRows(reasoning: [String], steps: [ActivityStep]) -> [PanelProgressRow] {
+        let stepKeys = Set(steps.map { normalizeTrace($0.title) })
+        let rows = ProgressTraceRules.reasoning(reasoning)
+            .filter { !stepKeys.contains(normalizeTrace($0)) }
+            .map(PanelProgressRow.reasoning)
+        return rows + steps.map(PanelProgressRow.step)
+    }
+
+    /// A trace line and a step title compared without their trailing "…"/punctuation or case.
+    static func normalizeTrace(_ text: String) -> String {
+        text.trimmingCharacters(in: CharacterSet(charactersIn: " ….")).lowercased()
     }
 
     /// Everything the user attached in this conversation, oldest first, each once.

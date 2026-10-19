@@ -60,6 +60,18 @@ struct CornerLivePanel: View {
         return ActivityStep.steps(recorded: recorded, receipts: answer.evidenceReceipts)
     }
 
+    /// The Progress panel's one list: the turn's reasoning above the tool steps it ran. While
+    /// a turn runs it is the live trace; after, the finished answer's. Built from the trace,
+    /// so a turn that reasoned but ran no registered tool still shows why it acted instead of
+    /// "No steps recorded" (#199).
+    private var progressRows: [PanelProgressRow] {
+        if isAnswering {
+            return L.progressRows(reasoning: liveSteps, steps: conversation.liveActivity)
+        }
+        guard let answer = lastTurnAnswer else { return [] }
+        return L.progressRows(reasoning: answer.trace, steps: finishedSteps)
+    }
+
     var body: some View {
         let steps = L.steps(
             isAnswering: isAnswering, live: conversation.liveActivity, finished: finishedSteps)
@@ -69,7 +81,7 @@ struct CornerLivePanel: View {
                 PanelHeader(
                     icon: appIcon, title: appName.isEmpty ? "This app" : appName,
                     subtitle: subtitle(steps), status: isAnswering ? .orange : .green)
-                section("Progress", count: steps.count) { progress(steps) }
+                section("Progress", count: progressRows.count) { progress(progressRows) }
                 if let shell = L.terminalStep(in: steps) {
                     section(shell.status == .running ? "Terminal — running" : "Terminal") {
                         terminal(shell)
@@ -157,21 +169,12 @@ struct CornerLivePanel: View {
     // MARK: Progress
 
     @ViewBuilder
-    private func progress(_ steps: [ActivityStep]) -> some View {
-        if steps.isEmpty {
+    private func progress(_ rows: [PanelProgressRow]) -> some View {
+        if rows.isEmpty {
             if isAnswering {
-                // Before the first tool runs, the turn's narration is all there is to show.
-                let lines = Array(liveSteps.suffix(5))
-                if lines.isEmpty {
-                    stepRow(symbol: nil, title: "Thinking…", detail: "", trailing: nil, done: false)
-                } else {
-                    ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                        let last = index == lines.count - 1
-                        stepRow(
-                            symbol: last ? nil : "checkmark.circle.fill", title: line, detail: "",
-                            trailing: nil, tint: .accentColor, done: !last)
-                    }
-                }
+                // Nothing recorded yet — the turn has begun but neither reasoning nor a tool
+                // step has landed.
+                stepRow(symbol: nil, title: "Thinking…", detail: "", trailing: nil, done: false)
             } else {
                 // Only what was recorded can be vouched for. "Answered without running
                 // anything" was said of turns a pre-model shortcut had run (issue #195).
@@ -180,11 +183,27 @@ struct CornerLivePanel: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            ForEach(steps) { step in
-                stepRow(
-                    symbol: symbol(for: step.status), title: step.title, detail: step.detail,
-                    trailing: step.duration.map(Self.duration), tint: tint(for: step.status),
-                    done: step.status == .ok)
+            ForEach(rows) { row in
+                switch row {
+                case .reasoning(let line):
+                    // A decision the turn recorded (Understood / Lane / Chose / Gate): shown
+                    // dim with a tick, the way Claude lists the reasoning behind a step.
+                    stepRow(
+                        symbol: "checkmark.circle.fill", title: line, detail: "",
+                        trailing: nil, tint: .secondary, done: true)
+                case .step(let step):
+                    stepRow(
+                        symbol: symbol(for: step.status), title: step.title, detail: step.detail,
+                        trailing: step.duration.map(Self.duration), tint: tint(for: step.status),
+                        done: step.status == .ok)
+                }
+            }
+            // A live turn with no step running now keeps a spinner so the panel looks alive.
+            if isAnswering, !rows.contains(where: {
+                if case .step(let step) = $0 { return step.status == .running }
+                return false
+            }) {
+                stepRow(symbol: nil, title: "Working…", detail: "", trailing: nil, done: false)
             }
         }
     }

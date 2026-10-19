@@ -474,6 +474,8 @@ struct AIChatMessage: Identifiable, Equatable {
         _ content: String, role: ChatRole, isStreamingPlaceholder: Bool
     ) -> String {
         guard role == .assistant else { return content }
+        // A DoraX turn envelope reaches the bubble as JSON; show only its `answer` (#185).
+        let content = ChatAnswerSanitizer.userFacingText(content)
         // The bubble a turn is about to write into. It is empty because nothing has been
         // said yet, not because the app had nothing to say — turning it into the fallback
         // showed "couldn't carry it out on this surface" under a spinner for a turn that was

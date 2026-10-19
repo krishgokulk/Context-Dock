@@ -70,6 +70,7 @@ nonisolated enum TurnFileExtractor {
         func take(_ text: String, allowDirectories: Bool) {
             for path in paths(in: text, homeDirectory: homeDirectory, probe: counted) {
                 guard found.count < limit else { return }
+                if isTemporaryNoise(path) { continue }
                 if !allowDirectories, isSystemNoise(path, homeDirectory: homeDirectory) { continue }
                 guard !seen.contains(path), let kind = counted(path) else { continue }
                 if kind == .directory, !allowDirectories { continue }
@@ -94,6 +95,21 @@ nonisolated enum TurnFileExtractor {
         func isInside(_ root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
         if isInside(home + "/Library/Mobile Documents") { return false }
         return [home + "/Library", "/Library", "/System", "/private"].contains(where: isInside)
+    }
+
+    /// A temp file DoraX wrote itself — the `dorax-mcp-<timestamp>.png` screenshot
+    /// (`DoraXMCPServer`, under $TMPDIR). It is machinery, never a file the user would open,
+    /// so it is never a result card even when the answer names it (#185). Matched by the
+    /// generated shape *and* a temporary location, so a real user file that merely shares the
+    /// name (`~/Documents/dorax-mcp-report.pdf`) is left alone; other deliverables under
+    /// `/var/folders/.../T` (file-search hits, `OutputFileWriter` exports) still become cards.
+    static func isTemporaryNoise(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent
+        guard name.hasPrefix("dorax-mcp-"), name.hasSuffix(".png") else { return false }
+        let stamp = name.dropFirst("dorax-mcp-".count).dropLast(".png".count)
+        guard !stamp.isEmpty, stamp.allSatisfy(\.isNumber) else { return false }
+        return path.contains("/var/folders/") || path.hasPrefix("/tmp/")
+            || path.hasPrefix(NSTemporaryDirectory())
     }
 
     static func diskProbe(_ path: String) -> Probe? {
