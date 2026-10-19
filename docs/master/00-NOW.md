@@ -27,12 +27,26 @@ Owner rules: merge only on the owner's "merge N" / "N passed" (docs-only PRs the
 - App-agent lane: #197 P3 done (#276), #277 P3b done (#295), #198 P4 in review (#297, awaiting owner hand-check); next **#199** P5.
 - **Owner rule (2026-10-18):** never merge before the owner's hand-check — a CI-green PR waits for the owner's "merge N".
 
+**State (2026-10-19):**
+- Merged into `general-chat-agent`: #297 (P4 shortcut steps), #299 (P5 reasoning-steps panel), #301 (#300 graphify platform-specific). **P1–P5 of the app-agent plan are done.**
+- Mail app-chat bugs **#302, #296, #211 closed as phantoms** — all three were already fixed on `general-chat-agent`: mail body reads (commit `71da5937`, `MailMessageReaderTests`); `mail.search` headless route for tool-less providers in Mail scope (#279 bulk search + #293 ChatGPT provider); nested `dorax_ask` refused outright (`DoraXMCPServer.swift`). Full suite green (2759 passed). #302 was owner-hand-checked on a current GCA build. They had been reported from **stale main-based hand-check builds** (see the branch rule below) — not real regressions.
+- App-agent lane frontier: **#200 P6** (`ready`) → **#201 P7** (`ready`) → #202/#203 P8/P9 · #208 P13 (after P6) · #204 P10 · #205/#206. Nothing `in-progress`.
+- Verification card out for the other app-chat bugs (#235, #233, #188, #180): check each against current GCA before a builder writes any fix.
+
+> **Integration branch — read this before catching up or cutting a worktree.** The live branch is
+> **`general-chat-agent`**. Every builder PR bases on it (#276/#295/#297/#299/#301). **`main` is a
+> stale release base, ~788 commits behind** — its tip is still PR #8; it only advances when a release PR
+> (`scripts/release-prep.sh`) merges at `ship it`; `scripts/ship.sh` then only publishes. Therefore: catch up from `general-chat-agent`'s `00-NOW.md`, never main; cut
+> every worktree with `source_branch general-chat-agent`; open PRs with base `general-chat-agent`. A
+> build cut from main shows **old UI** and yields bug reports for things already fixed — exactly what
+> made #302/#296/#211 phantoms.
+
 ## Next, in order (GitHub issues)
 
 Owner order (2026-10-01): security first, then the AI engine plan, with the two owner bugs after E1.
 The planner labels the next issue `ready` when the one before it is in review.
 
-0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · **#196 P2** menus out of the prompt · **#197 P3** two lanes · then #180, #185 · **#198 P4** · **#199 P5** · **#200–#203 P6–P9** plugin manager · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
+0. **App agent plan (owner 2026-10-06, "confirm plan")** — `docs/master/00-APP-AGENT-PLUGIN-PLAN.md`, in this order: ~~#195 P1~~ (#209, merged 2026-10-10) · ~~#196 P2~~ · ~~#197 P3~~ (#276) · ~~#198 P4~~ (#297) · ~~#199 P5~~ (#299, folds #185) · **#200 P6** · **#201 P7** · #202/#203 P8/P9 · **#208 P13** dictionary rung (after P6) · **#204 P10** retire shortcuts (E12) · #205 P11 / #206 P12 after E19a.
 1. ~~#146~~ (#163) · ~~#150 E2~~ (#170) — merged 2026-10-02
 2. **#147** Drop Shelf becomes an icon at the end of the dock, in every app (UI)
 3. **#165 E1b** outbound-gate gaps: Mail/Messages/Notes untrusted, shell allow-list, exact typed URL (owner 2026-10-04: all three, option a)
@@ -61,6 +75,9 @@ A failed check becomes a `Fix:` issue at the top of the queue and its sentence g
 
 | Date | Task | PR |
 |---|---|---|
+| 2026-10-19 | P5: Progress panel shows the whole reasoning trace — Understood→Lane→Tools→Chose→Gate→Result; folds #185 | #299 |
+| 2026-10-19 | #300: graphify is platform-specific — documented, not mirrored | #301 |
+| 2026-10-19 | P4: pre-model shortcuts report a "Shortcut: …" step | #297 |
 | 2026-10-19 | Fix: mail.search scans in bulk (was 9-28 s per call); owner hand-tested ("merge 279") | #279 |
 | 2026-10-18 | P3b: the app agent's two lanes — data never takes the window, UI lane's last rung is Computer Use | #295 |
 | 2026-10-18 | S5: the router learns from the owner's picks | #294 |
