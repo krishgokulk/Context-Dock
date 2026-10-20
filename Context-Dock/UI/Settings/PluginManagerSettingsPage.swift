@@ -25,14 +25,15 @@ struct PluginManagerSettingsPage: View {
         }
         return order.map { app in
             let group = byApp[app] ?? []
-            let bundleID = group.compactMap { $0.bundleIDs.first }.first
+            // An app name can cover more than one bundle id (variants, two adapters); sum
+            // every bundle's cached menu commands, not just the first.
+            let bundleIDs = Array(Set(group.flatMap(\.bundleIDs)))
             return AppGroup(
                 name: app.isEmpty ? "System" : app,
-                bundleID: bundleID,
                 manifests: group,
-                menuCommandCount: bundleID.map {
-                    AgentPluginManifestBuilder.menuCommandCount(bundleID: $0)
-                } ?? 0)
+                menuCommandCount: bundleIDs.reduce(0) {
+                    $0 + AgentPluginManifestBuilder.menuCommandCount(bundleID: $1)
+                })
         }
     }
 
@@ -145,7 +146,6 @@ struct PluginManagerSettingsPage: View {
 
     private struct AppGroup: Identifiable {
         let name: String
-        let bundleID: String?
         let manifests: [AgentPluginManifest]
         let menuCommandCount: Int
         var id: String { name }

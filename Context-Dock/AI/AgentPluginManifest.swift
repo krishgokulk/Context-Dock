@@ -20,6 +20,7 @@
 //  what the owner hand check asks for: "the 5 adapter tools and the menu count".
 //
 
+import AppKit
 import Foundation
 
 /// One plugin: every capability of one kind that one app (or the machine) exposes.
@@ -98,21 +99,72 @@ enum AgentPluginManifestBuilder {
     /// record from `CapabilityCatalog.allRecords()` lands in exactly one manifest.
     @MainActor
     static func manifests() -> [AgentPluginManifest] {
-        manifests(from: CapabilityCatalog.allRecords(), bundleIDForApp: bundleIDMap())
+        let records = CapabilityCatalog.allRecords()
+        var bundleIDForApp = bundleIDMap()
+
+        // A capability names its app with a bundle id, but `allRecords()` only fills in a
+        // display name when an *enabled App Pack adapter* has that bundle id. Apple apps
+        // (Mail, Notes, Calendar…) ship their capabilities without an adapter, so without
+        // this they would all pile under "System". Resolve the app here, in the manager's
+        // own layer, from the capability's bundle id — the capability index is untouched.
+        var appOverrides: [String: String] = [:]
+        var nameCache: [String: String?] = [:]
+        for record in records where record.kind == .capability && record.app.isEmpty {
+            let capID = String(record.id.dropFirst("capability.".count))
+            guard let bundleID = CapabilityRegistry.shared.capability(id: capID)?.appBundleID,
+                !bundleID.isEmpty
+            else { continue }
+            let name = nameCache[bundleID] ?? {
+                let resolved = appDisplayName(forBundleID: bundleID)
+                nameCache[bundleID] = resolved
+                return resolved
+            }()
+            guard let name else { continue }
+            appOverrides[record.id] = name
+            if bundleIDForApp[name]?.contains(bundleID) != true {
+                bundleIDForApp[name, default: []].append(bundleID)
+            }
+        }
+
+        // Origin follows the adapter's own source flag, not the capability kind: an
+        // imported adapter's actions must not wear the built-in badge. Skills carry no
+        // source flag today, so they keep the kind default (noted as a follow-up).
+        var originOverrides: [String: AgentPluginManifest.Origin] = [:]
+        for adapter in AppAdapterManager.shared.adapters {
+            let origin: AgentPluginManifest.Origin = adapter.isBuiltIn ? .builtIn : .userAdded
+            for action in adapter.actions {
+                originOverrides["adapter.\(action.id)"] = origin
+            }
+        }
+
+        return manifests(
+            from: records, bundleIDForApp: bundleIDForApp,
+            appOverrides: appOverrides, originOverrides: originOverrides)
     }
 
     /// Pure core, so the mapping can be tested without a running app. `bundleIDForApp`
-    /// resolves an app's display name to its bundle ids (an app can have more than one).
+    /// resolves an app's display name to its bundle ids (an app can have more than one);
+    /// `appOverrides` re-homes a record under a resolved app name when `allRecords()` left
+    /// its `app` blank (keyed by record id).
     static func manifests(
         from records: [CapabilityRecord],
-        bundleIDForApp: [String: [String]]
+        bundleIDForApp: [String: [String]],
+        appOverrides: [String: String] = [:],
+        originOverrides: [String: AgentPluginManifest.Origin] = [:]
     ) -> [AgentPluginManifest] {
+        func app(of record: CapabilityRecord) -> String {
+            appOverrides[record.id] ?? record.app
+        }
+        func origin(of record: CapabilityRecord) -> AgentPluginManifest.Origin {
+            originOverrides[record.id] ?? AgentPluginManifest.Origin(kind: record.kind)
+        }
+
         // Group by (app, kind). A dictionary would lose order, so collect keys in first-
         // seen order and bucket alongside.
         var order: [GroupKey] = []
         var buckets: [GroupKey: [CapabilityRecord]] = [:]
         for record in records {
-            let key = GroupKey(app: record.app, kind: record.kind)
+            let key = GroupKey(app: app(of: record), kind: record.kind)
             if buckets[key] == nil { order.append(key) }
             buckets[key, default: []].append(record)
         }
@@ -128,15 +180,31 @@ enum AgentPluginManifestBuilder {
                 .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
             let bundleIDs = key.app.isEmpty ? [] : (bundleIDForApp[key.app] ?? [])
             let slug = bundleIDs.first ?? (key.app.isEmpty ? "system" : key.app)
+            // A plugin can only lower its trust, never raise it (§4.2): if any member of a
+            // group is user-added, the whole group is shown as user-added rather than
+            // lending it the built-in badge.
+            let origins = group.map(origin(of:))
+            let origin: AgentPluginManifest.Origin = origins.contains(.userAdded)
+                ? .userAdded
+                : (origins.first ?? AgentPluginManifest.Origin(kind: key.kind))
             return AgentPluginManifest(
                 id: "\(slug)/\(key.kind.rawValue)",
                 app: key.app,
                 bundleIDs: bundleIDs,
-                origin: AgentPluginManifest.Origin(kind: key.kind),
+                origin: origin,
                 kind: key.kind,
                 capabilities: capabilities,
                 health: nil)
         }
+    }
+
+    /// An app's user-facing name from its bundle id, for apps without an App Pack adapter.
+    /// `FileManager.displayName` localizes and drops ".app" ("com.apple.mail" → "Mail").
+    @MainActor
+    private static func appDisplayName(forBundleID bundleID: String) -> String? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return nil }
+        return FileManager.default.displayName(atPath: url.path)
     }
 
     /// Menu commands DoraX has learned for an app. Shown as a count, not as manifest

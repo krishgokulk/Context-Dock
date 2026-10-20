@@ -108,6 +108,54 @@ struct AgentPluginManifestTests {
         #expect(system.id == "system/globalCommand")
     }
 
+    @Test("appOverrides re-home blank-app capabilities under their resolved app")
+    func appOverridesRegroup() {
+        // Two Mail capabilities arrive with app "" (no enabled Mail adapter), as
+        // allRecords() leaves them; the manager resolves them from their bundle id.
+        let records = [
+            CapabilityRecord(id: "capability.mail.recent", app: "", kind: .capability,
+                title: "Recent mail", isWrite: false, surface: .headless),
+            CapabilityRecord(id: "capability.mail.createDraft", app: "", kind: .capability,
+                title: "Create draft", isWrite: true, surface: .headless),
+            CapabilityRecord(id: "globalcmd.bluetooth", app: "", kind: .globalCommand,
+                title: "Toggle Bluetooth", isWrite: true, surface: .headless),
+        ]
+        let manifests = AgentPluginManifestBuilder.manifests(
+            from: records,
+            bundleIDForApp: ["Mail": ["com.apple.mail"]],
+            appOverrides: [
+                "capability.mail.recent": "Mail",
+                "capability.mail.createDraft": "Mail",
+            ])
+
+        let mail = try! #require(manifests.first { $0.app == "Mail" })
+        #expect(mail.kind == .capability)
+        #expect(mail.capabilities.count == 2)
+        #expect(mail.bundleIDs == ["com.apple.mail"])
+        #expect(mail.id == "com.apple.mail/capability")
+        // The un-overridden global command stays under System, untouched.
+        let system = try! #require(manifests.first { $0.kind == .globalCommand })
+        #expect(system.app == "")
+    }
+
+    @Test("originOverrides stop an imported adapter wearing the built-in badge")
+    func originOverridesTrust() {
+        let records = [
+            CapabilityRecord(id: "adapter.imported.do", app: "ThirdParty",
+                kind: .adapterAction, title: "Do thing", isWrite: true, surface: .headless),
+        ]
+        // Default (no override): kind alone would call it Built-in.
+        let defaulted = AgentPluginManifestBuilder.manifests(
+            from: records, bundleIDForApp: [:])
+        #expect(defaulted.first?.origin == .builtIn)
+
+        // With the adapter's source flag threaded in, it is User-added.
+        let overridden = AgentPluginManifestBuilder.manifests(
+            from: records, bundleIDForApp: [:],
+            originOverrides: ["adapter.imported.do": .userAdded])
+        #expect(overridden.first?.origin == .userAdded)
+    }
+
     @Test("Capabilities within a manifest are sorted by title")
     func capabilitiesSorted() {
         let records = [
