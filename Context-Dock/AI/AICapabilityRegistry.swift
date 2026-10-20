@@ -159,6 +159,12 @@ struct AICapability {
     /// menu command). The executor brings the app forward only then and returns focus after;
     /// a data capability never does (plan §2a). Most capabilities leave it false.
     var bringsAppForward: Bool = false
+    /// What running this costs the person watching (plan §5 ranks by cheapest surface). Most
+    /// capabilities are data-lane reads/writes that open nothing, so the default is
+    /// `.headless`; the few that open a window — a composer, a browser page — declare
+    /// `.opensApp` so the ranker does not under-cost them against a headless route. Without
+    /// this every capability read as `.headless` and a window-opening route looked free (#307).
+    var surface: CapabilityRecord.Surface = .headless
     let executor: @MainActor (AICapabilityExecutionRequest) async throws -> AICapabilityExecutionResult
 }
 
