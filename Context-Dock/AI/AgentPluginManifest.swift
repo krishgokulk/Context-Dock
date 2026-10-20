@@ -199,12 +199,14 @@ enum AgentPluginManifestBuilder {
     }
 
     /// An app's user-facing name from its bundle id, for apps without an App Pack adapter.
-    /// `FileManager.displayName` localizes and drops ".app" ("com.apple.mail" → "Mail").
+    /// `FileManager.displayName` localizes but keeps the ".app" extension when the user has
+    /// "show all extensions" on, so strip it ("com.apple.mail" → "Mail").
     @MainActor
     private static func appDisplayName(forBundleID bundleID: String) -> String? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
         else { return nil }
-        return FileManager.default.displayName(atPath: url.path)
+        let shown = FileManager.default.displayName(atPath: url.path)
+        return shown.hasSuffix(".app") ? String(shown.dropLast(4)) : shown
     }
 
     /// Menu commands DoraX has learned for an app. Shown as a count, not as manifest
