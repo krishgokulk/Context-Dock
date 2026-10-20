@@ -31,6 +31,8 @@ struct SettingsDetailView: View {
             AIProvidersSettingsPage()
         case .integrations:
             IntegrationsSettingsPage(destination: integrationDestination)
+        case .pluginManager:
+            PluginManagerSettingsPage()
         case .plugins:
             PluginsSettingsPage()
         case .appPacks:

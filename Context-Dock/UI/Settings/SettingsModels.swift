@@ -4,6 +4,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case general
     case aiProviders
     case integrations
+    case pluginManager
     case plugins
     case appPacks
     case extensionsGlobalWithSelection
@@ -29,6 +30,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return "General"
         case .aiProviders: return "AI Providers"
         case .integrations: return "Integrations"
+        case .pluginManager: return "Plugin Manager"
         case .plugins: return "Plugins"
         case .appPacks: return "App Packs"
         case .extensionsGlobalWithSelection: return "With Selection"
@@ -54,6 +56,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return "Launch, layers, clipboard, and app behavior."
         case .aiProviders: return "Choose provider and verify model access."
         case .integrations: return "Apps and global capabilities."
+        case .pluginManager:
+            return "Every capability DoraX has for each app — kind, surface, read/write, origin."
         case .plugins: return "Global Context plugins, and what they draw."
         case .appPacks: return "Every app's actions, skills and tools, and the System packs — each on or off."
         case .extensionsGlobalWithSelection: return "Actions shown for selected text, files, URLs, and media."
@@ -79,6 +83,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return "gearshape.fill"
         case .aiProviders: return "brain.head.profile"
         case .integrations: return "app.connected.to.app.below.fill"
+        case .pluginManager: return "list.bullet.rectangle.fill"
         case .plugins: return "puzzlepiece.extension.fill"
         case .appPacks: return "shippingbox.fill"
         case .extensionsGlobalWithSelection: return "selection.pin.in.out"
@@ -104,6 +109,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: return .blue
         case .aiProviders: return .purple
         case .integrations: return .orange
+        case .pluginManager: return .indigo
         case .plugins: return .indigo
         case .appPacks: return .orange
         case .extensionsGlobalWithSelection: return .teal
@@ -178,6 +184,7 @@ extension SettingsSidebarSection {
                 // a plugin from a description and its prompt can be pasted into any AI, which
                 // is what the importer's copy-a-template flow was for. Its row keeps the
                 // page's raw value so a deep link lands on the Creator's door.
+                SettingsSidebarRow(SettingsPage.pluginManager.title, page: .pluginManager),
                 SettingsSidebarRow(SettingsPage.appPacks.title, page: .appPacks),
                 SettingsSidebarRow(SettingsPage.integrations.title, page: .integrations),
                 SettingsSidebarRow(SettingsPage.plugins.title, page: .plugins),
