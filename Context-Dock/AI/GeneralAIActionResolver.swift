@@ -1578,13 +1578,16 @@ final class GeneralAIActionResolver {
             list.removeAll { dropIDs.contains($0.id) }
         }
         step("Ranking \(list.count) route(s)…")
-        // Primary: the tuned tier + learned/preference score. Tiebreak: the cheaper surface
-        // wins (plan §5.3), so two routes the ranker rates equally are split by what they
-        // cost the user to run — a headless route over one that opens a window.
+        // Plan §5 orders cheapest surface (5.3) *before* route reliability and preferences
+        // (5.5): the screen is the user's to spend, so a headless route is taken over one
+        // that opens a window even when the window route is the more "reliable" tier. Surface
+        // is therefore the primary key; the tuned tier + learned/preference score
+        // (`rankScore`) breaks ties within one surface. Weak adapter matches are already
+        // pruned above, so surface-first cannot resurrect the "New Private Window" bug.
         list.sort { a, b in
-            let sa = rankScore(a, intentKey: intentKey), sb = rankScore(b, intentKey: intentKey)
-            if sa != sb { return sa < sb }
-            return candidateSurface(a).rawValue < candidateSurface(b).rawValue
+            let fa = candidateSurface(a).rawValue, fb = candidateSurface(b).rawValue
+            if fa != fb { return fa < fb }
+            return rankScore(a, intentKey: intentKey) < rankScore(b, intentKey: intentKey)
         }
         explainSurfaceChoice(list)
         return list

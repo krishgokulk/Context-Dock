@@ -66,4 +66,18 @@ struct RankingSurfaceTests {
         let ranked = resolver.rankedWithPreferences([menu, cli], intentKey: "mail.archive.test")
         #expect(ranked.first?.id == "cli.archive")
     }
+
+    @Test("A window-opening adapter loses to a headless CLI (surface before reliability)")
+    func headlessCLIBeatsWindowAdapter() {
+        // messages.compose is an adapter-tier route but opens the Messages window (#307), so
+        // §5.3 says a headless CLI for the same job wins despite the adapter's higher tier.
+        let adapter = candidate(
+            id: "messages.compose", route: .adapter, source: .appAdapter,
+            bundleID: "com.apple.MobileSMS", capabilityID: "messages.compose")
+        let cli = candidate(
+            id: "cli.sms", route: .cli, source: .cli, bundleID: "com.apple.MobileSMS")
+        #expect(resolver.candidateSurface(adapter) == .opensApp)
+        let ranked = resolver.rankedWithPreferences([adapter, cli], intentKey: "sms.send.test")
+        #expect(ranked.first?.id == "cli.sms")
+    }
 }
