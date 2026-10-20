@@ -60,6 +60,7 @@ struct PluginManagerSettingsPage: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text(group.name).font(.headline)
+                    .accessibilityAddTraits(.isHeader)
                 Spacer(minLength: 0)
                 if group.menuCommandCount > 0 {
                     Text("\(group.menuCommandCount) menu commands")
