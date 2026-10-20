@@ -1509,6 +1509,21 @@ final class GeneralAIActionResolver {
         }
     }
 
+    /// What running a candidate costs the person watching (plan §5.3, cheapest surface wins).
+    /// Prefer the capability's declared surface (#307) — it knows a composer opens a window
+    /// even when its route is otherwise headless — and fall back to the route when the
+    /// candidate names no capability.
+    func candidateSurface(_ c: DoraXActionCandidate) -> CapabilityRecord.Surface {
+        if let id = c.capabilityID, let declared = CapabilityRegistry.shared.capability(id: id)?.surface {
+            return declared
+        }
+        switch c.route {
+        case .adapter, .mcp, .api, .cli: return .headless
+        case .keyboardShortcut, .verifiedMenu, .automation, .appLaunch: return .opensApp
+        case .axFallback: return .takesScreen
+        }
+    }
+
     /// Combined learned + explicit-preference adjustment, clamped below 50 so the ±budget
     /// can never span the 100-wide tier gap. Guarantees a preference/learning signal can
     /// reorder routes WITHIN a class but never lets AX outrank a native/adapter/MCP/CLI route.
@@ -1538,7 +1553,7 @@ final class GeneralAIActionResolver {
     /// Sort candidates by rankScore, and DROP any the user explicitly said to avoid when a
     /// non-avoided alternative exists (so "avoid AX for Safari" blocks the AX route rather
     /// than merely demoting it). Never returns an empty list.
-    private func rankedWithPreferences(
+    func rankedWithPreferences(
         _ candidates: [DoraXActionCandidate], intentKey: String
     ) -> [DoraXActionCandidate] {
         let candidates = droppingWeakAdapterMatches(productRouteFiltered(candidates))
@@ -1563,8 +1578,29 @@ final class GeneralAIActionResolver {
             list.removeAll { dropIDs.contains($0.id) }
         }
         step("Ranking \(list.count) route(s)…")
-        list.sort { rankScore($0, intentKey: intentKey) < rankScore($1, intentKey: intentKey) }
+        // Primary: the tuned tier + learned/preference score. Tiebreak: the cheaper surface
+        // wins (plan §5.3), so two routes the ranker rates equally are split by what they
+        // cost the user to run — a headless route over one that opens a window.
+        list.sort { a, b in
+            let sa = rankScore(a, intentKey: intentKey), sb = rankScore(b, intentKey: intentKey)
+            if sa != sb { return sa < sb }
+            return candidateSurface(a).rawValue < candidateSurface(b).rawValue
+        }
+        explainSurfaceChoice(list)
         return list
+    }
+
+    /// When the chosen route is cheaper to watch than a route that could also do the job,
+    /// say so as a step — this is the "picks the headless one and shows why" the user sees
+    /// (plan §3/§5). Silent when the top route is the only surface on offer.
+    private func explainSurfaceChoice(_ ranked: [DoraXActionCandidate]) {
+        guard let top = ranked.first else { return }
+        let topSurface = candidateSurface(top)
+        guard let alt = ranked.dropFirst().first(where: {
+            candidateSurface($0) > topSurface
+        }) else { return }
+        step("Chose \(top.title) — \(topSurface.costLabel) — over \(alt.title), "
+            + "which \(candidateSurface(alt).costLabel)")
     }
 
     /// Ranking is by route tier, and the adapter route is tier 0 — so an adapter candidate
@@ -1597,18 +1633,24 @@ final class GeneralAIActionResolver {
     /// or keyboard shortcut), remove CLI candidates before ranking. This prevents a model or
     /// learned preference from choosing shell when the user added a better app integration.
     func productRouteFiltered(_ candidates: [DoraXActionCandidate]) -> [DoraXActionCandidate] {
-        let capableTargets = Set(candidates.compactMap { candidate -> String? in
-            guard candidate.route != .cli,
-                  candidate.source != .cli,
-                  candidate.route != .appLaunch,
-                  candidate.route != .axFallback
-            else { return nil }
-            return candidate.bundleID ?? "__system__"
-        })
-        guard !capableTargets.isEmpty else { return candidates }
+        // A user-installed CLI is dropped only when a native route is a *strict substitute*:
+        // it targets the same app AND costs the watcher no more (plan §5.3). So a native
+        // adapter (headless) still supersedes a redundant CLI, but a Message › Archive menu
+        // (opens the app) does NOT supersede a headless `mail-app-cli archive` — there the
+        // CLI is the cheaper surface and the ranker must see it (plan §5 archive example).
+        let native = candidates.filter { candidate in
+            candidate.route != .cli && candidate.source != .cli
+                && candidate.route != .appLaunch && candidate.route != .axFallback
+        }
+        guard !native.isEmpty else { return candidates }
         let filtered = candidates.filter { candidate in
             guard candidate.route == .cli || candidate.source == .cli else { return true }
-            return !capableTargets.contains(candidate.bundleID ?? "__system__")
+            let target = candidate.bundleID ?? "__system__"
+            let cliSurface = candidateSurface(candidate)
+            let supersededByNative = native.contains { n in
+                (n.bundleID ?? "__system__") == target && candidateSurface(n) <= cliSurface
+            }
+            return !supersededByNative
         }
         return filtered.isEmpty ? candidates : filtered
     }
