@@ -73,7 +73,13 @@ enum CapabilityCatalog {
             // offers — reads are filed low, writes are not — and it is a proxy, not a
             // fact. If this proves wrong for a capability, the fix is a flag on the
             // capability rather than a special case here.
-            isWrite: capability.riskLevel != .low)
+            isWrite: capability.riskLevel != .low,
+            // The capability declares what it costs to run; most open nothing, a few open a
+            // window. `bringsAppForward` (a menu-bar/window UI capability) also opens the
+            // app, so honour it when the capability did not already name a surface (#307).
+            surface: capability.surface == .headless && capability.bringsAppForward
+                ? .opensApp
+                : capability.surface)
     }
 
     // MARK: - The live catalogue

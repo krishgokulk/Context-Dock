@@ -103,7 +103,8 @@ enum AppleMailMCPCapabilities {
                     .init(name: "subject", description: "Subject line", required: true),
                     .init(name: "body", description: "Message body", required: false),
                 ]),
-                riskLevel: .medium
+                riskLevel: .medium,
+                surface: .opensApp  // opens the Mail composer window (#307)
             ) { request in
                 guard AppSettings.shared.mailMCPEnabled else {
                     throw AICapabilityError.blocked("Mail access is disabled in Settings.")

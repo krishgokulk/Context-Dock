@@ -146,7 +146,8 @@ enum BrowserCapabilities {
                         + "history or bookmarks — never a guessed address.",
                     required: true),
             ]),
-            riskLevel: .low
+            riskLevel: .low,
+            surface: .opensApp  // brings the browser forward on the opened page (#307)
         ) { request in
             let raw = (request.input["url"] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)

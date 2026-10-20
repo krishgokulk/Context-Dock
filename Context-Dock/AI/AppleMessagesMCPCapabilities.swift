@@ -133,7 +133,8 @@ enum AppleMessagesMCPCapabilities {
                     .init(name: "recipient", description: "Contact name, phone number, or Apple ID", required: true),
                     .init(name: "body", description: "Optional draft text for the user to review", required: false),
                 ]),
-                riskLevel: .medium
+                riskLevel: .medium,
+                surface: .opensApp  // opens the Messages window with the draft (#307)
             ) { request in
                 try ensureEnabled()
                 guard let recipient = request.input["recipient"], !recipient.isEmpty else {
