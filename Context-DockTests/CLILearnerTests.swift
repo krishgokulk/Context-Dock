@@ -11,10 +11,13 @@ import Foundation
 
 struct CLILearnerTests {
 
-    /// Representative `mail-app-cli --help`. Includes the meta rows a real CLI prints
-    /// (help, completion) to prove they are filtered out, not learned as subcommands.
+    /// Representative `mail-app-cli --help`. The description line deliberately LEADS WITH THE
+    /// BINARY NAME ("mail-app-cli drives Mail.app…"), the shape cobra / ArgumentParser Long
+    /// descriptions take (kubectl "kubectl controls…", gh "gh works with GitHub…"): the parser
+    /// must take subcommands from the commands section and NOT read "drives" as one. Includes
+    /// the meta rows a real CLI prints (help, completion) to prove they are filtered too.
     static let helpFixture = """
-    A command-line interface for Mail.app. JSON output on every command.
+    mail-app-cli drives Mail.app from the terminal. JSON output on every command.
 
     Usage:
       mail-app-cli [command]
@@ -54,9 +57,25 @@ struct CLILearnerTests {
         let subs = TerminalPackageManager.shared.parseSubcommands(
             from: Self.helpFixture, binary: "mail-app-cli")
         #expect(subs == Self.expectedSubcommands)
+        // The binary-name-led description line is NOT read as a subcommand.
+        #expect(!subs.contains("drives"))
         // Meta rows are never learned as subcommands.
         #expect(!subs.contains("help"))
         #expect(!subs.contains("completion"))
+    }
+
+    /// Help with no "Available Commands:" section still yields subcommands from the
+    /// invocation-prefixed rows — the fallback the section-preference must not break.
+    @Test func parseSubcommandsFallsBackToInvocationRowsWhenNoSection() {
+        let noSection = """
+        Manage your dotfiles from one place.
+
+          mo clean     Free up disk space
+          mo sync      Sync with the remote
+          mo status    Show the current status
+        """
+        let subs = TerminalPackageManager.shared.parseSubcommands(from: noSection, binary: "mo")
+        #expect(subs == ["clean", "sync", "status"])
     }
 
     // MARK: Classifying each verb

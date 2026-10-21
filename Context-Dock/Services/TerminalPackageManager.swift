@@ -658,7 +658,8 @@ class TerminalPackageManager: ObservableObject {
         let text = Self.strippingANSI(helpText)
         var subcommands: [String] = []
         var inSection = false
-        var rows: [[String]] = []
+        var sectionRows: [[String]] = []       // harvested inside a commands section
+        var invocationRows: [[String]] = []    // lines written as `binary sub …`
         let invocations = Self.invocationNames(in: text, binary: binary)
 
         for line in text.components(separatedBy: .newlines) {
@@ -674,7 +675,7 @@ class TerminalPackageManager: ObservableObject {
                 inSection = false
             }
             // Blank line ends section only if already well inside it
-            if inSection && trimmedLine.isEmpty && !rows.isEmpty {
+            if inSection && trimmedLine.isEmpty && !sectionRows.isEmpty {
                 inSection = false
             }
 
@@ -690,9 +691,19 @@ class TerminalPackageManager: ObservableObject {
             let startsWithInvocation = tokens.first.map {
                 invocations.contains($0.lowercased())
             } ?? false
-            guard inSection || startsWithInvocation else { continue }
-            rows.append(tokens)
+            if inSection {
+                sectionRows.append(tokens)
+            } else if startsWithInvocation {
+                invocationRows.append(tokens)
+            }
         }
+
+        // Prefer a real commands section when the help has one. A cobra / ArgumentParser Long
+        // description commonly leads with the binary name ("kubectl controls the Kubernetes
+        // cluster manager", "gh works with GitHub…"), and the invocation-prefix heuristic would
+        // read its second word ("controls", "works") as a phantom subcommand. That heuristic is
+        // only the fallback for help that prints no commands section at all.
+        let rows = sectionRows.isEmpty ? invocationRows : sectionRows
 
         var invocationNames = invocations
         // Help written as invocations ("mo clean  Free up disk space") repeats one leading
