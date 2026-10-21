@@ -2,11 +2,6 @@
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
   "mcp": {
-    "llmbrain": {
-      "type": "remote",
-      "url": "https://server.llmbrain.dev/mcp",
-      "enabled": true
-    },
     "dorax": {
       "type": "remote",
       "url": "http://127.0.0.1:8213/mcp",
