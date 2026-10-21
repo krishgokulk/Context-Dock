@@ -210,6 +210,24 @@ class TerminalPackageManager: ObservableObject {
     /// cargo, a curl installer) is on PATH only if one of the user's dotfiles puts it there —
     /// so a tool DoraX had scanned, listed with its full path and let the user scope could
     /// still come back "command not found" the moment the model invoked it by name.
+    /// Directories that hold user-installed CLIs (not macOS system tools). The single source
+    /// of truth for both scanning (`scanForInstalledTools`) and resolving a learned binary's
+    /// absolute path when no `installedPath` was recorded — the two must not drift, or a tool
+    /// the scanner finds becomes one the runner reports "no executable" for.
+    static func userBinDirectories() -> [String] {
+        let home = NSHomeDirectory()
+        return [
+            "/opt/homebrew/bin",
+            "/opt/homebrew/sbin",
+            "/usr/local/bin",
+            "\(home)/.local/bin",
+            "\(home)/go/bin",
+            "\(home)/.cargo/bin",
+            "\(home)/.npm-global/bin",
+            "\(home)/.poetry/bin",
+        ]
+    }
+
     func pinnedToolDirectories() -> [String] {
         var seen = Set<String>()
         return packages
@@ -321,19 +339,9 @@ class TerminalPackageManager: ObservableObject {
     func scanForInstalledTools() async -> [TerminalPackage] {
         var discovered: [TerminalPackage] = []
         let fm = FileManager.default
-        let home = NSHomeDirectory()
 
         // Directories that contain user-installed tools (not macOS system tools)
-        let userBinDirs = [
-            "/opt/homebrew/bin",
-            "/opt/homebrew/sbin",
-            "/usr/local/bin",
-            "\(home)/.local/bin",
-            "\(home)/go/bin",
-            "\(home)/.cargo/bin",
-            "\(home)/.npm-global/bin",
-            "\(home)/.poetry/bin"
-        ]
+        let userBinDirs = Self.userBinDirectories()
 
         // macOS built-in binaries to skip (so we don't flood the list with system tools)
         let systemNoise: Set<String> = [

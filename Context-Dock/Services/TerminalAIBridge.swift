@@ -816,19 +816,28 @@ class TerminalAIBridge: ObservableObject {
     /// chain. The environment is rebuilt rather than inherited: the user's dotfiles are the
     /// reason `zsh -lc` exists on the approved path, and they are exactly what must not
     /// influence a command running without approval.
+    /// `extraPathDirectories` are prepended to the fixed system PATH. They come only from a
+    /// trusted, hard-coded install-dir list (never `$PATH` or dotfiles), so a script CLI whose
+    /// shebang is `#!/usr/bin/env node` can still find its interpreter in Homebrew or a user
+    /// bin directory without reintroducing dotfile influence.
     nonisolated static func runArgv(
         executable: URL,
         arguments: [String],
         onLine: (@Sendable (String) -> Void)? = nil,
-        workingDirectory: URL? = nil
+        workingDirectory: URL? = nil,
+        extraPathDirectories: [String] = []
     ) async -> (output: String, exitCode: Int32) {
         await CancellableProcessRunner.run { box in
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
+            let systemPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+            let path = extraPathDirectories.isEmpty
+                ? systemPath
+                : extraPathDirectories.joined(separator: ":") + ":" + systemPath
             process.environment = [
-                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "PATH": path,
                 "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
                 "LANG": "en_US.UTF-8",
                 "TERM": "dumb",

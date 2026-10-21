@@ -127,6 +127,21 @@ struct CLILearnerTests {
     // The run-time gate in CLIAdapterTool asks whenever the class requires approval. Unit-tested
     // here at that seam, so it needs no live model: a read runs, a write or a send asks.
 
+    @Test func nounFirstMutationIsAWriteNotAReadOnItsLeadingNoun() {
+        // "attachments save" reads as a write: a later token mutates even though the first is
+        // an enumeration noun. Plain "attachments" stays a read.
+        #expect(CLIVerbClassifier.classify("attachments") == .read)
+        #expect(CLIVerbClassifier.classify("attachments save") == .write)
+        #expect(CLIVerbClassifier.classify("attachments send") == .outbound)
+    }
+
+    @Test func unknownPluralVerbDoesNotSlipThroughAsRead() {
+        // A mutating verb ending in "s" (no longer blanket-read) and an unknown verb both ask.
+        #expect(CLIVerbClassifier.classify("compress") == .write)
+        #expect(CLIVerbClassifier.classify("push") == .write)
+        #expect(CLIVerbClassifier.classify("frobnicate") == .write)
+    }
+
     @Test func gateAsksForWritesAndSendsButNotReads() {
         #expect(CLIVerbClassifier.classify("list").requiresApproval == false)
         #expect(CLIVerbClassifier.classify("accounts").requiresApproval == false)

@@ -28,35 +28,43 @@ enum CLIVerbClassifier {
         "list", "show", "search", "get", "read", "view", "ls", "cat", "find",
         "count", "status", "info", "describe",
     ]
-    /// Verbs that change local state (§6.1).
+    /// Verbs that change local state (§6.1). `save` writes a file to disk.
     static let writeVerbs: Set<String> = [
         "delete", "move", "archive", "flag", "mark", "rm", "trash", "edit", "set",
-        "create", "update", "rename", "mkdir",
+        "create", "update", "rename", "mkdir", "save",
     ]
     /// Verbs that send data to another person — a write that is also outbound (§6.1).
     static let outboundVerbs: Set<String> = [
         "send", "compose", "reply", "forward",
     ]
+    /// Collection nouns that name something to enumerate — a read. Explicit, because a
+    /// blanket "any plural noun is a read" rule would mis-read a mutating verb that happens
+    /// to end in `s` (compress, process) as safe. These are the known enumeration nouns of
+    /// the mail CLIs §2b/§7 describe; an unknown token is a write, never a read.
+    static let readNouns: Set<String> = [
+        "accounts", "account", "mailboxes", "mailbox", "attachments", "messages",
+        "folders", "labels", "threads", "drafts", "drives",
+    ]
 
-    /// Classify a subcommand on its first token, case-insensitively.
+    /// Classify a subcommand, case-insensitively. Every non-flag token is considered, not
+    /// only the first: a noun-first command like `attachments save` must be seen as the write
+    /// its later token makes it, not read as its leading noun. Flags (`--json`, `-h`) and
+    /// quoted values are skipped so a flag value cannot flip the class.
     static func classify(_ subcommand: String) -> CLIVerbClass {
-        let token = subcommand
-            .trimmingCharacters(in: .whitespaces)
+        let words = subcommand
+            .lowercased()
             .split(whereSeparator: { $0 == " " || $0 == "\t" })
-            .first
-            .map { String($0).lowercased() } ?? ""
-        // Outbound first: `send` is both a write and a send, and the send is what the gate
-        // must see.
-        if outboundVerbs.contains(token) { return .outbound }
-        if writeVerbs.contains(token) { return .write }
-        if readVerbs.contains(token) { return .read }
-        // A bare plural noun names a collection to enumerate (accounts, mailboxes,
-        // attachments) rather than an action — a read. No write or outbound verb above is
-        // plural, so this only ever widens reads.
-        // ponytail: a plural destructive verb (none known on a real CLI today) would slip
-        // through as a read; revisit the day a tool ships one.
-        if token.count > 3, token.hasSuffix("s") { return .read }
-        // Unknown verb: ask. The safe default (§6.1).
+            .map(String.init)
+            .filter { !$0.hasPrefix("-") && !$0.hasPrefix("\"") && !$0.hasPrefix("'") }
+        // Most-dangerous class wins: a send anywhere in the invocation is outbound; any write
+        // verb makes it a write. `send` is deliberately in both buckets and outbound wins.
+        if words.contains(where: outboundVerbs.contains) { return .outbound }
+        if words.contains(where: writeVerbs.contains) { return .write }
+        // Only a recognised read verb or enumeration noun as the leading word runs cardless.
+        if let first = words.first, readVerbs.contains(first) || readNouns.contains(first) {
+            return .read
+        }
+        // Unknown: ask. The safe default (§6.1).
         return .write
     }
 }

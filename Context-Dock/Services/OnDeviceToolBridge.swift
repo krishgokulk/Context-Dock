@@ -962,6 +962,8 @@ struct CLIAdapterTool: Tool {
     /// Absolute path the scan recorded for this binary, when known. Preferred over a PATH
     /// search so the argv run invokes the exact executable the owner reviewed.
     private let installedPath: String?
+    /// Marked "needs a terminal": a full-screen TUI that must run in a PTY, not through pipes.
+    private let isInteractive: Bool
     private let recorder: OnDeviceToolRunRecorder?
     private let gate: OnDeviceTurnGate?
 
@@ -986,6 +988,7 @@ struct CLIAdapterTool: Tool {
             $0.command.caseInsensitiveCompare(resolvedCmd) == .orderedSame
         })
         self.installedPath = pkg?.installedPath
+        self.isInteractive = pkg?.isInteractive ?? false
         if let help = pkg?.helpTextForPrompt {
             desc += "\n\nUsage reference:\n\(String(help.prefix(600)))"
         }
@@ -1037,11 +1040,28 @@ struct CLIAdapterTool: Tool {
             return "❌ \(cliCommand) did not run: \(held)"
         }
 
+        // A full-screen interactive tool produces escape sequences, not capturable output, and
+        // hangs when run through pipes — it needs a real PTY, so route it through the terminal
+        // path. Still injection-safe: the tokenizer above already refused any unquoted shell
+        // syntax in the model-supplied args, so nothing reaches the shell that it did not vet.
+        if isInteractive {
+            let (ok, out, _) = await TerminalCommandExecutor.shared.run(
+                fullCommand, purpose: "\(cliCommand) CLI")
+            let text = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            await MainActor.run { recorder?.record(command: fullCommand, output: text, success: ok) }
+            return ok ? (text.isEmpty ? "✅ \(cliCommand) completed with no output." : text)
+                      : "❌ \(cliCommand) failed: \(text)"
+        }
+
         guard let executable = Self.resolveExecutable(named: binaryName, installedPath: installedPath) else {
             return "❌ \(cliCommand) did not run: no executable named \(binaryName) was found."
         }
+        // The binary's own directory plus the trusted install dirs, so a script CLI's shebang
+        // interpreter (`#!/usr/bin/env node`) resolves without consulting $PATH or dotfiles.
+        let pathDirs = [executable.deletingLastPathComponent().path]
+            + TerminalPackageManager.userBinDirectories()
         let (output, exitCode) = await TerminalAIBridge.runArgv(
-            executable: executable, arguments: argv)
+            executable: executable, arguments: argv, extraPathDirectories: pathDirs)
         let success = exitCode == 0
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         await MainActor.run {
@@ -1062,12 +1082,10 @@ struct CLIAdapterTool: Tool {
            fm.isExecutableFile(atPath: path) {
             return URL(fileURLWithPath: path)
         }
-        let home = fm.homeDirectoryForCurrentUser.path
-        let dirs = [
-            "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
-            "\(home)/go/bin", "\(home)/.local/bin",
-            "/usr/bin", "/bin", "/usr/sbin", "/sbin",
-        ]
+        // Same user-install dirs the scanner uses (single source of truth), plus the system
+        // dirs — never $PATH, which dotfiles can steer.
+        let dirs = TerminalPackageManager.userBinDirectories()
+            + ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         for dir in dirs {
             let candidate = dir + "/" + name
             if fm.isExecutableFile(atPath: candidate) {
