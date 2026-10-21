@@ -998,6 +998,20 @@ struct CLIAdapterTool: Tool {
     func call(arguments: Arguments) async throws -> String {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
+
+        // A subcommand that writes or sends always asks the owner first (§6.1; AGENTS.md:
+        // "writes/outbound ALWAYS ask"). A read runs without a card. A bare invocation
+        // (no subcommand) only prints usage, so it is not gated here.
+        let verbClass = CLIVerbClassifier.classify(args)
+        if !args.isEmpty, verbClass.requiresApproval {
+            guard await askRunApproval(fullCommand: fullCommand, verbClass: verbClass) else {
+                let kind = verbClass == .outbound ? "send" : "write"
+                return "❌ \(cliCommand) did not run: the \(kind) was not approved."
+            }
+        }
+
+        // The lethal-trifecta gate still applies on top: an outbound call in a turn that holds
+        // both private data and untrusted content is held even if the write card was approved.
         if let held = await gate?.check(toolName: "run_command", arguments: ["command": fullCommand]) {
             return "❌ \(cliCommand) did not run: \(held)"
         }
@@ -1011,6 +1025,32 @@ struct CLIAdapterTool: Tool {
         }
         return success ? (trimmed.isEmpty ? "✅ \(cliCommand) completed with no output." : trimmed)
                        : "❌ \(cliCommand) failed: \(trimmed)"
+    }
+
+    /// Ask the owner before a learned CLI write or send. Same shared inbox, expiry and
+    /// unattended refusal as every other capability — a plugin cannot skip it.
+    @MainActor
+    private func askRunApproval(fullCommand: String, verbClass: CLIVerbClass) async -> Bool {
+        let explanation = verbClass == .outbound
+            ? "This \(cliCommand) command sends something to someone. DoraX never sends on its own."
+            : "This \(cliCommand) command changes your data."
+        return await AICapabilityApprovalCenter.shared.requestApproval(
+            plan: AIActionPlan(
+                capability: "cli.\(cliCommand)",
+                input: ["command": fullCommand],
+                explanation: explanation),
+            capability: AICapability(
+                id: "cli.\(cliCommand)",
+                title: "Run \(fullCommand)",
+                appBundleID: nil,
+                inputSchema: .init(fields: []),
+                riskLevel: verbClass == .outbound ? .high : .medium,
+                runsWithoutAdapter: true,
+                executor: { _ in
+                    throw AICapabilityError.blocked(
+                        "CLI tools run through TerminalCommandExecutor, not the registry.")
+                }),
+            context: .none)
     }
 }
 

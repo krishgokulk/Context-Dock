@@ -1,0 +1,118 @@
+import Testing
+import Foundation
+@testable import Context_Dock
+
+// MARK: - The §6.1 CLI learner, on recorded `mail-app-cli --help`
+//
+// mail-app-cli (and the Go toolchain) are not installed on the build Mac, so the fixture is
+// built from plan §7's documented command set — accounts, mailboxes, list, show, search,
+// mark, flag, archive, move, delete, send, attachments — in the cobra `Available Commands:`
+// shape the real binary prints. The learner never runs the binary here; it parses this text.
+
+struct CLILearnerTests {
+
+    /// Representative `mail-app-cli --help`. Includes the meta rows a real CLI prints
+    /// (help, completion) to prove they are filtered out, not learned as subcommands.
+    static let helpFixture = """
+    mail-app-cli drives Mail.app from the terminal. JSON output on every command.
+
+    Usage:
+      mail-app-cli [command]
+
+    Available Commands:
+      accounts      List configured mail accounts
+      mailboxes     List mailboxes for an account
+      list          List messages in a mailbox
+      show          Show a single message
+      search        Search messages by sender, subject or date
+      mark          Mark messages read or unread
+      flag          Flag or unflag messages
+      archive       Archive messages
+      move          Move messages to another mailbox
+      delete        Delete messages
+      send          Send a new message
+      attachments   List or save a message's attachments
+      completion    Generate the autocompletion script
+      help          Help about any command
+
+    Flags:
+      -h, --help     help for mail-app-cli
+          --json     output JSON (default true)
+
+    Use "mail-app-cli [command] --help" for more information about a command.
+    """
+
+    /// The twelve real subcommands the fixture documents, in order.
+    static let expectedSubcommands = [
+        "accounts", "mailboxes", "list", "show", "search", "mark",
+        "flag", "archive", "move", "delete", "send", "attachments",
+    ]
+
+    // MARK: Parsing the recorded --help
+
+    @Test func parseSubcommandsExtractsEveryRealCommand() {
+        let subs = TerminalPackageManager.shared.parseSubcommands(
+            from: Self.helpFixture, binary: "mail-app-cli")
+        #expect(subs == Self.expectedSubcommands)
+        // Meta rows are never learned as subcommands.
+        #expect(!subs.contains("help"))
+        #expect(!subs.contains("completion"))
+    }
+
+    // MARK: Classifying each verb
+
+    @Test func readVerbsAndEnumerationNounsClassifyAsRead() {
+        for sub in ["list", "show", "search", "mailboxes", "accounts", "attachments"] {
+            #expect(CLIVerbClassifier.classify(sub) == .read, "\(sub) should be read")
+        }
+    }
+
+    @Test func mutatingVerbsClassifyAsWrite() {
+        for sub in ["mark", "flag", "archive", "move", "delete"] {
+            #expect(CLIVerbClassifier.classify(sub) == .write, "\(sub) should be write")
+        }
+    }
+
+    @Test func sendClassifiesAsOutbound() {
+        #expect(CLIVerbClassifier.classify("send") == .outbound)
+        // Outbound even though it is also a write: the send is what the gate must see.
+        #expect(CLIVerbClassifier.classify("send --to a@b.com") == .outbound)
+        #expect(CLIVerbClassifier.classify("reply") == .outbound)
+        #expect(CLIVerbClassifier.classify("forward") == .outbound)
+    }
+
+    @Test func classificationIsCaseInsensitiveOnFirstToken() {
+        #expect(CLIVerbClassifier.classify("LIST --json") == .read)
+        #expect(CLIVerbClassifier.classify("Delete 42") == .write)
+    }
+
+    @Test func unknownVerbDefaultsToWrite() {
+        #expect(CLIVerbClassifier.classify("frobnicate") == .write)
+        #expect(CLIVerbClassifier.classify("") == .write)
+    }
+
+    // MARK: The review summary
+
+    @Test func learnedSummaryCountsAndSentence() {
+        let summary = LearnedCLISummary(subcommands: Self.expectedSubcommands)
+        #expect(summary.read.count == 6)
+        #expect(summary.write.count == 5)
+        #expect(summary.outbound.count == 1)
+        #expect(summary.sentence
+            == "Learned 12 commands: 6 read, 5 write, 1 sends mail. "
+             + "Enable reads? Writes ask each time.")
+    }
+
+    // MARK: The classification → gate mapping
+    //
+    // The run-time gate in CLIAdapterTool asks whenever the class requires approval. Unit-tested
+    // here at that seam, so it needs no live model: a read runs, a write or a send asks.
+
+    @Test func gateAsksForWritesAndSendsButNotReads() {
+        #expect(CLIVerbClassifier.classify("list").requiresApproval == false)
+        #expect(CLIVerbClassifier.classify("accounts").requiresApproval == false)
+        #expect(CLIVerbClassifier.classify("mark").requiresApproval == true)
+        #expect(CLIVerbClassifier.classify("delete").requiresApproval == true)
+        #expect(CLIVerbClassifier.classify("send").requiresApproval == true)
+    }
+}

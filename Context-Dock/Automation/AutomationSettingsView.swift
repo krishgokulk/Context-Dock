@@ -2535,6 +2535,12 @@ struct CLIDetailView: View {
                     }
                 }
 
+                if !package.subcommands.isEmpty {
+                    AutomationDetailSection(title: "LEARNED") {
+                        LearnedCLISummaryLine(subcommands: package.subcommands)
+                    }
+                }
+
                 if let help = package.helpText, !help.isEmpty {
                     AutomationDetailSection(title: "HELP TEXT") {
                         Text(String(help.prefix(600)))
@@ -2754,6 +2760,27 @@ struct CLIContextAppPickerSheet: View {
         } else {
             selectedBundleIds.insert(bundleId)
         }
+    }
+}
+
+/// The owner's review after a CLI is learned (§6.1): "Learned N commands: X read, Y write,
+/// Z sends mail. Enable reads? Writes ask each time." One definition, used wherever a scanned
+/// CLI's subcommands are shown — the app-scoped link and the global CLI editor alike.
+struct LearnedCLISummaryLine: View {
+    let subcommands: [String]
+
+    var body: some View {
+        let summary = LearnedCLISummary(subcommands: subcommands)
+        return HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "sparkle.magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.tint)
+            Text(summary.sentence)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -4261,6 +4288,7 @@ struct AutomationAdapterDetailView: View {
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                        LearnedCLISummaryLine(subcommands: p.subcommands)
                     } else if pkg == nil {
                         Text("Click \"Scan --help\" to discover subcommands and enable AI assistance for \(command).")
                             .font(.system(size: 11))
