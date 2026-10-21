@@ -1,13 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md"],
-  "mcp": {
-    "dorax": {
-      "type": "remote",
-      "url": "http://127.0.0.1:8213/mcp",
-      "enabled": true
-    }
-  },
   "permission": {
     "skill": { "*": "allow" },
     "bash": {
@@ -35,22 +28,33 @@
       "gh pr checks*": "allow",
       "gh issue list*": "allow",
       "gh issue view*": "allow",
-      "./scripts/ship.sh*": "ask",
-      "scripts/ship.sh*": "ask",
-      "./scripts/release-prep.sh*": "ask",
-      "scripts/release-prep.sh*": "ask",
+      "./scripts/ship.sh*": "deny",
+      "scripts/ship.sh*": "deny",
+      "bash scripts/ship.sh*": "deny",
+      "./scripts/release-prep.sh*": "deny",
+      "scripts/release-prep.sh*": "deny",
       "git stash*": "deny",
       "git reset --hard*": "deny",
       "git reset * --hard*": "deny",
+      "git clean -f*": "deny",
+      "git clean -d*": "deny",
+      "git clean -x*": "deny",
+      "git clean -fd*": "deny",
       "git add -A*": "deny",
       "git add --all*": "deny",
       "git add .": "deny",
       "git commit -a*": "deny",
       "git commit --all*": "deny",
       "git commit -am*": "deny",
+      "git checkout *": "deny",
+      "git switch *": "deny",
+      "git restore *": "deny",
       "git push * main": "deny",
       "git push * main *": "deny",
       "git push * +main*": "deny",
+      "git push * *:main*": "deny",
+      "git push *refs/heads/main*": "deny",
+      "git push origin main*": "deny",
       "rm -rf ~*": "deny",
       "rm -rf $HOME*": "deny",
       "rm -rf /": "deny"
