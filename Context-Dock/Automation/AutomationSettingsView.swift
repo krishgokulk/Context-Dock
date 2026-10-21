@@ -2775,12 +2775,14 @@ struct LearnedCLISummaryLine: View {
             Image(systemName: "sparkle.magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(.tint)
+                .accessibilityHidden(true)
             Text(summary.sentence)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 }
 
