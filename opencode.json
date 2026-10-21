@@ -1,0 +1,64 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "mcp": {
+    "llmbrain": {
+      "type": "remote",
+      "url": "https://server.llmbrain.dev/mcp",
+      "enabled": true
+    },
+    "dorax": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8213/mcp",
+      "enabled": true
+    }
+  },
+  "permission": {
+    "skill": { "*": "allow" },
+    "bash": {
+      "*": "ask",
+      "./scripts/dev-run.sh": "allow",
+      "./scripts/build-debug.sh": "allow",
+      "./scripts/check.sh": "allow",
+      "./scripts/check.sh --full": "allow",
+      "./scripts/test.sh": "allow",
+      "graphify query *": "allow",
+      "graphify path *": "allow",
+      "graphify explain *": "allow",
+      "graphify update .": "allow",
+      "git status*": "allow",
+      "git log*": "allow",
+      "git diff*": "allow",
+      "git show*": "allow",
+      "git fetch*": "allow",
+      "git rev-parse*": "allow",
+      "git ls-files*": "allow",
+      "git branch --show-current": "allow",
+      "git worktree list*": "allow",
+      "gh pr list*": "allow",
+      "gh pr view*": "allow",
+      "gh pr checks*": "allow",
+      "gh issue list*": "allow",
+      "gh issue view*": "allow",
+      "./scripts/ship.sh*": "ask",
+      "scripts/ship.sh*": "ask",
+      "./scripts/release-prep.sh*": "ask",
+      "scripts/release-prep.sh*": "ask",
+      "git stash*": "deny",
+      "git reset --hard*": "deny",
+      "git reset * --hard*": "deny",
+      "git add -A*": "deny",
+      "git add --all*": "deny",
+      "git add .": "deny",
+      "git commit -a*": "deny",
+      "git commit --all*": "deny",
+      "git commit -am*": "deny",
+      "git push * main": "deny",
+      "git push * main *": "deny",
+      "git push * +main*": "deny",
+      "rm -rf ~*": "deny",
+      "rm -rf $HOME*": "deny",
+      "rm -rf /": "deny"
+    }
+  }
+}
