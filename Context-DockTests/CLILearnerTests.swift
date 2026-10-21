@@ -14,7 +14,7 @@ struct CLILearnerTests {
     /// Representative `mail-app-cli --help`. Includes the meta rows a real CLI prints
     /// (help, completion) to prove they are filtered out, not learned as subcommands.
     static let helpFixture = """
-    mail-app-cli drives Mail.app from the terminal. JSON output on every command.
+    A command-line interface for Mail.app. JSON output on every command.
 
     Usage:
       mail-app-cli [command]
