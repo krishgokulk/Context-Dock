@@ -959,6 +959,9 @@ struct CLIAdapterTool: Tool {
     let name: String
     let description: String
     private let cliCommand: String
+    /// Absolute path the scan recorded for this binary, when known. Preferred over a PATH
+    /// search so the argv run invokes the exact executable the owner reviewed.
+    private let installedPath: String?
     private let recorder: OnDeviceToolRunRecorder?
     private let gate: OnDeviceTurnGate?
 
@@ -979,9 +982,11 @@ struct CLIAdapterTool: Tool {
         self.name = "run_\(safeName)"
         let base = action.description.isEmpty ? action.name : action.description
         var desc = "Run `\(resolvedCmd)` CLI tool. \(base). Pass any subcommands, flags, or arguments."
-        if let pkg = TerminalPackageManager.shared.packages.first(where: {
+        let pkg = TerminalPackageManager.shared.packages.first(where: {
             $0.command.caseInsensitiveCompare(resolvedCmd) == .orderedSame
-        }), let help = pkg.helpTextForPrompt {
+        })
+        self.installedPath = pkg?.installedPath
+        if let help = pkg?.helpTextForPrompt {
             desc += "\n\nUsage reference:\n\(String(help.prefix(600)))"
         }
         self.description = desc
@@ -999,6 +1004,22 @@ struct CLIAdapterTool: Tool {
         let args = arguments.args.trimmingCharacters(in: .whitespacesAndNewlines)
         let fullCommand = args.isEmpty ? cliCommand : "\(cliCommand) \(args)"
 
+        // Argv, never a shell string (§4.2). `args` is model-supplied and steerable by
+        // untrusted mail/message content, so tokenize the whole invocation and REFUSE any
+        // unquoted shell syntax: an approved `archive` carrying `; curl …|sh` is stopped
+        // here, before anything runs. The tokens run as a resolved process with no shell.
+        let tokens: [String]
+        switch ArgvCommandGate.tokenizeRejectingShellSyntax(fullCommand) {
+        case .rejected(let reason):
+            return "❌ \(cliCommand) did not run: \(reason)."
+        case .tokens(let parsed):
+            tokens = parsed
+        }
+        guard let binaryName = tokens.first else {
+            return "❌ \(cliCommand) did not run: nothing to run."
+        }
+        let argv = Array(tokens.dropFirst())
+
         // A subcommand that writes or sends always asks the owner first (§6.1; AGENTS.md:
         // "writes/outbound ALWAYS ask"). A read runs without a card. A bare invocation
         // (no subcommand) only prints usage, so it is not gated here.
@@ -1015,16 +1036,45 @@ struct CLIAdapterTool: Tool {
         if let held = await gate?.check(toolName: "run_command", arguments: ["command": fullCommand]) {
             return "❌ \(cliCommand) did not run: \(held)"
         }
-        let (success, output, _) = await TerminalCommandExecutor.shared.run(
-            fullCommand,
-            purpose: "\(cliCommand) CLI"
-        )
+
+        guard let executable = Self.resolveExecutable(named: binaryName, installedPath: installedPath) else {
+            return "❌ \(cliCommand) did not run: no executable named \(binaryName) was found."
+        }
+        let (output, exitCode) = await TerminalAIBridge.runArgv(
+            executable: executable, arguments: argv)
+        let success = exitCode == 0
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         await MainActor.run {
             recorder?.record(command: fullCommand, output: trimmed, success: success)
         }
         return success ? (trimmed.isEmpty ? "✅ \(cliCommand) completed with no output." : trimmed)
                        : "❌ \(cliCommand) failed: \(trimmed)"
+    }
+
+    /// Resolve a binary name to an absolute executable, with no shell and without consulting
+    /// `$PATH` (attacker-influenceable via dotfiles). Prefer the exact path the scan recorded
+    /// for this tool; otherwise search the fixed dirs a user CLI installs into — including
+    /// `~/go/bin`, where `go install` (mail-app-cli's documented install) puts it.
+    private static func resolveExecutable(named name: String, installedPath: String?) -> URL? {
+        let fm = FileManager.default
+        if let path = installedPath, !path.isEmpty,
+           URL(fileURLWithPath: path).lastPathComponent == name,
+           fm.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        let home = fm.homeDirectoryForCurrentUser.path
+        let dirs = [
+            "/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+            "\(home)/go/bin", "\(home)/.local/bin",
+            "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+        ]
+        for dir in dirs {
+            let candidate = dir + "/" + name
+            if fm.isExecutableFile(atPath: candidate) {
+                return URL(fileURLWithPath: candidate)
+            }
+        }
+        return nil
     }
 
     /// Ask the owner before a learned CLI write or send. Same shared inbox, expiry and
